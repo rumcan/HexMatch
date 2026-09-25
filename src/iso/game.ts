@@ -3989,15 +3989,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let cityPick = false;
   let cityPickTimer = 0;
   function setCityPick(on: boolean): void {
-    cityPick = on;
     window.clearTimeout(cityPickTimer);
     if (on) {
-      cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
       // Playtest (2026-09): a build tool in the hand owns every map click, so
       // picking a city with Dirt Road still armed built road. Put the tool
-      // down first; the map shows the upgrade cursor until the pick ends.
+      // down first (before the flag, so arming doesn't cancel the pick).
       if (tool !== "select") armTool("select");
+      cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
     }
+    cityPick = on;
     ui.el.dataset.pick = on ? "city" : "";
     syncUpgradeMarkers();
   }
@@ -9985,6 +9985,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * a road drag left armed under the Depot tool would quote the wrong build.
    */
   function armTool(t: Tool) {
+    // Playtest (2026-09): picking any tool (Select included) ends a city pick
+    // and its upgrade cursor.
+    if (cityPick) setCityPick(false);
     // RAIL-05 (#182): the flag down means the tool does not exist. Refuse the
     // arm and keep whatever is already in the hand — a hotkey that would
     // summon a refused build is just a confusing one.
