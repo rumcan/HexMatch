@@ -129,7 +129,7 @@ one. "Hot files" are the ones two tickets must not both rewrite at once.
 | **11** | #382 ART-2 Thick dithered water/sand/grass blend | `ground.ts`, `coastline.ts`, ground chunk cache | — |
 | 11 | #383 UX-FIX Difficulty picker shows code comments | `skill-picker.ts`, `skill.ts`, `ui.ts` selector | — |
 | 11 | #384 TEST-1 Dam unit tests | new `tests/unit/iso-dams.test.ts` (tests only) | — |
-| (held) | Minimap / chat dock overlap in multiplayer | `minimap.ts`, chat dock | waits for the lead's check of the #254 agent's work |
+| 11 | #386 UX-FIX Minimap overlaps the chat dock (MP) | `styles.css` minimap/chat docks, `minimap.ts`, `ui.ts` chat | — |
 
 Why this order: rivers need the new water art; bridges need rivers; dams need
 bridges; elevation comes after rivers so rivers can later run downhill;
@@ -449,6 +449,12 @@ Targeted tests: tests/unit/iso-skill-picker.test.ts + a new tests/unit/ui-copy-g
 ```text
 Ticket #384. Tests only; a real bug found = its own small commit.
 Targeted tests: the new tests/unit/iso-dams.test.ts, tests/unit/iso-bridges.test.ts.
+```
+
+### #386 — UX-FIX Minimap / chat dock overlap  (wave 11)
+```text
+Ticket #386. CSS + a published --minimap-h; single-player must not change.
+Targeted tests: tests/unit/main-menu.test.ts + a new tests/unit/ui-dock-layout.test.ts.
 ```
 
 ## 6. Wave 0 — housekeeping (done 2026-09-24)
