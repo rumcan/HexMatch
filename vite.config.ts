@@ -83,6 +83,31 @@ function devRoomsConfigPath(): string | undefined {
  * deploy. `assets/` is deliberately NOT made `publicDir` — that would
  * deoptimise the bundled atlases and ground textures.
  */
+/**
+ * VO-1: ship `assets/voice/` (the line script and, once the lead drops them,
+ * the MP3s) beside index.html. The runtime fetches
+ * `${BASE_URL}assets/voice/<speaker>/<id>.mp3` — a missing file is a subtitle
+ * with no sound, but a present file has to actually be in the build.
+ */
+function copyVoiceLines(): Plugin {
+  let outDir = "dist";
+  let srcDir = "";
+  return {
+    name: "hexmatch:voice-lines",
+    apply: "build",
+    configResolved(config) {
+      outDir = config.build.outDir;
+      srcDir = config.root;
+    },
+    closeBundle() {
+      const from = path.resolve(srcDir, "assets", "voice");
+      if (!existsSync(from)) return;
+      const to = path.resolve(srcDir, outDir, "assets", "voice");
+      cpSync(from, to, { recursive: true });
+    },
+  };
+}
+
 function copyBuildingLayers(): Plugin {
   let outDir = "dist";
   let srcDir = "";
@@ -191,6 +216,7 @@ export default defineConfig({
     }),
     devRoomServerOrigin(),
     copyBuildingLayers(),
+    copyVoiceLines(),
     watchBuildingSources(),
   ],
 
