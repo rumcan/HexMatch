@@ -153,3 +153,89 @@ describe("PP-02 the AI never lands a Factory off-town via its fallback", () => {
     }
   }, 30_000);
 });
+
+describe("#298 the rival reads the same plant grid", () => {
+  it("with no track, the first road leaves the plant floor and never paves it", async () => {
+    const { planCandidates } = await import("../../src/iso/ai");
+    const { createTrack, plantFootprintTiles, tIdx } = await import("../../src/iso/track");
+    const { FACTORY_FOOTPRINT, INDUSTRY_BY_KEY } = await import("../../src/iso/config");
+    const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+    const farm = INDUSTRY_BY_KEY.farm;
+    const ind = {
+      id: 0, type: "farm", tx: 10, ty: 20,
+      w: farm.footprint[0], h: farm.footprint[1], output: farm.output, banditUntil: 0,
+    };
+    for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+      for (let x = ind.tx; x < ind.tx + ind.w; x++) occ[y * MAP_W + x] = 0;
+    }
+    const fx = 10, fy = 10;
+    const foot = plantFootprintTiles(fx, fy);
+    const footSet = new Set(foot.map(([x, y]) => tIdx(x, y)));
+    const g: Grid = {
+      w: MAP_W, h: MAP_H,
+      terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+      industries: [ind],
+      towns: [],
+      occupancy: occ,
+      seed: 1,
+      builtAt: (x, y) => footSet.has(y * MAP_W + x) ? "plant" : null,
+    };
+    const factory = { owner: "ai", ownerId: 2, tx: fx, ty: fy };
+    const cands = planCandidates(
+      { grid: g, track: createTrack(), harvesters: [], factories: [factory] },
+      factory,
+      { stock: {}, purse: { wood: 99, stone: 99, ore: 99 }, free: 12, freeDepots: 1 },
+    );
+    expect(cands.length).toBeGreaterThan(0);
+    expect(FACTORY_FOOTPRINT[0]).toBeGreaterThan(0);
+    for (const c of cands) {
+      for (const [x, y] of c.path.tiles) {
+        expect(footSet.has(tIdx(x, y)), `paved the floor at ${x},${y}`).toBe(false);
+      }
+      const [sx, sy] = c.path.tiles[0];
+      const shoulder = foot.some(([px, py]) => Math.abs(px - sx) + Math.abs(py - sy) === 1);
+      expect(shoulder, `start ${sx},${sy} is not beside the plant`).toBe(true);
+    }
+  }, 20_000);
+
+  it("a source already off the plant is not rewritten onto a shoulder", async () => {
+    const { planCandidates } = await import("../../src/iso/ai");
+    const { createTrack, buildTile, plantFootprintTiles, tIdx } = await import("../../src/iso/track");
+    const { INDUSTRY_BY_KEY } = await import("../../src/iso/config");
+    const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
+    const farm = INDUSTRY_BY_KEY.farm;
+    const ind = {
+      id: 0, type: "farm", tx: 10, ty: 20,
+      w: farm.footprint[0], h: farm.footprint[1], output: farm.output, banditUntil: 0,
+    };
+    for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+      for (let x = ind.tx; x < ind.tx + ind.w; x++) occ[y * MAP_W + x] = 0;
+    }
+    const foot = plantFootprintTiles(10, 10);
+    const footSet = new Set(foot.map(([x, y]) => tIdx(x, y)));
+    const g: Grid = {
+      w: MAP_W, h: MAP_H,
+      terrain: new Uint8Array(MAP_W * MAP_H).fill(GRASS),
+      industries: [ind],
+      towns: [],
+      occupancy: occ,
+      seed: 1,
+      builtAt: (x, y) => footSet.has(y * MAP_W + x) ? "plant" : null,
+    };
+    const track = createTrack();
+    buildTile(track, "dirt", 40, 10, 2);
+    const factory = { owner: "ai", ownerId: 2, tx: 10, ty: 10 };
+    const cands = planCandidates(
+      { grid: g, track, harvesters: [], factories: [factory] },
+      factory,
+      { stock: {}, purse: { wood: 99, stone: 99, ore: 99 }, free: 40, freeDepots: 1 },
+    );
+    expect(cands.length).toBeGreaterThan(0);
+    for (const c of cands) {
+      expect(c.path.tiles[0]).toEqual([40, 10]);
+      for (const [x, y] of c.path.tiles) {
+        expect(footSet.has(tIdx(x, y)), `later road entered ${x},${y}`).toBe(false);
+      }
+    }
+  }, 20_000);
+});

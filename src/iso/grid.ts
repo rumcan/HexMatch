@@ -101,17 +101,99 @@ export interface Grid {
   occupancy: Int16Array;      // per tile: industry list index or -1 (towns use -2)
   seed: number;
   /**
-   * Playtest (2026-09): what the RUNNING GAME has built on a tile that the map
-   * itself does not stamp in `occupancy` — the railway and the truck Depots.
+   * Playtest (2026-09) / #298: what the RUNNING GAME has built on a tile that
+   * the map itself does not stamp in `occupancy` — the railway, the truck
+   * Depots, and processing plants / town buildings.
    * Set by the game; absent in tests and tools, where nothing is built.
    *   "rail-x"/"rail-y": a straight rail tile along x / along y (a road may
    *   cross it at a right angle); "rail": any other rail tile; "platform": a
-   *   rail structure; "depot": a truck Depot's 2×2 lot.
+   *   rail structure; "depot": a truck Depot's 2×2 lot; "plant": a processing
+   *   plant / Factory footprint tile, or a town building, in whatever rotation
+   *   that footprint was laid (`rotatedSpan`). A plant blocks the other seat's
+   *   roads, everyone's rail, and depot placement. The owner's own road drag
+   *   still steps over their plant (`structures` in `previewDrag`, PP-15) —
+   *   those tiles are not paved. Town STREETS are not plants: rail may still
+   *   cross them. The L17 grown ring is visual only and is not reported here.
    */
   builtAt?: (tx: number, ty: number) => GridBuilt | null;
 }
 
-export type GridBuilt = "rail" | "rail-x" | "rail-y" | "platform" | "depot";
+export type GridBuilt = "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant";
+
+/**
+ * #298: a footprint after `quarterTurns` clockwise quarter-turns. The anchor
+ * stays the origin and the span grows toward +x/+y — the same convention as a
+ * rail platform (`se` is [1,3], `sw` is [3,1]). An odd turn swaps the axes.
+ * Square art is unchanged in every rotation.
+ */
+export function rotatedSpan(w: number, h: number, quarterTurns = 0): [number, number] {
+  const q = ((quarterTurns % 4) + 4) % 4;
+  return q % 2 === 0 ? [w, h] : [h, w];
+}
+
+/** Every tile of a footprint anchored at (tx, ty), after `quarterTurns`. */
+export function footprintTilesAt(
+  tx: number, ty: number, w: number, h: number, quarterTurns = 0,
+): [number, number][] {
+  const [fw, fh] = rotatedSpan(w, h, quarterTurns);
+  const out: [number, number][] = [];
+  for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out.push([tx + x, ty + y]);
+  return out;
+}
+
+/** True when (x, y) lies on that rotated footprint. */
+export function tileInFootprint(
+  x: number, y: number,
+  tx: number, ty: number, w: number, h: number, quarterTurns = 0,
+): boolean {
+  const [fw, fh] = rotatedSpan(w, h, quarterTurns);
+  return x >= tx && x < tx + fw && y >= ty && y < ty + fh;
+}
+
+/**
+ * A town HOUSE tile (the centre counts), not a street. Streets are also
+ * `TOWN_OCC`, but they are roads — rail may cross them. A house with no
+ * occupancy stamp does not count: synthetic towns that were never stamped
+ * are not obstacles.
+ */
+export function townHouseAt(grid: Grid, tx: number, ty: number): boolean {
+  if (!inBounds(tx, ty) || grid.occupancy[idx(tx, ty)] !== TOWN_OCC) return false;
+  for (const t of grid.towns) {
+    if (t.tx === tx && t.ty === ty) return true;
+    if (t.houses.some(([hx, hy]) => hx === tx && hy === ty)) return true;
+  }
+  return false;
+}
+
+/**
+ * #298: tiles a town's BUILDINGS claim — every house, plus each drawn
+ * building's footprint in its rotation. A building whose origin `skipOrigin`
+ * accepts (the L17 grown ring) is visual only and claims nothing. Streets are
+ * not included, so a highway can still meet the town and rail can still cross
+ * a straight street.
+ */
+export function townObstacleTiles(
+  town: Town,
+  buildings: readonly { tx: number; ty: number; w: number; h: number; rot?: number }[],
+  skipOrigin?: (tx: number, ty: number) => boolean,
+): [number, number][] {
+  const seen = new Set<number>();
+  const out: [number, number][] = [];
+  const add = (x: number, y: number) => {
+    if (!inBounds(x, y)) return;
+    const i = idx(x, y);
+    if (seen.has(i)) return;
+    seen.add(i);
+    out.push([x, y]);
+  };
+  add(town.tx, town.ty);
+  for (const [hx, hy] of town.houses) add(hx, hy);
+  for (const b of buildings) {
+    if (skipOrigin?.(b.tx, b.ty)) continue;
+    for (const [x, y] of footprintTilesAt(b.tx, b.ty, b.w, b.h, b.rot ?? 0)) add(x, y);
+  }
+  return out;
+}
 
 function makeTerrain(rng: () => number): Uint8Array {
   const t = new Uint8Array(MAP_W * MAP_H).fill(GRASS);

@@ -432,6 +432,53 @@ export function networkTiles(track: Track, kind: TrackKind, factory: Factory): [
   return out;
 }
 
+/**
+ * True when (x, y) is unbuildable only because a plant stands on it. Water,
+ * rough (for a paved road), a town street or an industry stay refused — a
+ * factory parked in a water enclave must not grow a road from the far side
+ * of that water (W8: nothing can be built from there).
+ */
+function blockedOnlyByPlant(grid: Grid, kind: TrackKind, x: number, y: number): boolean {
+  if (grid.builtAt?.(x, y) !== "plant") return false;
+  const saved = grid.builtAt;
+  grid.builtAt = (tx, ty) => (tx === x && ty === y) ? null : (saved?.(tx, ty) ?? null);
+  try {
+    return canBuildOn(grid, kind, x, y);
+  } finally {
+    grid.builtAt = saved;
+  }
+}
+
+/**
+ * #298: with no track yet the only network source is the plant floor, which
+ * `builtAt` reports as unbuildable. The player's drag steps over that floor
+ * (PP-15); the rival must not pave it either. Depart from the buildable tile
+ * on the footprint's edge nearest (tx, ty) — the road still joins the plant,
+ * and the path never enters it.
+ */
+function departBesidePlant(
+  grid: Grid, kind: TrackKind, factory: Factory, tx: number, ty: number,
+): [number, number] | null {
+  const foot = plantFootprintTiles(factory.tx, factory.ty);
+  const inside = new Set(foot.map(([x, y]) => tIdx(x, y)));
+  let best: [number, number] | null = null;
+  let bestD = Infinity;
+  for (const [x, y] of foot) {
+    for (const d of DIRS) {
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (!inMapT(nx, ny) || inside.has(tIdx(nx, ny))) continue;
+      if (!canBuildOn(grid, kind, nx, ny)) continue;
+      const dist = Math.abs(nx - tx) + Math.abs(ny - ty);
+      const ni = tIdx(nx, ny);
+      if (dist < bestD || (dist === bestD && best && ni < tIdx(best[0], best[1]))) {
+        best = [nx, ny];
+        bestD = dist;
+      }
+    }
+  }
+  return best;
+}
+
 /** The nearest network tile to a target, by Manhattan distance then index. */
 export function nearestSource(
   sources: [number, number][], tx: number, ty: number,
@@ -881,9 +928,22 @@ export function planCandidates(
         // L14 (#229): under the new loop, the nearest tile the plan can START
         // from — not merely the nearest (see `nearestBuildableSource` for why
         // the shipped loop keeps the plain read).
-        const src = newLoop
+        let src = newLoop
           ? nearestBuildableSource(grid, kindPref, sources, hx, hy)
           : nearestSource(sources, hx, hy);
+        // #298: no track yet means the only source is the plant floor. It is
+        // not a road. Leave from the edge instead of paving it or dropping
+        // the plan — but only when the floor is legal ground with a plant on
+        // it. A water enclave (W8's (0,0) corner) is not that: departing from
+        // a shoulder outside the water would build a network the plant can
+        // never join. Any real track tile in `sources` keeps the old answer.
+        if (src && !canBuildOn(grid, kindPref, src[0], src[1])
+          && sources.every(([x, y]) => plantFootprintTiles(factory.tx, factory.ty)
+            .some(([px, py]) => px === x && py === y))
+          && sources.every(([x, y]) => canBuildOn(grid, kindPref, x, y)
+            || blockedOnlyByPlant(grid, kindPref, x, y))) {
+          src = departBesidePlant(grid, kindPref, factory, hx, hy);
+        }
         if (!src || !canBuildOn(grid, kindPref, src[0], src[1])) continue;
         // The road has to reach the lot's GATE, and the Depot is built in
         // whichever ROTATION puts that gate nearest the network — the same
@@ -1837,6 +1897,10 @@ export function railStepCost(
   // would refuse.
   if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) return IMPASSABLE;
   if (structureAt(rail, tx, ty)) return IMPASSABLE;
+  // #298: the same `builtAt` the player's rail refusal reads — a depot, a
+  // plant or a town building is not a tile the rival may plan through.
+  const built = grid.builtAt?.(tx, ty);
+  if (built === "depot" || built === "plant" || built === "platform") return IMPASSABLE;
   if (!railTerrainOk(grid, tx, ty)) return IMPASSABLE;
   if ((rail.rail.tile[i] & RAIL_PRESENT) !== 0) {
     return rail.rail.owner[i] === ownerId ? RAIL_OWN_COST : IMPASSABLE;
@@ -2006,6 +2070,8 @@ function endpointSources(
     const i = tIdx(jx, jy);
     if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) continue;   // the rule's occupancy read
     if (structureAt(rail, jx, jy)) continue;
+    const built = grid.builtAt?.(jx, jy);
+    if (built === "depot" || built === "plant" || built === "platform") continue;
     const ownRail = (rail.rail.tile[i] & RAIL_PRESENT) !== 0 && rail.rail.owner[i] === ownerId;
     if (ownRail || railTerrainOk(grid, jx, jy)) out.push([jx, jy]);
   }

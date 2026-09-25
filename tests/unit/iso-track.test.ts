@@ -667,6 +667,84 @@ describe("L2 free dirt under newLoop", () => {
     expect(p.unaffordable).toHaveLength(0);
   });
 
+describe("#298 plants and town buildings block the other seat", () => {
+  const rich = { wood: 999, stone: 999, ore: 999 };
+
+  /** Stamp a rotated footprint as `builtAt` "plant" and return its tiles. */
+  async function stamp(grid: Grid, tx: number, ty: number, w: number, h: number, rot: number) {
+    const { footprintTilesAt } = await import("../../src/iso/grid");
+    const tiles = footprintTilesAt(tx, ty, w, h, rot);
+    const set = new Set(tiles.map(([x, y]) => tIdx(x, y)));
+    grid.builtAt = (x, y) => set.has(tIdx(x, y)) ? "plant" : null;
+    return tiles;
+  }
+
+  it("every quarter-turn of a non-square stamp blocks a road, and the other orientation's edge stays buildable", async () => {
+    const { footprintTilesAt } = await import("../../src/iso/grid");
+    for (const rot of [0, 1, 2, 3]) {
+      const grid = flatGrid();
+      const plant = await stamp(grid, 10, 10, 1, 3, rot);
+      const plantSet = new Set(plant.map(([x, y]) => `${x},${y}`));
+      // The tile the OTHER orientation claims, and this one does not.
+      const edge: [number, number] = rot % 2 === 0 ? [11, 10] : [10, 11];
+      expect(plantSet.has(`${edge[0]},${edge[1]}`), `rot ${rot} edge`).toBe(false);
+      expect(canBuildOn(grid, "dirt", edge[0], edge[1]), `rot ${rot} dirt edge`).toBe(true);
+      expect(canBuildOn(grid, "road", edge[0], edge[1]), `rot ${rot} road edge`).toBe(true);
+      for (const [x, y] of plant) {
+        expect(canBuildOn(grid, "dirt", x, y), `rot ${rot} dirt ${x},${y}`).toBe(false);
+        expect(canBuildOn(grid, "road", x, y), `rot ${rot} road ${x},${y}`).toBe(false);
+      }
+      // A drag that runs through the stamp stops on it and paints those tiles.
+      const alongY = previewDrag(grid, createTrack(), "dirt", rich, 10, 8, 10, 14);
+      const hit = alongY.tiles.concat(alongY.blocked);
+      expect(alongY.truncated, `rot ${rot}`).toBe(true);
+      expect(alongY.unaffordable, `rot ${rot} affordability untouched`).toEqual([]);
+      for (const [x, y] of footprintTilesAt(10, 10, 1, 3, rot)) {
+        if (x === 10 && y >= 10 && y <= 14) {
+          expect(alongY.blocked, `rot ${rot} blocked`).toContainEqual([x, y]);
+          expect(alongY.tiles, `rot ${rot} not paved`).not.toContainEqual([x, y]);
+        }
+      }
+      // The free tile past the obstacle is not painted as blocked.
+      expect(hit.some(([x, y]) => !plantSet.has(`${x},${y}`) && alongY.blocked.some(([bx, by]) => bx === x && by === y))).toBe(false);
+    }
+  });
+
+  it("a road drag steps over the builder's own plant and stops on someone else's", async () => {
+    const grid = flatGrid();
+    const plant = await stamp(grid, 10, 10, 1, 3, 1);
+    const own = new Set(plant.map(([x, y]) => tIdx(x, y)));
+    const through = previewDrag(grid, createTrack(), "road", rich, 8, 10, 14, 10, true, undefined, 0, own);
+    expect(through.truncated).toBe(false);
+    expect(through.blocked).toEqual([]);
+    expect(through.tiles).toContainEqual([8, 10]);
+    expect(through.tiles).toContainEqual([14, 10]);
+    for (const tile of plant) expect(through.tiles).not.toContainEqual(tile);
+
+    const other = previewDrag(grid, createTrack(), "road", rich, 8, 10, 14, 10, true, undefined, 0, new Set([tIdx(0, 0)]));
+    expect(other.truncated).toBe(true);
+    expect(other.blocked).toEqual([[10, 10], [11, 10], [12, 10]]);
+    expect(other.tiles).toEqual([[8, 10], [9, 10]]);
+    expect(other.unaffordable).toEqual([]);
+  });
+
+  it("a rail drag stops on a plant and paints the refused run, with no structures skip", async () => {
+    const { createRailState, railPreview, railTileRefusal } = await import("../../src/iso/rail");
+    const grid = flatGrid();
+    const plant = await stamp(grid, 10, 10, 1, 3, 1);
+    const rail = createRailState();
+    const edge: [number, number] = [10, 11];
+    expect(railTileRefusal(grid, createTrack(), rail, 1, edge[0], edge[1])).toBe("ok");
+    expect(railTileRefusal(grid, createTrack(), rail, 1, 11, 10)).toBe("occupied");
+    const pv = railPreview(grid, createTrack(), rail, 1, { stone: 99 }, 8, 10, 14, 10);
+    expect(pv.truncated).toBe(true);
+    expect(pv.why).toBe("occupied");
+    expect(pv.blocked).toEqual(plant.filter(([, y]) => y === 10));
+    expect(pv.tiles).toEqual([[8, 10], [9, 10]]);
+    expect(pv.unaffordable).toEqual([]);
+  });
+});
+
   it.skip("a paved drag under newLoop still needs ore and still spends no allowance", () => {
     const grid = flatGrid(), t = createTrack();
     const broke = previewDrag(grid, t, "road", { wood: 12, stone: 12, ore: 0 }, 5, 5, 16, 5, true, undefined, 12, undefined, true);

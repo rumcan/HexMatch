@@ -40,7 +40,7 @@ import {
   industriesTouchingDepot, type DepotFacing,
 } from "./depot";
 import {
-  FIELD_OCC, GRASS, ROUGH, SAND, TOWN_OCC, type Grid, type Industry, type Town,
+  FIELD_OCC, GRASS, ROUGH, SAND, TOWN_OCC, rotatedSpan, type Grid, type Industry, type Town,
 } from "./grid";
 import { buildRefusal, hasTrack, tIdx, type Track } from "./track";
 import {
@@ -310,8 +310,14 @@ export interface DepotPlanOptions {
    * industry has exactly one Depot, and a second one beside it claims nothing.
    */
   locked?: ReadonlySet<number>;
-  /** MP-AUDIT: factory footprints that block depot placement (opening factories + live buildings) */
-  factories?: readonly { tx: number; ty: number }[];
+  /**
+   * MP-AUDIT / #298: factory footprints that block depot placement (opening
+   * factories + live buildings). `w`/`h`/`rot` default to `FACTORY_FOOTPRINT`
+   * unrotated; an odd `rot` swaps the axes (`rotatedSpan`). The live game also
+   * reports these tiles through `grid.builtAt` ("plant"), which `buildRefusal`
+   * reads — so a footprint the caller forgot to pass is still refused.
+   */
+  factories?: readonly { tx: number; ty: number; w?: number; h?: number; rot?: number }[];
   /**
    * The rotation the player has turned the ghost to (R). Honoured when that
    * side is free at this site; otherwise the site keeps its own default, so a
@@ -335,8 +341,10 @@ export function planDepotPlacement(
   const tileWhy = tiles.map(([x, y]) => (inGrid(grid, x, y) ? buildRefusal(grid, "dirt", x, y) : "out-of-bounds"));
   let code: string | null = tileWhy.find((w) => w !== null) ?? null;
   if (code === null && harvesters.some((h) => depotsOverlap(h.tx, h.ty, tx, ty))) code = "depot-taken";
-  if (code === null && opts.factories && opts.factories.some((f) =>
-    tx < f.tx + FACTORY_FOOTPRINT[0] && tx + 2 > f.tx && ty < f.ty + FACTORY_FOOTPRINT[1] && ty + 2 > f.ty)) code = "occupied";
+  if (code === null && opts.factories && opts.factories.some((f) => {
+    const [fw, fh] = rotatedSpan(f.w ?? FACTORY_FOOTPRINT[0], f.h ?? FACTORY_FOOTPRINT[1], f.rot ?? 0);
+    return tx < f.tx + fw && tx + 2 > f.tx && ty < f.ty + fh && ty + 2 > f.ty;
+  })) code = "occupied";
   const { problem } = depotFacingAt(grid, tx, ty);
   const facing = depotFacingFor(grid, tx, ty, opts.facing);
   const served = industriesTouchingDepot(grid, tx, ty).map((t) => t.industry);
