@@ -246,3 +246,13 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .aside.right .tab { flex: 1 1 0; justify-content: center; min-width: 0; }
   .aside.right .tab:last-child { border-right: 0; }
 }
+
+/* lighter type: nothing heavier than 500 in the HUD and menus; numbers 400 */
+.ui-root b, .ui-root strong, .ui-root h1, .ui-root h2, .ui-root h3,
+.start-screen b, .start-screen strong, .start-screen h1, .start-screen h2,
+.logo, .panel-title, .modal h2, .menu-title, .menu-btn, .tab, .vp-badge, .king-name, .king-vp,
+.post-btn, .big-btn, .bank-btn, .menu-btn.primary, .start-primary, .ending-button, .tool-card b {
+  font-weight: 500 !important;
+}
+.chip-n, .chip-r, .vp-badge b, .king-vp b, .ui-root .num { font-weight: 400 !important; }
+.logo { letter-spacing: .16em; }
