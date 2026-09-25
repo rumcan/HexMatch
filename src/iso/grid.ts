@@ -116,6 +116,22 @@ export interface Grid {
    *   cross them. The L17 grown ring is visual only and is not reported here.
    */
   builtAt?: (tx: number, ty: number) => GridBuilt | null;
+  /**
+   * R1 (#260): the river layer. One byte per tile, non-zero where a generated
+   * river flows. River tiles are ALSO `WATER` in `terrain` (so every gameplay
+   * check — build refusal, rail terrain, placement — treats them as water);
+   * this mask only exists so the renderer can give rivers their own texture
+   * and banks instead of the open-ocean look. Absent when the map was
+   * generated without the `rivers` option (the default), so option-OFF maps
+   * stay byte-identical to today's.
+   */
+  rivers?: Uint8Array;
+}
+
+/** R1 (#260): the map-generation options. All default to the historical behaviour. */
+export interface MapGenOptions {
+  /** Generate 1–3 seeded rivers. OFF (default) keeps every seed byte-identical. */
+  rivers?: boolean;
 }
 
 export type GridBuilt = "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant";
@@ -283,6 +299,186 @@ function makeTerrain(rng: () => number): Uint8Array {
     for (const i of sand) t[i] = SAND;
   }
   return t;
+}
+
+// ── R1 (#260): rivers ──────────────────────────────────────────────────────
+//
+// Rivers are carved into the terrain AFTER `makeTerrain` and BEFORE
+// `placeIndustries`/`placeTowns`, so industries, towns and the public
+// highways all treat them as WATER and route around them by construction.
+//
+// Each river is a single open random walk from an inland source down to the
+// sea: it only ever steps towards (or across) the sea's distance field, never
+// onto its own water, so it cannot loop back and enclose land. A river whose
+// carve would nonetheless split the island into two landmasses is discarded
+// (the terrain is restored) and another source is tried — the generator's
+// reachability invariant ("every town and industry on ONE landmass") therefore
+// holds with rivers exactly as it does without them.
+//
+// Determinism: the whole pass runs off the caller's seeded stream and draws
+// nothing when the `rivers` option is off, so option-OFF seeds generate
+// byte-identical maps to the pre-river generator.
+
+/** 4-connected component count of the land (non-WATER) tiles. */
+function landComponentCount(terrain: Uint8Array): number {
+  const seen = new Uint8Array(terrain.length);
+  let comps = 0;
+  for (let i = 0; i < terrain.length; i++) {
+    if (seen[i] || terrain[i] === WATER) continue;
+    comps++;
+    const stack = [i];
+    seen[i] = 1;
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+        const ni = ny * MAP_W + nx;
+        if (seen[ni] || terrain[ni] === WATER) continue;
+        seen[ni] = 1;
+        stack.push(ni);
+      }
+    }
+  }
+  return comps;
+}
+
+/**
+ * BFS distance from every tile to the nearest OCEAN tile — water that is
+ * 4-connected to the map border. Inland lakes (which `fillCoastalHoles` later
+ * turns to sand) stay at 0xffff, so a river is never drawn towards a lake it
+ * could not actually drain into.
+ */
+function distanceToSea(terrain: Uint8Array): { dist: Uint16Array; sea: Uint8Array } {
+  // First: which water is the open ocean (4-connected to the map border)?
+  const sea = new Uint8Array(terrain.length);
+  const wq: number[] = [];
+  const seedSea = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return;
+    const i = idx(x, y);
+    if (terrain[i] === WATER && !sea[i]) { sea[i] = 1; wq.push(i); }
+  };
+  for (let x = 0; x < MAP_W; x++) { seedSea(x, 0); seedSea(x, MAP_H - 1); }
+  for (let y = 0; y < MAP_H; y++) { seedSea(0, y); seedSea(MAP_W - 1, y); }
+  for (let head = 0; head < wq.length; head++) {
+    const cur = wq[head], x = cur % MAP_W, y = (cur / MAP_W) | 0;
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      const ni = ny * MAP_W + nx;
+      if (terrain[ni] === WATER && !sea[ni]) { sea[ni] = 1; wq.push(ni); }
+    }
+  }
+  // Then: distance from the ocean over every tile (sea tiles are 0).
+  const dist = new Uint16Array(terrain.length).fill(0xffff);
+  const queue: number[] = [];
+  for (let i = 0; i < terrain.length; i++) if (sea[i]) { dist[i] = 0; queue.push(i); }
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head], x = cur % MAP_W, y = (cur / MAP_W) | 0;
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      const ni = ny * MAP_W + nx;
+      if (dist[ni] !== 0xffff) continue;
+      dist[ni] = dist[cur] + 1;
+      queue.push(ni);
+    }
+  }
+  return { dist, sea };
+}
+
+const RIVER_DIRS: readonly (readonly [number, number])[] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+/**
+ * Carve 1–3 meandering rivers into `terrain` (they become WATER) and return
+ * the river mask. Every river runs from an inland source to the sea, is 1–2
+ * tiles wide, and is discarded if it would split the island's landmass.
+ * Draws from `rng` only — pure under the seed.
+ */
+export function carveRivers(terrain: Uint8Array, rng: () => number): Uint8Array {
+  const mask = new Uint8Array(terrain.length);
+  const baseComps = landComponentCount(terrain);
+  const count = 1 + Math.floor(rng() * 3);                  // 1..3 rivers
+  for (let r = 0; r < count; r++) {
+    // A river slot gets a few attempts: a carve that would split the island
+    // is reverted and retried from another source before giving up.
+    for (let tries = 0; tries < 3; tries++) {
+      const { dist: distSea, sea } = distanceToSea(terrain);
+      // An inland source: land comfortably away from the sea so the river has
+      // some length. A few draws, else this attempt has no source.
+      let sx = -1, sy = -1;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const x = 6 + Math.floor(rng() * (MAP_W - 12));
+        const y = 6 + Math.floor(rng() * (MAP_H - 12));
+        const i = idx(x, y);
+        if (terrain[i] !== WATER && distSea[i] >= 18 && distSea[i] < 0xfff0) { sx = x; sy = y; break; }
+      }
+      if (sx < 0) continue;
+
+      const snapshot = terrain.slice();
+      // Phase 1 — a 1-wide meandering SPINE from the source down to the sea.
+      // No widening here, so the head always has the downhill tile available
+      // and therefore reaches the coast.
+      const spine: number[] = [];
+      let cx = sx, cy = sy;
+      let steps = 0;
+      let reached = false;
+      while (terrain[idx(cx, cy)] !== WATER && steps < 600) {
+        steps++;
+        const here = idx(cx, cy);
+        terrain[here] = WATER; spine.push(here);
+        let best: [number, number] | null = null;
+        let bestScore = Infinity;
+        for (const [dx, dy] of RIVER_DIRS) {
+          const nx = cx + dx, ny = cy + dy;
+          if (!inBounds(nx, ny)) continue;
+          const ni = idx(nx, ny);
+          if (terrain[ni] === WATER) {
+            // Ocean (or an earlier river the sea-flood already includes)
+            // terminates the walk; inland lakes are skipped — they can't drain.
+            if (sea[ni] && bestScore > -1) { bestScore = -1; best = [nx, ny]; }
+            continue;
+          }
+          if (mask[ni]) continue;
+          const climb = distSea[ni] - distSea[here];
+          if (climb > 1) continue;                            // never climb away from the sea
+          const score = distSea[ni] + (rng() * 2 - 1) * 2.2;  // meander jitter
+          if (score < bestScore) { bestScore = score; best = [nx, ny]; }
+        }
+        if (!best) break;                                     // boxed in: river ends here
+        if (terrain[idx(best[0], best[1])] === WATER) reached = true;
+        [cx, cy] = best;
+      }
+      if (spine.length < 8 || !reached || landComponentCount(terrain) !== baseComps) {
+        terrain.set(snapshot);
+        continue;                                             // retry this river slot
+      }
+      // Phase 2 — widen to 2 tiles where a lateral tile doesn't split the
+      // island. Widening is cosmetic; if the widened river is unsafe the
+      // laterals revert and the 1-wide spine is kept.
+      const laterals: [number, number][] = [];               // [tile, original terrain]
+      for (const si of spine) {
+        if (rng() >= 0.5) continue;
+        const [dx, dy] = RIVER_DIRS[Math.floor(rng() * 4)];
+        const x = (si % MAP_W) + dx, y = ((si / MAP_W) | 0) + dy;
+        if (!inBounds(x, y)) continue;
+        const li = idx(x, y);
+        if (terrain[li] === WATER) continue;                 // only onto dry land
+        if (mask[li]) continue;
+        laterals.push([li, terrain[li]]);
+        terrain[li] = WATER;
+      }
+      if (laterals.length && landComponentCount(terrain) !== baseComps) {
+        for (const [li, orig] of laterals) terrain[li] = orig;
+        laterals.length = 0;
+      }
+      for (const i of spine) mask[i] = 1;
+      for (const [li] of laterals) mask[li] = 1;
+      break;                                                  // this river is committed
+    }
+  }
+  return mask;
 }
 
 function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Industry[]; occ: Int16Array } {
@@ -1557,10 +1753,14 @@ function placeTowns(
  * Callers that want a random game map should draw the seed themselves with the
  * game RNG and pass it in (see `randomSeed`).
  */
-export function generateMap(seed: number): Grid {
+export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   const s = seed >>> 0;
   const rng = mulberry32(s);
   const terrain = makeTerrain(rng);
+  // R1 (#260): rivers go in BEFORE industries/towns so every placement stage
+  // routes around them as water. Off by default: no RNG is drawn and no tile
+  // changes, so option-OFF seeds stay byte-identical to the old generator.
+  const riverMask = opts.rivers ? carveRivers(terrain, rng) : undefined;
   const { list, occ } = placeIndustries(terrain, rng);
   // TOWN-1: towns are placed AFTER industries (sequencing), using the same
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
@@ -1602,19 +1802,37 @@ export function generateMap(seed: number): Grid {
   // Coastal repair runs AFTER all seed-derived placement. Only WATER becomes
   // SAND: existing land, industries, towns and public roads remain identical
   // to v10, making old solo saves safe to resume on the improved coastline.
+  // R1 (#260): river water is exempt — a 1-tile river bend has three land
+  // neighbours and would otherwise be "repaired" into a sand plug. The same
+  // exemption covers the sea tile a river mouth pours into, so the mouth
+  // stays open.
+  const riverNear = (x: number, y: number): boolean => {
+    if (!riverMask) return false;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && ny >= 0 && nx < MAP_W && ny < MAP_H && riverMask[idx(nx, ny)]) return true;
+    }
+    return false;
+  };
   for (let pass = 0; pass < 2; pass++) {
     const prev = terrain.slice();
     for (let y = 1; y < MAP_H - 1; y++) for (let x = 1; x < MAP_W - 1; x++) {
       if (prev[idx(x, y)] !== WATER) continue;
+      if (riverNear(x, y)) continue;
       const neighbours = [prev[idx(x - 1, y)], prev[idx(x + 1, y)],
         prev[idx(x, y - 1)], prev[idx(x, y + 1)]];
       if (neighbours.filter(v => v !== WATER).length >= 3) terrain[idx(x, y)] = SAND;
     }
   }
   fillCoastalHoles(terrain, MAP_W, MAP_H, WATER, SAND);
+  // fillCoastalHoles only fills sea-disconnected WATER; rivers reach the sea so
+  // they survive — but re-assert the mask as water regardless, so the layer
+  // the renderer reads can never disagree with the terrain.
+  if (riverMask) for (let i = 0; i < riverMask.length; i++) if (riverMask[i]) terrain[i] = WATER;
 
   return {
     w: MAP_W, h: MAP_H, terrain, industries: list, towns, publicRoads, occupancy: occ, seed: s,
+    rivers: riverMask,
   };
 }
 

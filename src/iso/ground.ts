@@ -29,14 +29,27 @@ export interface GroundTextures {
   grass: AtlasImage;
   sand: AtlasImage;
   water: AtlasImage;
+  /** R1 (#260): the fresh-water texture for rivers; optional so old callers stay valid. */
+  river?: AtlasImage;
 }
 
-/** Per-zoom canvas patterns for the three ground textures. */
+/** Per-zoom canvas patterns for the ground textures. */
 export interface GroundPatterns {
   grass: CanvasPattern;
   sand: CanvasPattern;
   water: CanvasPattern;
+  river?: CanvasPattern;
 }
+
+/**
+ * R1 (#260): the river fill the ground paint uses. The renderer's chunk call
+ * hands `paintGroundTiles` only grass/sand, so `createGroundPatterns` parks
+ * the river pattern here where the paint can find it. Null until textures load
+ * (or in stubbed-canvas contexts), and the paint falls back to a flat colour.
+ */
+let riverFillPattern: CanvasPattern | null = null;
+/** Test/debug access to the installed river pattern. */
+export const riverPattern = (): CanvasPattern | null => riverFillPattern;
 
 /** The four diamond corners of tile (tx,ty) in world space (1×), clockwise from the top vertex. */
 export function tileDiamondWorld(tx: number, ty: number): [number, number][] {
@@ -134,8 +147,78 @@ export function paintGroundTiles(
     ctx.globalAlpha = alpha;
     ctx.stroke();
   }
+  paintRiverWater(ctx, grid, tx0, ty0, tx1, ty1, project, px, py, scale);
   ctx.restore();
 }
+
+/**
+ * R1 (#260): the river's own water and banks. River tiles are WATER in the
+ * terrain, so left alone they would show the animated open ocean; this paints
+ * them with the seamless fresh-water texture (world-anchored, like the land
+ * patterns, so joins between chunks line up) over the ocean, then strokes a
+ * subtle dark bank along the edges a river shares with land. ONE batched fill
+ * and two batched strokes per chunk — rivers add no per-frame cost (the chunk
+ * is cached), which is what keeps the shore-stroke fps budget intact.
+ */
+function paintRiverWater(
+  ctx: CanvasRenderingContext2D,
+  grid: Grid,
+  tx0: number, ty0: number, tx1: number, ty1: number,
+  project: GroundProject,
+  px: number, py: number, scale: number,
+): void {
+  const river = grid.rivers;
+  if (!river) return;
+  const diamonds: [number, number][][] = [];
+  const banks: [number, number][][] = [];
+  const isLand = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < grid.w && y < grid.h && grid.terrain[y * grid.w + x] !== WATER;
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      if (!river[ty * grid.w + tx]) continue;
+      const corners = tileDiamondWorld(tx, ty).map(([x, y]) => project(x, y));
+      diamonds.push(corners);
+      // Shared edge with each land 4-neighbour: W(-1,0)=T–W, N(0,-1)=T–E,
+      // E(+1,0)=E–S, S(0,1)=W–S (corners N,E,S,W = indices 0..3).
+      const edge: [number, number][] = [[0, 3], [0, 1], [1, 2], [3, 2]];
+      const dirs = [[-1, 0], [0, -1], [1, 0], [0, 1]];
+      for (let d = 0; d < 4; d++) {
+        if (!isLand(tx + dirs[d][0], ty + dirs[d][1])) continue;
+        const [a, b] = edge[d];
+        banks.push([corners[a], corners[b]]);
+      }
+    }
+  }
+  if (diamonds.length === 0) return;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  pathPolygons(ctx, diamonds);
+  if (riverFillPattern) {
+    const m = makeMatrix();
+    m.translateSelf(px, py);
+    m.scaleSelf(scale * RIVER_TEX_SCALE, scale * RIVER_TEX_SCALE);
+    riverFillPattern.setTransform(m);
+    ctx.fillStyle = riverFillPattern;
+  } else {
+    ctx.fillStyle = FALLBACK.river;
+  }
+  ctx.fill();
+  if (banks.length) {
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (const [[ax, ay], [bx, by]] of banks) { ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+    ctx.strokeStyle = "rgba(24, 46, 40, 0.55)";
+    ctx.lineWidth = 2.2 * scale;
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(196, 232, 220, 0.28)";
+    ctx.lineWidth = 1 * scale;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** River texture grain — the same world scale the land textures paint at. */
+const RIVER_TEX_SCALE = 0.2;
 
 // ── PERF-01: the flat performance-mode ground ─────────────────────────────
 /**
@@ -152,6 +235,8 @@ export const PERF_FLAT = {
   sand: "#d9bd7f",
   /** Muted flat green land. */
   grass: "#6f7f4a",
+  /** R1 (#260): flat fresh-water for rivers in performance mode. */
+  river: "#2c7471",
   /** The subtle isometric build grid, stroked over the land only. */
   grid: "rgba(24, 32, 16, 0.16)",
 };
@@ -160,6 +245,7 @@ export interface FlatGroundColors {
   grass: string;
   sand: string;
   grid: string;
+  river?: string;
 }
 
 /**
@@ -201,6 +287,21 @@ export function paintFlatGroundTiles(
   pathPolygons(ctx, loops(coast.inland));
   ctx.fillStyle = colors.grass;
   ctx.fill();
+  // R1 (#260): rivers get a solid fresh-water fill in performance mode (the
+  // flat path has no textures). Water tiles are transparent elsewhere, so the
+  // diamonds are exactly the river.
+  if (grid.rivers) {
+    const diamonds: [number, number][][] = [];
+    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+      if (!grid.rivers[ty * grid.w + tx]) continue;
+      diamonds.push(tileDiamondWorld(tx, ty).map(([x, y]) => project(x, y)));
+    }
+    if (diamonds.length) {
+      pathPolygons(ctx, diamonds);
+      ctx.fillStyle = colors.river ?? PERF_FLAT.river;
+      ctx.fill();
+    }
+  }
   // The build grid: one path over every tile diamond in the range (ringed),
   // one stroke, clipped to the land so the grid never crosses the water.
   // 1px in paint space — it scales with the chunk's zoom, so the line stays
@@ -222,17 +323,31 @@ export function paintFlatGroundTiles(
   ctx.restore();
 }
 
-export interface GroundContours { land: CoastPoint[][]; inland: CoastPoint[][] }
+export interface GroundContours {
+  land: CoastPoint[][];
+  inland: CoastPoint[][];
+  /**
+   * R1 (#260): the OUTER sea coast with river tiles treated as land, so the
+   * ocean's surf/foam bands follow only the true coastline and never stroke
+   * the long banks of a river (which get their own, cheaper bank stroke).
+   */
+  coast: CoastPoint[][];
+}
 const contourCache = new WeakMap<Grid, GroundContours>();
 export function groundContours(grid: Grid): GroundContours {
   let coast = contourCache.get(grid);
   if (!coast) {
+    const river = grid.rivers;
+    const isRiver = (x: number, y: number) =>
+      !!river && x >= 0 && y >= 0 && x < grid.w && y < grid.h && river[y * grid.w + x] !== 0;
     coast = {
       land: traceCoast(grid.w, grid.h, (x, y) => grid.terrain[y * grid.w + x] !== WATER),
       inland: traceCoast(grid.w, grid.h, (x, y) => {
         const v = grid.terrain[y * grid.w + x];
         return v !== WATER && v !== SAND;
       }),
+      coast: traceCoast(grid.w, grid.h, (x, y) =>
+        grid.terrain[y * grid.w + x] !== WATER || isRiver(x, y)),
     };
     contourCache.set(grid, coast);
   }
@@ -246,7 +361,9 @@ export function paintShore(
   project: GroundProject = identityProject,
 ): void {
   ctx.save();
-  pathPolygons(ctx, groundContours(grid).land.map(loop => loop.map(p => project(...p))));
+  // R1 (#260): surf follows the OUTER coast only (rivers read as land for this
+  // contour), so the broad ocean shelf bands never swallow a narrow river.
+  pathPolygons(ctx, groundContours(grid).coast.map(loop => loop.map(p => project(...p))));
   ctx.lineJoin = "round";
   // Broad translucent bands feather the shelf into the animated ocean.
   for (const [width, alpha] of [[18, .035], [12, .055], [7, .09]] as const) {
@@ -345,6 +462,7 @@ export const FALLBACK = {
   water: "#155e70",
   grass: "#6d7c42",
   sand: "#d9b36c",
+  river: "#2c7471",
 };
 
 /**
@@ -395,9 +513,9 @@ export function makeMatrix(): DOMMatrix {
   return stub as unknown as DOMMatrix;
 }
 
-/** Load the three seamless ground textures in a browser. */
+/** Load the seamless ground textures in a browser (river optional). */
 export async function loadGroundTextures(
-  urls: { grass: string; sand: string; water: string },
+  urls: { grass: string; sand: string; water: string; river?: string },
 ): Promise<GroundTextures> {
   const load = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
     const img = new Image();
@@ -405,10 +523,11 @@ export async function loadGroundTextures(
     img.onerror = rej;
     img.src = src;
   });
-  const [grass, sand, water] = await Promise.all([
+  const [grass, sand, water, river] = await Promise.all([
     load(urls.grass), load(urls.sand), load(urls.water),
+    urls.river ? load(urls.river).catch(() => undefined) : Promise.resolve(undefined),
   ]);
-  return { grass, sand, water };
+  return { grass, sand, water, river };
 }
 
 /** Build the per-zoom patterns (call on zoom change / texture load). */
@@ -421,7 +540,15 @@ export function createGroundPatterns(
     if (!p) throw new Error("createPattern failed for ground texture");
     return p;
   };
-  return { grass: pat(tex.grass), sand: pat(tex.sand), water: pat(tex.water) };
+  // Park the river fill for `paintGroundTiles` (the renderer's chunk call only
+  // forwards grass/sand). A context without the river texture yields null.
+  riverFillPattern = tex.river
+    ? ctx.createPattern(tex.river as unknown as CanvasImageSource, "repeat")
+    : null;
+  return {
+    grass: pat(tex.grass), sand: pat(tex.sand), water: pat(tex.water),
+    river: riverFillPattern ?? undefined,
+  };
 }
 
 /** GRASS re-exported for callers that classify land vs water. */

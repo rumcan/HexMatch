@@ -20,10 +20,12 @@ const byTier: Record<DetailTier, Record<string, string>> = {
  * wanted tier falls back to the full-size file, so a partial art drop still
  * paints a ground rather than dropping to flat colours.
  */
-export function groundTextureUrls(cap: number): { grass: string; sand: string; water: string } {
+export function groundTextureUrls(
+  cap: number,
+): { grass: string; sand: string; water: string; river: string } {
   const tier = detailTierFor(cap);
   const url = (name: string) =>
     byTier[tier][`../../assets/ground/${tierDir(tier)}${name}.png`]
     ?? byTier.high[`../../assets/ground/${name}.png`];
-  return { grass: url("grass"), sand: url("sand"), water: url("water") };
+  return { grass: url("grass"), sand: url("sand"), water: url("water"), river: url("river") };
 }

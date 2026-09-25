@@ -536,6 +536,12 @@ export interface IsoGameOptions {
    */
   rail?: boolean;
   /**
+   * R1 (#260): force the rivers map option. Absent, it is read from
+   * `?rivers=1` and applies to solo (non-story) boots only — a networked room
+   * regenerates the map from the seed alone, so rivers are not on the wire yet.
+   */
+  rivers?: boolean;
+  /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
    * carries — and is otherwise OFF in every mode. The new loop is
@@ -722,8 +728,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // boot (and, on the guest, restore a map the host never generated).
   // `?fresh=1` (owner testing, 2026-09): a first-time player's view — no save
   // is loaded and none is written, so the real slots are left untouched.
+  // R1 (#260): the rivers map option. OFF by default so every existing seed /
+  // save / room is untouched; `?rivers=1` (or `opts.rivers`) turns it on for a
+  // solo sandbox boot. Solo-only: a networked room regenerates from the seed
+  // alone and rivers are not on the wire yet, so MP deliberately ignores it.
+  const riversParam = (() => { try { return new URLSearchParams(location.search).get("rivers"); } catch { return null; } })();
+  const riversOn = (opts.rivers ?? riversParam === "1") && isSolo() && !storyOn;
   const freshLink = (() => { try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; } })();
-  const savesOff = isMp() || freshLink || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  // A rivers boot never reads or writes the save slot: resuming a rivers map
+  // without the flag would regenerate a different (riverless) terrain under
+  // the saved network, so rivers play is a fresh sandbox each time.
+  const savesOff = isMp() || freshLink || riversOn || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
@@ -743,7 +758,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
   // carrying its own seed, as always.
   const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
-  const grid: Grid = generateMap(seed);
+  const grid: Grid = generateMap(seed, { rivers: riversOn });
   // SCENERY: decals + clumped trees, a pure function of the seed (so a guest
   // regenerates exactly the host's woodland from the seed alone — scenery is
   // never on the wire). Computed before the towns stamp their roads because
