@@ -282,7 +282,12 @@ import { GEM_ART } from "../game/gem-art";
 import { sfx } from "../audio/sfx";
 // VO-1: spoken lines on coach steps (ui.ts) and on feed events below.
 // A missing MP3 is a subtitle; it must never throw into the match.
-import { voice } from "../game/voice";
+// MUSIC-1 (#377): `onVoiceLine` is the ducking hook — see where the radio is
+// mounted, below the minimap.
+import { onVoiceLine, voice } from "../game/voice";
+// MUSIC-1 (#377): the mini radio player (state machine + element + pill). Its
+// own bus, its own settings; nothing about it touches the wire or a save.
+import { mountRadioWidget, radio, radioText, type RadioWidget } from "../audio/radio";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
@@ -2084,6 +2089,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }),
     // Seat colours by owner id — the same blue/red split the depots wear.
     ownerColour: (id) => players[id - 1]?.colour,
+  });
+
+  // MUSIC-1 (#377): the mini radio, in the HUD's top-right dock. The widget
+  // owns the pill; `radio` (the singleton the settings sheet also drives) owns
+  // the element, the settings and the retry schedule. One line of wiring here
+  // is the whole voice↔music contract: duck while a line speaks, restore after.
+  const radioWidget: RadioWidget = mountRadioWidget(ui.radioHost, radio);
+  const offVoiceDuck = onVoiceLine((line) => {
+    try { radio.duck(line !== null); } catch { /* garnish */ }
   });
 
   // M2 (#256): Sabotage Event Window — opens on clicking a sabotage marker on the minimap
@@ -12521,6 +12535,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     get sabotageEventWindow() { return sabotageWindow; },
     /**
+     * MUSIC-1 (#377): the radio, for probes and the play-test. Reads the state
+     * machine and the three saved choices; with an argument it drives the same
+     * verbs the pill and the settings sheet use (`__iso.radio({ play: true })`).
+     * A console call is not a user gesture, so the browser may refuse the very
+     * first `play()` — tapping the pill is the honest way in; this is for
+     * inspection and for turning it off without hunting for the widget.
+     */
+    radio: (action?: {
+      play?: boolean; pause?: boolean; duck?: boolean;
+      enabled?: boolean; show?: boolean; volume?: number;
+    }) => {
+      if (action) {
+        if (action.enabled !== undefined) radio.setEnabled(action.enabled);
+        if (action.show !== undefined) radio.setShow(action.show);
+        if (action.volume !== undefined) radio.setVolume(action.volume);
+        if (action.duck !== undefined) radio.duck(action.duck);
+        if (action.play) radio.play();
+        if (action.pause) radio.pause();
+      }
+      return {
+        status: radio.machine.status,
+        enabled: radio.settings.enabled,
+        show: radio.settings.show,
+        volume: radio.settings.volume,
+        ducked: radio.machine.ducked,
+        failures: radio.machine.failures,
+        nowPlaying: radio.nowPlaying,
+        text: radioText(radio.machine.status, radio.station, radio.nowPlaying),
+      };
+    },
+    /**
      * E14: what a pointer event at a CANVAS point (device px, the same space
      * `pos()` hands the click handlers) resolves to — literally
      * the two-stage hit-test plus the own-factory anchor normalisation a
@@ -12881,6 +12926,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     mini.destroy();
     sabotageWindow.destroy();
     minimap.destroy();
+    // MUSIC-1 (#377): the pill goes with the HUD, and the duck listener with
+    // the game (the radio itself is the PLAYER's — it keeps playing across a
+    // quit to the menu, where the settings sheet can still stop it).
+    offVoiceDuck();
+    radioWidget.destroy();
     // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
     // open sheet is destroyed rather than orphaned over a dead board.
     menuTeardown?.();

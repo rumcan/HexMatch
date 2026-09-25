@@ -628,6 +628,13 @@ export interface OriginalUi {
    * and the fab that folds it on phones (`data-open`).
    */
   minimapHost: HTMLElement;
+  /**
+   * MUSIC-1 (#377): where the mini radio player mounts — the top-right corner,
+   * one lane under the top bar. `src/audio/radio.ts` owns everything inside it
+   * (the transport, the text, the volume); the chrome owns only the place and
+   * the phone's collapse to a single round key (styles.css `.radio-dock`).
+   */
+  radioHost: HTMLElement;
   renderBoard: () => void;
   setReach: (reach: Partial<Record<Cargo, number>>) => void;
   setCombo: (count: number, need: number) => void;
@@ -922,6 +929,17 @@ export function createOriginalUi(
     syncMinimapKey();
   };
   syncMinimapKey();
+
+  // ── MUSIC-1 (#377): the mini radio's dock ────────────────────────────────
+  // The chrome owns the PLACE — the very top-right corner, one lane under the
+  // top bar, and on a phone under whichever of the banner / objective cards is
+  // posted (styles.css `.radio-dock` is the whole of that decision). The pill
+  // itself is `src/audio/radio.ts`'s, mounted by the game — the same division
+  // of labour as the minimap's plate, and why neither of those widgets needed
+  // this file's markup.
+  const radioHost = h("div", "radio-dock");
+  radioHost.id = "iso-radio-dock";
+  root.appendChild(radioHost);
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
@@ -4832,6 +4850,7 @@ export function createOriginalUi(
     el: root,
     mapHost,
     minimapHost,
+    radioHost,
     renderBoard,
     setReach,
     setCombo,
