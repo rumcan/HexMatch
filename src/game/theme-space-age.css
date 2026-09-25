@@ -377,3 +377,14 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .start-screen.menu > .menu-leaderboard .menu-leaderboard-title,
 .start-screen.menu > .menu-leaderboard .menu-leaderboard-sub,
 .start-screen.menu > .menu-leaderboard .ladder-note { text-align: center; }
+
+/* Every lemon/orange-filled control reads DARK text (white on yellow was
+   unreadable). !important beats the old sheet's per-context text colours. */
+.big-btn:not(.ghost), .post-btn, .bank-btn, .menu-btn.primary, .start-primary, .ending-button, .tax-btn,
+.sr-confirm, .battle-continue, .battle-first-hint .bfh-ok, [data-confirm-ok], [data-act="tut-next"], [data-act="tut-done"] {
+  background: var(--sa-lemon) !important; color: var(--sa-on-lemon) !important; text-shadow: none !important;
+}
+.big-btn:not(.ghost) *, .post-btn *, .menu-btn.primary *, .start-primary *, .sr-confirm *, .battle-continue *, [data-confirm-ok] * { color: inherit !important; }
+.big-btn.danger:not(.ghost), [data-confirm-ok].danger { background: var(--sa-red) !important; color: #1f0a05 !important; }
+.quests-head .q-count, .chat-badge, .tab-badge, .menu-btn.primary:hover { color: var(--sa-on-orange) !important; }
+.menu-btn.primary:hover { background: #f7e27a !important; color: var(--sa-on-lemon) !important; }
