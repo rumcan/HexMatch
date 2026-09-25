@@ -1164,3 +1164,104 @@ export const TOWN_VILLAGE_VARIANTS = [
 export function townCentreSprite(tier: number): string {
   return tier >= 1 ? "town_bank" : "town_center";
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// MON-1 (#367) — the RUN Bits store catalogue.
+//
+// ONE place every unlockable is declared. The platform (RUN) is the ledger of
+// record — it holds the price, the artwork and the entitlement — so each id
+// below MUST exist there under exactly this name, twice: as the IAP product
+// id `spendCurrency` charges, and as the durable entitlement id
+// `entitlements.getQuantity` re-verifies. Keep them one string.
+//
+// MON-1 ENFORCES NOTHING. Every item ships `enforced: false`: the feature is
+// in the game for everyone and buying it is a promise about MON-2+, which
+// flips `enforced` to true for the item it gates. That is deliberate — this
+// ticket is the plumbing (own / buy / load / cache / mock), and a locked door
+// that the plumbing cannot open yet is a worse bug than a free railway.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The platform's hard currency, as the panel prints it. */
+export const BITS_LABEL = "Bits";
+
+/** 1500 → "1,500 Bits". Locale-pinned: the panel must not read differently on another machine. */
+export function fmtBits(bits: number): string {
+  const n = Math.max(0, Math.round(bits));
+  return `${n.toLocaleString("en-US")} ${BITS_LABEL}`;
+}
+
+export interface StoreItemDef {
+  /**
+   * The RUN product id AND entitlement id — one string, created once on RUN.
+   * Lowercase snake; never rename an item that has sold (the entitlement is
+   * keyed by this, so a rename orphans every receipt).
+   */
+  id: string;
+  /** The name the store panel and the receipt print. */
+  name: string;
+  /** SUGGESTED price in RUN Bits — RUN is the authority once the item exists. */
+  price: number;
+  /** One line on what owning it does, for the store panel. */
+  unlocks: string;
+  /**
+   * True once the game actually gates something on this item. MON-1 ships
+   * every item false: nothing is locked yet (see the note above).
+   */
+  enforced: boolean;
+  /**
+   * A text glyph standing in for the item's art. MON-1 has no art — each row
+   * wants its own 96×96 brass plate (see the PR's art request), and this
+   * field is where the sprite name goes when it lands.
+   */
+  icon: string;
+}
+
+/**
+ * The catalogue, in panel order. `railways` is first because it is the one
+ * MON-2 locks: the Rail and Platform tools (#178 already ships them free).
+ */
+export const STORE_ITEMS: readonly StoreItemDef[] = [
+  {
+    id: "railways",
+    name: "Railways",
+    price: 150,
+    unlocks: "The Rail and Platform tools — lay track, raise platforms, run trains between your industries.",
+    enforced: false,
+    icon: "🚂",
+  },
+  {
+    id: "bridges",
+    name: "Bridges",
+    price: 200,
+    unlocks: "Carry a road or a rail line over a river instead of around it (R2 — #266).",
+    enforced: false,
+    icon: "🌉",
+  },
+  {
+    id: "dams",
+    name: "Hydro Dams",
+    price: 250,
+    unlocks: "Dam a river and feed the depots and the city downstream (R3 — #270).",
+    enforced: false,
+    icon: "💧",
+  },
+  {
+    id: "founders_badge",
+    name: "Founder's Badge",
+    price: 60,
+    unlocks: "A brass badge on the front door and on your tycoon card. Nothing else changes — it is a thank you, not an advantage.",
+    enforced: false,
+    icon: "🎖️",
+  },
+];
+
+export const STORE_ITEMS_BY_ID: Readonly<Record<string, StoreItemDef>> =
+  Object.fromEntries(STORE_ITEMS.map((it) => [it.id, it]));
+
+/** The catalogue entry for an id, or null for anything not declared here. */
+export function storeItem(id: string): StoreItemDef | null {
+  return STORE_ITEMS_BY_ID[id] ?? null;
+}
+
+/** Every id the store can sell — what a verify call asks the platform about. */
+export const STORE_ITEM_IDS: readonly string[] = STORE_ITEMS.map((it) => it.id);
