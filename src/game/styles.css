@@ -5631,20 +5631,54 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 
    MULTIPLAYER ONLY. ui.ts builds none of this without a chat config, so a
    solo game never sees a panel — and none of these rules ever match.
+
+   ── #386 — THE STACK over the minimap plate ────────────────────────────
+   dockLayout() (src/game/dock-layout.ts) is the arithmetic; ui.ts publishes
+   the variables read below. One layout, decided once:
+
+   • The PLATE is the anchor. Its place (bottom lane, left edge, width) is
+     untouched by any of this: single-player has no chat dock, matches none
+     of these rules, reads none of these variables — pixel-identical to
+     today, by construction.
+   • The dock shares the PLATE'S LEFT edge: the left rules below mirror
+     `.minimap-dock`'s own (320 → 48 folded → 282 at ≤1180 → 10 at ≤900 and
+     on a phone), same .25s `transition: left`, so the two slide together
+     through the Build column's fold.
+   • Whenever the plate is showing, the dock's bottom edge sits 6px
+     (DOCK_STACK_GAP) directly ABOVE the plate's top edge — `--chat-lift`,
+     published by ui.ts from dockLayout({ minimapH, … }). It is 0 while the
+     plate is folded away, so the dock then lands on its own base lane:
+     today's place, to the pixel.
+   • Open, the panel grows UPWARD from that same edge and `--chat-max-h`
+     caps it so its top edge stops below the top bar (and the radio in it,
+     #377). The log is the flexible row: when the cap binds it shrinks and
+     scrolls; the head, presets, composer and switches never move.
+   • Phone: the folded pill stacks over the plate exactly like desktop. An
+     OPEN sheet would have no room up there — its top would ride into the
+     bar — so there the sheet wins: `[data-chat-open="1"]` tucks the plate
+     away while the sheet is up and it returns the moment the sheet closes.
+     Same promise: the two boxes never intersect.
    ════════════════════════════════════════════════════════════════════ */
 .chat-dock {
   position: fixed;
   /* Parked in the map's free band, between the two columns: the Build column
      ends at 310px and the board column starts --board-px + 40px from the right
      edge (ui.ts publishes the live width), so neither aside can ever be
-     covered — on a narrow window the bar simply gets narrower. */
+     covered — on a narrow window the bar simply gets narrower. The left rules
+     below MIRROR .minimap-dock's, so dock and plate share one left edge and
+     slide with the fold together (#386). */
   left: 320px;
   right: calc(var(--board-px, 496px) + 40px);
   width: auto; max-width: 320px;
+  transition: left .25s ease;   /* rides the BUILD column's fold (RAIL-01), like the plate */
   /* One lane above the placement hint pill (.modebar): the pill is centred at
      the same bottom edge and is up the whole time a tool is in the hand, so
-     the two would otherwise fight over the middle of the map every drag. */
-  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px);
+     the two would otherwise fight over the middle of the map every drag.
+     #386: + --chat-lift stacks the dock over the plate (0 = today's lane). */
+  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px + var(--chat-lift, 0px));
+  /* #386: the open panel stops below the top bar (cap from dockLayout();
+     `none` is today's desktop rule, before ui.ts ever paints). */
+  max-height: var(--chat-max-h, none);
   z-index: 44;
   display: flex; flex-direction: column;
   border: 1px solid var(--brass-lo);
@@ -5659,9 +5693,21 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 /* the Build column loses 38px below 1180 (styles.css's responsive block) */
 @media (max-width: 1180px) { .chat-dock { left: 282px; } }
+/* #386: these three mirror .minimap-dock's own left rules in the same order —
+   folded Build column → the plate's 48px sliver lane; ≤900 → the plate's 10px
+   corner. Same source, same cascade, so the dock can never drift off the
+   plate's left edge (the fold rule must stay BEFORE the ≤900 pair: equal
+   specificity, later wins, exactly like the plate). */
+.ui-root[data-rail-left="1"] .chat-dock { left: 48px; }
+@media (max-width: 900px) {
+  .chat-dock, .ui-root[data-rail-left="1"] .chat-dock { left: 10px; }
+}
 
-/* the bar — always on screen, and the only part of the panel when it is shut */
+/* the bar — always on screen, and the only part of the panel when it is shut.
+   flex: none — #386: when --chat-max-h caps the open panel, the squeeze lands
+   on the log alone; the head (with its unread badge) is never compressed. */
 .chat-head {
+  flex: 0 0 auto;
   display: flex; align-items: center; gap: 7px;
   width: 100%; padding: 6px 9px; cursor: pointer; text-align: left;
   background: none; border: 0;
@@ -5690,10 +5736,18 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .chat-badge.hidden { display: none; }
 
-/* the conversation */
-.chat-body { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
+/* the conversation — flex: 1 / overflow: hidden so --chat-max-h's cap lands
+   here (#386): the body fills exactly what the dock has left of the head, and
+   the log below gives the height back. */
+.chat-body {
+  flex: 1 1 auto; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; border-top: 1px solid var(--line);
+}
 .chat-body.hidden { display: none; }
+/* #386: the log is the ONLY row that yields to --chat-max-h — it shrinks
+   (min-height: 0) and keeps scrolling; every fixed row stays whole. */
 .chat-log {
+  flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; gap: 4px;
   max-height: 208px; overflow-y: auto;
   padding: 7px 9px;
@@ -5710,8 +5764,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   color: var(--txt-mute); font-size: 11.5px; font-style: italic;
 }
 
-/* the four phrases, the composer, the two switches */
-.chat-presets { display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 9px 0; }
+/* the four phrases, the composer, the two switches — flex: none: they are
+   controls; #386's cap never squeezes them (the log above absorbs it). */
+.chat-presets { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 7px 9px 0; }
 .chat-preset {
   padding: 3px 8px; cursor: pointer;
   border: 1px solid var(--brass-lo); border-radius: var(--r);
@@ -5721,7 +5776,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .chat-preset:hover { background: rgba(255, 176, 46, .12); border-color: var(--brass); }
 .chat-preset:active { transform: translateY(1px); }
-.chat-compose { display: flex; gap: 5px; padding: 7px 9px; }
+.chat-compose { flex: 0 0 auto; display: flex; gap: 5px; padding: 7px 9px; }
 .chat-input {
   flex: 1 1 auto; min-width: 0; padding: 5px 7px;
   border: 1px solid var(--line-hi); border-radius: var(--r);
@@ -5741,7 +5796,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .chat-send:hover { border-color: var(--brass-hi); color: var(--brass-hi); }
 .chat-send:disabled { opacity: .45; cursor: default; }
-.chat-tools { display: flex; gap: 6px; padding: 0 9px 8px; }
+.chat-tools { flex: 0 0 auto; display: flex; gap: 6px; padding: 0 9px 8px; }
 .chat-tool {
   flex: 1 1 auto; padding: 4px 6px; cursor: pointer;
   border: 1px solid rgba(107, 81, 35, .6); border-radius: var(--r);
@@ -5755,7 +5810,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   background: linear-gradient(180deg, rgba(255, 176, 46, .16), rgba(138, 90, 17, .12));
   box-shadow: inset 0 1px 0 rgba(242, 220, 166, .2), 0 0 10px -4px var(--gold-glow);
 }
-.chat-note { padding: 0 9px 8px; color: var(--info); font-family: var(--mono); font-size: 11px; }
+.chat-note { flex: 0 0 auto; padding: 0 9px 8px; color: var(--info); font-family: var(--mono); font-size: 11px; }
 .chat-note.hidden { display: none; }
 
 /* ── the phone: a pill that opens a compact sheet ──
@@ -5771,10 +5826,14 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   display: block; position: fixed; inset: 0; z-index: 45;
   background: rgba(4, 3, 2, .5);
 }
+/* #386: left/transition mirror .minimap-dock's phone rule; bottom gets the
+   same --chat-lift as desktop, computed against the phone's own lanes — the
+   folded pill stacks over the plate. */
 .ui-root[data-phone="1"] .chat-dock {
   left: 10px; right: auto; width: auto; max-width: calc(100vw - 20px);
   z-index: 46;
-  bottom: calc(152px + env(safe-area-inset-bottom, 0px));
+  transition: none;
+  bottom: calc(152px + env(safe-area-inset-bottom, 0px) + var(--chat-lift, 0px));
   border-radius: 999px;
 }
 .ui-root[data-phone="1"] .chat-head { padding: 7px 12px; }
@@ -5782,12 +5841,22 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .ui-root[data-phone="1"] .chat-dock.open .chat-caret { transform: none; }
 .ui-root[data-phone="1"] .chat-dock.open {
   left: 8px; right: 8px; width: auto; max-width: none;
-  bottom: calc(106px + env(safe-area-inset-bottom, 0px));
+  /* #386: with the plate tucked below (data-chat-open), --chat-lift is 0 and
+     this is today's lane; if the plate were ever still up, the lift stacks the
+     sheet over it instead of across it. The cap keeps the sheet's top edge
+     below the top bar either way (fallback = today's rule). */
+  bottom: calc(106px + env(safe-area-inset-bottom, 0px) + var(--chat-lift, 0px));
   border-radius: var(--r);
-  max-height: calc(100vh - 150px);
+  max-height: var(--chat-max-h, calc(100vh - 150px));
 }
 .ui-root[data-phone="1"] .chat-dock.open .chat-log { max-height: 32vh; }
 .ui-root[data-phone="1"]:not([data-view="map"]) .chat-dock:not(.open) { display: none; }
+/* #386: while the phone's chat SHEET is up the plate tucks away — there is no
+   vertical room to stack an open sheet over it (its top would ride into the
+   top bar), and the sheet is what the player just asked for. The plate comes
+   back the moment the sheet closes: this hides it, `data-open` still holds the
+   player's own fab choice, and a solo game never sets data-chat-open at all. */
+.ui-root[data-phone="1"][data-chat-open="1"] .minimap-dock { display: none; }
 /* ══ M1 (#254) — the minimap plate ═════════════════════════════════════
    One small plate over the map's lower-left corner: just clear of the BUILD
    column (or of its folded sliver), and lifted above the placement-hint lane
@@ -5798,7 +5867,14 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
      phone     folded until the fab sets data-open="1"
      not map   folded (the phone's Build / Economy sheets)
    Deliberately NOT an .iso-panel: the e2e corridor measures its clear band
-   between those two columns, and this plate only floats over its corner. */
+   between those two columns, and this plate only floats over its corner.
+
+   #386: this plate is the ANCHOR of the bottom-left stack. Nothing here
+   moves for chat — no --chat-* variable, no fold, no width touches its
+   `bottom`/`left`, so single-player stays pixel-identical. The CHAT dock is
+   the one that stacks: it mirrors this plate's left rules and sits above its
+   top edge (see `.chat-dock` above; src/iso/minimap.ts publishes the live
+   height as --minimap-h on the ui root). */
 .minimap-dock {
   position: fixed; z-index: 37;
   left: 320px;
