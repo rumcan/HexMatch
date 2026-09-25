@@ -2958,6 +2958,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             : `${names || "A"} Depot cut off · ${vpDeltaText(b.vp)}`)
           : source === "level"
             ? (gained ? `Depot at top level · ${vpDeltaText(b.vp)}` : `Top-level Depot lost · ${vpDeltaText(b.vp)}`)
+          // B7 (#252): the battle route — held, and (the one a player can act
+          // on) lost to the next fight there
+          : source === "hold"
+            ? (gained
+              ? `Contested site held · ${vpDeltaText(b.vp)}`
+              : `Contested site lost · ${vpDeltaText(b.vp)}`)
           : source === "route"
             ? (gained
               ? `Route fully paved · ${vpDeltaText(b.vp)}`
@@ -3014,6 +3020,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // L13 (#228): the winning line names the sources the LIVE table paid.
         const how = newLoop
           ? `${b.types} depot type${b.types === 1 ? "" : "s"}, ${b.rungs} rung${b.rungs === 1 ? "" : "s"}, ${b.city} city upgrade${b.city === 1 ? "" : "s"}`
+            + (b.holds > 0 ? `, ${b.holds} contested site${b.holds === 1 ? "" : "s"} held` : "")
           : `${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"}`;
         toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ (${how})`,
           p.human ? "good" : "bad");
@@ -5582,19 +5589,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         mapStake = null;
         if (!s) return;
         // `result.winner` is the SEAT (0 = the player, the contender list's
-        // first entry). `settleMapBattle` speaks for the challenger (industry
-        // stakes) or the defender (fight-offs).
+        // first entry). `settleMapBattle` speaks for the CHALLENGER (industry
+        // and town stakes) or the defender (fight-offs).
+        // B7 (#252): this used to call `settleMapBattle` directly — so a solo
+        // battle never rescored (the ★ lagged until the next build), a lost
+        // town never closed its plant's tiers, and a town stake the RIVAL
+        // called was read from the player's side. It now settles exactly as
+        // the multiplayer `settleDuel` does, and a draw is a draw (it used
+        // to count as the defender's win).
         const iWon = result.winner === 0;
-        const won = !result.over ? null
-          : s.kind === "industry"
-            ? (s.challengerId === me.id ? iWon : !iWon)
-            : iWon;
-        const verdict = settleMapBattle(eco, s, won);
-        if (verdict === "conquest") toast("The industry is yours — your depots draw from it now.", "good");
-        else if (verdict === "held") toast("They held the industry.", "bad");
-        else if (verdict === "draw") toast("A draw — the map stands.", "info");
-        else if (verdict === "cancelled") toast("You fought it off — their Gold stays spent either way.", "good");
-        else if (verdict === "lands" && s.kind === "fightoff") landFightOff(s.pending, performance.now());
+        const won = !result.over || result.winner === null ? null
+          : s.kind === "fightoff" ? iWon
+            : (s.challengerId === me.id ? iWon : !iWon);
+        const verdict = finishStake(s, won);
+        if (verdict === "lands" && s.kind === "fightoff") landFightOff(s.pending, performance.now());
       },
     });
     battleScreen = screen;
@@ -8985,6 +8993,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           `Depots running: ${b.types} × ${VICTORY.loop.type}★ = ${fmtVp(b.typeVp)}★`,
           `Fully paved routes: ${b.routes} × ${VICTORY.loop.route}★ = ${fmtVp(b.routeVp)}★`,
           `City upgrades: ${b.city} × ${VICTORY.loop.city}★ = ${fmtVp(b.cityVp)}★`,
+          // B7 (#252): the battle route, with its cap spelled out
+          `Contested sites held: ${b.holdsHeld}${b.holdsHeld > b.holds ? ` (${b.holds} pay)` : ""} × ${VICTORY.loop.hold}★ = ${fmtVp(b.holdVp)}★ (max ${VICTORY.loop.holdCap}★)`,
         ]
         : [
           `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
@@ -10668,6 +10678,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // runs, so all six go before the rebuild.
     score.paved.clear(); score.plants.clear(); score.vp.clear();
     score.types.clear(); score.rungs.clear(); score.city.clear();
+    score.holds.clear();   // B7 (#252): held contested sites are derived too
     rescore(eco, score, railPlatforms(), loopScoring());
     for (const p of players) starFed.set(p.id, Math.floor(vpFor(score, p.id)));
     phase = d.phase as typeof phase;

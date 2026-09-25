@@ -26,7 +26,7 @@ import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
  */
 export type EndingPath = "paving" | "plants" | "balanced" | "network" | "industry";
 export type DecisiveSource =
-  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | "level" | null;
+  | "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | "level" | "hold" | null;
 
 export interface EndingBreakdown {
   /**
@@ -57,6 +57,9 @@ export interface EndingBreakdown {
   /** 2026-09: Depots with a fully paved route, and what they paid. */
   routes?: number;
   routeVp?: number;
+  /** B7 (#252): contested sites held by battle that paid (≤ the cap), and their ★. */
+  holds?: number;
+  holdVp?: number;
 }
 
 export interface EndingInput {
@@ -78,7 +81,7 @@ export interface EndingInput {
 
 export interface EndingScoreRow {
   /** L13 (#228): the new loop's rows sit beside the shipped loop's two. */
-  key: "paving" | "plants" | "types" | "rungs" | "routes" | "city";
+  key: "paving" | "plants" | "types" | "rungs" | "routes" | "city" | "holds";
   icon: string;
   label: string;
   detail: string;
@@ -275,6 +278,10 @@ function decisiveText(source: DecisiveSource, won: boolean): string {
   if (source === "city") {
     return `${who} winning margin was the city itself—the newest upgrade lifted every route at once.`;
   }
+  // B7 (#252): a contested site held by battle.
+  if (source === "hold") {
+    return `${who} final star was won across a board, not a map — a contested site held in battle.`;
+  }
   return `${who} network crossed the star line and the territory had its answer.`;
 }
 
@@ -311,6 +318,16 @@ export function ledgerRows(b: EndingBreakdown): EndingScoreRow[] {
   const isLoop = b.loop ?? (b.typeVp !== undefined || b.rungVp !== undefined || b.cityVp !== undefined);
   if (isLoop) {
     const types = b.types ?? 0, city = b.city ?? 0, routes = b.routes ?? 0;
+    const holds = b.holds ?? 0;
+    // B7 (#252): the battle row only when battles paid — a match won without
+    // fighting reads exactly as it did before (the three-row ledger).
+    const held: EndingScoreRow[] = (b.holdVp ?? 0) > 0 ? [{
+      key: "holds",
+      icon: "⚔",
+      label: "Contested sites held",
+      detail: `${holds} site${holds === 1 ? "" : "s"} won in battle (capped)`,
+      vp: b.holdVp ?? 0,
+    }] : [];
     // 2026-09 (owner's table): depots, paved routes, city tiers.
     return [
       {
@@ -334,6 +351,7 @@ export function ledgerRows(b: EndingBreakdown): EndingScoreRow[] {
         detail: `${city} tier${city === 1 ? "" : "s"} raising the base rate`,
         vp: b.cityVp ?? 0,
       },
+      ...held,
     ];
   }
   return [

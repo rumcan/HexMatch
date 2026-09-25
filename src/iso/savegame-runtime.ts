@@ -46,7 +46,7 @@ export interface SaveGamePayload {
   story?: {
     playerSabotage: number;
     rivalSabotage: number;
-    winningSource: "platform" | "type" | "rung" | "city" | "route" | "level" | "upgrade" | "plant" | null;
+    winningSource: "platform" | "type" | "rung" | "city" | "route" | "level" | "upgrade" | "plant" | "hold" | null;
     oilBanterSeen?: boolean;
   };
   bandit: Record<number, number>;

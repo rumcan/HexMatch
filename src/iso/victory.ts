@@ -82,7 +82,7 @@ import type { EconomyState, Harvester } from "./economy";
  */
 export const OPENING_PLANT_ID = 0;
 
-export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | "level";
+export type VpSource = "upgrade" | "plant" | "platform" | "type" | "rung" | "city" | "route" | "level" | "hold";
 export type VpChange = "awarded" | "revoked";
 
 /**
@@ -106,6 +106,8 @@ export interface VpEvent {
   cargo?: Cargo;
   /** L13 (#228) `rung`/`city` events: the level that was reached. */
   level?: number;
+  /** B7 (#252) `hold` events: which contested site changed hands. */
+  site?: { kind: "industry" | "town"; id: number };
 }
 
 /** Where a scored thing is and who it paid. Kept so a removal can be debited
@@ -146,6 +148,19 @@ export interface TypeLedger {
   ty: number;
 }
 
+/**
+ * B7 (#252): a contested site a seat holds BY BATTLE — the standing winner of
+ * the last fight over that industry or town. The tile is the site's middle,
+ * so the float lands on the thing that was fought over.
+ */
+export interface HoldLedger {
+  owner: string;
+  kind: "industry" | "town";
+  id: number;
+  tx: number;
+  ty: number;
+}
+
 export interface ScoreState {
   /** tile index → who it scored for. */
   paved: Map<number, PavedLedger>;
@@ -167,13 +182,19 @@ export interface ScoreState {
   levels: Map<string, TypeLedger>;
   /** L13: per-owner city tiers already scored. */
   city: Map<string, number>;
+  /**
+   * B7 (#252): `${owner}#${kind}:${id}` → a contested site held by battle
+   * that is PAYING (within the seat's `VICTORY.loop.holdCap`). Revocable.
+   */
+  holds: Map<string, HoldLedger>;
   /** Per-owner VP total. */
   vp: Map<string, number>;
 }
 
 export const createScoreState = (): ScoreState => ({
   paved: new Map(), plants: new Map(), platforms: new Map(),
-  types: new Map(), rungs: new Map(), routes: new Map(), levels: new Map(), city: new Map(), vp: new Map(),
+  types: new Map(), rungs: new Map(), routes: new Map(), levels: new Map(), city: new Map(),
+  holds: new Map(), vp: new Map(),
 });
 
 /** VP as the HUD prints it: whole when it is whole, 2dp at most otherwise. */
@@ -327,6 +348,79 @@ export function pavedRoutes(
     const cargo = loop.cargoOf(h);
     if (cargo === null) continue;
     out.set(`${h.owner}#${h.id}`, { owner: h.owner, cargo, tx: h.tx, ty: h.ty });
+  }
+  return out;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// B7 (#252) — ★ for contested sites held, and the cap.
+//
+// The decision (docs/battle-balance.md §★): battles pay ★ through what they
+// HOLD, not through the fight. A seat is paid `VICTORY.loop.hold` for every
+// industry or town where it is the standing winner of the last battle fought
+// there — `siteRights[id].streak.playerId` / `townHolds[id].holder`, both
+// already saved and on the wire, so the ★ is derived state like every other
+// loop source and needs no ledger of its own in a save.
+//
+//   • revocable — lose the next fight over the site and the ★ moves;
+//   • capped    — at most `VICTORY.loop.holdCap` ★ per seat;
+//   • unfarmable — the fight itself pays nothing, a draw changes nothing, and
+//     a site nobody fought over pays nothing (first-come is the `type` row).
+// ══════════════════════════════════════════════════════════════════════════
+
+const holdKey = (h: Pick<HoldLedger, "owner" | "kind" | "id">): string => `${h.owner}#${h.kind}:${h.id}`;
+
+/**
+ * Every contested site held by battle, uncapped, in a stable order
+ * (industries by id, then towns by id). A site's holder must still have
+ * rights there (an industry) — a streak record left behind by a site whose
+ * rights were stripped holds nothing.
+ */
+export function contestedHolds(state: EconomyState): HoldLedger[] {
+  const out: HoldLedger[] = [];
+  const inds = [...(state.siteRights ?? new Map()).entries()].sort((a, b) => a[0] - b[0]);
+  for (const [id, rec] of inds) {
+    const owner = rec.streak?.playerId;
+    if (!owner || !rec.rights.includes(owner)) continue;
+    const ind = state.grid.industries[id];
+    if (!ind) continue;
+    out.push({ owner, kind: "industry", id, tx: ind.tx + ind.w / 2, ty: ind.ty + ind.h / 2 });
+  }
+  const towns = [...(state.townHolds ?? new Map()).entries()].sort((a, b) => a[0] - b[0]);
+  for (const [id, hold] of towns) {
+    if (!hold.holder) continue;
+    const t = state.grid.towns[id];
+    if (!t) continue;
+    out.push({ owner: hold.holder, kind: "town", id, tx: t.tx, ty: t.ty });
+  }
+  return out;
+}
+
+/** How many held sites one seat is paid for (`holdCap` ★ ÷ `hold` ★ each). */
+export const holdSlots = (): number =>
+  VICTORY.loop.hold > 0 ? Math.floor(VICTORY.loop.holdCap / VICTORY.loop.hold) : 0;
+
+/**
+ * The PAYING holds: every seat's held sites cut to `holdSlots()`. Sites that
+ * are already paying keep their slot first (then the stable order fills the
+ * rest), so winning a third site while at the cap does not reshuffle which
+ * two pay — and losing one lets the next held site step in.
+ */
+export function payingHolds(state: EconomyState, paid?: ReadonlyMap<string, HoldLedger>): Map<string, HoldLedger> {
+  const slots = holdSlots();
+  const byOwner = new Map<string, HoldLedger[]>();
+  for (const h of contestedHolds(state)) {
+    let list = byOwner.get(h.owner);
+    if (!list) byOwner.set(h.owner, list = []);
+    list.push(h);
+  }
+  const out = new Map<string, HoldLedger>();
+  for (const list of byOwner.values()) {
+    const ranked = [
+      ...list.filter((h) => paid?.has(holdKey(h))),
+      ...list.filter((h) => !paid?.has(holdKey(h))),
+    ];
+    for (const h of ranked.slice(0, slots)) out.set(holdKey(h), h);
   }
   return out;
 }
@@ -509,6 +603,29 @@ export function rescore(
         events.push({ source: "level", type: "revoked", owner: t.owner, delta: -VICTORY.loop.maxDepot, tx: t.tx, ty: t.ty });
       }
     }
+    // CONTROL (B7 #252) — contested sites held by battle, capped per seat.
+    // Revocable like a running Depot: the next fight can move the ★.
+    if (VICTORY.loop.hold > 0) {
+      const holds = payingHolds(state, score.holds);
+      for (const [key, h] of holds) {
+        if (score.holds.has(key)) continue;
+        score.holds.set(key, h);
+        add(h.owner, VICTORY.loop.hold);
+        events.push({
+          source: "hold", type: "awarded", owner: h.owner, delta: VICTORY.loop.hold,
+          tx: h.tx, ty: h.ty, site: { kind: h.kind, id: h.id },
+        });
+      }
+      for (const [key, h] of [...score.holds]) {
+        if (holds.has(key)) continue;
+        score.holds.delete(key);
+        add(h.owner, -VICTORY.loop.hold);
+        events.push({
+          source: "hold", type: "revoked", owner: h.owner, delta: -VICTORY.loop.hold,
+          tx: h.tx, ty: h.ty, site: { kind: h.kind, id: h.id },
+        });
+      }
+    }
     // DEPTH — rungs and city tiers. Both are monotone by construction (a rung
     // cannot be un-unlocked, a bought upgrade is not refunded once confirmed),
     // so they are scored as a HIGH-WATER MARK rather than diffed: a seat that
@@ -577,6 +694,13 @@ export function victoryBreakdown(
   }
   let routes = 0;
   if (loop) for (const r of pavedRoutes(state, loop).values()) if (r.owner === owner) routes++;
+  // B7 (#252): held contested sites — the PAYING ones (capped), plus the raw
+  // count so a reader can say "3 held, 2 paying".
+  let holds = 0, holdsHeld = 0;
+  if (loop && VICTORY.loop.hold > 0) {
+    for (const h of payingHolds(state).values()) if (h.owner === owner) holds++;
+    for (const h of contestedHolds(state)) if (h.owner === owner) holdsHeld++;
+  }
   const seat = loop?.seats.find((s) => s.owner === owner);
   const rungs = Math.max(0, Math.floor(seat?.depotTier ?? 0));
   const city = Math.max(0, Math.floor(seat?.townLevel ?? 0));
@@ -605,6 +729,11 @@ export function victoryBreakdown(
     routeVp: routes * VICTORY.loop.route,
     city,
     cityVp: city * VICTORY.loop.city,
+    /** B7 (#252): contested sites held by battle that pay (≤ the cap)… */
+    holds,
+    holdVp: holds * VICTORY.loop.hold,
+    /** …and every one held, paying or not. */
+    holdsHeld,
   };
 }
 
