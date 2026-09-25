@@ -43,9 +43,12 @@ import { MAP_W } from "../game/config";
 import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
-  addCost, type DragPreview, type Purse, type Track,
+  addCost, mergedPresent, type DragPreview, type Purse, type Track,
 } from "./track";
 import { FIELD_OCC, GRASS, ROUGH, SAND, idx, type Grid } from "./grid";
+import {
+  bridgeCostFor, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
+} from "./bridges";
 import { TRUCK_SPEED } from "./vehicles";
 import type { DrawItem } from "./depth";
 import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type TrainWire } from "./snapshot";
@@ -127,12 +130,14 @@ export function rotateView(view: RailView, quarterTurns = 1): RailView {
  * This is the railway's view of that table under the names the rules use.
  */
 export const RAIL_COSTS: Readonly<{
-  rail: Purse; platform: Purse; depot: Purse; train: Purse;
+  rail: Purse; platform: Purse; depot: Purse; train: Purse; bridge: Purse;
 }> = {
   rail: BUILD_COSTS.rail,
   platform: BUILD_COSTS.platform,
   depot: BUILD_COSTS.trainDepot,
   train: BUILD_COSTS.train,
+  // R2 (#266): the deck, per water tile spanned. Three rail tiles' stone.
+  bridge: BUILD_COSTS.railBridge,
 };
 
 /** RAIL-01: exactly one Victory Point per platform, on construction. */
@@ -220,6 +225,16 @@ export const railCost = (tiles: number): Purse => {
   for (const [c, n] of costEntries(RAIL_COSTS.rail)) out[c] = n * tiles;
   return out;
 };
+
+/**
+ * R2 (#266): the price of a rail drag of `fresh` new tiles, `decks` of them
+ * bridge decks. A deck is charged `RAIL_COSTS.bridge` (per water tile) instead
+ * of the flat rail tile, and — like the road decks — never rides the setup
+ * allowance. One function, so the preview, `buildRail`'s `RailBuildResult` and
+ * the rival's `RailMove.cost` all quote the same number.
+ */
+export const railCostOf = (fresh: number, decks = 0): Purse =>
+  addCost(railCost(Math.max(0, fresh - Math.max(0, decks))), bridgeCostFor(RAIL_COSTS.bridge, decks));
 
 // ── the layer ─────────────────────────────────────────────────────────────
 /**
@@ -717,7 +732,9 @@ export type RailRefusal =
   | "ok" | "off-map" | "water" | "occupied" | "road-parallel" | "crossing-curve"
   | "foreign-rail" | "component-conflict" | "no-anchor" | "anchor-taken"
   | "no-network" | "exit-blocked" | "overlap" | "anchor-range" | "train-in-way"
-  | "not-yours" | "missing" | "track-blocked";
+  | "not-yours" | "missing" | "track-blocked"
+  /** R2 (#266): the tile would hang a side connection on a standing rail bridge. */
+  | "bridge-junction";
 
 export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   ok: "",
@@ -738,6 +755,7 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "not-yours": "That isn't yours.",
   missing: "That is not there.",
   "track-blocked": "The platform's track side is blocked — turn it (R) or move it.",
+  "bridge-junction": "A bridge stays straight — no track can join its side.",
 };
 
 // ── placement: rail tiles ─────────────────────────────────────────────────
@@ -774,9 +792,24 @@ function prospectiveMask(
 export function railTileRefusal(
   grid: Grid, track: Track, state: RailState, ownerId: number, tx: number, ty: number,
   planned?: ReadonlySet<number>,
+  bridges?: ReadonlySet<number>,
 ): RailRefusal {
   if (!inMapT(tx, ty)) return "off-map";
-  if (!railTerrainOk(grid, tx, ty)) return "water";
+  // R2 (#266): a tile the drag's own bridge plan covers is RIVER WATER a deck
+  // is laid on — legal ground for this one drag (`bridges` is
+  // `planBridges(...).runs`), water for every other. Everything below still
+  // applies to it: nothing built there, no train on it, no foreign rail.
+  if (!railTerrainOk(grid, tx, ty) && !bridges?.has(tIdx(tx, ty))) return "water";
+  // R2 (#266): a tile ORTHOGONALLY beside a standing rail bridge would join
+  // the deck (own rail joins on connectivity, which is exactly what
+  // `autotileRail` computes), and the deck would grow a third arm — a junction
+  // on a bridge. `sideJoinAt` reads the deck's own bits, so a join along the
+  // deck is still fine (that is how a broken crossing is repaired).
+  if (railTerrainOk(grid, tx, ty) && sideJoinAt(
+    tx, ty,
+    (x, y) => bridgeDeckAt(grid, x, y, (b, c) => sameOwnerRail(state, ownerId, b, c)),
+    (x, y) => inMapT(x, y) ? state.rail.tile[tIdx(x, y)] & RAIL_BITS : 0,
+  )) return "bridge-junction";
   // Anything built on the tile blocks rail: an industry, a field, a depot, a
   // plant / town building (#298, `builtAt` "plant" — every rotation), a
   // platform, or a train standing on it. Town STREETS are not in that set:
@@ -784,7 +817,13 @@ export function railTileRefusal(
   if (grid.occupancy[tIdx(tx, ty)] >= 0 || grid.occupancy[tIdx(tx, ty)] === FIELD_OCC) return "occupied";
   if (structureAt(state, tx, ty)) return "occupied";
   const built = grid.builtAt?.(tx, ty);
-  if (built === "depot" || built === "plant" || built === "platform") return "occupied";
+  if (built === "bridge") {
+    // R2 (#266): a deck is built ground — except for the very drag that is
+    // bridging there (a re-laid crossing over your own deck reads it back).
+    if (!bridges?.has(tIdx(tx, ty))) return "occupied";
+  } else if (built === "depot" || built === "plant" || built === "platform") {
+    return "occupied";
+  }
   if (trainOccupies(state, tx, ty)) return "train-in-way";
   const owner = state.rail.owner[tIdx(tx, ty)];
   if ((state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) && owner !== ownerId) return "foreign-rail";
@@ -899,6 +938,10 @@ export function buildRail(
   const guardMerge = trainsOf(state, ownerId).length > 1;
   // The whole gesture is the "final shape" a crossing is judged against.
   const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
+  // R2 (#266): …and the whole gesture is the bridge, too — a deck exists only
+  // as part of a straight crossing with both banks inside this same drag.
+  const bridgePlan = railBridgePlan(grid, track, state, ownerId, tiles, planned);
+  const bridgeTiles = bridgePlan.deckTiles;      // TILE indices — see `BridgePlan`
   // The drag's tiles that will carry a diagonal link, known up front so the
   // first tile of a diagonal never joins its side neighbours on its own.
   const plannedDiag = new Set<number>();
@@ -908,17 +951,21 @@ export function buildRail(
     plannedDiag.add(tIdx(tiles[n][0], tiles[n][1]));
   }
   let charged = 0;
+  let decks = 0;
   for (let n = 0; n < tiles.length; n++) {
     const [tx, ty] = tiles[n];
     const why = diagOverRoad(track, tiles, n) ? "crossing-curve"
-      : railTileRefusal(grid, track, state, ownerId, tx, ty, planned);
-    if (why !== "ok") return { ok: built.length > 0, why, cost: railCost(charged), built };
+      : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles);
+    if (why !== "ok") return { ok: built.length > 0, why, cost: railCostOf(charged, decks), built };
     // Rail you already own is stepped over for free — a drag that redraws part
     // of an existing line (or crosses its own track at a junction) pays only
     // for the new tiles, exactly like a road drag over your own road.
     const already = (state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(tx, ty)] === ownerId;
-    if (!already) charged++;
+    if (!already) {
+      charged++;
+      if (bridgeTiles.has(tIdx(tx, ty))) decks++;      // R2: a deck is charged the deck price
+    }
     const beforeTile = state.rail.tile[tIdx(tx, ty)];
     const beforeOwner = state.rail.owner[tIdx(tx, ty)];
     writeRailTile(state, ownerId, tx, ty);
@@ -956,13 +1003,34 @@ export function buildRail(
       state.rail.tile[tIdx(tx, ty)] = beforeTile;
       state.rail.owner[tIdx(tx, ty)] = beforeOwner;
       autotileRail(state, [[tx, ty]]);
-      return { ok: built.length > 0, why: "component-conflict", cost: railCost(charged), built };
+      return { ok: built.length > 0, why: "component-conflict", cost: railCostOf(charged, decks), built };
     }
     built.push([tx, ty]);
   }
   // `charged`, not `built.length`: a drag that redraws rail you already own
-  // lays tiles but pays for none of them.
-  return { ok: built.length > 0, why: "ok", cost: railCost(charged), built };
+  // lays tiles but pays for none of them. R2 (#266): the charged tiles that
+  // stand on water are decks and are quoted at the deck price.
+  return { ok: built.length > 0, why: "ok", cost: railCostOf(charged, decks), built };
+}
+
+/**
+ * R2 (#266): the rail drag's bridge plan, with the railway's own predicates —
+ * "this layer carries track" is own rail or an own structure lane (journalled
+ * for autotiling), and "the other layer" is any road tier, because a deck is
+ * never shared with the road. Shared by `railPreview`, `buildRail` and the
+ * rival's `validateRailDrag`, so the player and the AI cross rivers by the one
+ * rule.
+ */
+export function railBridgePlan(
+  grid: Grid, track: Track, state: RailState, ownerId: number,
+  tiles: readonly (readonly [number, number])[],
+  planned: ReadonlySet<number>,
+): BridgePlan {
+  return planBridges(
+    grid, tiles,
+    (x, y) => inMapT(x, y) && (sameOwnerRail(state, ownerId, x, y) || planned.has(tIdx(x, y))),
+    (x, y) => inMapT(x, y) && mergedPresent(track, x, y),
+  );
 }
 
 /** Would tile `n` of a drag carry a diagonal link while standing on a road? */
@@ -1002,10 +1070,14 @@ export function railPreview(
 ): RailPreviewResult {
   const path = octPath(ax, ay, bx, by, xFirst);
   const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
+  // R2 (#266): the drag's crossing — the deck tiles, and the price each buys.
+  const bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
+  const bridgeTiles = bridgePlan.deckTiles;      // TILE indices — see `BridgePlan`
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
   const blocked: [number, number][] = [];
   let cost: Purse = {};
+  let decks = 0;
   let why: RailRefusal | null = null;
   let truncated = false;
   const noteObstacle = (from: number, firstWhy: RailRefusal) => {
@@ -1013,7 +1085,7 @@ export function railPreview(
     truncated = true;
     for (let j = from; j < path.length; j++) {
       const [bx, by] = path[j];
-      if (railTileRefusal(grid, track, state, ownerId, bx, by, planned) === "ok") break;
+      if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles) === "ok") break;
       blocked.push([bx, by]);
     }
   };
@@ -1023,15 +1095,17 @@ export function railPreview(
       && state.rail.owner[tIdx(x, y)] === ownerId;
     if (diagOverRoad(track, path, i)) { noteObstacle(i, "crossing-curve"); break; }
     if (!already) {
-      const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned);
+      const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned, bridgeTiles);
       if (refusal !== "ok") { noteObstacle(i, refusal); break; }
-      const next = addCost(cost, RAIL_COSTS.rail);
+      // R2 (#266): a deck tile pays the deck price; everything else pays the
+      // flat rail tile, exactly as before.
+      const next = addCost(cost, bridgeTiles.has(tIdx(x, y)) ? RAIL_COSTS.bridge : RAIL_COSTS.rail);
       if (!canPay(purse, next)) {
         // Everything from here on is what the purse cannot reach: the overlay
         // paints it as "not this drag", exactly like the road preview.
         for (let j = i; j < path.length; j++) {
           const [ux, uy] = path[j];
-          const tail = railTileRefusal(grid, track, state, ownerId, ux, uy, planned);
+          const tail = railTileRefusal(grid, track, state, ownerId, ux, uy, planned, bridgeTiles);
           // The purse already stopped the drag; the obstacle only paints the
           // tiles it claims. Don't invent a refusal the affordable prefix
           // didn't hit.
@@ -1039,7 +1113,7 @@ export function railPreview(
             truncated = true;
             for (let k = j; k < path.length; k++) {
               const [bx, by] = path[k];
-              if (railTileRefusal(grid, track, state, ownerId, bx, by, planned) === "ok") break;
+              if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles) === "ok") break;
               blocked.push([bx, by]);
             }
             break;
@@ -1049,10 +1123,11 @@ export function railPreview(
         break;
       }
       cost = next;
+      if (bridgeTiles.has(tIdx(x, y))) decks++;
     }
     tiles.push([x, y]);
   }
-  return { tiles, cost, upgrades: 0, free: 0, unaffordable, blocked, truncated, why };
+  return { tiles, cost, upgrades: 0, free: 0, bridges: decks, unaffordable, blocked, truncated, why };
 }
 
 export function demolishRail(state: RailState, tx: number, ty: number): boolean {
@@ -1145,7 +1220,7 @@ export function platformRefusal(
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
     // Nothing else built there: a Depot lot, a plant / town building, or anyone's rail.
     const b = grid.builtAt?.(tx + x, ty + y);
-    if (b === "depot" || b === "plant" || b === "platform"
+    if (b === "depot" || b === "plant" || b === "platform" || b === "bridge"
       || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
@@ -1155,7 +1230,7 @@ export function platformRefusal(
     if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "track-blocked";
     if (structures.some((s) => overlaps(s, x, y, 1, 1))) return "track-blocked";
     const side = grid.builtAt?.(x, y);
-    if (side === "depot" || side === "plant" || side === "platform") return "track-blocked";
+    if (side === "depot" || side === "plant" || side === "platform" || side === "bridge") return "track-blocked";
   }
   const candidates = anchorCandidates(grid, factories, ownerId, tx, ty, view);
   if (!candidates.length) return "no-anchor";
@@ -1223,7 +1298,7 @@ export function depotRefusal(
     // #298: a rail depot does not stand on a plant, a town building, a truck
     // Depot lot, or rail that is already there.
     const b = grid.builtAt?.(tx + x, ty + y);
-    if (b === "depot" || b === "plant" || b === "platform"
+    if (b === "depot" || b === "plant" || b === "platform" || b === "bridge"
       || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (state.structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
@@ -1240,7 +1315,7 @@ export function depotRefusal(
   if (!inMapT(nx, ny) || !railTerrainOk(grid, nx, ny)) return "exit-blocked";
   const exitBuilt = grid.builtAt?.(nx, ny);
   const blocked = grid.occupancy[tIdx(nx, ny)] >= 0 || grid.occupancy[tIdx(nx, ny)] === FIELD_OCC || structureAt(state, nx, ny) !== null
-    || exitBuilt === "depot" || exitBuilt === "plant" || exitBuilt === "platform"
+    || exitBuilt === "depot" || exitBuilt === "plant" || exitBuilt === "platform" || exitBuilt === "bridge"
     || (hasRail(state.rail, nx, ny) && state.rail.owner[tIdx(nx, ny)] !== ownerId);
   return blocked ? "exit-blocked" : "no-network";
 }

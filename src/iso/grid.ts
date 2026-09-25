@@ -134,7 +134,17 @@ export interface MapGenOptions {
   rivers?: boolean;
 }
 
-export type GridBuilt = "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant";
+/**
+ * What the game says stands on a tile (`Grid.builtAt`), for the rules that must
+ * not build through a building or over rail.
+ *
+ * R2 (#266): `"bridge"` is a deck — track of either layer standing on WATER.
+ * It is derived, not stored: nothing else in the game can put track on water,
+ * so "water + track" IS a bridge (see `bridges.ts`), and one entry in this
+ * union is all the other builders need to keep off it.
+ */
+export type GridBuilt =
+  | "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant" | "bridge";
 
 /**
  * #298: a footprint after `quarterTurns` clockwise quarter-turns. The anchor

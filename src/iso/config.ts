@@ -848,7 +848,8 @@ export interface TransportDef {
  * charged" are one number.
  */
 export const BUILD_COSTS: Readonly<Record<
-  "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train",
+  "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train"
+  | "bridge" | "railBridge",
   Partial<Record<Cargo, number>>
 >> = {
   // A Dirt Road is FREE: the gravel is the plumbing every game needs, and
@@ -866,6 +867,16 @@ export const BUILD_COSTS: Readonly<Record<
   platform: { wood: 12, stone: 12, ore: 36, oil: 6 },
   trainDepot: { wood: 9, stone: 9, ore: 12, oil: 6 },
   train: { ore: 12, oil: 6 },
+  // R2 (#266): a BRIDGE deck, charged PER WATER TILE it spans. Deliberately
+  // the priciest per-tile number on the board — a river crossing is an
+  // investment, not a shortcut — and deliberately no Ore: the road deck is
+  // timber and stone so an early seat with no mine can still reach the far
+  // bank, and only the PAVED surface keeps the ore gate (`road`). Three times
+  // a paved tile's wood and stone, and three times a rail tile's stone.
+  // The free setup allowance never covers these (`previewDrag`); the rival
+  // prices them the same way (`ai.ts`).
+  bridge: { wood: 9, stone: 9 },
+  railBridge: { stone: 9 },
 };
 
 // ── VP-01: the victory table ──────────────────────────────────────────────
