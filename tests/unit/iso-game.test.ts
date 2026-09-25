@@ -481,9 +481,10 @@ describe("E11 the game boots", () => {
     expect(pop.classList.contains("hidden")).toBe(false);
     expect(btn.getAttribute("aria-expanded")).toBe("true");
     // a bare solo boot: no onQuitToMenu, so no quit row — the App-driven
-    // doors are Settings, How to Play and (solo-only) New Game
+    // doors are Settings, How to Play, Store (MON-1 #367) and the solo-only
+    // New Game
     expect([...pop.querySelectorAll(".tm-item span")].map((x) => x.textContent))
-      .toEqual(["Settings", "How to Play", "New Game"]);
+      .toEqual(["Settings", "How to Play", "Store", "New Game"]);
 
     // Settings raises the REAL sheet over the game, and it writes through
     // the real store — the GFX-01 miniature toggle, clicked from the menu

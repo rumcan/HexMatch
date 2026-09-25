@@ -223,7 +223,14 @@ export function ownsStoreItem(itemId: string): boolean {
   return file.owned.includes(itemId);
 }
 
-/** Ids of everything owned. The payload a future join message carries. */
+/**
+ * Ids of everything owned — the payload a seat's join would carry once an
+ * item is actually ENFORCED (MON-2 + the MP follow-up). Nothing sends it yet,
+ * and that is deliberate: a wire field nothing reads is a compatibility debt
+ * for a gate that does not exist. When MON-2 flips `railways`, this is the
+ * list the host trusts per seat — the host still re-verifies through the SDK
+ * rather than believing the guest, and a guest can never unlock for the host.
+ */
 export function ownedStoreItemIds(): readonly string[] {
   return [...file.owned];
 }

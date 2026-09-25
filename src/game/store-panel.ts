@@ -199,6 +199,13 @@ export function showStorePanel(host: HTMLElement = document.body): StorePanelHan
     paintRows();
   }
 
+  // Re-verify when the page can: a top-up happens in the platform's own
+  // store, and a seat that lost the network mid-session should not have to
+  // reload to see what it owns. Both listeners die with the panel.
+  const onWake = () => { void refreshStore(); };
+  document.addEventListener("visibilitychange", onWake);
+  window.addEventListener("online", onWake);
+
   const unsub = subscribeStore(paint);
   paint(storeSnapshot());
   // Kick a load (and a re-verify) without waiting on it: the panel is already
@@ -209,6 +216,8 @@ export function showStorePanel(host: HTMLElement = document.body): StorePanelHan
     if (closed) return;
     closed = true;
     unsub();
+    document.removeEventListener("visibilitychange", onWake);
+    window.removeEventListener("online", onWake);
     document.removeEventListener("keydown", onKey, true);
     root.remove();
     resolveClosed();
