@@ -1,8 +1,8 @@
 // ══════════════════════════════════════════════════════════════════════════
 // Terrain-GL glue (docs/TERRAIN_GL.md): mounts the WebGL2 terrain renderer
 // UNDER the 2D layer stack and feeds it the map, the camera and tile changes.
-// Opt-in while it is being evaluated: `?terrain=gl` (or localStorage
-// `hexmatch:terrain-gl` = "1"); `?terrain=2d` forces the old ground. When
+// ON by default (owner call 2026-09-25). `?terrain=2d` switches back to the
+// old 2D ground (remembered); `?terrain=gl` clears that. When
 // WebGL2 is missing the mount returns null and the 2D ground stays.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_H, MAP_W } from "../game/config";
@@ -16,11 +16,11 @@ const STORE_KEY = "hexmatch:terrain-gl";
 export function terrainGlWanted(search: string = typeof location !== "undefined" ? location.search : ""): boolean {
   try {
     const q = new URLSearchParams(search).get("terrain");
-    if (q === "gl") { localStorage.setItem(STORE_KEY, "1"); return true; }
-    if (q === "2d") { localStorage.removeItem(STORE_KEY); return false; }
-    return localStorage.getItem(STORE_KEY) === "1";
+    if (q === "gl") { localStorage.removeItem(STORE_KEY); return true; }
+    if (q === "2d") { localStorage.setItem(STORE_KEY, "0"); return false; }
+    return localStorage.getItem(STORE_KEY) !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 
