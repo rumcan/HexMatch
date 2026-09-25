@@ -265,6 +265,55 @@ export function elevateWorldPoint(grid: Grid, wx: number, wy: number): [number, 
   return [wx, wy - surfaceHeight(grid, u, v) * LEVEL_PX];
 }
 
+// ── height-aware picking ───────────────────────────────────────────────────
+/**
+ * The flat pick — the exact `tileToScreen` inverse (floor, never round; E0).
+ * Kept private here so `pickTile` needs no import cycle with the renderer.
+ */
+const flatPick = (wx: number, wy: number): [number, number] => [
+  Math.floor((wx / HW + wy / HH) / 2),
+  Math.floor((wy / HH - wx / HW) / 2),
+];
+
+/**
+ * E3 (#269): the tile a cursor at world (wx, wy) actually SEES, height included.
+ *
+ * A raised tile is drawn `lift` pixels UP the screen, so its flat projection
+ * sits `lift` pixels BELOW the cursor. Undoing the lift — testing whether the
+ * cursor, pushed down by a candidate tile's own surface height, lands in that
+ * tile's flat diamond — recovers the raised tile: `flatPick(wx, wy + lift)`
+ * equals the tile exactly when the tile, lifted by `lift`, covers the cursor.
+ *
+ * Several tiles can satisfy that (a raised tile in front reaches up over the
+ * flat one behind it), so we walk the small window of candidates and keep the
+ * FRONT-MOST hit — the largest `tx+ty`, the one drawn last and therefore the
+ * one on top. That is the "test the raised tile first, front-to-back" the
+ * ticket asks for, and it is what makes a hill in front of a lower tile hide it.
+ *
+ * On a flat map (or a map with no height bytes) this is exactly `flatPick`:
+ * no lattice, no window, byte-identical to the renderer's stage-1 pick.
+ */
+export function pickTile(grid: Grid | null | undefined, wx: number, wy: number): [number, number] {
+  const f = grid ? elevationField(grid) : null;
+  if (!f) return flatPick(wx, wy);
+  const [fx, fy] = flatPick(wx, wy);
+  // The tallest lift is MAX_LIFT_PX = 2 tiles, so a candidate can reach at most
+  // ~2 tiles "in front"; the window is padded a tile each way and the
+  // flatPick(wx, wy+lift) test filters the rest out.
+  const reach = Math.ceil(MAX_LIFT_PX / HH) + 2;
+  let bx = fx, by = fy, bk = fx + fy;
+  for (let ty = fy - 1; ty <= fy + reach; ty++) {
+    if (ty < 0 || ty >= f.h) continue;
+    for (let tx = fx - 1; tx <= fx + reach; tx++) {
+      if (tx < 0 || tx >= f.w) continue;
+      const lift = tileSurfaceHeight(grid!, tx, ty) * LEVEL_PX;
+      const [px, py] = flatPick(wx, wy + lift);
+      if (px === tx && py === ty && tx + ty > bk) { bx = tx; by = ty; bk = tx + ty; }
+    }
+  }
+  return [bx, by];
+}
+
 // ── the draper ──────────────────────────────────────────────────────────────
 /**
  * Lift a polyline, tessellating each segment to `step` first.
