@@ -31,29 +31,20 @@
    vendored in `src/assets/fonts` with their licence text beside them.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── the type ─────────────────────────────────────────────────────
-   Cinzel  — inscriptional Roman capitals: carved into a bank façade in
-             1929 and into a horde war-plinth in Azeroth, which is the
-             whole brief in one typeface.
-   Barlow Condensed — the intertitle / police blotter headline. Carries the
-             dense HUD labels (it was always the name in `--serif`; now the
-             file exists, so it actually renders).
-   Barlow Semi Condensed — body copy, small and still legible.
-   Special Elite — the Underwood the ledger was typed on: notes, prices,
-             timers, feed lines, the room code.
+/* ── the type (UI Space Age, docs/UI_SPACE_AGE_PLAN.md) ────────────
+   Jost — geometric sans in the Futura line: headings (uppercase,
+             tracked) and UI text.
+   Barlow Semi Condensed — dense labels and numbers (costs, timers).
+   Yellowtail — the 1950s script, ONLY for "Industries" in the logo.
    ──────────────────────────────────────────────────────────────── */
-@font-face { font-family: "Cinzel"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/cinzel-latin-400-normal.woff2") format("woff2"); }
-@font-face { font-family: "Cinzel"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/cinzel-latin-600-normal.woff2") format("woff2"); }
-@font-face { font-family: "Cinzel"; font-style: normal; font-weight: 700; font-display: swap; src: url("../assets/fonts/cinzel-latin-700-normal.woff2") format("woff2"); }
-@font-face { font-family: "Cinzel"; font-style: normal; font-weight: 900; font-display: swap; src: url("../assets/fonts/cinzel-latin-900-normal.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/barlow-condensed-latin-400-normal.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/barlow-condensed-latin-500-normal.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/barlow-condensed-latin-600-normal.woff2") format("woff2"); }
-@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 700; font-display: swap; src: url("../assets/fonts/barlow-condensed-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/jost-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/jost-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/jost-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Jost"; font-style: normal; font-weight: 700; font-display: swap; src: url("../assets/fonts/jost-latin-700-normal.woff2") format("woff2"); }
 @font-face { font-family: "Barlow Semi Condensed"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/barlow-semi-condensed-latin-400-normal.woff2") format("woff2"); }
 @font-face { font-family: "Barlow Semi Condensed"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/barlow-semi-condensed-latin-500-normal.woff2") format("woff2"); }
 @font-face { font-family: "Barlow Semi Condensed"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/barlow-semi-condensed-latin-600-normal.woff2") format("woff2"); }
-@font-face { font-family: "Special Elite"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/special-elite-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Yellowtail"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/yellowtail-latin-400-normal.woff2") format("woff2"); }
 
 :root {
   /* MOBILE-01: the top bar's own height plus the notch/status-bar inset.
@@ -107,9 +98,10 @@
   --wood2: var(--line);
   --wood3: var(--bg);
 
-  --display: "Cinzel", "Trajan Pro", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --serif: "Barlow Condensed", "Haettenschweiler", "Arial Narrow", "Segoe UI", system-ui, sans-serif;
-  --sans: "Barlow Semi Condensed", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --display: "Jost", "Segoe UI", system-ui, sans-serif;
+  --serif: "Barlow Semi Condensed", "Arial Narrow", "Segoe UI", system-ui, sans-serif;
+  --script: "Yellowtail", cursive;
+  --sans: "Jost", "Segoe UI", system-ui, -apple-system, sans-serif;
   /* Owner call (2026-09): the typewriter face (Special Elite) was hard to read.
      Notes, prices and ledger text use the plain UI sans now; the variable name
      stays so all 66 uses follow. Digits are tabular so columns still align. */

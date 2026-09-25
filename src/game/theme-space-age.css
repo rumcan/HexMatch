@@ -1,0 +1,45 @@
+/* ═══════════════════════════════════════════════════════════════════
+   UI SPACE AGE — docs/UI_SPACE_AGE_PLAN.md
+   Charcoal, orange, aqua and lemon; square corners; flat colour; no
+   gradients, bevels, rivets or glows. Loaded AFTER styles.css (App.tsx),
+   so the old token names below re-point every var() in styles.css.
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  /* palette */
+  --sa-ink: #0f1214; --sa-panel: #1f2427; --sa-panel-2: #2a3034; --sa-line: #343b3f; --sa-line-hi: #4a5357;
+  --sa-bone: #eee6d4; --sa-bone-dim: #b9b3a6; --sa-bone-mute: #7d786e;
+  --sa-orange: #f08a24; --sa-orange-hi: #ffb061; --sa-orange-lo: #8a4a0c; --sa-on-orange: #1f1204;
+  --sa-aqua: #4fb3bf; --sa-aqua-hi: #8fd6de; --sa-aqua-lo: #245a61;
+  --sa-lemon: #f2d64b; --sa-on-lemon: #2b2604;
+  --sa-red: #e2553f; --sa-green: #7cc47f; --sa-sky: #6fb0e0;
+  /* channels for the remap script: rgb(var(--c-x) / a) */
+  --c-orange: 240 138 36; --c-bone: 238 230 212; --c-ink: 15 18 20; --c-line: 74 83 87;
+  --c-red: 226 85 63; --c-lemon: 242 214 75; --c-aqua: 79 179 191;
+
+  /* old token names → new values */
+  --bg: var(--sa-ink); --walnut: var(--sa-panel); --iron-hi: var(--sa-panel-2);
+  --glass: #1f2427f5; --glass-hi: var(--sa-panel-2); --glass-lo: #0f1214e6;
+  --line: var(--sa-line); --line-hi: var(--sa-line-hi);
+  --brass: var(--sa-orange); --brass-hi: #fff3dc; --brass-lo: var(--sa-line-hi); --patina: var(--sa-aqua);
+  --txt: var(--sa-bone); --txt-dim: var(--sa-bone-dim); --txt-mute: var(--sa-bone-mute);
+  --gold: var(--sa-lemon); --gold2: #f7e58a; --gold-d: #8c7a1c; --gold-glow: transparent;
+  --danger: #c43e2c; --danger2: var(--sa-red); --good: var(--sa-green); --info: var(--sa-sky);
+  --r: 0;
+
+  /* the plate/texture system goes flat (layer syntax stays valid) */
+  --flat: linear-gradient(var(--sa-panel), var(--sa-panel));
+  --iron: var(--flat); --iron-big: var(--flat);
+  --plate-rivet: none; --plate-lamp: none; --plate-bevel: none; --plate-grain: none;
+  --plate-body: var(--flat); --plate-wash-brass: var(--flat);
+  --felt: var(--flat); --ledger: var(--flat); --smoke: none;
+  --corner-tl: none; --corner-tr: none; --corner-bl: none; --corner-br: none;
+  --boss-tl: none; --boss-tr: none; --boss-bl: none; --boss-br: none;
+  --seal: none; --seal-sm: none;
+  --room:
+    linear-gradient(115deg, transparent 0 62%, #f08a2414 62% 66%, transparent 66%),
+    linear-gradient(115deg, transparent 0 70%, #4fb3bf12 70% 72%, transparent 72%),
+    linear-gradient(var(--sa-ink), var(--sa-ink));
+
+  /* layout */
+  --topbar-h: 44px; --rail-w: 72px; --dock-h: 36px; --drawer-h: 0px;
+}
