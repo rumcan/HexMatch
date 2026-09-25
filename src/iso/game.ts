@@ -2981,10 +2981,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * RAIL-02 (#176): place a platform — the anchor rule, the one-per-anchor
    * limit, the 4 Wood + 4 Stone + 12 Ore + 2 Oil price and the +1★ are all the
    * rail module's, and this is only the click that pays for it.
+   *
+   * #181: `view` is the heading to build in, defaulting to the local tool's.
+   * The HOST passes the heading a guest's intent named, because the refusal
+   * it checked and the structure it commits have to be the same shape: judged
+   * with the guest's rotation and built with the host's would put the guest's
+   * platform down somewhere it never previewed (or silently refuse it after
+   * the check said ok).
    */
-  function placeRailPlatform(tx: number, ty: number, p: PlayerState): boolean {
+  function placeRailPlatform(tx: number, ty: number, p: PlayerState, view: RailView = railView): boolean {
     const ownerId = p.i + 1;
-    const why = platformRefusal(grid, rail.structures, railPlants(), ownerId, tx, ty, railView);
+    const why = platformRefusal(grid, rail.structures, railPlants(), ownerId, tx, ty, view);
     if (why !== "ok") {
       if (p.human) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
@@ -2999,7 +3006,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    const anchor = resolveAnchor(grid, railPlants(), ownerId, tx, ty, railView);
+    const anchor = resolveAnchor(grid, railPlants(), ownerId, tx, ty, view);
     // A platform at an industry IS a Depot — one tuning session at a time.
     if (anchor?.kind === "industry" && newLoop && tuning && p === me) {
       toast("Finish the tuning session first — one Depot is tuned at a time.", "bad");
@@ -3007,7 +3014,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!spend(p, RAIL_COSTS.platform)) return false;
-    const built = placePlatform(rail, p.id, ownerId, tx, ty, railView, anchor);
+    const built = placePlatform(rail, p.id, ownerId, tx, ty, view, anchor);
     layPlatformTrack(grid, track, rail, built);
     const depot = adoptPlatformDepot(built, p);
     if (p.human) sfx.play("build");
@@ -3054,10 +3061,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /**
    * RAIL-02 (#176): place a train depot — 2×2, one declared rail exit, and the
    * exit has to join the owner's own rail (`depotRefusal` says why not).
+   * #181: `view` is the heading, defaulting to the local tool's — the host
+   * passes a guest's intent heading through the same refusal and the same
+   * build, exactly as `placeRailPlatform` does.
    */
-  function placeRailDepot(tx: number, ty: number, p: PlayerState): boolean {
+  function placeRailDepot(tx: number, ty: number, p: PlayerState, view: RailView = railView): boolean {
     const ownerId = p.i + 1;
-    const why = depotRefusal(grid, rail, ownerId, tx, ty, railView);
+    const why = depotRefusal(grid, rail, ownerId, tx, ty, view);
     if (why !== "ok") {
       if (p.human) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
@@ -3073,7 +3083,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!spend(p, RAIL_COSTS.depot)) return false;
-    const built = placeDepot(rail, p.id, ownerId, tx, ty, railView);
+    const built = placeDepot(rail, p.id, ownerId, tx, ty, view);
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();
@@ -7772,30 +7782,41 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // RAIL-05 (#182): with the flag down the railway does not exist on this
         // host, so a guest's rail request is refused whole — never half-built.
         echoed.push("Rail is not available in this mode.");
-      } else if (what === "rail") {
-        // RAIL-04 (#178): a guest's rail drag. The host runs the SAME preview
-        // and the SAME commit against the guest's seat, so the tiles the guest
-        // saw priced are the tiles that get built and charged.
-        const ax = int(payload.ax), ay = int(payload.ay);
-        const bx = int(payload.bx), by = int(payload.by);
-        if (ax !== null && ay !== null && bx !== null && by !== null) {
-          const pv = railPreview(grid, track, rail, p.i + 1, p.purse, ax, ay, bx, by,
-            payload.xFirst !== false);
-          if (pv.tiles.length === 0) {
-            echoed.push(pv.why && pv.why !== "ok" ? RAIL_REFUSAL_TEXT[pv.why] : "Can't build rail there.");
-          } else commitRailDrag(p, pv);
-        }
-      } else if (what === "platform" || what === "raildepot") {
-        const tx = int(payload.tx), ty = int(payload.ty);
-        const view = (RAIL_VIEWS as readonly string[]).includes(String(payload.view))
-          ? payload.view as RailView : "se";
-        if (tx !== null && ty !== null) {
-          const why = what === "platform"
-            ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view)
-            : depotRefusal(grid, rail, p.i + 1, tx, ty, view);
-          if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
-          else if (what === "platform") placeRailPlatform(tx, ty, p);
-          else placeRailDepot(tx, ty, p);
+      } else if (what === "rail" || what === "platform" || what === "raildepot") {
+        // #181: no phase gate here, on purpose — the other build intents
+        // (track, depot, plant) do not have one either: the guest's own phase
+        // governs what its UI offers, and the host's rules are the only
+        // validation. The heading, though, IS the guest's: it is what its
+        // preview drew, so it is what the host validates and builds with.
+        if (what === "rail") {
+          // RAIL-04 (#178): a guest's rail drag. The host runs the SAME preview
+          // and the SAME commit against the guest's seat, so the tiles the guest
+          // saw priced are the tiles that get built and charged.
+          const ax = int(payload.ax), ay = int(payload.ay);
+          const bx = int(payload.bx), by = int(payload.by);
+          if (ax !== null && ay !== null && bx !== null && by !== null) {
+            const pv = railPreview(grid, track, rail, p.i + 1, p.purse, ax, ay, bx, by,
+              payload.xFirst !== false);
+            if (pv.tiles.length === 0) {
+              echoed.push(pv.why && pv.why !== "ok" ? RAIL_REFUSAL_TEXT[pv.why] : "Can't build rail there.");
+            } else commitRailDrag(p, pv);
+          }
+        } else {
+          const tx = int(payload.tx), ty = int(payload.ty);
+          // #181: the heading the guest drew with is the heading the host
+          // validates AND builds with — one refusal, one structure. (Before
+          // this, the refusal ran with the guest's heading and the build with
+          // the HOST's held one: the two could disagree.)
+          const view = (RAIL_VIEWS as readonly string[]).includes(String(payload.view))
+            ? payload.view as RailView : "se";
+          if (tx !== null && ty !== null) {
+            const why = what === "platform"
+              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view)
+              : depotRefusal(grid, rail, p.i + 1, tx, ty, view);
+            if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
+            else if (what === "platform") placeRailPlatform(tx, ty, p, view);
+            else placeRailDepot(tx, ty, p, view);
+          }
         }
       } else if (what === "railact") {
         // The panel's verbs. Malformed bodies are ignored, exactly like
@@ -11435,6 +11456,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** The test twin of a rail drag (solo/host commits, a guest sends). */
     railDrag: (ax: number, ay: number, bx: number, by: number) =>
       requestRailBuild(ax, ay, bx, by, true),
+    /**
+     * #181: the test twin of the SELECT-tool click that opens a Depot's card.
+     * A platform-Depot has no 2×2 lot to hit — it is clicked on its platform —
+     * so "does THIS seat resolve this tile to its OWN Depot record" is the one
+     * question the card's door asks, and the twin asks it through the same
+     * `myDepotAt` + `depotCardFor` the click runs. Read-only: it opens the
+     * card, it never changes the world. Returns whether a card opened.
+     *
+     * The click's own door additionally sits inside the `newLoop` branch, and
+     * the new loop is solo-only — so in a hosted room the card is reached
+     * through the `?loop=new` solo path today. The twin is the seat-frame half
+     * (whose Depot is this?) without that upstream gate, which is what a test
+     * can hold the guest to.
+     */
+    depotCardAt: (tx: number, ty: number) => {
+      const d = myDepotAt(tx, ty);
+      if (!d) return false;
+      depotCardFor(d);
+      return true;
+    },
     /** The test twin of clicking with the Platform / Train Depot tool. */
     placePlatform: (tx: number, ty: number, view?: string, who: "you" | "ai" = "you") => {
       const p = who === "ai" ? rival : me;
@@ -11442,11 +11483,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (who === "you" && isGuest()) {
         return net?.sendIntent("build", { do: "platform", tx, ty, view: v }) ?? false;
       }
-      const held = railView;
-      railView = v;
-      const ok = placeRailPlatform(tx, ty, p);
-      railView = held;
-      return ok;
+      // #181: the heading is an ARGUMENT now, not a temporary write to the
+      // local tool state — the same shape the host's intent handler uses.
+      return placeRailPlatform(tx, ty, p, v);
     },
     placeRailDepot: (tx: number, ty: number, view?: string, who: "you" | "ai" = "you") => {
       const p = who === "ai" ? rival : me;
@@ -11454,11 +11493,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (who === "you" && isGuest()) {
         return net?.sendIntent("build", { do: "raildepot", tx, ty, view: v }) ?? false;
       }
-      const held = railView;
-      railView = v;
-      const ok = placeRailDepot(tx, ty, p);
-      railView = held;
-      return ok;
+      return placeRailDepot(tx, ty, p, v);
     },
     /** The test twin of the panel's Assign / Recall / Sell buttons. */
     railAssign: (sourceId: number, destId: number, who: "you" | "ai" = "you") =>
