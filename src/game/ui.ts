@@ -3363,6 +3363,12 @@ export function createOriginalUi(
     // on max(52px, --resbar-h). jsdom lays nothing out (0) and keeps the
     // stylesheet's 52px fallback, so every pinned number below survives.
     placeChips();
+    // UI Space Age: the Plant card rides the bottom-right dock on desktop and
+    // the Economy sheet (the right aside) on a phone.
+    if (plantCard) {
+      const home = phone ? rightAside : brDock;
+      if (plantCard.parentElement !== home) home.appendChild(plantCard);
+    }
     // UI Space Age: on desktop the footer is gone; the bottom lane is the
     // drawer's tab strip (--dock-h, 36px).
     const resbarH = phone ? footer.offsetHeight : 36;
