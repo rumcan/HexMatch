@@ -35,8 +35,8 @@ import {
   FACTORY_FOOTPRINT,
 } from "./config";
 import {
-  DEFAULT_FACING, DEPOT_SPRITES, depotEntranceTiles, depotFacingAt, depotFacingFor, depotTiles,
-  depotsOverlap,
+  DEFAULT_FACING, DEPOT_SIZE, DEPOT_SPRITES, depotEntranceTiles, depotFacingAt, depotFacingFor,
+  depotTiles, depotsOverlap,
   industriesTouchingDepot, type DepotFacing,
 } from "./depot";
 import {
@@ -51,8 +51,12 @@ import {
 /** Orthogonal (edge-sharing) neighbour offsets — diagonals never qualify. */
 const DIR4 = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
 
-/** A Factory occupies FACTORY_FOOTPRINT; a truck Depot a 2×2 lot (depot.ts). */
-export const DEPOT_FOOTPRINT: [number, number] = [2, 2];
+/**
+ * A Factory occupies FACTORY_FOOTPRINT; a truck Depot its lot (depot.ts).
+ * F4 (#275): the lot size is the manifest's `truck_depot` footprint — the
+ * same 2×2 it always was, but derived, never hard-coded.
+ */
+export const DEPOT_FOOTPRINT: [number, number] = [...DEPOT_SIZE];
 
 export interface PlanFootprintTile {
   tx: number;
