@@ -33,6 +33,8 @@ import { tileToScreen } from "../game/config";
 import { worldToScreen, type Camera } from "./camera";
 import type { Atlas } from "./atlas";
 import { place, type DrawItem } from "./depth";
+import type { Grid } from "./grid";
+import { LEVEL_PX, cornerHeight, elevationActive } from "./elevation";
 
 type Ctx2D = CanvasRenderingContext2D;
 type Surface = HTMLCanvasElement | OffscreenCanvas;
@@ -380,6 +382,13 @@ const strokePx = (z: number, weight: number) =>
 export class PlacementOverlay {
   style: OverlayStyle = DEFAULT_OVERLAY_STYLE;
   /**
+   * E3 (#269): the map the overlay is drawn over. Set by the renderer each
+   * frame (its `world.grid`); the footprint corners and the ghost lift onto
+   * the terrain through it, and a null/flat grid is the identity (the overlay
+   * sits exactly where it always has).
+   */
+  grid: Grid | null = null;
+  /**
    * QoL: honour the OS "reduce motion" setting. The pulse, the marching reach
    * band and the ghost's bob are all decoration; with this on they freeze at
    * their resting value and every static property (colour, shape, position)
@@ -467,7 +476,13 @@ export class PlacementOverlay {
   /** Screen position of a tile-corner lattice point. */
   private corner(cam: Camera, c: readonly [number, number]): [number, number] {
     const [wx, wy] = tileToScreen(c[0], c[1]);
-    return worldToScreen(cam, wx, wy);
+    // E3 (#269): raise the corner onto the terrain by its own lattice height,
+    // so a footprint outline hugs the drawn ground exactly (the ground itself
+    // is painted from this same corner lattice). Flat map → cornerHeight 0.
+    const lift = this.grid && elevationActive(this.grid)
+      ? cornerHeight(this.grid, c[0], c[1]) * LEVEL_PX
+      : 0;
+    return worldToScreen(cam, wx, wy - lift);
   }
 
   private paintReach(
@@ -604,7 +619,7 @@ export class PlacementOverlay {
     const s = this.style;
     const z = cam.zoom;
     const tone = ghost.valid ? s.valid : s.bad;
-    const placed = place(atlas, { sprite: ghost.sprite, tx: ghost.tx, ty: ghost.ty });
+    const placed = place(atlas, { sprite: ghost.sprite, tx: ghost.tx, ty: ghost.ty }, this.grid);
     if (!placed) return false;
     const b = siteLoops.length ? loopsBounds(cam, siteLoops) : null;
     if (b) {

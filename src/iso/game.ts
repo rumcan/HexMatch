@@ -92,6 +92,7 @@ import {
   bootZoomFor, tapSlop,
   type Camera, type GestureState,
 } from "./camera";
+import { LEVEL_PX, elevationActive, tileSurfaceHeight } from "./elevation";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { coarsePointer } from "./touch";
 import { IsoRenderer, type World } from "./renderer";
@@ -1826,7 +1827,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const tileScreenCss = (tx: number, ty: number): [number, number] => {
     const [x, y] = tileToScreenAt(cam, tx, ty);
     const d = dpr();
-    return [x / d, y / d];
+    // E3 (#269): a float/label over a raised tile must rise with it. Lift the
+    // anchor by the surface height of the tile under it (sampled at the tile
+    // centre, never a shared corner). Flat map → lift 0, position unchanged.
+    const lift = elevationActive(grid)
+      ? tileSurfaceHeight(grid, Math.floor(tx), Math.floor(ty)) * LEVEL_PX
+      : 0;
+    return [x / d, (y - lift) / d];
   };
   const floats: FloatLayer = createFloatLayer(ui.mapHost, tileScreenCss);
   const labels: LabelLayer = createLabelLayer(ui.mapHost, tileScreenCss);
@@ -12341,8 +12348,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  stack (and its ✕) without playing a whole round. */
     toast: (text: string, kind: Toast["kind"] = "info") => toast(text, kind),
     /** Screen position (device px, live camera) of a tile's drawn diamond
-     *  centre — clicking it hits that tile (renderer.flatPick, N4). */
-    tileScreenAt: (tx: number, ty: number) => tileToScreenAt(cam, tx, ty),
+     *  centre — clicking it hits that tile (renderer.pickTile, N4). E3 (#269):
+     *  lifted by the tile's surface height so the point is where the raised
+     *  tile is actually drawn, and `pickTile` resolves it back to this tile. */
+    tileScreenAt: (tx: number, ty: number) => {
+      const [x, y] = tileToScreenAt(cam, tx, ty);
+      const lift = elevationActive(grid)
+        ? tileSurfaceHeight(grid, tx, ty) * LEVEL_PX
+        : 0;
+      return [x, y - lift] as [number, number];
+    },
     /**
      * RAIL-05 (#182): the screenshot twin of panning and zooming by hand —
      * centre the camera on a tile, optionally at one of the zoom steps (the
