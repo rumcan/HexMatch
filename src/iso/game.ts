@@ -81,6 +81,10 @@ import {
 } from "./graphics";
 import { createTiltShiftPass } from "./miniature";
 import { createMinimap, minimapSceneOf, type MinimapMarker } from "./minimap";
+import {
+  createSabotageEventWindow, collectSabotageEvents, sabotageEventsToMarkers,
+  type Protest,
+} from "./protest";
 import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
@@ -1943,6 +1947,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     upgradeMarkers.frame();
   }
 
+  // M2 (#256): active protests on public roads
+  const protests = new Map<number, Protest>();
+
   // M1 (#254): the minimap — its own module (src/iso/minimap.ts) on the HUD's
   // plate. It reads the world by reference and redraws each layer only when
   // its key moves (terrain: this map; network: netVersion + rail.revision;
@@ -1960,6 +1967,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // Seat colours by owner id — the same blue/red split the depots wear.
     ownerColour: (id) => players[id - 1]?.colour,
   });
+
+  // M2 (#256): Sabotage Event Window — opens on clicking a sabotage marker on the minimap
+  const sabotageWindow = createSabotageEventWindow({
+    host: ui.el,
+    onGoTo: (tx, ty) => minimap.goTo(tx, ty),
+    resolvePlayerName: (id) => {
+      if (id === me.id || id === "you") return "You";
+      const p = players.find((pl) => pl.id === id);
+      return p?.name ?? (id === rival.id || id === "ai" ? "Rival" : id);
+    },
+  });
+
+  minimap.onMarker = (marker) => {
+    const now = performance.now();
+    const source = {
+      protests: protests.values(),
+      industries: grid.industries,
+      players,
+      now,
+    };
+    const events = collectSabotageEvents(source);
+    const ev = events.find((e) => e.id === marker.id);
+    if (ev) {
+      sabotageWindow.open(ev);
+    }
+  };
 
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
   let atlasRef: Atlas | null = null;
@@ -4830,8 +4863,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   //     clock, and `protestedDepot` below is where it does.
   //
   // It blocks YOUR routes too — that is the card's whole tension.
-  interface Protest { tx: number; ty: number; until: number; owner: string }
-  const protests = new Map<number, Protest>();
+  // Protests live in the `protests` map hoisted above.
   /**
    * L9 (#224): is this depot's route cut by a protest right now?
    *
@@ -5510,6 +5542,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const target = grid.industries[p.industryId];
       if (target) {
         target.banditUntil = p.until;
+        target.banditOwner = p.attackerId;
         const def = INDUSTRY_BY_KEY[target.type];
         floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
         toast(`The Blockade landed on ${def?.name ?? "the industry"} — its depots stop ticking.`, "bad");
@@ -6046,6 +6079,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return true;
       }
       target.banditUntil = now + BANDIT_MS;
+      target.banditOwner = actor.id;
       const def = INDUSTRY_BY_KEY[target.type];
       // L9 (#224): re-worded against the CLOCK economy — a blockade is not
       // "no one may harvest" any more (nobody harvests by hand), it is "every
@@ -6914,6 +6948,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // hire above is already spent either way).
     if (offerFightOff("blockade", rival.id, target.id, undefined, now + BANDIT_MS)) return;
     target.banditUntil = now + BANDIT_MS;
+    target.banditOwner = rival.id;
     const def = INDUSTRY_BY_KEY[target.type];
     floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
     toast(`The rival blockaded your ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "bad");
@@ -7406,7 +7441,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const blockadesWire = (now = performance.now()) =>
     grid.industries
       .filter((ind) => ind.banditUntil > now)
-      .map((ind) => ({ id: ind.id, until: ind.banditUntil }));
+      .map((ind) => ({ id: ind.id, until: ind.banditUntil, owner: ind.banditOwner }));
 
   /**
    * GUEST: adopt the host's Blockade set wholesale. The host is authoritative
@@ -7414,9 +7449,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * blockade has to clear on the guest too, or its map keeps showing a
    * stoppage the host has already forgotten.
    */
-  function applyBlockadesWire(list: { id: number; until: number }[]): void {
-    const byId = new Map(list.map((b) => [b.id, b.until]));
-    for (const ind of grid.industries) ind.banditUntil = byId.get(ind.id) ?? 0;
+  function applyBlockadesWire(list: { id: number; until: number; owner?: string }[]): void {
+    const byId = new Map(list.map((b) => [b.id, b]));
+    for (const ind of grid.industries) {
+      const b = byId.get(ind.id);
+      ind.banditUntil = b ? b.until : 0;
+      ind.banditOwner = b ? b.owner : undefined;
+    }
   }
 
   const inSetup = () => phase === "setup-factory" || phase === "setup-harvester";
@@ -11016,6 +11055,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       labels.frame();
     upgradeMarkers.frame();
       paintUi(t);
+      // M2 (#256): update live sabotage markers and the event window countdown.
+      const sabotageEvents = collectSabotageEvents({
+        protests: protests.values(),
+        industries: grid.industries,
+        players,
+        now: t,
+      });
+      minimap.setMarkers(sabotageEventsToMarkers(sabotageEvents, players, t));
+      sabotageWindow.update(t, sabotageEvents);
+
       // M1 (#254): last in the frame. With the camera still and the network
       // unchanged this is a key compare; hidden, it returns at once. It
       // catches its own errors, so it can never cost the map a frame.
@@ -11820,6 +11869,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         goTo: (tx: number, ty: number) => minimap.goTo(tx, ty),
       };
     },
+    get sabotageEventWindow() { return sabotageWindow; },
     /**
      * E14: what a pointer event at a CANVAS point (device px, the same space
      * `pos()` hands the click handlers) resolves to — literally
@@ -12162,6 +12212,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // match's state).
     gfxUnsub();
     mini.destroy();
+    sabotageWindow.destroy();
     minimap.destroy();
     // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
     // open sheet is destroyed rather than orphaned over a dead board.
