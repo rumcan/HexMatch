@@ -2740,6 +2740,97 @@ html, body, #root {
 .big-btn.danger:hover { box-shadow: 0 0 26px -6px rgba(226, 112, 79, .7), 0 8px 20px rgba(0, 0, 0, .6); }
 .confirm-row { display: flex; gap: 10px; justify-content: center; }
 
+/* ── MON-1 (#367): the Store panel ───────────────────────────────────────
+   One projector (game/store-panel.ts) over BOTH doors — the main menu's
+   Store door and the in-game ☰ row — so the plate is stock `.modal box` and
+   only the rows are new language. The rows are ledger lines, like the
+   taxman's, because that is what they are: an item, a price, a signature.
+   ART: the `.store-icon` glyphs are PLACEHOLDERS standing in for one 96×96
+   brass plate per item (see the PR's art request). */
+.store-modal { max-width: 620px; text-align: left; }
+.store-modal h2 { justify-content: safe center; }
+.store-modal .sub { margin-bottom: 10px; }
+.store-purse {
+  margin: 0 0 4px; font-family: var(--mono); font-size: 12px;
+  letter-spacing: .8px; color: var(--brass-hi); font-variant-numeric: tabular-nums;
+}
+.store-topup {
+  display: inline-block; margin: 0 0 12px; padding: 5px 12px; cursor: pointer;
+  font-family: var(--serif); font-size: 11px; font-weight: 600; letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--txt-dim);
+  background: linear-gradient(180deg, rgba(58, 44, 28, .5), rgba(12, 9, 6, .86));
+  border: 1px solid var(--brass-lo); border-radius: var(--r);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .1);
+  transition: color .15s, border-color .15s, box-shadow .15s;
+}
+.store-topup:hover { color: var(--brass-hi); border-color: var(--brass); box-shadow: 0 0 16px -4px rgba(255, 176, 46, .55); }
+.store-items { display: flex; flex-direction: column; gap: 6px; }
+.store-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  background:
+    var(--ledger) center / cover no-repeat,
+    linear-gradient(180deg, rgba(208, 186, 146, .92), rgba(170, 146, 108, .88));
+  background-blend-mode: multiply, normal;
+  border: 1px solid rgba(58, 40, 20, .55); border-radius: 2px;
+  color: #1e1509;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 3px 12px rgba(0, 0, 0, .45);
+}
+.store-row.owned { filter: saturate(.75) brightness(.96); }
+.store-icon {
+  flex: 0 0 auto; display: grid; place-items: center; width: 42px; height: 42px;
+  font-size: 22px; line-height: 1;
+  /* ART: the plate the glyph is standing in for goes here as a background. */
+  background: rgba(48, 34, 16, .18);
+  border: 1px solid rgba(58, 40, 20, .45); border-radius: 2px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
+}
+.store-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.store-name {
+  font-family: var(--serif); font-size: 13px; font-weight: 700;
+  letter-spacing: 1.4px; text-transform: uppercase; color: #20160a;
+}
+.store-unlocks { font-size: 11.5px; line-height: 1.45; color: #3a2a14; }
+.store-soon {
+  margin-top: 2px; font-family: var(--mono); font-size: 10px;
+  letter-spacing: .6px; text-transform: uppercase; color: #5a4526;
+}
+.store-rowmsg { font-family: var(--mono); font-size: 10.5px; letter-spacing: .4px; }
+.store-rowmsg.ok { color: #1c4a1c; }
+.store-rowmsg.bad { color: #7a2b12; }
+.store-side { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+.store-price {
+  font-family: var(--mono); font-size: 12px; color: #2a1d0c;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.store-buy {
+  min-width: 104px; padding: 7px 13px; cursor: pointer;
+  font-family: var(--serif); font-weight: 700; font-size: 11.5px;
+  letter-spacing: 1.6px; text-transform: uppercase; color: #171004;
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass));
+  border: 1px solid var(--brass); border-radius: var(--r);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 16px -3px rgba(255, 176, 46, .6);
+  transition: filter .15s, transform .12s;
+}
+.store-buy:hover { filter: brightness(1.12); }
+.store-buy:active { transform: translateY(1px); }
+.store-buy:disabled {
+  cursor: not-allowed; filter: grayscale(.6); transform: none;
+  color: var(--txt-dim); background: linear-gradient(180deg, rgba(58, 44, 28, .5), rgba(12, 9, 6, .86));
+  border-color: var(--brass-lo); box-shadow: inset 0 1px 0 rgba(242, 220, 166, .08);
+}
+/* the store that cannot be reached: rows stay legible, buttons go quiet, and
+   the copy above says why — an unavailable unlock is never a locked game */
+.store-sheet.is-unavailable .store-row { filter: grayscale(.4) brightness(.92); }
+.store-sheet.is-mock .store-modal { border-color: rgba(120, 200, 255, .5); }
+.store-msg { min-height: 14px; margin: 10px 0 0; font-family: var(--mono); font-size: 11px; color: var(--brass-hi); }
+/* MOBILE-01: the price and the button stack under the copy on a phone. */
+@media (max-width: 560px) {
+  .store-row { flex-wrap: wrap; }
+  .store-side { width: 100%; justify-content: space-between; }
+  .store-buy { flex: 1; }
+}
+
 /* taxman — the collection, itemised on the ledger */
 .tax-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .tax-row {
