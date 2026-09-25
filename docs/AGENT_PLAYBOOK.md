@@ -126,6 +126,10 @@ one. "Hot files" are the ones two tickets must not both rewrite at once.
 | **8** | #268 E4 Slope rules & uphill costs | `track.ts`, `rail.ts`, `ai.ts`, costs | #269 |
 | **9** | ROADS-45 Angled roads (optional — owner decides) | `track.ts`, `road-geometry.ts`, `vehicles.ts`, `ai.ts` | #266, #268 |
 | **10** | #252 B7 Battle balance & onboarding | `battle*.ts`, config, docs | everything that changes the economy |
+| **11** | #382 ART-2 Thick dithered water/sand/grass blend | `ground.ts`, `coastline.ts`, ground chunk cache | — |
+| 11 | #383 UX-FIX Difficulty picker shows code comments | `skill-picker.ts`, `skill.ts`, `ui.ts` selector | — |
+| 11 | #384 TEST-1 Dam unit tests | new `tests/unit/iso-dams.test.ts` (tests only) | — |
+| (held) | Minimap / chat dock overlap in multiplayer | `minimap.ts`, chat dock | waits for the lead's check of the #254 agent's work |
 
 Why this order: rivers need the new water art; bridges need rivers; dams need
 bridges; elevation comes after rivers so rivers can later run downhill;
@@ -426,6 +430,26 @@ background, with a 10-minute cap.
 ```
 
 ---
+
+### #382 — ART-2 Thick dithered terrain blend  (wave 11)
+```text
+Ticket #382. The renderer restriction is LIFTED for src/iso/ground.ts and
+src/iso/coastline.ts only. Bake into the cached ground chunks; never per frame.
+Targeted tests: tests/unit/iso-renderer-cache.test.ts, tests/unit/iso-depth-performance.test.ts,
+tests/unit/iso-elevation.test.ts + a new tests/unit/iso-ground-blend.test.ts.
+```
+
+### #383 — UX-FIX Difficulty picker code comments  (wave 11)
+```text
+Ticket #383. Reproduce first; fix at the source; ship the guard test either way.
+Targeted tests: tests/unit/iso-skill-picker.test.ts + a new tests/unit/ui-copy-guard.test.ts.
+```
+
+### #384 — TEST-1 Dam unit tests  (wave 11)
+```text
+Ticket #384. Tests only; a real bug found = its own small commit.
+Targeted tests: the new tests/unit/iso-dams.test.ts, tests/unit/iso-bridges.test.ts.
+```
 
 ## 6. Wave 0 — housekeeping (done 2026-09-24)
 
