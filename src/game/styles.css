@@ -5557,10 +5557,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .battle-turns { font-family: var(--serif, serif); font-size: 11px; color: var(--ink2, #b3bbbd); letter-spacing: .5px; }
 /* 2026-09: city-pick mode — the town halls you can upgrade glow */
 .label-upgrade {
-  background: rgb(var(--c-bone) / 1) !important; color: #0f1516 !important;
-  font-weight: 700; border: 1px solid rgb(var(--c-bone) / 1) !important;
-  box-shadow: none;
-  animation: coach-pulse 1.4s ease-in-out infinite;
+  background: var(--sa-lemon, #f2d64b) !important; color: var(--sa-on-lemon, #2b2604) !important;
+  font-weight: 500; border: 1px solid var(--sa-lemon, #f2d64b) !important;
+  box-shadow: none !important; text-shadow: none !important; filter: none !important;
+  animation: none;
 }
 
 /* 2026-09: the ex-typewriter text keeps its figures in columns */
