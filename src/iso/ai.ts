@@ -56,7 +56,7 @@ import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { distanceFactorForPath } from "./loop";
 // L17 (#245): the bank is back (3:1) — the rival's planner is real again.
 import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
-import { FIELD_OCC, ROUGH, factoryTouchesTown, type Grid, type Industry } from "./grid";
+import { FIELD_OCC, ROUGH, factoryTouchesTown, rotatedSpan, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
@@ -1329,30 +1329,33 @@ export function laneRichness(grid: Grid, x: number, y: number): number {
  */
 export function chooseRivalFactorySpot(
   grid: Grid, track: Track, awayFrom: [number, number], opts: RivalSpotOptions,
-): [number, number] | null {
-  const [fw, fh] = FACTORY_FOOTPRINT;
-  const spots: { x: number; y: number; paved: boolean; town: boolean; d: number }[] = [];
-  for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
-    for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
-      // check all tiles of the Factory footprint (FACTORY_FOOTPRINT)
-      let allDirt = true, allPaved = true;
-      for (let dy = 0; dy < fh; dy++) {
-        for (let dx = 0; dx < fw; dx++) {
-          if (!canBuildOn(grid, "dirt", x + dx, y + dy)) allDirt = false;
-          if (!canBuildOn(grid, "road", x + dx, y + dy)) allPaved = false;
+): [number, number, number] | null {
+  // F3: try both orientations
+  const spots: { x: number; y: number; rot: number; paved: boolean; town: boolean; d: number }[] = [];
+  for (const rot of [0, 1]) {
+    const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+    for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
+      for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
+        // check all tiles of the Factory footprint (FACTORY_FOOTPRINT), rotated
+        let allDirt = true, allPaved = true;
+        for (let dy = 0; dy < fh; dy++) {
+          for (let dx = 0; dx < fw; dx++) {
+            if (!canBuildOn(grid, "dirt", x + dx, y + dy)) allDirt = false;
+            if (!canBuildOn(grid, "road", x + dx, y + dy)) allPaved = false;
+          }
         }
+        if (!allDirt) continue;
+        // PP-02: only footprints that touch a town (by an edge) are legal
+        // Factory sites. The pool is restricted to these so the rival can never
+        // be handed a tile far from a town — even through the fallback below.
+        const town = factoryTouchesTown(grid, x, y, rot);
+        spots.push({
+          x, y, rot,
+          paved: allPaved,
+          town,
+          d: Math.abs(x - awayFrom[0]) + Math.abs(y - awayFrom[1]),
+        });
       }
-      if (!allDirt) continue;
-      // PP-02: only footprints that touch a town (by an edge) are legal
-      // Factory sites. The pool is restricted to these so the rival can never
-      // be handed a tile far from a town — even through the fallback below.
-      const town = factoryTouchesTown(grid, x, y);
-      spots.push({
-        x, y,
-        paved: allPaved,
-        town,
-        d: Math.abs(x - awayFrom[0]) + Math.abs(y - awayFrom[1]),
-      });
     }
   }
   if (!spots.length) return null;
@@ -1363,9 +1366,14 @@ export function chooseRivalFactorySpot(
   const townSpots = spots.filter((s) => s.town);
   if (!townSpots.length) return null;
   // Reserve the player's whole Factory footprint, not just its origin tile.
-  const apart = townSpots.filter((s) =>
-    s.x + fw <= awayFrom[0] || awayFrom[0] + fw <= s.x
-    || s.y + fh <= awayFrom[1] || awayFrom[1] + fh <= s.y);
+  // F3: footprint size depends on rot.
+  const apart = townSpots.filter((s) => {
+    const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], s.rot);
+    const [afw, afh] = FACTORY_FOOTPRINT; // awayFrom is player's factory, assume rot 0 for distance check (conservative)
+    // For simplicity, use player's factory as 2x2? Actually factory is 2x2 in current config, but use FACTORY_FOOTPRINT
+    return s.x + fw <= awayFrom[0] || awayFrom[0] + afw <= s.x
+      || s.y + fh <= awayFrom[1] || awayFrom[1] + afh <= s.y;
+  });
   const ranked = apart.length ? apart : townSpots;
   ranked.sort((a, b) =>
     Number(b.paved) - Number(a.paved) || b.d - a.d || tIdx(a.x, a.y) - tIdx(b.x, b.y));
@@ -1410,6 +1418,7 @@ export function chooseRivalFactorySpot(
     if (emptyTrack && !targets.some(([x, y]) => Math.abs(x - s.x) + Math.abs(y - s.y) + 1 <= maxOpening)) continue;
     if (probed++ >= tries) break;
     probe.tx = s.x; probe.ty = s.y;
+    (probe as any).rot = s.rot;
     // PP-05: the probe models the rival's OPENING turn — no harvesters yet —
     // so the Depot it would place rides on the free allowance, exactly as the
     // human's setup Depot does.
@@ -1422,12 +1431,12 @@ export function chooseRivalFactorySpot(
     const rich = laneRichness(grid, s.x, s.y);
     if (!best || rich > best.rich) best = { s, rich };
     // the richest lane the scale knows — take it and stop probing
-    if (best && best.rich >= LANE_CARGOS.size) return [best.s.x, best.s.y];
+    if (best && best.rich >= LANE_CARGOS.size) return [best.s.x, best.s.y, best.s.rot];
   }
-  if (best) return [best.s.x, best.s.y];
+  if (best) return [best.s.x, best.s.y, best.s.rot];
   // No probe found a plan (nothing affordable from anywhere): fall back to the
   // best-ranked tile so the rival still exists on the board.
-  return [ranked[0].x, ranked[0].y];
+  return [ranked[0].x, ranked[0].y, ranked[0].rot];
 }
 
 // ── execution ─────────────────────────────────────────────────────────────

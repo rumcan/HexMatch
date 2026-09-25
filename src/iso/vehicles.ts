@@ -166,7 +166,7 @@ export function roadDeliveryForHarvester(
   const route = roadPath(
     eco.track, h.ownerId,
     depotShoulders(eco.track, h.ownerId, h),
-    new Set(plantShoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty)
+    new Set(plantShoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty, conn.factory.rot ?? 0)
       .map(([x, y]) => tIdx(x, y))),
   );
   if (!route) return null;
