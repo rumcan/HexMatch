@@ -5847,6 +5847,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(242, 220, 166, .2), 0 0 14px -3px rgba(255, 176, 46, .55);
 }
 
+/* MUSIC-1 (#377): the dock is a flex item at the very end of the top bar's
+   right cluster (ui.ts mounts it there), not a floating layer. */
+.topbar .radio-dock {
+  position: static; top: auto; right: auto; z-index: auto;
+  order: 99; margin-left: 6px; display: flex; align-items: center;
+}
 /* ══ MUSIC-1 (#377) — the mini radio ═══════════════════════════════════
    One compact pill in the very top-right of the game interface, and one round
    ▶/⏸ key on a phone.

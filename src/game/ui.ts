@@ -939,7 +939,6 @@ export function createOriginalUi(
   // this file's markup.
   const radioHost = h("div", "radio-dock");
   radioHost.id = "iso-radio-dock";
-  root.appendChild(radioHost);
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
@@ -1035,6 +1034,9 @@ export function createOriginalUi(
   helpBtn.onclick = () => helpModal();
   right.appendChild(helpBtn);
   top.appendChild(right);
+  // MUSIC-1 (#377): the radio lives IN the top bar, at its far right end —
+  // a floating dock under the bar sat over the side panel's tab row.
+  right.appendChild(radioHost);
   root.appendChild(top);
 
   // ── footer: resources ─────────────────────────────────────────────────────
