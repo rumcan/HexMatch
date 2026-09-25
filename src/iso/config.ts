@@ -78,6 +78,54 @@ export const DISTANCE = {
 } as const;
 
 /**
+ * E4 (#268) — THE slope table: what a climb costs, for track, for vehicles and
+ * for the clock. Elevation is an option (`MapGenOptions.elevation`); with it
+ * OFF every number here is inert and the game is byte-for-byte what it was
+ * (`elevationActive` gates every reader — see `slopes.ts`).
+ *
+ * Levels are the generator's own 0–4 tile levels (`Grid.height`): sea and
+ * rivers 0, coasts low, hills inland, and neighbours never more than one level
+ * apart. The rules are therefore about *how fast* a line may climb, not about
+ * whether a single step exists:
+ *
+ *   • roadMaxStep 1 — a road may climb one level between two adjacent tiles.
+ *     That is the generator's own limit, so a road may go anywhere the map
+ *     can draw a new route; it is also the TTD convention (a road climbs a
+ *     slope face per tile).
+ *   • railMaxStep 1 / railRampRun 3 — rail climbs only on a GENTLE ramp: a
+ *     level change needs 3 tiles of run, i.e. two level changes may never sit
+ *     closer than 3 steps apart. Why 3: the map's own hillside rises one level
+ *     every ~10 tiles of inland distance, so a 3-tile ramp is already three
+ *     times steeper than the terrain ever needs, while the generator's ±1
+ *     jitter (a one-tile cliff; 26% of adjacent pairs on seed 1337) is exactly
+ *     what the rule refuses. With it, every tile of a 144×144 elevation map is
+ *     still reachable by rail (measured — see docs/railway-balance.md), so the
+ *     rule prices the sharp way up without ever walling a district off.
+ *   • climbTiles 2 — the L3 distance factor (#217) counts every level a route
+ *     climbs as extra distance: up or down (a loaded lorry pays for the hill
+ *     either way), 2 tile-equivalents per level. Four levels is the whole map
+ *     height, so the steepest possible detour is +8 tile-equivalents — one
+ *     whole distance band on a near route, which is the point: a depot up a
+ *     hill ticks slower than the same length of flat road.
+ *   • uphillSlow 1 — the visible half: a lorry or a train moves at
+ *     `1 / (1 + uphillSlow × levels climbed)` while it is climbing (halved for
+ *     one level, a third for two), and at full speed on the flat and downhill.
+ *     Presentation only — the clock is paid by `climbTiles`, never by this.
+ */
+export const SLOPES = {
+  /** Levels a ROAD may climb between two adjacent tiles. */
+  roadMaxStep: 1,
+  /** Levels a RAIL step may ever change by, ramp or not. */
+  railMaxStep: 1,
+  /** Tiles of run a one-level rail climb needs (level changes ≥ this far apart). */
+  railRampRun: 3,
+  /** Tile-equivalents of extra distance per level of climb, up or down. */
+  climbTiles: 2,
+  /** Speed divisor rate while climbing: speed × 1 / (1 + uphillSlow × levels). */
+  uphillSlow: 1,
+} as const;
+
+/**
  * L4 (#218) — THE tuning-session table. One session per depot, opened by
  * building it, played on the plant board and closed by the budget running out
  * (or by the player finishing early): the session's score is read off into a
