@@ -55,10 +55,12 @@ import {
 } from "../game/battle-mp";
 import type { BattleMove, BattleSeat } from "../game/battle";
 import { chooseBattleMove } from "./battle-ai";
+import { showBattleHowto, takeFirstBattleHint } from "./battle-howto";
 // B5 (#250): the map's battle layer — challenges, conquests, fight-offs and
 // the cooldowns that pace them (pure bookkeeping in battle-map.ts).
 import {
   createChallengeState, canChallenge, canChallengeTown, markChallenge, markRivalChallenge,
+  contestedIndustries, contestedTowns, battleCooldownLeft, fmtBattleCooldown,
   rivalChallengeDue, settleMapBattle, unlockTownHold,
   pickRivalChallengeTarget, challengeRefusalText, isComeback, hasOpenPlant,
   cheapestSale, applySale, listSales,
@@ -2075,6 +2077,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   });
 
   minimap.onMarker = (marker) => {
+    // B7 (#252): a contested site's dot opens that site's card
+    const contest = /^contest:(ind|town):(\d+)$/.exec(marker.id);
+    if (contest) {
+      const id = Number(contest[2]);
+      if (contest[1] === "ind") { const ind = grid.industries[id]; if (ind) showIndustryCard(ind); }
+      else { const tw = grid.towns[id]; if (tw) showTownCard(tw); }
+      return;
+    }
     const now = performance.now();
     const source = {
       protests: protests.values(),
@@ -2868,20 +2878,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * owner. Runs inside `syncWorld`, so any build/demolish/snapshot that
    * changes who stands where updates the tags on the same beat.
    */
+  /**
+   * B7 (#252): the viewer's challenge clock as the contested tags print it
+   * ("1:20"), or "" while they may fight. Written by the frame loop (which
+   * owns the clock and re-syncs the tags when the text changes), read here —
+   * `syncLabels` also runs during boot, before the challenge state exists.
+   */
+  let contestClock = "";
+  /** B7: the contested-site set + clock the tags last printed (frame-loop key). */
+  let contestKey = "";
   const syncLabels = () => {
     const entries: LabelEntry[] = [];
+    // B7 (#252): a site someone has WON a battle over wears ⚔ (and, while the
+    // viewer's challenge clock runs, when they may fight again)
+    const contested = contestedIndustries(eco);
+    const contestedT = contestedTowns(eco);
+    const sword = (name: string) => `⚔ ${name}${contestClock ? ` · ${contestClock}` : ""}`;
     for (const ind of grid.industries) {
       const def = INDUSTRY_BY_KEY[ind.type];
+      const hot = contested.has(ind.id);
       entries.push({
         key: `ind-${ind.id}`,
-        name: def?.name ?? ind.type,
+        name: hot ? sword(def?.name ?? ind.type) : (def?.name ?? ind.type),
         tx: ind.tx + ind.w / 2,
         ty: ind.ty + ind.h / 2,
-        cls: "label-industry",
+        cls: hot ? "label-industry label-contested" : "label-industry",
       });
     }
     for (const t of grid.towns) {
-      entries.push({ key: `town-${t.id}`, name: "Town", tx: t.tx, ty: t.ty, cls: "label-town" });
+      const hot = contestedT.has(t.id);
+      entries.push({
+        key: `town-${t.id}`, name: hot ? sword("Town") : "Town", tx: t.tx, ty: t.ty,
+        cls: hot ? "label-town label-contested" : "label-town",
+      });
     }
     for (const f of eco.factories) {
       entries.push({
@@ -2962,6 +2991,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             : `${names || "A"} Depot cut off · ${vpDeltaText(b.vp)}`)
           : source === "level"
             ? (gained ? `Depot at top level · ${vpDeltaText(b.vp)}` : `Top-level Depot lost · ${vpDeltaText(b.vp)}`)
+          // B7 (#252): the battle route — held, and (the one a player can act
+          // on) lost to the next fight there
+          : source === "hold"
+            ? (gained
+              ? `Contested site held · ${vpDeltaText(b.vp)}`
+              : `Contested site lost · ${vpDeltaText(b.vp)}`)
           : source === "route"
             ? (gained
               ? `Route fully paved · ${vpDeltaText(b.vp)}`
@@ -3018,6 +3053,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // L13 (#228): the winning line names the sources the LIVE table paid.
         const how = newLoop
           ? `${b.types} depot type${b.types === 1 ? "" : "s"}, ${b.rungs} rung${b.rungs === 1 ? "" : "s"}, ${b.city} city upgrade${b.city === 1 ? "" : "s"}`
+            + (b.holds > 0 ? `, ${b.holds} contested site${b.holds === 1 ? "" : "s"} held` : "")
           : `${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"}`;
         toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ (${how})`,
           p.human ? "good" : "bad");
@@ -5572,12 +5608,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : { win: `You hold ${town}.`, lose: `They operate out of ${town} too now — its upgrades lock.`, draw };
   }
 
+  /**
+   * B7 (#252): every battle screen gets the "?" (How to Play) and — on the
+   * first battle this browser has ever shown — the one-time hint strip.
+   */
+  const battleOnboarding = () => ({
+    onHelp: () => { showBattleHowto(); },
+    firstHint: takeFirstBattleHint(),
+  });
+
   function openMapBattle(stake: MapBattleStake, seed: number, stakeText: string): void {
     mapStake = stake;
     const screen = startBattleScreen(seed, [
       { id: me.id, name: me.name, portrait: portraitYou, depots: mapDepotCargos(me.i + 1) },
       { id: rival.id, name: rival.name, portrait: portraitVex, depots: mapDepotCargos(2 - me.i) },
     ], {
+      ...battleOnboarding(),
       stake: stakeText,
       consequence: battleConsequence(stake),
       // B4 (#249): the rival fights its live skill's line — watchable.
@@ -5588,19 +5634,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         mapStake = null;
         if (!s) return;
         // `result.winner` is the SEAT (0 = the player, the contender list's
-        // first entry). `settleMapBattle` speaks for the challenger (industry
-        // stakes) or the defender (fight-offs).
+        // first entry). `settleMapBattle` speaks for the CHALLENGER (industry
+        // and town stakes) or the defender (fight-offs).
+        // B7 (#252): this used to call `settleMapBattle` directly — so a solo
+        // battle never rescored (the ★ lagged until the next build), a lost
+        // town never closed its plant's tiers, and a town stake the RIVAL
+        // called was read from the player's side. It now settles exactly as
+        // the multiplayer `settleDuel` does, and a draw is a draw (it used
+        // to count as the defender's win).
         const iWon = result.winner === 0;
-        const won = !result.over ? null
-          : s.kind === "industry"
-            ? (s.challengerId === me.id ? iWon : !iWon)
-            : iWon;
-        const verdict = settleMapBattle(eco, s, won);
-        if (verdict === "conquest") toast("The industry is yours — your depots draw from it now.", "good");
-        else if (verdict === "held") toast("They held the industry.", "bad");
-        else if (verdict === "draw") toast("A draw — the map stands.", "info");
-        else if (verdict === "cancelled") toast("You fought it off — their Gold stays spent either way.", "good");
-        else if (verdict === "lands" && s.kind === "fightoff") landFightOff(s.pending, performance.now());
+        const won = !result.over || result.winner === null ? null
+          : s.kind === "fightoff" ? iWon
+            : (s.challengerId === me.id ? iWon : !iWon);
+        const verdict = finishStake(s, won);
+        if (verdict === "lands" && s.kind === "fightoff") landFightOff(s.pending, performance.now());
       },
     });
     battleScreen = screen;
@@ -6044,6 +6091,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : o.industryId < 0 ? "a friendly"
         : industryName(o.industryId);
     battleScreen = openBattleScreen({
+      ...battleOnboarding(),
       battle: d.battle,
       contenders: players,
       seat: 0,
@@ -6282,6 +6330,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const players = duelContenders();
     const d = duelFromWire(e, [players[0], players[1]]);
     const screen = openBattleScreen({
+      ...battleOnboarding(),
       battle: d.battle,
       contenders: players,
       seat: 1,
@@ -8991,6 +9040,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           `Depots running: ${b.types} × ${VICTORY.loop.type}★ = ${fmtVp(b.typeVp)}★`,
           `Fully paved routes: ${b.routes} × ${VICTORY.loop.route}★ = ${fmtVp(b.routeVp)}★`,
           `City upgrades: ${b.city} × ${VICTORY.loop.city}★ = ${fmtVp(b.cityVp)}★`,
+          // B7 (#252): the battle route, with its cap spelled out
+          `Contested sites held: ${b.holdsHeld}${b.holdsHeld > b.holds ? ` (${b.holds} pay)` : ""} × ${VICTORY.loop.hold}★ = ${fmtVp(b.holdVp)}★ (max ${VICTORY.loop.holdCap}★)`,
         ]
         : [
           `Paved road tiles: ${b.paved} × 0.25★ = ${fmtVp(b.pavedVp)}★`,
@@ -9690,6 +9741,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rights?.rights.length) {
       lines.push(`Rights: ${rights.rights.map((id) => seatName(id)).join(", ")}`);
     }
+    // B7 (#252): who holds it BY BATTLE (the Hold ★), and the viewer's clock
+    const won = contestedIndustries(eco).get(ind.id);
+    if (won) lines.push(`⚔ Last battle won by ${seatName(won)} (+${VICTORY.loop.hold}★ while held)`);
+    const wait = battleCooldownLeft(challengeState, now, me.id);
+    if (wait > 0) lines.push(`Your next challenge: ${fmtBattleCooldown(wait)}`);
     const sales = isComeback(eco, me.id) ? listSales(eco, me.id, pavedCountOf(me), me.townLevel) : [];
     showBattleCard(`industry:${ind.id}`, {
       title: def?.name ?? "Industry",
@@ -9732,6 +9788,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return mine ? "You" : "Unclaimed";
       })()}`,
       hold?.locked ? "Upgrades locked until won again." : "",
+      // B7 (#252): the battle holder (Hold ★) and the viewer's clock
+      hold?.holder ? `⚔ Last battle won by ${seatName(hold.holder)} (+${VICTORY.loop.hold}★ while held)` : "",
+      battleCooldownLeft(challengeState, now, me.id) > 0
+        ? `Your next challenge: ${fmtBattleCooldown(battleCooldownLeft(challengeState, now, me.id))}` : "",
     ].filter(Boolean);
     showBattleCard(`town:${t.id}`, {
       title: townName(t.id),
@@ -10679,6 +10739,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // runs, so all six go before the rebuild.
     score.paved.clear(); score.plants.clear(); score.vp.clear();
     score.types.clear(); score.rungs.clear(); score.city.clear();
+    score.holds.clear();   // B7 (#252): held contested sites are derived too
     rescore(eco, score, railPlatforms(), loopScoring());
     for (const p of players) starFed.set(p.id, Math.floor(vpFor(score, p.id)));
     phase = d.phase as typeof phase;
@@ -10804,6 +10865,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
     menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    // B7 (#252): the battle page, one tap from the same menu
+    menuItem("How battles work", "turns, mana, abilities, stakes", () => { showBattleHowto(); });
     // MON-1 (#367): the Store — the same panel the front door raises, over
     // the game root, one instance at a time. An unreachable store paints a
     // sentence and closes like any other sheet; it never blocks the match.
@@ -11588,7 +11651,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         players,
         now: t,
       });
-      minimap.setMarkers(sabotageEventsToMarkers(sabotageEvents, players, t));
+      // B7 (#252): contested sites ride the same plate — a dot in the
+      // standing winner's colour; a click opens the site's card. The tags'
+      // ⚔ text follows the viewer's challenge clock, re-synced only when the
+      // printed text would change (once a second at most).
+      const contestInd = contestedIndustries(eco);
+      const contestTown = contestedTowns(eco);
+      const cd = battleCooldownLeft(challengeState, t, me.id);
+      contestClock = cd > 0 ? fmtBattleCooldown(cd) : "";
+      const ck = `${[...contestInd].join(",")}|${[...contestTown].join(",")}|${contestClock}`;
+      if (ck !== contestKey) { contestKey = ck; syncLabels(); }
+      const colourOf = (id: string) => players.find((p) => p.id === id)?.colour ?? "#e0d2b0";
+      const contestMarkers: MinimapMarker[] = [
+        ...[...contestInd].flatMap(([id, who]) => {
+          const ind = grid.industries[id];
+          if (!ind) return [];
+          return [{
+            id: `contest:ind:${id}`, tx: ind.tx + Math.floor(ind.w / 2), ty: ind.ty + Math.floor(ind.h / 2),
+            color: colourOf(who), kind: "contest",
+            label: `⚔ ${INDUSTRY_BY_KEY[ind.type]?.name ?? "Industry"} — last battle won by ${seatName(who)}`,
+          }];
+        }),
+        ...[...contestTown].flatMap(([id, who]) => {
+          const tw = grid.towns[id];
+          if (!tw) return [];
+          return [{
+            id: `contest:town:${id}`, tx: tw.tx, ty: tw.ty, color: colourOf(who), kind: "contest",
+            label: `⚔ ${townName(id)} — last battle won by ${seatName(who)}`,
+          }];
+        }),
+      ];
+      minimap.setMarkers([...sabotageEventsToMarkers(sabotageEvents, players, t), ...contestMarkers]);
       sabotageWindow.update(t, sabotageEvents);
 
       // M1 (#254): last in the frame. With the camera still and the network

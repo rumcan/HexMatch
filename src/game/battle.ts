@@ -15,7 +15,9 @@
 //     not mana — matched gems feed mana, blasts feed damage);
 //   • a run of `rules.extraTurnMinMatch` (4+), a special shape (match-5 / L /
 //     T / cross) or a cascade of `rules.extraTurnOnCascade` passes grants an
-//     EXTRA TURN — otherwise the turn passes;
+//     EXTRA TURN — otherwise the turn passes. B7 (#252): at most
+//     `rules.extraTurnChain` extra turns in a row, so an opening can never
+//     chain itself into a one-sided knockout;
 //   • no legal move at the top of a turn → the board reshuffles (seeded) and
 //     the SAME player moves — a reshuffle is not a turn;
 //   • first to 0 health loses; failing that, `rules.turnLimit` resolved swaps
@@ -65,7 +67,18 @@ export interface BattlePlayer {
   extraTurn: boolean;
   /** Copy of the contender's depot cargos (ability ownership gate). */
   depots: Cargo[];
+  /**
+   * B7 (#252): this seat's full health — `rules.startHealth`, plus
+   * `rules.secondSeatHealth` for the seat that moves second. Repair heals up
+   * to it and the health bar is drawn against it. Absent on snapshots from
+   * before B7: read it through `maxHealthOf`.
+   */
+  maxHealth?: number;
 }
+
+/** B7 (#252): a seat's full health (older snapshots fall back to the rules). */
+export const maxHealthOf = (p: BattlePlayer, rules: BattleRules): number =>
+  p.maxHealth ?? rules.startHealth;
 
 export interface BattleState {
   players: [BattlePlayer, BattlePlayer];
@@ -91,6 +104,17 @@ export interface BattleState {
    * comes back to this seat. null = none standing.
    */
   obstaclesBy?: BattleSeat | null;
+  /**
+   * B7 (#252): extra turns the CURRENT mover has chained in a row. Reset
+   * whenever the turn passes; `rules.extraTurnChain` caps it.
+   */
+  chain?: number;
+  /**
+   * B7 (#252): obstacles a FREE Girders / Frost cast has armed — they drop
+   * the moment the caster's turn passes (never onto the caster's own swap),
+   * then lift when the turn comes back, like a turn-costing cast's do.
+   */
+  armed?: { seat: BattleSeat; girders: number; frost: number; frostHard: 1 | 2 } | null;
 }
 
 /** One entry in the replayable move log. B3 adds `{ t: "ability", … }`. */
@@ -133,9 +157,12 @@ export interface AbilityOutcome {
   heal: number;
   /** Gold Bribe: mana moved per cargo from the opponent. */
   stolen: Partial<Record<Cargo, number>>;
-  /** Iron Girders: girders actually placed (the board may hold fewer). */
+  /**
+   * Iron Girders: girders actually placed (the board may hold fewer). B7: a
+   * FREE cast reports the girders it ARMED — they drop when the turn passes.
+   */
   girders: number;
-  /** Frost: gems actually frozen. */
+  /** Frost: gems actually frozen (B7: a free cast — gems armed to freeze). */
   frozen: number;
   /** Smog: half-mana matches now pending on the opponent. */
   smog: number;
@@ -244,6 +271,17 @@ export function createBattle(opts: BattleOptions): Battle {
     }
   };
 
+  /** `withRng` for a synchronous body (the turn hand-over is synchronous). */
+  const withRngSync = <T>(fn: () => T): T => {
+    const prev = getRng();
+    setRng(rng);
+    try {
+      return fn();
+    } finally {
+      setRng(prev);
+    }
+  };
+
   const board = (() => {
     // The Board's constructor fills itself — construct it ON the battle's
     // stream so the opening layout is a function of the seed alone.
@@ -264,17 +302,23 @@ export function createBattle(opts: BattleOptions): Battle {
     }
   })();
 
-  const makePlayer = (c: BattleContender): BattlePlayer => ({
+  // B7 (#252): the seat that moves SECOND opens with `secondSeatHealth`
+  // extra health (start AND cap) — the first-move compensation: a damage race
+  // otherwise goes to whoever swings first.
+  const fullHealth = (seat: BattleSeat): number =>
+    rules.startHealth + (seat === 1 ? Math.max(0, Math.floor(rules.secondSeatHealth ?? 0)) : 0);
+  const makePlayer = (c: BattleContender, seat: BattleSeat): BattlePlayer => ({
     id: c.id,
     name: c.name,
-    health: rules.startHealth,
+    health: fullHealth(seat),
     mana: emptyMana(),
     extraTurn: false,
     depots: [...(c.depots ?? [])],
+    maxHealth: fullHealth(seat),
   });
 
   const state: BattleState = {
-    players: [makePlayer(opts.players[0]), makePlayer(opts.players[1])],
+    players: [makePlayer(opts.players[0], 0), makePlayer(opts.players[1], 1)],
     turn: 0,
     turns: 0,
     winner: null,
@@ -282,6 +326,8 @@ export function createBattle(opts: BattleOptions): Battle {
     smog: [0, 0],
     cooldowns: [{}, {}],
     obstaclesBy: null,
+    chain: 0,
+    armed: null,
   };
 
   const moves: BattleMove[] = [];
@@ -303,6 +349,8 @@ export function createBattle(opts: BattleOptions): Battle {
     const opp = state.players[1 - mover as BattleSeat];
     me.extraTurn = extraTurn;
     opp.extraTurn = false;
+    // B7: the chain counter follows the seat that keeps the turn.
+    state.chain = extraTurn ? (state.chain ?? 0) + 1 : 0;
     if (!extraTurn) state.turn = 1 - mover as BattleSeat;
     state.turns++;
     // Playtest (2026-09): the caster's obstacles lift when their turn returns
@@ -310,6 +358,14 @@ export function createBattle(opts: BattleOptions): Battle {
     if (state.obstaclesBy != null && state.turn === state.obstaclesBy) {
       board.clearObstacles();
       state.obstaclesBy = null;
+    }
+    // B7 (#252): a free Girders / Frost drops now that the caster's turn has
+    // passed — on the opponent's board only, lifted when the turn returns.
+    const armed = state.armed;
+    if (armed && state.turn !== armed.seat && !state.over) {
+      state.armed = null;
+      withRngSync(() => board.seedObstacles(armed.frost, armed.girders, armed.frostHard));
+      state.obstaclesBy = armed.seat;
     }
     // A turn STARTS for `next`, so its cooldowns tick one — extra turns are
     // turns of yours too (a big cascade brings your girders back sooner).
@@ -373,10 +429,14 @@ export function createBattle(opts: BattleOptions): Battle {
     // passes. A bomb's blast is not a match pass (`biggest` 0); its follow-on
     // matches count normally.
     const matchPasses = passes.filter((p) => p.biggest > 0);
-    const extraTurn =
+    const earned =
       matchPasses.some((p) => p.biggest >= rules.extraTurnMinMatch) ||
       (rules.extraTurnOnShape && matchPasses.some((p) => p.shaped)) ||
       (rules.extraTurnOnCascade > 0 && matchPasses.length >= rules.extraTurnOnCascade);
+    // B7 (#252): the chain cap — past `extraTurnChain` extras in a row the
+    // move still scores, but the turn passes.
+    const cap = rules.extraTurnChain ?? 0;
+    const extraTurn = earned && !(cap > 0 && (state.chain ?? 0) >= cap);
 
     const winner = finishTurn(mover, extraTurn);
     return { ok: true, mana, damage, extraTurn, smogged, passes, winner };
@@ -468,13 +528,30 @@ export function createBattle(opts: BattleOptions): Battle {
     // effects
     let damage = 0, heal = 0, girders = 0, frozen = 0, smog = 0;
     const stolen: Partial<Record<Cargo, number>> = {};
+    const free = def.costsTurn === false;
+    const arm = (g: number, f: number, hard: 1 | 2): void => {
+      // B7 (#252): a free cast ARMS its obstacles — they drop when this
+      // seat's turn passes (see finishTurn), so they never block the caster
+      const a = state.armed && state.armed.seat === seat
+        ? state.armed : { seat, girders: 0, frost: 0, frostHard: hard };
+      a.girders += g;
+      a.frost += f;
+      a.frostHard = Math.max(a.frostHard, hard) as 1 | 2;
+      state.armed = a;
+    };
     if (def.id === "girders") {
-      girders = (await withRng(async () => board.seedObstacles(0, def.girders ?? 0))).girders;
-      state.obstaclesBy = seat;
+      if (free) { girders = def.girders ?? 0; arm(girders, 0, 2); }
+      else {
+        girders = (await withRng(async () => board.seedObstacles(0, def.girders ?? 0))).girders;
+        state.obstaclesBy = seat;
+      }
     } else if (def.id === "frost") {
-      frozen = (await withRng(async () =>
-        board.seedObstacles(def.frostGems ?? 0, 0, def.frostHard ?? 2))).frost;
-      state.obstaclesBy = seat;
+      if (free) { frozen = def.frostGems ?? 0; arm(0, frozen, def.frostHard ?? 2); }
+      else {
+        frozen = (await withRng(async () =>
+          board.seedObstacles(def.frostGems ?? 0, 0, def.frostHard ?? 2))).frost;
+        state.obstaclesBy = seat;
+      }
     } else if (def.id === "smog") {
       const oppSeat = 1 - seat as BattleSeat;
       state.smog[oppSeat] += def.matches ?? 1;
@@ -483,7 +560,7 @@ export function createBattle(opts: BattleOptions): Battle {
       damage = def.damage ?? 0;
       opp.health = Math.max(0, opp.health - damage);
     } else if (def.id === "repair") {
-      heal = Math.min(def.heal ?? 0, rules.startHealth - me.health);
+      heal = Math.max(0, Math.min(def.heal ?? 0, maxHealthOf(me, rules) - me.health));
       me.health += heal;
     } else if (def.id === "bribe") {
       for (const c of CARGOES) {
@@ -536,6 +613,8 @@ export function createBattle(opts: BattleOptions): Battle {
           smog: [...state.smog] as [number, number],
           cooldowns: [{ ...state.cooldowns[0] }, { ...state.cooldowns[1] }],
           obstaclesBy: state.obstaclesBy ?? null,
+          chain: state.chain ?? 0,
+          armed: state.armed ? { ...state.armed } : null,
         },
         moves: moves.map((m) => ({ ...m })),
         board: board.save(),
@@ -564,6 +643,8 @@ export function createBattle(opts: BattleOptions): Battle {
           state.players[i].mana = { ...src.mana };
           state.players[i].extraTurn = src.extraTurn;
           if (Array.isArray(src.depots)) state.players[i].depots = [...src.depots];
+          // B7: a pre-B7 snapshot has no maxHealth — keep this engine's own
+          if (typeof src.maxHealth === "number") state.players[i].maxHealth = src.maxHealth;
         }
       }
       if (st) {
@@ -573,6 +654,8 @@ export function createBattle(opts: BattleOptions): Battle {
         state.over = st.over ?? false;
         state.smog = [st.smog?.[0] ?? 0, st.smog?.[1] ?? 0];
         state.obstaclesBy = st.obstaclesBy ?? null;
+        state.chain = st.chain ?? 0;
+        state.armed = st.armed ? { ...st.armed } : null;
         state.cooldowns = [
           { ...(st.cooldowns?.[0] ?? {}) },
           { ...(st.cooldowns?.[1] ?? {}) },

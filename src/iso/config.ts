@@ -398,6 +398,19 @@ export interface BattleRules {
   /** A cascade of at least this many passes grants an extra turn (0 = never). */
   extraTurnOnCascade: number;
   /**
+   * B7 (#252): the most extra turns one seat may chain in a row (0 or absent
+   * = no cap). Past it a big move still deals its damage and banks its mana,
+   * but the turn passes — the fix for openings that chained into a knockout
+   * before the second seat ever moved.
+   */
+  extraTurnChain?: number;
+  /**
+   * B7 (#252): extra health — start AND cap — for the seat that moves
+   * second: the first-move compensation (0 or absent = none). Seat 0 always
+   * moves first; this is what seat 1 gets for waiting. Shown on its bar.
+   */
+  secondSeatHealth?: number;
+  /**
    * Hard stop so a battle always ends: after this many resolved swaps in
    * total, the higher health wins (equal health = a draw — `winner` stays
    * null and `over` is set).
@@ -424,18 +437,25 @@ export interface BattleRules {
 }
 
 /**
- * The shipped table. Provisional until B7 (#252) tunes it against bot-vs-bot
- * simulations; the shape (a bomb hurts more than a match helps) is deliberate.
+ * The shipped table — B7 (#252) tuned it against bot-vs-bot simulations
+ * (docs/battle-balance.md; pinned in tests/unit/battle-balance.test.ts).
+ * Before B7 battles ended in 4–9 swaps, the seat that moved first won 71–98%
+ * of mirror matches and casting was a losing move. B7's changes, each with a
+ * row in the doc: health 30→50, the second seat +10, cascades need 3 passes,
+ * at most one extra turn in a row. The shape (a bomb hurts more than a match
+ * helps) is deliberate.
  */
 export const BATTLE_RULES: BattleRules = {
-  startHealth: 30,
+  startHealth: 50,       // B7: 30 → 50 (battles ran 4–9 swaps)
   manaCap: 12,
   manaPerGem: 1,
   damagePerGem: 1,
   matchDamagePerGem: 1,
   extraTurnMinMatch: 4,
   extraTurnOnShape: true,
-  extraTurnOnCascade: 2,
+  extraTurnOnCascade: 3, // B7: 2 → 3 (two passes happen by gravity alone)
+  extraTurnChain: 1,     // B7: new — one extra turn, then the turn passes
+  secondSeatHealth: 10,  // B7: new — the seat that moves second opens at 60
   turnLimit: 20,
   turnMs: 30000,
   challengeGold: 12,   // ×3 (2026-09)
@@ -509,7 +529,7 @@ export interface BattleAbilityDef {
   matches?: number;
   /** Dynamite: flat damage to the opponent (bomb purges stay damagePerGem). */
   damage?: number;
-  /** Repair Crew: flat heal (capped at startHealth). */
+  /** Repair Crew: flat heal (capped at the seat's full health — B7: startHealth, +secondSeatHealth for seat 1). */
   heal?: number;
   /** Gold Bribe: mana moved per cargo from the opponent. */
   stealPerCargo?: number;
@@ -518,29 +538,36 @@ export interface BattleAbilityDef {
 export const BATTLE_ABILITIES: Record<AbilityId, BattleAbilityDef> = {
   girders: {
     id: "girders", name: "Iron Girders",
-    desc: "Drop 3 girders on the board — blocked cells spoil the opponent's plans.",
-    cost: { stone: 3, ore: 3 }, cooldown: 3, requires: "stone", girders: 3,
+    desc: "Free action: 4 girders drop on the board when your turn ends — blocked cells spoil the opponent's plans.",
+    // B7: 3 → 4 girders, stone3+ore3 → stone2+ore2, cooldown 3 → 2, free
+    cost: { stone: 2, ore: 2 }, cooldown: 2, requires: "stone", girders: 4,
+    costsTurn: false,
   },
   frost: {
     id: "frost", name: "Frost",
-    desc: "Freeze 4 gems — a frozen gem cracks one step instead of clearing.",
-    cost: { grain: 3, wood: 3 }, cooldown: 3, requires: "grain",
-    frostGems: 4, frostHard: 2,
+    desc: "Free action: 6 gems freeze when your turn ends — a frozen gem cracks one step instead of clearing.",
+    // B7: 4 → 6 gems, grain3+wood3 → grain2+wood2, cooldown 3 → 2, free
+    cost: { grain: 2, wood: 2 }, cooldown: 2, requires: "grain",
+    frostGems: 6, frostHard: 2,
+    costsTurn: false,
   },
   smog: {
     id: "smog", name: "Smog",
-    desc: "The opponent's next match banks half mana.",
+    desc: "Free action: the opponent's next match banks half mana.",
     cost: { oil: 4 }, cooldown: 2, requires: "oil", matches: 1,
+    costsTurn: false,  // B7: free (a turn for half a match's mana was a losing trade)
   },
   dynamite: {
     id: "dynamite", name: "Dynamite",
-    desc: "Deal 4 direct damage to the opponent.",
-    cost: { ore: 2, oil: 2 }, cooldown: 2, requires: "ore", damage: 4,
+    desc: "Deal 9 direct damage to the opponent.",
+    // B7: 4 → 9 damage (a swap averages ~7 with match damage on)
+    cost: { ore: 2, oil: 2 }, cooldown: 2, requires: "ore", damage: 9,
   },
   repair: {
     id: "repair", name: "Repair Crew",
-    desc: "Restore 6 health.",
-    cost: { wood: 2, stone: 2 }, cooldown: 3, requires: "wood", heal: 6,
+    desc: "Restore 10 health.",
+    // B7: 6 → 10 heal
+    cost: { wood: 2, stone: 2 }, cooldown: 3, requires: "wood", heal: 10,
   },
   bribe: {
     id: "bribe", name: "Gold Bribe",
@@ -1043,6 +1070,21 @@ export const VICTORY = {
      *  #297: 1★ per tier (was 2★). Three tiers at 1★ = 3★, a quarter of the
      *  12★ line — no single source carries most of the win condition. */
     city: 1,
+    /**
+     * B7 (#252) — ★ per CONTESTED SITE HELD: an industry or a town where the
+     * last battle fought over it went your way (you are the standing winner
+     * in `siteRights` / `townHolds`). Revocable: lose the next fight there and
+     * the ★ moves to the winner. Nothing pays for the fight itself, and a
+     * site nobody ever fought over pays nothing — first-come holds are the
+     * `type` row's business. See docs/battle-balance.md §★.
+     */
+    hold: 1,
+    /**
+     * B7 (#252) — the cap: at most this many ★ from held sites per seat, per
+     * match. 2★ of a 12★ line (17%) — less than the city's 3★, so battling
+     * is a route that can decide a close race but can never carry one alone.
+     */
+    holdCap: 2,
     /** ★ needed to win under the new loop. */
     target: 12,
   },

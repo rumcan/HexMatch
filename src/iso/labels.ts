@@ -72,7 +72,8 @@ export function createLabelLayer(
       let live = items.find((f) => f.entry.key === entry.key);
       if (!live) {
         const el = document.createElement("div");
-        el.className = "iso-label" + (entry.cls ? ` ${entry.cls}` : "");
+        // B7 (#252) fix: a tag born while Names is off starts hidden
+        el.className = "iso-label" + (entry.cls ? ` ${entry.cls}` : "") + (enabled ? "" : " hidden");
         const text = document.createElement("span");
         el.appendChild(text);
         live = { el, entry };
@@ -81,7 +82,9 @@ export function createLabelLayer(
       }
       if (live.entry !== entry) {
         live.entry = entry;
-        if (entry.cls) live.el.className = "iso-label " + entry.cls;
+        // B7 (#252) fix: rewriting the class list must keep Names' `hidden`
+        // (a retitled tag used to pop back on with Names switched off)
+        live.el.className = "iso-label" + (entry.cls ? ` ${entry.cls}` : "") + (enabled ? "" : " hidden");
       }
       const textEl = live.el.firstChild as HTMLElement;
       if (textEl.textContent !== entry.name) textEl.textContent = entry.name;

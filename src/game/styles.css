@@ -1942,6 +1942,9 @@ html, body, #root {
 .iso-label.label-town { color: #e8d9a8; }
 .iso-label.label-plant { color: #9fd8ff; }
 .iso-label.label-depot { color: #ffd9a0; }
+/* B7 (#252): a contested industry — someone has won a battle over it — and
+   the viewer's challenge clock while it runs ("⚔ 1:20"). */
+.iso-label.label-contested { color: #ffb4a0; box-shadow: inset 0 -2px 0 rgba(214, 84, 58, .75); }
 
 .harvest-pop {
   position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
@@ -3462,7 +3465,7 @@ html, body, #root {
    `.tut-fig-<kind>` class the plate also carries is a selector hook for the
    tests, not a look. A step with no figure paints no plate at all and the
    bullets move up. */
-#iso-tutorial { position: absolute; inset: 0; z-index: 96;
+#iso-tutorial, #iso-battle-howto { position: absolute; inset: 0; z-index: 96;
   display: flex; align-items: center; justify-content: center; padding: 14px;
   background:
     var(--room) center / cover,
@@ -3471,6 +3474,11 @@ html, body, #root {
   }
 /* A click on the veil is a Skip; the card rides above it. */
 #iso-tutorial .tut-shade { position: absolute; inset: 0; }
+/* B7 (#252): the battle How to Play rides the same projector, but it can be
+   opened FROM the battle screen (.battle-root, fixed at 900) — so it is fixed
+   to the viewport and sits above it. */
+#iso-battle-howto { position: fixed; z-index: 950; }
+#iso-battle-howto .tut-ledger-copy b { font-weight: 600; }
 .tut-card {
   position: relative; z-index: 1;
   width: 100%; max-width: 780px; max-height: min(88vh, 780px);
@@ -3664,7 +3672,7 @@ html, body, #root {
   font-family: var(--mono); font-size: 10.5px; line-height: 1.45; color: var(--txt-mute); }
 
 @media (max-width: 760px) {
-  #iso-tutorial { padding: 8px; align-items: stretch; }
+  #iso-tutorial, #iso-battle-howto { padding: 8px; align-items: stretch; }
   .tut-card { max-width: none; max-height: none; padding: 12px 13px 9px; }
   .tut-head { padding: 0 26px 7px; }
   .tut-title { font-size: 16px; letter-spacing: 1.8px; }
@@ -5204,6 +5212,32 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .battle-mana-chip.full .battle-mana-fill { background: linear-gradient(180deg, #fff3cf, var(--gold)); box-shadow: 0 0 6px var(--gold-glow); }
 .battle-mid { display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 4px; }
 .battle-vs { font-family: var(--display); letter-spacing: 3px; color: var(--brass-lo); font-size: 11px; }
+/* B7 (#252): "?" — the battle How to Play, from inside the battle */
+.battle-help {
+  width: 24px; height: 24px; padding: 0; border-radius: 50%;
+  font: 700 13px/22px var(--display); color: var(--gold2);
+  background: rgba(10, 8, 5, .7); border: 1px solid var(--brass-lo); cursor: pointer;
+}
+.battle-help:hover, .battle-help:focus-visible { border-color: var(--gold2); }
+/* B7 (#252): the one-time first-battle hint — a strip at the foot of the
+   viewport that never covers the board's middle and never blocks input. */
+.battle-first-hint {
+  position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 2;
+  width: min(560px, calc(100vw - 20px)); box-sizing: border-box;
+  padding: 9px 12px 8px; text-align: left;
+  color: var(--txt, #eadfc6); font-size: 12.5px; line-height: 1.4;
+  background: rgba(12, 9, 6, .94); border: 1px solid var(--brass-lo);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .55);
+}
+.battle-first-hint .bfh-title { display: block; margin-bottom: 3px; font-family: var(--display); letter-spacing: 2px; text-transform: uppercase; font-size: 11px; color: var(--gold2); }
+.battle-first-hint ul { margin: 0; padding-left: 18px; }
+.battle-first-hint .bfh-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.battle-first-hint button { padding: 5px 11px; font-size: 11px; letter-spacing: 1px; cursor: pointer;
+  color: var(--txt, #eadfc6); background: rgba(0, 0, 0, .35); border: 1px solid var(--brass-lo); }
+.battle-first-hint .bfh-ok { color: #1a1206; background: var(--gold2); border-color: var(--gold2); }
+@media (max-width: 760px) {
+  .battle-first-hint { font-size: 11.5px; bottom: 6px; padding: 7px 10px 6px; }
+}
 .battle-turn {
   font-family: var(--display); font-weight: 700; font-size: 13px;
   letter-spacing: 2.4px; text-transform: uppercase;

@@ -29,6 +29,7 @@ import { GEM_ART } from "./gem-art";
 import { BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
 import {
   createBattle, type AbilityOutcome, type Battle, type BattleMove, type BattleSeat, type TurnOutcome,
+  maxHealthOf,
 } from "./battle";
 import { GEM_TO_CARGO } from "../iso/quarry";
 import {
@@ -85,6 +86,18 @@ export interface BattleScreenOptions {
   /** B6: a LOCAL move landed on this engine (the host publishes on it). */
   onLocalMove?: (move: BattleMove) => void;
   onClose: (result: BattleScreenResult) => void;
+  /**
+   * B7 (#252): present = a "?" on the screen that opens the battle How to
+   * Play (the caller owns the page — `showBattleHowto` in battle-howto.ts).
+   */
+  onHelp?: () => void;
+  /**
+   * B7 (#252): the one-time first-battle hint's lines. The caller's gate
+   * (`takeFirstBattleHint`) decides it is the first battle; the screen only
+   * paints a dismissible strip that never blocks the board (a multiplayer
+   * turn clock may be running).
+   */
+  firstHint?: string[] | null;
 }
 
 export interface BattleScreenHandle {
@@ -276,6 +289,38 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   const result = h("div", "battle-result hidden");
   card.appendChild(result);
 
+  // B7 (#252): the "?" (How to Play) and the first-battle hint — both opt-in.
+  if (opts.onHelp) {
+    const help = h("button", "battle-help", "?");
+    help.type = "button";
+    help.dataset.act = "battle-help";
+    help.title = "How battles work";
+    help.setAttribute("aria-label", "How battles work");
+    help.onclick = () => opts.onHelp?.();
+    mid.appendChild(help);
+  }
+  if (opts.firstHint && opts.firstHint.length) {
+    const hint = h("div", "battle-first-hint");
+    hint.setAttribute("role", "note");
+    const list = h("ul");
+    for (const line of opts.firstHint) list.appendChild(h("li", "", "")).textContent = line;
+    const row = h("div", "bfh-row");
+    if (opts.onHelp) {
+      const more = h("button", "bfh-more", "How battles work");
+      more.type = "button";
+      more.dataset.act = "battle-hint-more";
+      more.onclick = () => { hint.remove(); opts.onHelp?.(); };
+      row.appendChild(more);
+    }
+    const ok = h("button", "bfh-ok", "Got it");
+    ok.type = "button";
+    ok.dataset.act = "battle-hint-ok";
+    ok.onclick = () => hint.remove();
+    row.appendChild(ok);
+    hint.append(h("b", "bfh-title", "Your first battle"), list, row);
+    root.appendChild(hint);
+  }
+
   document.body.appendChild(root);
 
   // ── HUD painting ─────────────────────────────────────────────────────────
@@ -285,10 +330,11 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     const el = sideEls[seat];
     const fill = el.querySelector(".battle-health-fill") as HTMLElement;
     const num = el.querySelector(".battle-health-num") as HTMLElement;
-    const pct = Math.max(0, (p.health / rules.startHealth) * 100);
+    const full = maxHealthOf(p, rules);
+    const pct = Math.max(0, Math.min(100, (p.health / full) * 100));
     fill.style.width = pct + "%";
     num.textContent = `${p.health}`;
-    el.classList.toggle("low", p.health * 4 <= rules.startHealth);
+    el.classList.toggle("low", p.health * 4 <= full);
     for (const cargo of CARGOES) {
       const chip = el.querySelector(`.battle-mana-chip[data-cargo="${cargo}"]`) as HTMLElement;
       const mfill = chip.querySelector(".battle-mana-fill") as HTMLElement;
@@ -734,8 +780,10 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (out.heal > 0) showFloat(`+${out.heal} ♥`, true);
     const stolenTotal = (Object.values(out.stolen) as number[]).reduce((s, n) => s + n, 0);
     if (stolenTotal > 0) showFloat(`+${stolenTotal} ${CARGO.gold.icon} mana`, true);
-    if (out.frozen > 0) showFloat(`${out.frozen} gems frozen ❄`);
-    if (out.girders > 0) showFloat(`${out.girders} girders`);
+    // B7 (#252): a free Girders / Frost is ARMED — it lands when the turn passes
+    const later = out.costsTurn ? "" : " at turn end";
+    if (out.frozen > 0) showFloat(`${out.frozen} gems freeze${later} ❄`);
+    if (out.girders > 0) showFloat(`${out.girders} girders drop${later}`);
     if (out.smog > 0) showFloat("SMOG!", true);
     if (battle.state.over) {
       window.setTimeout(showResult, 700);
@@ -838,6 +886,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (destroyed || resultShown) return;
     resultShown = true;
     lockInput(true);
+    root.querySelector(".battle-first-hint")?.remove();   // B7: the verdict owns the screen
     const w = battle.state.winner;
     const verdict: BattleScreenResult["verdict"] =
       w === null ? "draw" : w === mySeat ? "win" : "lose";
@@ -933,5 +982,7 @@ export function startBattleScreen(
     onLocalMove: opts.onLocalMove,
     opponentDelayMs: opts.opponentDelayMs,
     onClose: opts.onClose ?? (() => {}),
+    onHelp: opts.onHelp,
+    firstHint: opts.firstHint,
   });
 }
