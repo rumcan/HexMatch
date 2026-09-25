@@ -25,6 +25,9 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
+import {
+  BRIDGE_COST, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
+} from "./bridges";
 
 // ── directions ────────────────────────────────────────────────────────────
 export const NE = 1, SE = 2, SW = 4, NW = 8;
@@ -342,11 +345,18 @@ export const mergedBitsAt = (t: Track, tx: number, ty: number): number =>
  *
  * Returns null when `kind` may be laid at (tx,ty) (within `network`, when one
  * is given), else the reason tag: "out-of-bounds" | "water" | "occupied" |
- * "rough" | "not-adjacent".
+ * "field" | "rail" | "bridge-junction" | "rough" | "not-adjacent".
+ *
+ * `track` (optional) is the layer itself, and it buys the ONE rule the tile
+ * alone cannot answer: R2 (#266) — a tile that would hang a side connection on
+ * a standing bridge deck is refused (`"bridge-junction"`), because a bridge is
+ * straight and stations, spurs and junctions may never stand on it. Callers
+ * that pass no track (a read-only probe, a synthetic grid) keep the pre-#266
+ * answer exactly.
  */
 export function buildRefusal(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
-  crossing?: "x" | "y",
+  crossing?: "x" | "y", track?: Track,
 ): string | null {
   if (!inMapT(tx, ty)) return "out-of-bounds";
   const i = tIdx(tx, ty);
@@ -366,10 +376,26 @@ export function buildRefusal(
   // plant is stepped over earlier, by `previewDrag`'s `structures` skip
   // (PP-15) — this refusal is what stops the OTHER seat paving the floor.
   const built = grid.builtAt?.(tx, ty) ?? null;
-  if (built === "platform" || built === "depot" || built === "plant") return "occupied";
+  // R2 (#266): a bridge deck is reported by `builtAt` like any other built
+  // thing, so nothing is built on one. (A deck's own tile is WATER, and the
+  // terrain test above answers "water" for it long before this — the deck is in
+  // the set for the belt-and-braces case, a `builtAt` a game or a test
+  // supplies.)
+  if (built === "platform" || built === "depot" || built === "plant" || built === "bridge") {
+    return "occupied";
+  }
   if (built === "rail") return "rail";
   if (built === "rail-x" && crossing !== "y") return "rail";
   if (built === "rail-y" && crossing !== "x") return "rail";
+  // R2 (#266): a bridge is straight. A tile ORTHOGONALLY beside a bridge deck
+  // would join it (the merged autotile connects any two tiles carrying track),
+  // and the deck would grow a third arm — a junction on a bridge. Refused
+  // here, so the drag stops at the bank and the toast can say why.
+  if (track && sideJoinAt(
+    tx, ty,
+    (x, y) => bridgeDeckAt(grid, x, y, (b, c) => mergedPresent(track, b, c)),
+    (x, y) => mergedBitsAt(track, x, y),
+  )) return "bridge-junction";
   // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
   // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
@@ -390,9 +416,9 @@ export function buildRefusal(
  */
 export function canBuildOn(
   grid: Grid, kind: TrackKind, tx: number, ty: number, network?: Set<number>,
-  crossing?: "x" | "y",
+  crossing?: "x" | "y", track?: Track,
 ): boolean {
-  return buildRefusal(grid, kind, tx, ty, network, crossing) === null;
+  return buildRefusal(grid, kind, tx, ty, network, crossing, track) === null;
 }
 
 /**
@@ -807,6 +833,13 @@ export interface DragPreview {
   cost: Purse;
   /** W1: how many of `tiles` the free allowance covers (commit debits this). */
   free: number;
+  /**
+   * R2 (#266): how many of `tiles` are BRIDGE DECKS — tiles this drag builds
+   * on river water. The overlay reads it for the cost label, and it is the
+   * number a test asserts to tell a crossing apart from a drag that merely ran
+   * up to the bank.
+   */
+  bridges: number;
   /** Tiles previewed but unaffordable — drawn red, not built. */
   unaffordable: [number, number][];
   /**
@@ -843,12 +876,26 @@ export interface DragPreview {
  * allowance inapplicable (see `freeAllowanceCovers`), so a dirt drag prices
  * {} with `free: 0` and never truncates on affordability. A paved drag is
  * priced exactly as before.
+ *
+ * R2 (#266): a drag that crosses a narrow river builds a BRIDGE (`bridges.ts`
+ * holds the rule — river water only, ≤ 2 tiles, straight, land at both ends,
+ * no junctions). The deck's tiles ride in `tiles` like any others (track on
+ * water IS a bridge), are counted in `bridges`, and are charged the per-tile
+ * `BUILD_COSTS.bridge`: a deck is a structure, so neither the free setup
+ * allowance nor free Dirt Road covers it. `bridges.railAt` lets the caller
+ * hand in the railway layer, because a deck is never shared: a road drag never
+ * rides an existing rail bridge.
  */
+export interface BridgeDragOptions {
+  /** Does the OTHER layer (rail) carry track at (x,y)? A deck is never shared. */
+  railAt?: (x: number, y: number) => boolean;
+}
+
 export function previewDrag(
   grid: Grid, t: Track, kind: TrackKind, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true,
   network?: Set<number>, freeTiles = 0, structures?: Set<number>,
-  newLoop = false,
+  newLoop = false, bridges: BridgeDragOptions = {},
 ): DragPreview {
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
@@ -860,19 +907,32 @@ export function previewDrag(
   // `kind === "road"` tiles standing on dirt — `tileCost` returns
   // UPGRADE_COST for exactly that case, so one test drives both numbers).
   let upgrades = 0;
+  // R2 (#266): how many of the built tiles are bridge decks (see DragPreview).
+  let decks = 0;
   // W9: rail never rides the setup allowance, so for rail there is no
   // allowance to spend and `free` in the result stays 0.
   // L2: under newLoop the allowance covers no road tier at all.
   const allowance = freeAllowanceCovers(kind, newLoop) ? Math.max(0, freeTiles) : 0;
   let freeLeft = allowance;
   const growing = network ? new Set(network) : undefined;
+  // R2 (#266): the drag's bridge plan, computed once for the whole gesture —
+  // a crossing is a property of the PATH, not of a tile. The drag's own tiles
+  // count as track for the flank test (an L that runs back beside the water is
+  // a junction), exactly the way rail's `planned` set works.
+  const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
+  const bridgePlan: BridgePlan = planBridges(
+    grid, path,
+    (x, y) => inMapT(x, y) && (mergedPresent(t, x, y) || planned.has(tIdx(x, y))),
+    (x, y) => inMapT(x, y) && (bridges.railAt?.(x, y) ?? false),
+  );
   // The obstacle run the drag dies on — the building (or the water) it ran
   // into, not the free tiles beyond it. Painted red by the overlay.
   const noteObstacle = (from: number) => {
     truncated = true;
     for (let j = from; j < path.length; j++) {
       const [bx, by] = path[j];
-      if (canBuildOn(grid, kind, bx, by, growing, passAxis(path, j))) break;
+      if (bridgePlan.runs.has(j)) break;            // a legal crossing: it is not the obstacle
+      if (canBuildOn(grid, kind, bx, by, growing, passAxis(path, j), t)) break;
       blocked.push([bx, by]);
     }
   };
@@ -884,7 +944,13 @@ export function previewDrag(
     // (`Grid.builtAt`). The OTHER seat's plant is not in `structures`, so it
     // falls through to the refusal below and the drag stops.
     if (structures !== undefined && structures.has(tIdx(x, y))) continue;
-    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i))) { noteObstacle(i); break; }
+    // R2 (#266): a deck tile is water, so `canBuildOn` says "water" — the
+    // bridge plan is what makes it legal, and it is only legal as part of the
+    // crossing it was planned with.
+    const deck = bridgePlan.runs.get(i);
+    if (!canBuildOn(grid, kind, x, y, growing, passAxis(path, i), t) && !deck) {
+      noteObstacle(i); break;
+    }
     // PP-15: a tile the builder's OWN building stands on is stepped over — it
     // is neither built nor charged, and it consumes none of the free allowance.
     // The path may run under the plant to reach the ground beyond (that is a
@@ -894,6 +960,29 @@ export function previewDrag(
     // also START on the building itself — that is how you join a road to the
     // edge of a plant whose graphic covers the tile you wanted to click.
     if (structures !== undefined && structures.has(tIdx(x, y))) continue;
+    // R2 (#266): the deck is a structure and pays its own price — once, on the
+    // first crossing. A tile the player's own track already fills (a re-drag
+    // over their bridge, or paving the gravel on it) falls through to the
+    // ordinary tier cost below, so a bridge is never charged twice.
+    if (deck && !tileAlreadyCarries(t, kind, x, y)) {
+      const deckCost = { ...BRIDGE_COST };
+      const next = addCost(cost, deckCost);
+      if (!canAfford(purse, next)) {
+        for (let j = i; j < path.length; j++) {
+          const [ux, uy] = path[j];
+          if (!bridgePlan.runs.has(j)
+            && !canBuildOn(grid, kind, ux, uy, growing, undefined, t)) { noteObstacle(j); break; }
+          unaffordable.push([ux, uy]);
+        }
+        break;
+      }
+      cost = next;
+      tiles.push([x, y]);
+      decks++;
+      // A deck consumes none of the free allowance: that buys road.
+      growing?.add(tIdx(x, y));
+      continue;
+    }
     const c = tileCost(t, kind, x, y, newLoop);
     const paves = kind === "road" && hasTrack(t, "dirt", x, y);
     // VP-01: Free tiles are charged nothing; the allowance covers them first.
@@ -928,7 +1017,7 @@ export function previewDrag(
     if (paves) upgrades++;
     growing?.add(tIdx(x, y));
   }
-  return { tiles, cost, upgrades, free: allowance - freeLeft, unaffordable, blocked, truncated };
+  return { tiles, cost, upgrades, free: allowance - freeLeft, bridges: decks, unaffordable, blocked, truncated };
 }
 
 export interface CommitResult {

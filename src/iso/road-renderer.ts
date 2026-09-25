@@ -38,18 +38,24 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H, ZOOM_STEPS } from "../game/config";
 import type { Camera } from "./camera";
-import { isTownTile, townGroundBytes, type Grid } from "./grid";
+import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH,
   hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
   type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 import {
-  DEFAULT_RAIL_STYLE, paintRailTiles, railDetailFor, railTilesIn,
+  DEFAULT_RAIL_STYLE, paintRailTiles, railBridgeDecksIn, railDetailFor, railTilesIn,
   type RailDetail, type RailLayer, type RailStyle,
 } from "./rail-renderer";
+import {
+  deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
+} from "./bridge-renderer";
 
 type Ctx2D = CanvasRenderingContext2D;
+
+/** The road layer's PRESENT bit (`track.ts`'s bit 4) — a lone stub still counts. */
+const PRESENT = 0b10000;
 
 /** The one-pixel softening baked into every road/rail chunk raster. */
 export const ROAD_SOFTEN_FILTER = "blur(1px)";
@@ -369,6 +375,36 @@ const isPaved = (world: RoadWorld, tx: number, ty: number): boolean =>
  */
 const isTownStreet = (world: RoadWorld, tx: number, ty: number): boolean =>
   !!world.grid && isTownTile(world.grid, tx, ty);
+
+/**
+ * R2 (#266): every BRIDGE DECK in a range. A deck is track on water — nothing
+ * else can put road bytes on a water tile — so the test is the map's terrain
+ * plus the tile's own presence bit, and no new layer or wire field is needed.
+ * The axis comes from the tile's direction bits (see `deckAxis`).
+ *
+ * Deliberately separate from `roadTilesIn`: in the sprite road mode the atlas
+ * cells draw the roads, so `roadTilesIn` returns nothing — but a bridge deck is
+ * not art and must still be painted, or a road bridge would render as a road
+ * sprite floating on the sea.
+ */
+export function roadBridgeDecksIn(
+  world: RoadWorld, tx0: number, ty0: number, tx1: number, ty1: number,
+): BridgeDeck[] {
+  const grid = world.grid;
+  if (!grid) return [];
+  const out: BridgeDeck[] = [];
+  const isWater = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && grid.terrain[y * MAP_W + x] === WATER;
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const cell = cellAt(world.roadBits, tx, ty) | cellAt(world.dirtBits, tx, ty);
+      if ((cell & PRESENT) === 0) continue;
+      if (!isWater(tx, ty)) continue;
+      out.push({ tx, ty, axis: deckAxis(cell, isWater, tx, ty) });
+    }
+  }
+  return out;
+}
 
 /** Every road tile in a range, as drawing descriptions. */
 export function roadTilesIn(
@@ -701,6 +737,13 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[]): void {
  */
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
+  /**
+   * R2 (#266): the chunk's bridge decks, painted first so every road surface
+   * sits on timber rather than on water, with the railings last — see
+   * `bridge-renderer.ts`. Empty for a chunk with no crossing, in which case
+   * this pass is byte-identical to the one that shipped before bridges.
+   */
+  decks: readonly BridgeDeck[] = [],
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -713,7 +756,10 @@ export function paintRoadTiles(
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  // 0. #159 Town ground: the paved yards the houses stand on, under everything
+  // 0. R2 (#266) Bridge decks, under everything: the water texture has to go.
+  paintBridgeDecks(ctx, decks);
+
+  // 0b. #159 Town ground: the paved yards the houses stand on, under everything
   //    a road paints. Absent a `town` material the passes below still draw the
   //    streets; only the blocks between them stay grass.
   if (townFill) paintTownGround(ctx, townGround, townFill);
@@ -832,6 +878,11 @@ export function paintRoadTiles(
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.
   //    Markings stay under a lamp, exactly as paint on asphalt does.
   paintStreetLamps(ctx, tiles);
+
+  // 6. R2 (#266) The decks' kerbs and railings, last of all: a bridge's fence
+  //    stands OVER its surface, and over the lamps of any street that happens
+  //    to end at the bank.
+  paintBridgeRailings(ctx, decks);
   ctx.restore();
 }
 
@@ -1004,6 +1055,10 @@ export class RoadCache {
     // In the sprite road mode the atlas cells draw the roads, so this raster
     // carries the railway and nothing else.
     const tiles = this.railOnly ? [] : roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    // R2 (#266): decks are NOT atlas art, so they are collected in both road
+    // modes — in the sprite mode the cells above would otherwise leave a road
+    // bridge floating on the sea with no deck under it.
+    const roadDecks = roadBridgeDecksIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
     // Town ground comes from the same tile range, so a block at a chunk's edge
     // is paved by the chunk that owns it and the gutter simply agrees.
     const townGround = this.railOnly
@@ -1012,12 +1067,14 @@ export class RoadCache {
     // geometry is per tile, so a chunk paints its own tiles plus the neighbours
     // inside its gutter and the seam between chunks is invisible.
     const rail = railTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    // R2 (#266): the railway's own decks, painted by the rail pass.
+    const railDecks = railBridgeDecksIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
 
     // A chunk with nothing to draw is never rasterised: an empty path painted
     // into a fresh surface would cost the same memory for a rectangle that
     // shows nothing, and the blit skips it on every frame after this one.
     let surface: Surface | null = null;
-    if (tiles.length || townGround.length || rail.length) {
+    if (tiles.length || townGround.length || rail.length || roadDecks.length || railDecks.length) {
       surface = makeSurface(w, h);
       if (!surface) return null;
       const ctx = (surface as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
@@ -1026,10 +1083,10 @@ export class RoadCache {
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround);
+      paintRoadTiles(ctx, tiles, style, townGround, roadDecks);
       // …and the track OVER the finished road: that is what a level crossing
       // is, and why the road pass above has to stay exactly as it was.
-      paintRailTiles(ctx, rail, this.railDetail, this.railStyle);
+      paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       // Soften the vectors by a pixel so roads and rails sit with the pixel
       // artwork instead of looking razor-cut. ONE filtered copy of the finished

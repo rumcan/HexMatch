@@ -60,9 +60,11 @@ import { FIELD_OCC, ROUGH, factoryTouchesTown, rotatedSpan, type Grid, type Indu
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
+  mergedPresent,
   plantFootprintTiles, PUBLIC_OWNER, NE, SE, SW, NW,
   type Track, type TrackKind, type Purse,
 } from "./track";
+import { BRIDGE_COST, bridgeAxesAt, bridgeWaterAt, planBridges } from "./bridges";
 import {
   isServiced, industriesInCatchment,
   buildAllComponents, resolveConnection,
@@ -78,7 +80,7 @@ import {
 // every "may I" answer is a `rail.ts` function the player's click reads too.
 import {
   RAIL_COSTS, RAIL_PRESENT, RAIL_VIEWS, footprintFor,
-  railCost, railTerrainOk, roadAt, railTileRefusal, buildRail,
+  railCostOf, railTerrainOk, roadAt, railTileRefusal, railBridgePlan, buildRail,
   platformRefusal, resolveAnchor, placePlatform,
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
   structureAt, structuresOf, railComponents, ownerRailTiles,
@@ -92,6 +94,13 @@ export const COST_FLAT = 1;
 export const COST_ROUGH = 3;
 export const COST_OWNED = 0.3;      // multiplier, not an absolute
 export const IMPASSABLE = Infinity;
+/**
+ * R2 (#266): a bridge deck, ranked. Per water tile the rival pays the real
+ * `BUILD_COSTS.bridge` (the ranker's numbers are abstract, the price is not),
+ * and this is what the ranker sees so a crossing is always dearer than the
+ * longest sensible detour on land — a river is never the cheap shortcut.
+ */
+export const COST_BRIDGE = 6;
 
 /**
  * Cost of routing `kind` across one tile. Water and industry footprints are
@@ -125,8 +134,22 @@ export const IMPASSABLE = Infinity;
 export function stepCost(
   grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
 ): number {
+  // R2 (#266): a river tile in a straight, ≤2-tile, land-ended run may be
+  // BRIDGED. The A* is per tile and cannot see the drag's shape, so this is
+  // the local necessary condition (`bridgeAxesAt`); the shape itself is
+  // judged on the finished path (`planFeasibility`, via `planBridges`), the
+  // same rule the player's preview runs. A deck is always dearer than land.
+  if (bridgeWaterAt(grid, tx, ty)) {
+    if (!bridgeAxesAt(grid, tx, ty)) return IMPASSABLE;
+    // A deck already carrying the plan's track is `tileCost`-free, so it earns
+    // the same trunk discount the land rule below gives (see `stepCost`'s doc).
+    const held = track.owner[tIdx(tx, ty)];
+    if (owner !== 0 && (held === owner || held === PUBLIC_OWNER)
+      && tileAlreadyCarries(track, kind, tx, ty)) return COST_BRIDGE * COST_OWNED;
+    return COST_BRIDGE;
+  }
   // Use the build rule itself: town tiles (TOWN_OCC = -2) block routes too.
-  if (!canBuildOn(grid, kind, tx, ty)) return IMPASSABLE;
+  if (!canBuildOn(grid, kind, tx, ty, undefined, undefined, track)) return IMPASSABLE;
   const i = tIdx(tx, ty);
   // AI-01: never plan over the other player's line (see above).
   if (owner !== 0) {
@@ -534,6 +557,15 @@ function nearestBuildableSource(
   return best;
 }
 
+// ── R2 (#266): the two layer predicates a bridge plan needs ────────────────
+/** Does the ROAD layer (either tier) carry track at (x,y)? */
+const mergedLayerAt = (state: EconomyState, x: number, y: number): boolean =>
+  inMapT(x, y) && mergedPresent(state.track, x, y);
+
+/** Does the RAILWAY stand at (x,y)? A deck is never shared between the two. */
+const railAt = (state: EconomyState, x: number, y: number): boolean =>
+  inMapT(x, y) && ((state.rail?.rail.tile[tIdx(x, y)] ?? 0) & RAIL_PRESENT) !== 0;
+
 // ── W8: is the plan executable, and does it achieve anything? ─────────────
 /**
  * What a candidate's path would ACTUALLY do once `executeCandidate` runs it.
@@ -555,6 +587,11 @@ function nearestBuildableSource(
  *                factory standing on rough is not a plan at all; rejecting it
  *                is what lets the caller fall through to dirt instead of
  *                stalling on paving.
+ *   bridged    — R2 (#266): a river tile may stand on the path only as part of
+ *                a legal crossing (`planBridges`, the same rule the player's
+ *                drag runs). A path that walks INTO the water without a
+ *                straight, land-ended, ≤2-tile run is not executable, and one
+ *                that does have it gets those tiles priced as decks.
  *   serviced   — once the path is laid, the harvester touches track owned by
  *                `ownerId`, either already standing or laid by this plan.
  *                `isServiced` only looks at the harvester's four NEIGHBOURS,
@@ -573,6 +610,12 @@ function nearestBuildableSource(
 export interface PlanFeasibility {
   /** Path tiles that would be newly laid: legal ground, not already `kind`. */
   fresh: [number, number][];
+  /**
+   * R2 (#266): tile indices of `fresh` that are BRIDGE DECKS — the plan's
+   * crossing. Priced at `BUILD_COSTS.bridge` per tile by `planCandidates` and
+   * `executeCandidate`, and never by the free setup allowance.
+   */
+  bridgeTiles: Set<number>;
   /** Every tile of the path is buildable for `kind`. */
   executable: boolean;
   /** The Depot's entrance is on standing track, or on track the path lays. */
@@ -588,9 +631,24 @@ export function planFeasibility(
   const { grid, track } = state;
   const fresh: [number, number][] = [];
   const freshIdx = new Set<number>();
+  // R2 (#266): the plan's crossing, judged on the whole path by the shared rule
+  // — and with the PATH ITSELF standing in for the layer, exactly as
+  // `previewDrag` and `railBridgePlan` do: an L that bends back beside the
+  // water it crossed would hang a third arm on the deck, so the plan is
+  // refused on the same shape the player's preview refuses.
+  const planned = new Set(path.tiles.map(([x, y]) => tIdx(x, y)));
+  const bridge = planBridges(
+    grid, path.tiles,
+    (x, y) => mergedLayerAt(state, x, y) || planned.has(tIdx(x, y)),
+    (x, y) => railAt(state, x, y),
+  );
+  const bridgeTiles = bridge.deckTiles;          // TILE indices — see `BridgePlan`
   let executable = true;
   for (const [x, y] of path.tiles) {
-    if (!canBuildOn(grid, kind, x, y)) { executable = false; continue; }
+    const i = tIdx(x, y);
+    if (!canBuildOn(grid, kind, x, y, undefined, undefined, track) && !bridgeTiles.has(i)) {
+      executable = false; continue;
+    }
     if (hasTrack(track, kind, x, y)) continue;      // already ours: nothing to lay
     fresh.push([x, y]);
     freshIdx.add(tIdx(x, y));
@@ -604,7 +662,7 @@ export function planFeasibility(
     // …and so does track this very plan lays beside it.
     if (freshIdx.has(tIdx(nx, ny))) { serviced = true; break; }
   }
-  return { fresh, executable, serviced, viable: executable && serviced };
+  return { fresh, bridgeTiles, executable, serviced, viable: executable && serviced };
 }
 
 export interface PlanOptions {
@@ -977,7 +1035,8 @@ export function planCandidates(
         // paving over rough, or a path that never reaches the gate. The next
         // spot / the next kind is tried, so a paved plan that cannot be built
         // falls through to dirt.
-        if (!planFeasibility(state, kindPref, path, hx, hy, factory.ownerId, facing).viable) continue;
+        const feasible = planFeasibility(state, kindPref, path, hx, hy, factory.ownerId, facing);
+        if (!feasible.viable) continue;
 
         // W3: same cost model as the human preview — the allowance covers the
         // first new tiles, the purse pays the rest. W9: …and only for dirt; a
@@ -986,6 +1045,12 @@ export function planCandidates(
         let cost: Purse = {};
         let freeLeft = freeAllowanceCovers(kindPref, newLoop) ? free : 0;
         for (const [x, y] of path.tiles) {
+          // R2 (#266): a deck is a structure — the bridge price, per water
+          // tile, and never the free allowance (that buys road).
+          if (feasible.bridgeTiles.has(tIdx(x, y)) && !tileAlreadyCarries(track, kindPref, x, y)) {
+            cost = addCost(cost, BRIDGE_COST);
+            continue;
+          }
           const c = tileCost(track, kindPref, x, y, newLoop);
           if (Object.keys(c).length === 0) continue;
           if (freeLeft > 0) { freeLeft--; continue; }
@@ -1484,9 +1549,28 @@ export function executeCandidate(
   // L2: under newLoop NO road tier consumes the allowance (dirt is free).
   const allowance = freeAllowanceCovers(c.kind, newLoop) ? Math.max(0, free) : 0;
   let freeLeft = allowance;
+  // R2 (#266): the plan's crossing. A deck tile is water, so `canBuildOn` says
+  // "water" — the shared bridge rule is what makes it buildable, and its price
+  // is the deck price (`planCandidates` priced the same pair). The path's own
+  // tiles stand in for the layer (see `planFeasibility`), so the executed
+  // shape is the one the plan was judged on.
+  const planned = new Set(c.path.tiles.map(([x, y]) => tIdx(x, y)));
+  const bridge = planBridges(
+    state.grid, c.path.tiles,
+    (x, y) => mergedLayerAt(state, x, y) || planned.has(tIdx(x, y)),
+    (x, y) => railAt(state, x, y),
+  );
+  const bridgeTiles = bridge.deckTiles;          // TILE indices — see `BridgePlan`
   for (const [x, y] of c.path.tiles) {
-    if (!canBuildOn(state.grid, c.kind, x, y)) continue;
+    const bi = tIdx(x, y);
+    if (!canBuildOn(state.grid, c.kind, x, y, undefined, undefined, state.track) && !bridgeTiles.has(bi)) continue;
     if (hasTrack(state.track, c.kind, x, y)) continue;
+    if (bridgeTiles.has(bi) && !tileAlreadyCarries(state.track, c.kind, x, y)) {
+      spent = addCost(spent, BRIDGE_COST);       // a deck never rides the allowance
+      buildTile(state.track, c.kind, x, y, ownerId);
+      built.push([x, y]);
+      continue;
+    }
     const cCost = tileCost(state.track, c.kind, x, y, newLoop);
     if (Object.keys(cCost).length === 0) {
       // already this kind — rebuild is free and consumes no allowance
@@ -1861,7 +1945,12 @@ export interface RailMoveOptions {
  * nothing up front.
  */
 export type RailMove =
-  | { kind: "track"; tiles: [number, number][]; fresh: number; cost: Purse }
+  | {
+    kind: "track"; tiles: [number, number][]; fresh: number;
+    /** R2 (#266): how many of `fresh` are bridge decks (priced at the deck rate). */
+    bridges: number;
+    cost: Purse;
+  }
   | { kind: "platform"; tx: number; ty: number; view: RailView; anchor: RailAnchor; cost: Purse }
   | { kind: "depot"; tx: number; ty: number; view: RailView; cost: Purse }
   | { kind: "train"; sourceId: number; destId: number; cost: Purse }
@@ -1886,6 +1975,13 @@ const RAIL_CROSSING_PENALTY = 8;
 /** Stepping over the seat's own track costs nothing to build — and is
  *  cheaper than grass in the ranker, so a line reuses its trunk. */
 const RAIL_OWN_COST = 0.2;
+/**
+ * R2 (#266): a rail bridge deck, ranked. Per water tile the seat pays
+ * `BUILD_COSTS.railBridge` — this is what the ranker sees, so a river crossing
+ * is never the cheap way round (an 8-tile detour on land is cheaper than two
+ * deck tiles).
+ */
+const RAIL_BRIDGE_STEP = 12;
 
 /**
  * The A* step cost for laying rail across one tile. Water, built things,
@@ -1910,9 +2006,20 @@ export function railStepCost(
   // plant or a town building is not a tile the rival may plan through.
   const built = grid.builtAt?.(tx, ty);
   if (built === "depot" || built === "plant" || built === "platform") return IMPASSABLE;
-  if (!railTerrainOk(grid, tx, ty)) return IMPASSABLE;
+  // The seat's own rail is its trunk — a bridge deck it already laid included
+  // (so the tile is walked for RAIL_OWN_COST, never re-priced as a crossing).
   if ((rail.rail.tile[i] & RAIL_PRESENT) !== 0) {
     return rail.rail.owner[i] === ownerId ? RAIL_OWN_COST : IMPASSABLE;
+  }
+  if (!railTerrainOk(grid, tx, ty)) {
+    // R2 (#266): river water may be CROSSED by a deck, and nothing else may —
+    // never the sea or a lake, never a tile the other layer already bridges
+    // (a deck is not shared: `roadAt` on water is a road bridge's deck), and
+    // only inside a legal run. The run's SHAPE is validated on the finished
+    // drag (`validateRailDrag` → `planBridges`), the same way a road crossing
+    // is validated on the whole gesture.
+    if (roadAt(track, tx, ty) !== 0) return IMPASSABLE;
+    return bridgeAxesAt(grid, tx, ty) ? RAIL_BRIDGE_STEP : IMPASSABLE;
   }
   const road = roadAt(track, tx, ty);
   if (road !== 0) {
@@ -1974,6 +2081,8 @@ export function planRailRoute(
   const goalOut = goalLane < 0 ? -1 : (goalLane + 4) % 8;   // the step from the goal into the lane
   const start = tIdx(ax, ay) * 9 + (startOct < 0 ? 8 : startOct);
   const hasRoad = (x: number, y: number) => roadAt(track, x, y) !== 0;
+  // R2 (#266): a tile that is water — a river deck's tile, or the sea.
+  const onDeck = (x: number, y: number) => !railTerrainOk(grid, x, y);
 
   const gScore = new Map<number, number>([[start, 0]]);
   const cameFrom = new Map<number, number>();
@@ -2018,6 +2127,12 @@ export function planRailRoute(
       // tile, and no turn on one.
       if (diag && (hasRoad(cxn, cyn) || hasRoad(nx, ny))) continue;
       if (hasRoad(cxn, cyn) && oct !== 8 && o !== oct) continue;
+      // R2 (#266): …and a bridge is straight across for the same reasons. A
+      // diagonal may not start or end on a deck (that would put a RAIL_DE /
+      // RAIL_DS link on the bridge), and a train's heading may not change
+      // while it is on one.
+      if (diag && (onDeck(cxn, cyn) || onDeck(nx, ny))) continue;
+      if (onDeck(cxn, cyn) && oct !== 8 && o !== oct) continue;
       const ni = tIdx(nx, ny) * 9 + o;
       if (closed.has(ni)) continue;
       const c = railStepCost(grid, track, rail, ownerId, nx, ny);
@@ -2042,16 +2157,23 @@ export function planRailRoute(
  */
 export function validateRailDrag(
   grid: Grid, track: Track, rail: RailState, ownerId: number, tiles: [number, number][],
-): { ok: boolean; fresh: number; why: RailRefusal | null } {
+): { ok: boolean; fresh: number; bridges: number; why: RailRefusal | null } {
   const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
-  let fresh = 0;
+  // R2 (#266): the drag's crossing, judged on the whole gesture by the SAME
+  // function the player's preview and `buildRail` read — a plan that walks
+  // into the water is refused here even when its tiles look legal one by one.
+  const bridgeTiles = railBridgePlan(grid, track, rail, ownerId, tiles, planned).deckTiles;
+  let fresh = 0, bridges = 0;
   for (const [x, y] of tiles) {
-    const why = railTileRefusal(grid, track, rail, ownerId, x, y, planned);
-    if (why !== "ok") return { ok: false, fresh: 0, why };
+    const why = railTileRefusal(grid, track, rail, ownerId, x, y, planned, bridgeTiles);
+    if (why !== "ok") return { ok: false, fresh: 0, bridges: 0, why };
     const i = tIdx(x, y);
-    if ((rail.rail.tile[i] & RAIL_PRESENT) === 0 || rail.rail.owner[i] !== ownerId) fresh++;
+    if ((rail.rail.tile[i] & RAIL_PRESENT) === 0 || rail.rail.owner[i] !== ownerId) {
+      fresh++;
+      if (bridgeTiles.has(i)) bridges++;
+    }
   }
-  return { ok: true, fresh, why: null };
+  return { ok: true, fresh, bridges, why: null };
 }
 
 // ── the project, read off the rail state each turn (stateless) ─────────────
@@ -2367,7 +2489,10 @@ export function planRailMove(
           if (!path) continue;
           const v = validateRailDrag(grid, track, rail, ownerId, path);
           if (!v.ok) continue;
-          return { kind: "track", tiles: path, fresh: v.fresh, cost: railCost(v.fresh) };
+          return {
+            kind: "track", tiles: path, fresh: v.fresh, bridges: v.bridges,
+            cost: railCostOf(v.fresh, v.bridges),
+          };
         }
       }
       return null;   // broken and unconnectable: the recall/sell above drains it
