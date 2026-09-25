@@ -487,6 +487,8 @@ export function createSabotageOverlay(opts: SabotageOverlayOptions): SabotageOve
   const onMotionChange = () => {
     if (destroyed) return;
     if (!motionAllowed()) { rest(); return; }
+    // Motion is allowed again while the window is still open: pick the loop back
+    // up where it is (the canvas is already the right size from `start`).
     if (wanted) ensureCanvas();
   };
   const listen = (add: boolean) => {
@@ -511,7 +513,12 @@ export function createSabotageOverlay(opts: SabotageOverlayOptions): SabotageOve
     wanted = true;
     t0 = null;
     if (destroyed || !motionAllowed()) return;
-    if (ensureCanvas() && canvas && !ro && typeof globalThis.ResizeObserver === "function") {
+    if (!ensureCanvas()) return;
+    // Re-measured on every open, not only on creation: the slot may have been
+    // resized while the window was closed (a rotation, a narrower dock) and the
+    // canvas is stretched by CSS, which would soften every line.
+    measure();
+    if (canvas && !ro && typeof globalThis.ResizeObserver === "function") {
       ro = new globalThis.ResizeObserver(() => { if (canvas) measure(); });
       ro.observe(host);
     }
