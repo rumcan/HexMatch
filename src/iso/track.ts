@@ -381,7 +381,10 @@ export function buildRefusal(
   // terrain test above answers "water" for it long before this — the deck is in
   // the set for the belt-and-braces case, a `builtAt` a game or a test
   // supplies.)
-  if (built === "platform" || built === "depot" || built === "plant" || built === "bridge") {
+  // R3 (#270): a dam's footprint is standing ground — its water tile already
+  // answers "water" above, and this is what protects its BANK tile, the dry
+  // land the structure leans on.
+  if (built === "platform" || built === "depot" || built === "plant" || built === "bridge" || built === "dam") {
     return "occupied";
   }
   if (built === "rail") return "rail";

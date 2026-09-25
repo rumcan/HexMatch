@@ -1448,6 +1448,8 @@ export function chooseRivalFactorySpot(
   // only by what a NEW Depot could still claim there.
   const state: EconomyState = {
     grid, track, harvesters: opts.opponentHarvesters ?? [], factories: [],
+    // R3 (#270): the probe plans a lane, not a dam — no dams in this world.
+    dams: [],
   };
   const probe: Factory = { owner: opts.owner ?? "ai", ownerId: opts.ownerId, tx: 0, ty: 0 };
   // T4: eight far-corner probes are no longer enough on a sparse 144×144

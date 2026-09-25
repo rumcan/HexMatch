@@ -849,7 +849,7 @@ export interface TransportDef {
  */
 export const BUILD_COSTS: Readonly<Record<
   "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train"
-  | "bridge" | "railBridge",
+  | "bridge" | "railBridge" | "dam",
   Partial<Record<Cargo, number>>
 >> = {
   // A Dirt Road is FREE: the gravel is the plumbing every game needs, and
@@ -877,6 +877,12 @@ export const BUILD_COSTS: Readonly<Record<
   // prices them the same way (`ai.ts`).
   bridge: { wood: 9, stone: 9 },
   railBridge: { stone: 9 },
+  // R3 (#270): the HYDRO DAM, charged once per site (not per tile). A
+  // strategic structure — pricier than a bridge deck and a train, and a mix
+  // that spans the mid table: timber and stone footing, the ore the concrete
+  // needs, a little oil. The free setup allowance never covers it, and the
+  // rival prices it from this same row (`ai.ts`).
+  dam: { wood: 12, stone: 12, ore: 18, oil: 6 },
 };
 
 // ── VP-01: the victory table ──────────────────────────────────────────────

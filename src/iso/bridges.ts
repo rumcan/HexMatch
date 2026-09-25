@@ -287,6 +287,11 @@ function probeRun(
   for (let j = start; j <= end; j++) {
     const [bx, by] = path[j];
     if (otherAt(bx, by)) return { run: null, why: "shared", start };
+    // R3 (#270): a dam STANDS on its river tile — a deck laid over it would
+    // be a second structure at the same site. `builtAt` is the map's own
+    // report, and "something already crosses the water there" is exactly
+    // what a standing dam is.
+    if (grid.builtAt?.(bx, by) === "dam") return { run: null, why: "shared", start };
     for (const s of [1, -1]) {
       const nx = bx + pdx * s, ny = by + pdy * s;
       if (!inMapB(nx, ny)) continue;

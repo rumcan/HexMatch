@@ -42,6 +42,10 @@ import {
 // `railOpenTo` / `railServicedIndustries` are the rail module's own rules; this
 // module only asks them the same question it asks the road tar.
 import { railOpenTo, railPath, railServesIndustry, railServicedIndustries, stopTile, type RailState } from "./rail";
+// R3 (#270): the dam's record type only — the bonus arithmetic the clock
+// applies lives in `dams.ts`, and a type import keeps this leaf the way the
+// bridge rules already keep it.
+import type { Dam } from "./dams";
 
 /** Catchment is a 4×4 rectangle centred on the harvester tile. */
 export const CATCHMENT = 4;
@@ -165,6 +169,16 @@ export interface EconomyState {
    * rule below reads as "no railway" rather than throwing.
    */
   rail?: RailState;
+  /**
+   * R3 (#270): the map's standing hydro dams (`dams.ts`), owner per site.
+   * Required on the type — the game always creates it as `[]` — but the
+   * bonus rule still reads absence as "no dams" (headless economy tests
+   * and saves written before the dams existed build a state with none at
+   * runtime, and `dams?.` keeps them running). The clock reads it in
+   * `economyTick` (the bonus multiplies the factor there); nothing else in
+   * this module needs it.
+   */
+  dams: Dam[];
   /**
    * B5 (#250): the map's ONLY stored ownership — the industries a battle
    * CONQUERED (`industryId → holder harvester id`). First-come stays derived

@@ -128,6 +128,8 @@ function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
       track,
       harvesters: d.eco.harvesters,
       factories: d.eco.factories,
+      // R3 (#270): the score summary doesn't read the dam bonus.
+      dams: [],
     };
     const score = createScoreState();
     // Railways v1: platforms score 1★ each (`rescore`'s third argument is a

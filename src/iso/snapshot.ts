@@ -26,6 +26,9 @@ import type { Cargo } from "./config";
 import { createTrack, type Track } from "./track";
 import type { Harvester, Factory } from "./economy";
 import { DEPOT_FACINGS, type DepotFacing } from "./depot";
+// R3 (#270): the dam's wire shape (the record type travels, `dams.ts`
+// validates it — this module stays the tolerant reader).
+import type { DamWire } from "./dams";
 // B6 (#251): the live MP duel's wire shape (seed + move log + full save).
 import type { DuelWire } from "../game/battle-mp";
 import type { OfferWire } from "./offers";
@@ -403,6 +406,16 @@ export interface Snapshot {
    * fields themselves regenerate from the seed; only their clearing travels.
    */
   clearedFields?: number[];
+  /**
+   * R3 (#270): the standing hydro dams. The SITES are seed-derived (river
+   * water on the regenerated map); only the ownership and the bank the
+   * footprint leans onto are mutable, and that is all this field is. Same
+   * additive-optional contract as `clearedFields` and the setup allowances
+   * above: absent means "no dam stands", an old guest ignores the field, and
+   * a new guest reading a pre-dam snapshot finds it absent — no
+   * `SNAPSHOT_VERSION` bump.
+   */
+  dams?: DamWire[];
 }
 
 export interface SnapshotSource {
@@ -424,6 +437,8 @@ export interface SnapshotSource {
   rail?: RailWire;
   winner?: WinnerWire | null;
   clearedFields?: number[];
+  /** R3 (#270): the standing dams (the wire shape — the host's own form). */
+  dams?: DamWire[];
 }
 
 /** Copy the duel for the wire (`saved` is a fresh `Battle.save()` each call). */
@@ -491,6 +506,9 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     winner: src.winner ?? null,
     ...(src.clearedFields?.length ? { clearedFields: [...src.clearedFields] } : {}),
     ...(src.offers ? { offers: src.offers.map((o) => ({ ...o })) } : {}),
+    // R3 (#270): a world with no dam pays nothing for the field, like the
+    // railway and the offer book.
+    ...(src.dams?.length ? { dams: src.dams.map((d) => ({ ...d })) } : {}),
   };
 }
 
@@ -657,6 +675,31 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
     || o.clearedFields.some((id) => !Number.isInteger(id) || id < 0))) {
     return new SnapshotError("malformed", "Snapshot cleared fields are malformed.");
   }
+  // R3 (#270): the dams are optional (a dam-free world sends none), but a
+  // present one must be a list of readable rows — a tile within the map, an
+  // owner id, a legal axis and a bank across it. `damsFromWire` drops the
+  // bad rows on apply; the loud refusal here is for the list that is not a
+  // list at all, which no amount of row-dropping can make safe.
+  if (o.dams !== undefined && o.dams !== null && !Array.isArray(o.dams)) {
+    return new SnapshotError("malformed", "Snapshot dams is malformed.");
+  }
+  if (Array.isArray(o.dams)) {
+    for (const d of o.dams) {
+      if (!d || typeof d !== "object") return new SnapshotError("malformed", "Snapshot dams is malformed.");
+      if (!Number.isInteger(d.wx) || !Number.isInteger(d.wy)
+        || d.wx < 0 || d.wy < 0 || d.wx >= MAP_W || d.wy >= MAP_H
+        || !Number.isInteger(d.ownerId) || d.ownerId < 1) {
+        return new SnapshotError("malformed", "Snapshot carries a malformed dam site.");
+      }
+      if (d.axis !== "x" && d.axis !== "y") {
+        return new SnapshotError("malformed", "Snapshot carries a malformed dam axis.");
+      }
+      if (d.axis === "x" ? d.side !== "n" && d.side !== "s"
+        : d.side !== "e" && d.side !== "w") {
+        return new SnapshotError("malformed", "Snapshot carries a malformed dam side.");
+      }
+    }
+  }
   for (const [name, b64] of [["dirt", o.dirt], ["road", o.road], ["owner", o.owner],
     ["upgraded", o.upgraded]] as const) {
     if (base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
@@ -694,6 +737,8 @@ export interface AppliedSnapshot {
   rail?: RailWire;
   winner?: WinnerWire | null;
   clearedFields: number[];
+  /** R3 (#270): the standing dams, validated row by row. */
+  dams: DamWire[];
 }
 
 /**
@@ -743,6 +788,9 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     winner: (o as Snapshot).winner ?? null,
     clearedFields: [...(o.clearedFields ?? [])],
     offers: Array.isArray((o as Snapshot).offers) ? (o as Snapshot).offers!.map((x) => ({ ...x })) : undefined,
+    // R3 (#270): the dam rows, copied (a shared reference would let a late
+    // mutation on the wire object rewrite the applied world).
+    dams: ((o as Snapshot).dams ?? []).map((x) => ({ ...x })),
   };
 }
 

@@ -47,6 +47,10 @@ import { GEM_TO_CARGO } from "../iso/quarry";
 // RAIL-04 (#178): the buttons print the railway's real prices and its real
 // point value — the same table and the same constant the placement charges.
 import { RAIL_COSTS } from "../iso/rail";
+// R3 (#270): the Dam button prints the same price and bonus the placement
+// and the clock use — `BUILD_COSTS.dam` and `DAM_BONUS` from the dam's own
+// module, so the HUD cannot quote a number the rule does not make.
+import { DAM_COST, DAM_BONUS } from "../iso/dams";
 // VP-01: quarters on the scoreboard — 4.75★, not 4.7499999999999996★.
 import { fmtVp } from "../iso/victory";
 // AI-01: the rival difficulty presets the top-bar selector switches between.
@@ -128,6 +132,12 @@ export interface DepotCardInfo {
   retuneCost: string;
   /** A session is running — both doors wait. */
   busy: boolean;
+  /**
+   * R3 (#270): the dam bonus reaching this Depot — "×1.25 — hydro dam
+   * nearby" when one of the seat's dams is within range, null otherwise.
+   * The card prints it on its own line, beside the yield the clock pays.
+   */
+  damLine?: string | null;
   onUpgrade: () => boolean;
   onRetune: () => boolean;
 }
@@ -162,7 +172,9 @@ export type UiTool =
   // `raildepot` place one structure in the current heading (R turns it), and
   // `railway` holds the panel: the lines, the trains and the buy/recall/sell
   // buttons.
-  | "rail" | "platform" | "raildepot" | "railway";
+  | "rail" | "platform" | "raildepot" | "railway"
+  // R3 (#270): the hydro dam — a one-click placement on a river tile.
+  | "dam";
 
 /** RAIL-05 (#182): the tools the railway feature flag owns — the set the
  *  campaign boot hides when the flag is down. */
@@ -750,6 +762,14 @@ const ICON_MINIMAP =
  *  so `true` retires no tab — the Bank stays, tier-gated. */
 export interface OriginalUiOptions {
   rail?: boolean;
+  /**
+   * R3 (#270): the Dam button exists only when the game can actually build a
+   * dam — the rivers map option on AND the new loop, the two flags the
+   * placement rule gates on. Absent/false hides the button the way `rail`
+   * hides the four rail buttons: a button the rules would refuse is a promise
+   * the HUD cannot keep.
+   */
+  dams?: boolean;
   newLoop?: boolean;
   /**
    * C2 (#257): the chat panel. Present only in a hosted game — a solo boot
@@ -1998,13 +2018,19 @@ export function createOriginalUi(
     // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
     { key: "rail", label: "Rail", sub: `${costMarkup(RAIL_COSTS.rail)} a tile · 0★` },
     { key: "platform", label: "Platform", sub: `${costMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★ · track beside it included · R turns` },
+    // R3 (#270): the hydro dam. The price is read from the same row the
+    // placement charges (`BUILD_COSTS.dam`) and the bonus from the same
+    // constant the clock multiplies by (`DAM_BONUS`), so the button never
+    // promises a price or a pay the rule does not make.
+    { key: "dam", label: "Dam", sub: `${costMarkup(DAM_COST)} · +${Math.round(DAM_BONUS * 100)}% output nearby · R turns` },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   // RAIL-05 (#182): with the flag down the four railway buttons do not exist
   // — a button the rules would refuse is a promise the HUD cannot keep.
-  const visibleTools = opts.rail === false
-    ? TOOLS.filter((t) => !RAIL_TOOL_KEYS.has(t.key))
-    : TOOLS;
+  // R3 (#270): the Dam button goes with the rivers flag, the same rule.
+  const visibleTools = TOOLS.filter((t) =>
+    (opts.rail !== false || !RAIL_TOOL_KEYS.has(t.key))
+    && (opts.dams !== false || t.key !== "dam"));
   let depotSub: HTMLElement | null = null;
   let cityBtn: HTMLButtonElement | null = null;
   let lastDepotSub = "\u0000";
@@ -4241,6 +4267,9 @@ export function createOriginalUi(
       title: o.title,
       lines: [
         `Yield <b>×${o.yieldNow}</b> of cap <b>×${o.cap}</b>${full ? " — full; score past it pays Gold" : ""}`,
+        // R3 (#270): the dam's bonus, when it reaches this Depot — the same
+        // gate the hover inspector's `damLine` prints, so the two cards agree.
+        ...(o.damLine ? [o.damLine] : []),
       ],
       actions: [
         {

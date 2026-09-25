@@ -1,0 +1,55 @@
+{
+  "tileW": 64,
+  "tileH": 32,
+  "zooms": [
+    0.5,
+    1,
+    2
+  ],
+  "generatedBy": "rundot generate image (gemini-3.1-flash-image-preview), raw tools/art-src/270/dam-raw.png; sheared to 2:1, mirrored for dam_x",
+  "meta": {
+    "note": "Per-sprite PNG layers for the hydro dams (R3, #270). Two sprites: dam_x spans a river that runs along y (the 2\u00d71 footprint, the wall crossing in x) and dam_y spans a river that runs along x (the 1\u00d72 footprint, the wall crossing in y). The `anchor` is the pixel that lands on the SOUTH VERTEX OF THE RIVER (SITE) TILE \u2014 the one fixed point of a dam, since the bank tile of the footprint moves with `side` \u2014 exactly what src/iso/depth.ts' drawOrigin default branch (the south-vertex convention, no `center`) places the anchor on when the DrawItem's tx,ty come from dams.ts' damDrawOrigin. The placeholder PNGs are flat, clearly marked 'PLACEHOLDER', and sized/anchored so the lead's generated art can be dropped in under the same names with no code change.",
+    "palette": {
+      "charcoal": "#1f2a33",
+      "steel": "#9aa2ab",
+      "concrete": "#e8ebef",
+      "concrete-line": "#79828c",
+      "water": "#5b8fb5",
+      "water-line": "#3d6f8f"
+    }
+  },
+  "sprites": {
+    "dam_x": {
+      "name": "dam_x",
+      "kind": "dam",
+      "w": 106,
+      "h": 98,
+      "anchor": [
+        85,
+        97
+      ],
+      "footprint": [
+        2,
+        1
+      ],
+      "moving": false,
+      "note": "Dam across a river running along y (banks east/west). DrawItem origin = damDrawOrigin = [wx-1, wy]; the anchor lands on the water tile's south vertex. PLACEHOLDER art \u2014 replace under the same name/anchor."
+    },
+    "dam_y": {
+      "name": "dam_y",
+      "kind": "dam",
+      "w": 106,
+      "h": 98,
+      "anchor": [
+        20,
+        97
+      ],
+      "footprint": [
+        1,
+        2
+      ],
+      "moving": false,
+      "note": "Dam across a river running along x (banks north/south). DrawItem origin = damDrawOrigin = [wx, wy-1]; the anchor lands on the water tile's south vertex. PLACEHOLDER art \u2014 replace under the same name/anchor."
+    }
+  }
+}
