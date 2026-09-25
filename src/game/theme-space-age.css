@@ -409,3 +409,19 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   align-self: flex-start; background: transparent !important; color: var(--sa-bone-dim) !important;
   border: 1px solid var(--sa-line-hi) !important; padding: 4px 12px; font-family: var(--sans); text-transform: none;
 }
+
+/* selected build button, every layout (phone Build sheet included) */
+.build-btn { background: var(--sa-panel) !important; background-image: none !important; border: 0 !important; border-bottom: 1px solid var(--sa-line) !important; }
+.build-btn:hover { background: var(--sa-panel-2) !important; }
+.build-btn.active {
+  background: var(--sa-panel-2) !important; color: var(--sa-bone) !important;
+  border-left: 4px solid var(--sa-orange) !important;
+}
+.build-btn.active .bb-mid b { color: var(--sa-orange) !important; }
+.build-btn.active .bb-mid small { color: var(--sa-bone-dim) !important; }
+@media (min-width: 761px) {
+  /* the desktop rail keeps the solid orange tile (icon + one word reads fine) */
+  .aside.left .build-btn.active { background: var(--sa-orange) !important; border-left: 0 !important; color: var(--sa-on-orange) !important; }
+  .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange) !important; }
+}
+.build-btn .bb-mid small { color: var(--sa-bone-dim); }
