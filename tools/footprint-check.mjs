@@ -26,15 +26,38 @@ const OUT = process.argv[2] ?? join(ROOT, "assets/iso-atlas/footprint-check.png"
 const manifest = JSON.parse(readFileSync(join(ROOT, "assets/iso-atlas/manifest.json"), "utf8"));
 const atlas = await sharp(join(ROOT, "assets/iso-atlas/atlas@1x.png")).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
+/** Building-layer PNGs (assets/buildings/<name>@1x.png), loaded lazily. */
+const LAYERS = new Map();
+async function layerOf(name) {
+  if (!LAYERS.has(name)) {
+    LAYERS.set(name, await sharp(join(ROOT, "assets", "buildings", `${name}@1x.png`))
+      .ensureAlpha().raw().toBuffer({ resolveWithObject: true }));
+  }
+  return LAYERS.get(name);
+}
+
 const HW = 32, HH = 16, TILE_H = 32;
 const tileToScreen = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
-/** The buildings Y7 covers: the six single-sprite PP-12 industry nodes, the
- *  single-sprite PP-12 factory, and one PP-12 depot per cargo (each cargo has
- *  its own geometry, so all six are covered — unlike the old player tints,
- *  which shared one geometry each). Legacy per-tile cells are not covered. */
-const NAMES = Object.keys(manifest.sprites).filter((n) =>
-  /^(farm|forest|ore_mine|quarry|oil_rig|gold_mine|factory|depot_(grain|wood|ore|stone|oil|gold))$/.test(n));
+/** Two sets share one sheet now:
+ *
+ *  • Y7 — the six single-sprite PP-12 industry nodes, the single-sprite PP-12
+ *    factory and one PP-12 depot per cargo (each cargo has its own geometry,
+ *    so all six are covered — unlike the old player tints, which shared one
+ *    geometry each). Legacy per-tile cells are not covered.
+ *  • F5 (#273) — the first non-square buildings, drawn from their own layers
+ *    in assets/buildings/ (the sheet has no cell for them). BOTH orientations
+ *    of each pair are listed, so a footprint declared the wrong way round
+ *    shows as one of the two leaning off its diamond. */
+const Y7 = (n) =>
+  /^(farm|forest|ore_mine|quarry|oil_rig|gold_mine|factory|depot_(grain|wood|ore|stone|oil|gold))$/.test(n);
+const BUILT = JSON.parse(readFileSync(join(ROOT, "assets", "buildings", "manifest.json"), "utf8"));
+const F5 = Object.keys(BUILT.sprites).filter((n) => /^(terrace|shops|store|factory|depot)_\dx\d(_r)?$/.test(n));
+const NAMES = [...Object.keys(manifest.sprites).filter(Y7), ...F5];
+for (const name of F5) await layerOf(name);
+
+/** The def of a name: the sheet cell for a Y7 sprite, its layer for F5 art. */
+const defOf = (name) => manifest.sprites[name] ?? BUILT.sprites[name];
 
 // Quadrant offsets: the footprint origin placed in each map quadrant.
 const QUADRANTS = [[2, 2], [20, 3], [3, 22], [21, 21]];
@@ -45,21 +68,27 @@ const W = cols * CELL_W, H = rows * CELL_H;
 const dst = Buffer.alloc(W * H * 4);
 for (let i = 0; i < W * H; i++) { dst[i * 4] = 0xf2; dst[i * 4 + 1] = 0xf0; dst[i * 4 + 2] = 0xe8; dst[i * 4 + 3] = 255; }
 
-/** Blit sprite frame 0 with its top-left at (dx, dy). */
+/** Blit sprite frame 0 with its top-left at (dx, dy) — from the shared sheet
+ *  or from the sprite's own layer PNG, whichever the name resolves to. */
 function blitAt(name, dx, dy, frame = 0) {
-  const s = manifest.sprites[name];
+  const fromSheet = Boolean(manifest.sprites[name]);
+  const s = defOf(name);
+  const src = fromSheet ? atlas : LAYERS.get(name);
+  if (!src) return;
   const fwPx = s.w / (s.frames ?? 1);
   for (let y = 0; y < s.h; y++) {
     for (let x = 0; x < fwPx; x++) {
       const X = Math.floor(dx) + x, Y = Math.floor(dy) + y;
       if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
-      const si = ((s.y + y) * atlas.info.width + (s.x + frame * fwPx + x)) * 4;
+      const si = fromSheet
+        ? ((s.y + y) * atlas.info.width + (s.x + frame * fwPx + x)) * 4
+        : (y * src.info.width + x) * 4;
       const di = (Y * W + X) * 4;
-      const a = atlas.data[si + 3] / 255;
+      const a = src.data[si + 3] / 255;
       if (a === 0) continue;
-      dst[di] = dst[di] * (1 - a) + atlas.data[si] * a;
-      dst[di + 1] = dst[di + 1] * (1 - a) + atlas.data[si + 1] * a;
-      dst[di + 2] = dst[di + 2] * (1 - a) + atlas.data[si + 2] * a;
+      dst[di] = dst[di] * (1 - a) + src.data[si] * a;
+      dst[di + 1] = dst[di + 1] * (1 - a) + src.data[si + 1] * a;
+      dst[di + 2] = dst[di + 2] * (1 - a) + src.data[si + 2] * a;
       dst[di + 3] = 255;
     }
   }
@@ -83,7 +112,7 @@ function footprintSvg(fw, fh, ox, oy) {
 
 const svgParts = [];
 NAMES.forEach((name, r) => {
-  const [fw, fh] = manifest.sprites[name].footprint;
+  const [fw, fh] = defOf(name).footprint;
   QUADRANTS.forEach(([qx, qy], c) => {
     // Screen position of the footprint origin tile inside this sheet cell.
     // `drawnTop` is where the renderer's anchor contract puts a tile diamond's
@@ -104,13 +133,18 @@ NAMES.forEach((name, r) => {
         blitAt("terrain_grass", ox + (sx - bx) + HW - t.anchor[0], oy + (sy - by) + TILE_H - t.anchor[1]);
       }
     }
-    // the building, via drawOrigin: anchor on the footprint's south corner
+    // the building, via the renderer's drawOrigin: building-layer art
+    // (`center: true`) lands its anchor on the footprint CENTRE, sheet cells
+    // on the south corner of tile (fw−1, fh−1).
     const [sx, sy] = tileToScreen(qx + fw - 1, qy + fh - 1);
-    const s = manifest.sprites[name];
-    blitAt(name, ox + (sx - bx) + HW - s.anchor[0], oy + (sy - by) + TILE_H - s.anchor[1]);
+    const s = defOf(name);
+    const [ax, ay] = s.center
+      ? [sx - (fw - fh) * (HW / 2), sy + TILE_H - (fw + fh) * (HH / 2)]
+      : [sx, sy + TILE_H];
+    blitAt(name, ox + (ax - bx) + HW - s.anchor[0], oy + (ay - by) - s.anchor[1]);
     const [gx, gy] = drawnTop(qx, qy);
     svgParts.push(`<g>${footprintSvg(fw, fh, gx, gy)}</g>`);
-    svgParts.push(`<text x="${c * CELL_W + 6}" y="${r * CELL_H + 16}" font-family="monospace" font-size="11" fill="#333">${name} @(${qx},${qy})</text>`);
+    svgParts.push(`<text x="${c * CELL_W + 6}" y="${r * CELL_H + 16}" font-family="monospace" font-size="11" fill="#333">${name} ${fw}×${fh} @(${qx},${qy})</text>`);
   });
 });
 

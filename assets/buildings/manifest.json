@@ -976,6 +976,174 @@
         240,
         180
       ]
+    },
+    "terrace_1x2": {
+      "footprint": [
+        1,
+        2
+      ],
+      "anchor": [
+        49,
+        80
+      ],
+      "w": 100,
+      "h": 104,
+      "canvas": [
+        212,
+        224
+      ]
+    },
+    "shops_1x3": {
+      "footprint": [
+        1,
+        3
+      ],
+      "anchor": [
+        66,
+        134
+      ],
+      "w": 134,
+      "h": 168,
+      "canvas": [
+        280,
+        356
+      ],
+      "footRoom": 8
+    },
+    "store_2x4": {
+      "footprint": [
+        2,
+        4
+      ],
+      "anchor": [
+        105,
+        178
+      ],
+      "w": 210,
+      "h": 230,
+      "canvas": [
+        436,
+        484
+      ],
+      "footRoom": 16
+    },
+    "factory_2x4": {
+      "footprint": [
+        2,
+        4
+      ],
+      "anchor": [
+        97,
+        120
+      ],
+      "w": 204,
+      "h": 172,
+      "canvas": [
+        428,
+        364
+      ],
+      "footRoom": 12
+    },
+    "depot_1x2": {
+      "footprint": [
+        1,
+        2
+      ],
+      "anchor": [
+        50,
+        42
+      ],
+      "w": 100,
+      "h": 70,
+      "canvas": [
+        216,
+        156
+      ],
+      "footRoom": 8
+    },
+    "terrace_1x2_r": {
+      "footprint": [
+        2,
+        1
+      ],
+      "anchor": [
+        49,
+        80
+      ],
+      "w": 100,
+      "h": 104,
+      "canvas": [
+        212,
+        224
+      ]
+    },
+    "shops_1x3_r": {
+      "footprint": [
+        3,
+        1
+      ],
+      "anchor": [
+        66,
+        134
+      ],
+      "w": 134,
+      "h": 168,
+      "canvas": [
+        280,
+        356
+      ],
+      "footRoom": 8
+    },
+    "store_2x4_r": {
+      "footprint": [
+        4,
+        2
+      ],
+      "anchor": [
+        105,
+        176
+      ],
+      "w": 210,
+      "h": 228,
+      "canvas": [
+        436,
+        484
+      ],
+      "footRoom": 16
+    },
+    "factory_2x4_r": {
+      "footprint": [
+        4,
+        2
+      ],
+      "anchor": [
+        107,
+        120
+      ],
+      "w": 204,
+      "h": 172,
+      "canvas": [
+        428,
+        364
+      ],
+      "footRoom": 12
+    },
+    "depot_1x2_r": {
+      "footprint": [
+        2,
+        1
+      ],
+      "anchor": [
+        50,
+        42
+      ],
+      "w": 102,
+      "h": 70,
+      "canvas": [
+        216,
+        156
+      ],
+      "footRoom": 8
     }
   }
 }
