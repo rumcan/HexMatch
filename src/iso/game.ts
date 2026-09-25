@@ -287,6 +287,11 @@ import { createLoadingScreen, createRevealGate } from "./loading-screen";
 // (plant → depot → road → board → expand → points) before the first click.
 import { showTutorial, type TutorialHandle } from "./tutorial";
 import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
+// MON-1 (#367): the RUN Bits store — THE panel the main menu raises too, so
+// the front door and a live match never quote a different price. `loadStore`
+// warms the entitlement cache at boot; the store is never a gate.
+import { showStorePanel, type StorePanelHandle } from "../game/store-panel";
+import { loadStore } from "../game/store";
 // #121: the destructive asks are painted plates, not `window.confirm` — a
 // native dialog is answered `false` (with nothing on screen) inside a frame
 // the host sandboxes without `allow-modals`, which is how the hosted build
@@ -649,6 +654,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     voicedTrain = true;
     voiceCue("player:first-train");
   };
+  // MON-1 (#367): warm the entitlement cache as the match boots, so the ☰
+  // menu's Store row opens already knowing what this player owns.
+  // Fire-and-forget by design: an unreachable store is never a reason for a
+  // slower boot, and never a reason the island does not load.
+  void loadStore();
 
   // ── state ──────────────────────────────────────────────────────────────
   // AI-03: the map is REGENERATED from the save's seed on a resume — never a
@@ -10706,6 +10716,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // The sheet handle and the menu's teardown live at function scope so the
   // dispose closure below can reach them (the listeners ride on `document`).
   let settingsView: SettingsSheetHandle | null = null;
+  /** MON-1 (#367): at most one store panel over the map. */
+  let storeView: StorePanelHandle | null = null;
   /** #121: at most one question stands at a time — a repeat click on a
    *  destructive door must not stack a second plate over the first. */
   let confirmView: ConfirmSheetHandle | null = null;
@@ -10774,6 +10786,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
     menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    // MON-1 (#367): the Store — the same panel the front door raises, over
+    // the game root, one instance at a time. An unreachable store paints a
+    // sentence and closes like any other sheet; it never blocks the match.
+    menuItem("Store", "unlockables · RUN Bits", () => {
+      if (storeView) return;
+      const view = showStorePanel(ui.el);
+      storeView = view;
+      void view.promise.then(() => { if (storeView === view) storeView = null; });
+    });
     /**
      * #121: one destructive ask, as a painted plate. A double click cannot
      * stack a second question (the plate's backdrop covers the ☰ that opened
@@ -10870,6 +10891,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       document.removeEventListener("keydown", onDocKey, true);
       settingsView?.destroy();
       settingsView = null;
+      // MON-1 (#367): the store panel dies with the game, same as the sheet.
+      storeView?.destroy();
+      storeView = null;
       // #121: a question still standing when the game dies must die with it —
       // destroy() answers `false`, so the half-clicked door never runs either.
       confirmView?.destroy();

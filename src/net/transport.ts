@@ -32,8 +32,13 @@ import type {
 // `ListUserRoomsOptions` / `RealtimeRoomSummary` are not re-exported from
 // `/mp-client` — they live on the package root. Type-only: erased at build.
 import type {
+  // MON-1 (#367): the IAP and entitlement surfaces the store wrapper reaches.
+  // Type-only, like the two above — erased at build.
+  EntitlementApi,
+  IapApi,
   ListUserRoomsOptions,
   RealtimeRoomSummary,
+  SpendCurrencyOptions,
 } from "@series-inc/rundot-game-sdk";
 import type { HexProtocol } from "./protocol";
 
@@ -439,6 +444,190 @@ export async function submitLadderScore(params: {
     // A rate-limited or out-of-bounds submission is not an error the player
     // needs to see: the rating itself is already filed in their own storage.
     return { accepted: false, rank: null, reason: err instanceof Error ? err.message : null };
+  }
+}
+
+// ── MON-1 (#367) — the RUN Bits store ─────────────────────────────────────
+// The IAP and entitlement surfaces, wrapped by the same rule as the ladder:
+// every call here resolves, never throws, and says so when the platform is
+// not behind the page. `src/game/store.ts` owns the policy (cache, idempotency,
+// what "owned" means); this file only owns the SDK shape, so that the next
+// BETA drift (§1.4) is still a one-file fix.
+//
+// SHAPE NOTE (the ticket's `purchase(itemId, key)` / `getBalance()` are gone):
+// SDK 5.27's `IapApi` sells through `spendCurrency(productId, cost, options)`
+// — the host raises its own confirm dialog, deducts the Bits and resolves
+// `{ success, error }` — and reads the purse with `getHardCurrencyBalance()`.
+// Durable ownership is a SEPARATE surface, `RundotGameAPI.entitlements`
+// (`listEntitlements` / `getQuantity`), which is what re-verification asks.
+
+/** Why a purchase did not go through. `null` means it did. */
+export type StorePurchaseFailure =
+  | "unavailable"      // no platform behind the page
+  | "user-cancelled"   // the player declined the host's confirm — no charge
+  | "insufficient-funds"
+  | "unknown-item"
+  | "error";
+
+export interface BitsPurchaseResult {
+  ok: boolean;
+  reason: StorePurchaseFailure | null;
+  /** The balance the host reports after the attempt, when it gives one. */
+  balance: number | null;
+}
+
+/** The IAP surface, or null when the singleton has none. */
+function iap(): IapApi | null {
+  try {
+    return (RundotGameAPI.iap ?? null) as IapApi | null;
+  } catch {
+    return null;
+  }
+}
+
+/** The entitlement surface, or null when the singleton has none. */
+function entitlements(): EntitlementApi | null {
+  try {
+    return (RundotGameAPI.entitlements ?? null) as EntitlementApi | null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True only when the SDK's offline MOCK is standing in — `vite preview` or a
+ * statically served build, where `MockIapApi` hands out 100 fake Bits and
+ * `spendCurrency` "succeeds" for free. Duck-typed on the mock's own field
+ * (`_hardCurrency`), the same way `isOfflineMockRealtime` duck-types the
+ * room mock: a class name is not a handle to rely on under BETA drift (§1.4).
+ */
+function isMockIap(api: IapApi): boolean {
+  try {
+    return "_hardCurrency" in (api as unknown as object);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when Bits can actually be spent from this page: a live IAP surface,
+ * not the offline mock. The store panel says "unavailable" and the game plays
+ * on when this is false — an unlockable must never hold the island hostage.
+ */
+export function isStoreAvailable(): boolean {
+  const api = iap();
+  if (!api || typeof api.spendCurrency !== "function") return false;
+  return !isMockIap(api);
+}
+
+/** This player's Bits, or null when the purse cannot be read. */
+export async function readBitsBalance(): Promise<number | null> {
+  const api = iap();
+  if (!api || typeof api.getHardCurrencyBalance !== "function") return null;
+  try {
+    const n = await api.getHardCurrencyBalance();
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask the platform what this player owns. Resolves `null` when the ledger
+ * cannot be read at all (offline, mock, missing surface) — NULL MEANS
+ * "UNKNOWN", never "owns nothing": the caller keeps its cached answer.
+ */
+export async function readEntitlements(
+  ids: readonly string[],
+): Promise<Record<string, number> | null> {
+  const api = entitlements();
+  if (!api || typeof api.listEntitlements !== "function") return null;
+  try {
+    const list = await api.listEntitlements();
+    if (!Array.isArray(list)) return null;
+    const want = new Set(ids);
+    const out: Record<string, number> = {};
+    for (const e of list) {
+      if (!e || typeof e.entitlementId !== "string") continue;
+      if (!want.has(e.entitlementId)) continue;
+      // A revoked or expired grant is not ownership.
+      if (e.status && e.status !== "active") continue;
+      if (typeof e.quantity !== "number") continue;
+      out[e.entitlementId] = Math.max(out[e.entitlementId] ?? 0, e.quantity);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Spend Bits on one catalogued item.
+ *
+ * `idempotencyKey` is OURS, not the SDK's: SDK 5.27's `spendCurrency` takes
+ * no key, so the key rides along in the options bag (unknown fields are
+ * ignored by a host that does not know them) and — more importantly — is
+ * written to the store's own ledger BEFORE the call, so a retry after a crash
+ * or a lost tab re-sends the same key instead of charging twice.
+ */
+export async function purchaseWithBits(req: {
+  productId: string;
+  price: number;
+  /** Shown by the host in its own confirm dialog, so it says what it is charging for. */
+  description: string;
+  idempotencyKey: string;
+}): Promise<BitsPurchaseResult> {
+  const api = iap();
+  if (!api || typeof api.spendCurrency !== "function" || isMockIap(api)) {
+    return { ok: false, reason: "unavailable", balance: null };
+  }
+  const options = {
+    screenName: "store",
+    description: req.description,
+    // Not in `SpendCurrencyOptions` — forwarded as an opaque field.
+    idempotencyKey: req.idempotencyKey,
+  } as SpendCurrencyOptions & { idempotencyKey?: string };
+  try {
+    const res = await api.spendCurrency(req.productId, req.price, options);
+    const balance = await readBitsBalance();
+    if (res?.success === true) return { ok: true, reason: null, balance };
+    const err = typeof res?.error === "string" ? res.error : "";
+    return {
+      ok: false,
+      // The one sentinel the SDK defines; everything else is a server string.
+      reason: err === "USER_CANCELLED" ? "user-cancelled" : "error",
+      balance,
+    };
+  } catch {
+    return { ok: false, reason: "error", balance: null };
+  }
+}
+
+/**
+ * Raise the platform's own Bits store (top-ups). Null when there is no
+ * platform behind the page — the panel simply hides the button.
+ */
+export async function openBitsStore(): Promise<{ purchased: boolean; balance: number | null } | null> {
+  const api = iap();
+  if (!api || typeof api.openStore !== "function" || isMockIap(api)) return null;
+  try {
+    const res = await api.openStore();
+    return { purchased: res?.purchased === true, balance: typeof res?.newBalance === "number" ? res.newBalance : null };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * MON-1's analytics hook (purchase attempted / succeeded / failed). The SDK's
+ * `analytics.recordCustomEvent` is fire-and-forget here: an unreachable
+ * pipeline must never hold up a receipt the player is waiting for.
+ */
+export function recordStoreEvent(event: string, payload?: Record<string, unknown>): void {
+  try {
+    void RundotGameAPI.analytics?.recordCustomEvent(event, payload)?.catch?.(() => {});
+  } catch {
+    /* an absent analytics surface is not a purchase failure */
   }
 }
 

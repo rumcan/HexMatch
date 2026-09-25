@@ -22,6 +22,10 @@ import { useEffect, useRef, useState } from "react";
 // ══════════════════════════════════════════════════════════════════════════
 import { showTutorial, type TutorialHandle } from "../iso/tutorial";
 import { showSettingsSheet, type SettingsSheetHandle } from "../iso/settings-sheet";
+// MON-1 (#367): the RUN Bits store — the same projector the in-game ☰ menu
+// raises, so the door and a live match never quote a different price.
+import { showStorePanel, type StorePanelHandle } from "../game/store-panel";
+import { loadStore } from "../game/store";
 import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
@@ -63,6 +67,12 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   const tourRef = useRef<TutorialHandle | null>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<SettingsSheetHandle | null>(null);
+  // MON-1 (#367): the Store door. Same projector contract as the two above —
+  // React owns the host div and the open flag, the panel owns its listeners
+  // and resolves its promise on close.
+  const [store, setStore] = useState(false);
+  const storeRef = useRef<HTMLDivElement>(null);
+  const storeHandleRef = useRef<StorePanelHandle | null>(null);
 
   // The tour is a DOM projector beside this component, exactly as it is
   // beside game.ts: React owns the host div and the "is it standing" state,
@@ -90,6 +100,22 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
     void handle.promise.then(() => { sheetRef.current = null; setSettings(false); });
     return () => { handle.destroy(); sheetRef.current = null; };
   }, [settings]);
+
+  // MON-1 (#367): warm the entitlement cache while the menu stands, so the
+  // Store door opens already knowing what the player owns. Fire-and-forget —
+  // an unreachable store is a line of panel copy, not a slower front door.
+  useEffect(() => {
+    void loadStore();
+  }, []);
+
+  // …and mount the panel the same way the sheet and the tour are mounted.
+  useEffect(() => {
+    if (!store || !storeRef.current) return;
+    const handle = showStorePanel(storeRef.current);
+    storeHandleRef.current = handle;
+    void handle.promise.then(() => { storeHandleRef.current = null; setStore(false); });
+    return () => { handle.destroy(); storeHandleRef.current = null; };
+  }, [store]);
 
   const progress = loadStoryProgress();
   const filed = CHAPTERS.filter((c) => progress.results[c.id] === "win").length;
@@ -162,6 +188,10 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setHowTo(true)}>
             How to Play<span className="mb-tag">eight cards, one loop</span>
           </button>
+          {/* MON-1 (#367): the Store door — unlockables bought with RUN Bits. */}
+          <button type="button" className="menu-btn" data-sfx="open" onClick={() => setStore(true)}>
+            Store<span className="mb-tag">unlockables · RUN Bits</span>
+          </button>
         </nav>
         {STORY_MODE_ENABLED ? <p className="menu-campaign">
           {filed > 0
@@ -214,6 +244,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
       <p className="menu-foot">{currentVersionLabel()}</p>
       {howTo ? <div className="menu-howto" ref={howToRef} /> : null}
       {settings ? <div className="menu-howto" ref={settingsRef} /> : null}
+      {store ? <div className="menu-howto" ref={storeRef} /> : null}
     </main>
   );
 }
