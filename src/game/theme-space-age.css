@@ -500,3 +500,12 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 @media (max-width: 760px) {
   .iso-inspect { top: calc(var(--topbar-h) + var(--safe-top) + 8px) !important; left: 8px !important; right: auto !important; max-width: min(220px, 60vw) !important; font-size: 11.5px !important; }
 }
+
+/* Market offers (yours and the rival's): dark rows like the Feed */
+.offer {
+  background: var(--sa-panel-2) !important; color: var(--sa-bone) !important;
+  border: 0 !important; border-left: 3px solid var(--sa-line-hi) !important;
+}
+.offer * { color: inherit; }
+.offer.theirs, .offer.rival, .offer[data-side="rival"] { border-left-color: var(--sa-red) !important; }
+.offer.mine, .offer[data-side="mine"] { border-left-color: var(--sa-aqua) !important; }
