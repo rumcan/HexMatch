@@ -172,7 +172,6 @@ import {
 import {
   DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
   depotTiles, rotateFacing, type DepotFacing,
-  industriesTouchingDepot,
 } from "./depot";
 import {
   depotRate, depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
@@ -3362,11 +3361,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function placeRailPlatform(tx: number, ty: number, p: PlayerState, view: RailView = railView): boolean {
     const ownerId = p.i + 1;
-    const why = platformRefusal(grid, rail.structures, railPlants(), ownerId, tx, ty, view);
+    // #400: the Depot refusal's set. A platform at an industry this seat may
+    // not claim is `industry-taken` — the same sentence a second Depot gets —
+    // so building one never switches the other seat's Depot off.
+    const why = platformRefusal(
+      grid, rail.structures, railPlants(), ownerId, tx, ty, view, undefined,
+      lockedIndustryIdsFor(eco, p.id),
+    );
     if (why !== "ok") {
       if (p.human) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
-        flashAt(tx, ty, why === "anchor-taken" ? "You already have one here" : "Can't build here");
+        flashAt(tx, ty, why === "anchor-taken" ? "You already have one here"
+          : why === "industry-taken" ? "Already claimed" : "Can't build here");
       }
       return false;
     }
@@ -5615,8 +5621,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const name = INDUSTRY_BY_KEY[ind?.type ?? ""]?.name ?? "the industry";
       const streak = eco.siteRights?.get(stake.industryId)?.streak;
       const next = streak?.playerId === stake.challengerId ? streak.wins + 1 : 1;
+      // A platform-Depot serves its anchor industry, not the 2×2 lot at its
+      // origin — the same catchment the economy pays — so a closed platform
+      // reads as a closed Depot here too.
       const challengerClosed = eco.harvesters.some((h) => h.owner === stake.challengerId && h.closed
-        && industriesTouchingDepot(grid, h.tx, h.ty).some((e) => e.industry.id === stake.industryId));
+        && industriesInCatchment(grid, h).some((e) => e.id === stake.industryId));
       if (challengerClosed) {
         return iChallenge
           ? { win: `Your Depot at the ${name} reopens.`, lose: `Your Depot at the ${name} stays closed.`, draw }
@@ -8482,7 +8491,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             ? payload.view as RailView : "se";
           if (tx !== null && ty !== null) {
             const why = what === "platform"
-              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view)
+              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view, undefined, lockedIndustryIdsFor(eco, p.id))
               : depotRefusal(grid, rail, p.i + 1, tx, ty, view);
             if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
             else if (what === "platform") placeRailPlatform(tx, ty, p, view);
@@ -8923,7 +8932,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // the SAME refusal function the click runs, so the two cannot disagree.
       const kind: "platform" | "depot" = tool === "platform" ? "platform" : "depot";
       const why = kind === "platform"
-        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView)
+        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id))
         : depotRefusal(grid, rail, me.i + 1, tx, ty, railView);
       const ok = why === "ok";
       const [fw, fh] = footprintFor(kind, railView);

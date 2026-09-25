@@ -21,11 +21,10 @@
 // state (the host owns it in MP).
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  industryLocks, isServiced, lockedIndustryIds,
+  industryLocks, industriesInCatchment, isServiced, lockedIndustryIds,
   type EconomyState, type Harvester, type SiteRights, type TownHold,
 } from "./economy";
 import type { Industry } from "./grid";
-import { industriesTouchingDepot } from "./depot";
 import { BATTLE_SALE, INDUSTRY_BY_KEY, type BattleRules, type Cargo } from "./config";
 import { BATTLE_SKILLS } from "./battle-ai";
 import type { SkillKey } from "./skill";
@@ -144,9 +143,10 @@ export function canChallenge(
 
   const locks = industryLocks(eco);
   const holder = locks.get(industryId) ?? null;
+  // A platform-Depot serves `railIndustryId`, not the 2×2 at its origin — the
+  // same catchment the economy pays. A closed platform reopens like a Depot.
   const mine = eco.harvesters.find((h) =>
-    h.owner === playerId
-    && industriesTouchingDepot(eco.grid, h.tx, h.ty).some((e) => e.industry.id === industryId),
+    h.owner === playerId && industriesInCatchment(eco.grid, h).some((e) => e.id === industryId),
   ) ?? null;
 
   const rights = eco.siteRights?.get(industryId);
@@ -283,14 +283,15 @@ export function grantIndustryWin(
 ): IndustryWinKind {
   if (!eco.siteRights) eco.siteRights = new Map();
   const prev = eco.siteRights.get(industryId);
+  // #400: a platform is a Depot for the contest too — a second win closes it,
+  // a reopen clears it. `industriesInCatchment` is the one read that sees a
+  // platform's anchor as well as a truck lot's edge.
   const winnerDepot = eco.harvesters.find((h) =>
-    h.owner === winnerId
-    && industriesTouchingDepot(eco.grid, h.tx, h.ty).some((e) => e.industry.id === industryId),
+    h.owner === winnerId && industriesInCatchment(eco.grid, h).some((e) => e.id === industryId),
   );
   const loserDepot = loserId
     ? eco.harvesters.find((h) =>
-      h.owner === loserId
-      && industriesTouchingDepot(eco.grid, h.tx, h.ty).some((e) => e.industry.id === industryId),
+      h.owner === loserId && industriesInCatchment(eco.grid, h).some((e) => e.id === industryId),
     )
     : undefined;
 
@@ -546,7 +547,7 @@ export function pickRivalChallengeTarget(
 
   for (const h of eco.harvesters) {
     if (h.owner !== rivalId || !h.closed) continue;
-    for (const { industry } of industriesTouchingDepot(eco.grid, h.tx, h.ty)) {
+    for (const industry of industriesInCatchment(eco.grid, h)) {
       const hit = tryIndustry(industry.id);
       if (hit) return hit;
     }

@@ -74,7 +74,7 @@ import {
   isServiced, industriesInCatchment,
   buildAllComponents, resolveConnection,
   componentsTouchingTiles, depotComponents,
-  industryLocks, heldIndustries, depotCargo,
+  industryLocks, heldIndustries, lockedIndustryIdsFor, depotCargo,
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
 import {
@@ -389,9 +389,12 @@ export const CARGO_VALUE: Record<Cargo, number> = {
  */
 export function catchmentValue(
   state: EconomyState, locks: Map<number, Harvester>, stock: Purse,
-  tx: number, ty: number, now = 0, oreUrgency = 1,
+  tx: number, ty: number, now = 0, oreUrgency = 1, owner = "",
 ): number {
-  const probe = { id: -1, owner: "", ownerId: 0, tx, ty } as Harvester;
+  // `owner` is the seat the plan is for, so a site it has battle rights to
+  // (#322 / #400) is worth what `heldIndustries` would actually pay it.
+  // Omitted keeps the old probe (no rights) — the shipped callers.
+  const probe = { id: -1, owner, ownerId: 0, tx, ty } as Harvester;
   let v = 0;
   // PP-16: `heldIndustries` with a Depot that owns nothing is exactly the
   // question the candidate has to answer — which industries in this catchment
@@ -955,6 +958,11 @@ export function planCandidates(
   // would HOLD (VP-01 had a claimant COUNT here for the same reason: rank on
   // the economy's own arithmetic, never on a guess about it).
   const locks = industryLocks(state);
+  // #400: the same set the Depot click refuses against. A site this seat has
+  // battle rights to is not locked — a first win lets it build, exactly as
+  // `placeHarvester` does. A site another seat holds, with no rights, is not
+  // a destination.
+  const claimLocked = lockedIndustryIdsFor(state, factory.owner);
   const now = opts.now ?? 0;
   // L2 (#216): the new-loop cost model — dirt free, allowance inapplicable —
   // shared with the human drag preview, never re-derived.
@@ -994,10 +1002,12 @@ export function planCandidates(
         h.owner === factory.owner
         && industriesInCatchment(grid, h).some((x) => x.id === ind.id));
       if (covered) continue;
-      // PP-16: …and any industry somebody's road already holds. A Depot built
+      // PP-16 / #400: …and any industry this seat may not claim. A Depot built
       // beside it would claim nothing — the game refuses the placement — so no
-      // route is searched for it and no tile is spent reaching it.
-      if (locks.has(ind.id)) continue;
+      // route is searched for it and no tile is spent reaching it. Rights from
+      // a first battle win drop the id (`claimLocked`), so the search is not
+      // stricter than the click.
+      if (claimLocked.has(ind.id)) continue;
 
       // Nearest lots to the network first: the search stops at the first
       // viable site, so the order is what makes that site a cheap one.
@@ -1128,7 +1138,7 @@ export function planCandidates(
         //
         // The shipped loop's cargo comes off the plant board and is NOT
         // distance-scaled, so both discounts are new-loop only.
-        const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1);
+        const value = catchmentValue(state, locks, opts.stock, hx, hy, now, opts.oreUrgency ?? 1, factory.owner);
         // L14 (#229): …and when the tree has asked for a cargo, the type that
         // produces it outranks an equally good Depot of any other cargo.
         const wanted = cargo !== null && want.has(cargo);
@@ -2413,7 +2423,10 @@ export function railTargets(
   stock: Purse, ownerId: number, now = 0,
 ): Industry[] {
   const { grid } = state;
-  const locks = industryLocks(state);
+  // #400: the Depot refusal's set, not the raw lock map — a site this seat
+  // has battle rights to is claimable (a first win), and a site another seat
+  // holds is not a platform target. A platform must not bypass a challenge.
+  const locked = lockedIndustryIdsFor(state, factory.owner);
   const reach = roadReachable(state, factory);
   const taken = new Set(
     structuresOf(rail, ownerId, "platform")
@@ -2424,7 +2437,7 @@ export function railTargets(
   for (const ind of grid.industries) {
     const def = INDUSTRY_BY_KEY[ind.type];
     if (!def) continue;
-    if (locks.has(ind.id)) continue;                 // somebody's road already holds it
+    if (locked.has(ind.id)) continue;                // held, and this seat has no rights
     if (ind.banditUntil > now) continue;             // blockaded: it pays nothing
     if (taken.has(ind.id)) continue;                 // one platform per anchor
     let best = Infinity;
@@ -2491,7 +2504,7 @@ function joinPath(
 function platformSpotsAround(
   grid: Grid, rail: RailState, factories: { ownerId: number; tx: number; ty: number; id?: number }[],
   ownerId: number, bx: number, by: number, bw: number, bh: number,
-  anchor: RailAnchor, limit: number,
+  anchor: RailAnchor, limit: number, locked?: ReadonlySet<number>,
 ): { tx: number; ty: number; view: RailView; anchor: RailAnchor }[] {
   const out: { tx: number; ty: number; view: RailView; anchor: RailAnchor }[] = [];
   for (const view of RAIL_VIEWS) {
@@ -2502,7 +2515,7 @@ function platformSpotsAround(
       for (let tx = bx - 3 - (w - 1); tx <= bx + bw + 2; tx++) {
         const chosen = resolveAnchor(grid, factories, ownerId, tx, ty, view, anchor);
         if (!chosen) continue;
-        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen) !== "ok") continue;
+        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen, locked) !== "ok") continue;
         out.push({ tx, ty, view, anchor: chosen });
         if (out.length >= limit) return out;
       }
@@ -2537,6 +2550,10 @@ export function planRailMove(
   const scope: RailScope = opts.scope ?? "line";
   const factories = state.factories.filter((f) => f.ownerId === ownerId);
   if (!factories.length) return null;
+  // #400: the same held-industry set the Depot click refuses against. Every
+  // platform spot below is judged with it, so a platform is never planned at
+  // a site this seat may not claim.
+  const claimLocked = lockedIndustryIdsFor(state, factory.owner);
 
   // 1. An orphaned train (its line is gone) is sold once it is home — the
   //    one-time 50%. A BLOCKED train on a line is never recalled from here:
@@ -2560,7 +2577,7 @@ export function planRailMove(
     for (const ind of railTargets(state, rail, factory, opts.purse, ownerId, now)) {
       const spots = platformSpotsAround(
         grid, rail, factories, ownerId, ind.tx, ind.ty, ind.w, ind.h,
-        { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, 1,
+        { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, 1, claimLocked,
       );
       if (spots.length) {
         const s = spots[0];
@@ -2575,7 +2592,7 @@ export function planRailMove(
       const [fw, fh] = rotatedSpan(fp[0], fp[1], f.rot ?? 0);
       const spots = platformSpotsAround(
         grid, rail, factories, ownerId, f.tx, f.ty, fw, fh,
-        { kind: "plant", id: f.id ?? 0, tiles: plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, fp) }, 1,
+        { kind: "plant", id: f.id ?? 0, tiles: plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, fp) }, 1, claimLocked,
       );
       if (spots.length) {
         const s = spots[0];
@@ -2623,13 +2640,13 @@ export function planRailMove(
 
   const indSpots = (limit: number) => platformSpotsAround(
     grid, rail, factories, ownerId, ind.tx, ind.ty, ind.w, ind.h,
-    { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, limit,
+    { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, limit, claimLocked,
   );
   const plantFp = factoryFootprintOf(grid);
   const [plantFw, plantFh] = rotatedSpan(plantFp[0], plantFp[1], factory.rot ?? 0);
   const plantSpots = (limit: number) => platformSpotsAround(
     grid, rail, factories, ownerId, factory.tx, factory.ty, plantFw, plantFh,
-    { kind: "plant", id: factory.id ?? 0, tiles: plantFootprintTiles(factory.tx, factory.ty, factory.rot ?? 0, plantFp) }, limit,
+    { kind: "plant", id: factory.id ?? 0, tiles: plantFootprintTiles(factory.tx, factory.ty, factory.rot ?? 0, plantFp) }, limit, claimLocked,
   );
 
   if (!plantPlat && !indPlat) {
@@ -2773,7 +2790,7 @@ export function executeRailMove(
     }
     case "platform": {
       const factories = state.factories;
-      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor) !== "ok") {
+      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor, lockedIndustryIdsFor(state, owner)) !== "ok") {
         return null;
       }
       const s = placePlatform(rail, owner, ownerId, move.tx, move.ty, move.view, move.anchor);
