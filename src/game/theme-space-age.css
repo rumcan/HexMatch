@@ -125,3 +125,52 @@
 .tool-card b { display: block; font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
 .tool-card small { display: block; color: #3a3f42; font-size: 12px; }
 .tool-card.hidden { display: none; }
+
+/* ── P6: minimap top right ───────────────────────────────────────── */
+@media (min-width: 761px) {
+  .minimap-dock {
+    top: calc(var(--topbar-h) + var(--safe-top) + 11px); right: 8px; left: auto; bottom: auto;
+    width: clamp(150px, 13vw, 220px);
+    padding: 3px; background: var(--sa-panel); border: 1px solid var(--sa-ink); box-shadow: none;
+    transition: none;
+  }
+  .chat-dock { left: calc(var(--rail-w) + 12px); right: auto; bottom: calc(var(--dock-h) + 12px); }
+}
+
+/* ── P7: centered bottom drawer (was the right column) ───────────── */
+@media (min-width: 761px) {
+  .aside.right {
+    top: auto; bottom: 0; right: auto; left: 50%;
+    transform: translateX(-50%);
+    width: min(760px, calc(100vw - var(--rail-w) - 24px));
+    max-height: min(420px, 55vh);
+    flex-direction: column-reverse;
+    background: var(--sa-panel); border: 1px solid var(--sa-ink); border-bottom: 0;
+    border-top: 3px solid var(--sa-orange);
+    overflow: hidden;
+  }
+  .ui-root[data-rail-right="1"] .aside.right { transform: translateX(-50%); border-top-width: 0; }
+  .aside.right .rail-toggle-right { display: none; }
+  .aside.right > .panel { background: none; border: 0; margin: 0; padding: 0; min-height: 0; display: flex; flex-direction: column; }
+  .aside.right .tabs {
+    order: 99; display: flex; justify-content: center; gap: 0; margin: 0;
+    height: var(--dock-h); background: var(--sa-ink); border: 0; padding: 0;
+  }
+  .aside.right .tab {
+    flex: 0 0 auto; height: 100%; padding: 0 14px; gap: 6px;
+    background: none; border: 0; border-right: 1px solid var(--sa-line);
+    color: var(--sa-bone-dim); font-family: var(--sans); font-weight: 500; font-size: 12px;
+    letter-spacing: 0; text-transform: none; box-shadow: none;
+  }
+  .aside.right .tab:hover { background: var(--sa-panel-2); color: var(--sa-bone); }
+  .ui-root:not([data-rail-right="1"]) .aside.right .tab.active { background: var(--sa-bone); color: var(--sa-ink); }
+  .aside.right .tab-badge { background: var(--sa-orange); color: var(--sa-on-orange); }
+  .aside.right .pane { max-height: min(300px, 42vh); overflow-y: auto; padding: 10px 14px; }
+  .aside.right .plant-card { margin: 0; border: 0; border-bottom: 1px solid var(--sa-line); background: none; }
+  /* closed: only the strip */
+  .ui-root[data-rail-right="1"] .aside.right .pane,
+  .ui-root[data-rail-right="1"] .aside.right .plant-card,
+  .ui-root[data-rail-right="1"] .aside.right .tb-grip { display: none; }
+  /* hint pill and toasts ride above the drawer */
+  .modebar { bottom: calc(var(--drawer-h, 36px) + 10px); }
+}

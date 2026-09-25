@@ -1304,22 +1304,22 @@ export function createOriginalUi(
   const tabBlack = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.market}</i><span class="tab-l">Black Market</span>`);
   // TRADE (owner call, 2026-09): offers between the players, next to Bank.
   const tabMarket = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.trade}</i><span class="tab-l">Market</span>`);
-  tabMarket.onclick = () => setTab("market");
-  tabBlack.onclick = () => setTab("black");
-  tabBank.onclick = () => setTab("bank");
-  tabFeed.onclick = () => setTab("feed");
+  tabMarket.onclick = () => drawerTab("market");
+  tabBlack.onclick = () => drawerTab("black");
+  tabBank.onclick = () => drawerTab("bank");
+  tabFeed.onclick = () => drawerTab("feed");
   // Playtest (2026-09): the optional quests live in their own tab after Feed
   // (they floated over the map and got in the way). A badge counts the
   // quests the player has not looked at yet; they are never required.
   const tabQuests = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.quests}</i><span class="tab-l">Quests</span><span class="tab-badge hidden"></span>`);
-  tabQuests.onclick = () => setTab("quests");
+  tabQuests.onclick = () => drawerTab("quests");
   const questsBadge = tabQuests.querySelector(".tab-badge") as HTMLElement;
   // #299: the Plant tab only exists where the plant is a pane at all — the
   // retired loop. On the new loop the session moved out of the rail and into
   // its own window, so the strip is Bank / Feed and nothing else.
   const tabPlant = sessionMode ? null
     : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
-  if (tabPlant) tabPlant.onclick = () => setTab("plant");
+  if (tabPlant) tabPlant.onclick = () => drawerTab("plant");
   const tabDefs: [HTMLElement, TabName][] = sessionMode
     ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"], [tabQuests, "quests"]]
     : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"], [tabQuests, "quests"]];
@@ -1460,6 +1460,13 @@ export function createOriginalUi(
     // a running session owns the screen, top to bottom.
     root.appendChild(rightAside);
     root.appendChild(win);
+    // UI Space Age (P7): publish the drawer's live height so the hint pill
+    // and the toasts sit above it.
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => {
+        root.style.setProperty("--drawer-h", `${isPhoneViewport() ? 0 : Math.round(rightAside.getBoundingClientRect().height)}px`);
+      }).observe(rightAside);
+    }
   } else {
     tp.appendChild(qp);
     rightAside.appendChild(tp);
@@ -1479,7 +1486,9 @@ export function createOriginalUi(
   // a collapse the instant the viewport crosses to the sheet regime, and the
   // phone block drops the keys outright.
   let railLeftCollapsed = false;
-  let railRightCollapsed = false;
+  // UI Space Age (P7): on desktop the right column is a bottom drawer and it
+  // starts CLOSED (only its tab strip shows); the game opens it when needed.
+  let railRightCollapsed = !isPhoneViewport();
   let railSig = "\u0000";
   const railLeftBtn = h("button", "rail-toggle rail-toggle-left", "◂");
   const railRightBtn = h("button", "rail-toggle rail-toggle-right", "▸");
@@ -1523,7 +1532,10 @@ export function createOriginalUi(
     // the aside: the key lives beside the panel and stays reachable) removes
     // them from focus, pointer and AT traversal, and undoes itself on unfold.
     bp.inert = railLeftCollapsed;
-    tp.inert = railRightCollapsed;
+    // UI Space Age (P7): the tab strip is the closed drawer's handle, so only
+    // the panes leave the tab order when it folds.
+    for (const pane of [bankPane, marketPane, blackPane, feedPane, questsPane]) pane.inert = railRightCollapsed;
+    if (!sessionMode) qp.inert = railRightCollapsed;
     // #299: the plant card is rail content too — it leaves the tab order
     // with the column, same rule as the trade panel beside it.
     if (plantCard) plantCard.inert = railRightCollapsed;
@@ -2345,6 +2357,15 @@ export function createOriginalUi(
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
   let currentTab: TabName | null = null;
+  /** UI Space Age (P7): a tab click on the desktop drawer — a closed drawer
+   *  opens on that tab, the open drawer's active tab closes it. */
+  function drawerTab(t: TabName) {
+    if (!isPhoneViewport()) {
+      if (railRightCollapsed) { railRightCollapsed = false; paintRails(); setTab(t); return; }
+      if (currentTab === t) { railRightCollapsed = true; paintRails(); return; }
+    }
+    setTab(t);
+  }
   function setTab(t: TabName) {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
