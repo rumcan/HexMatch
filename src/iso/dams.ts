@@ -29,7 +29,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { BUILD_COSTS, type Cargo } from "./config";
-import { TOWN_OCC, WATER, type Grid } from "./grid";
+import { FIELD_OCC, TOWN_OCC, WATER, type Grid } from "./grid";
 import { bridgeWaterAt } from "./bridges";
 import { footprintFlatTiles } from "./slopes";
 
@@ -182,7 +182,11 @@ export function bankTileUsable(grid: Grid, x: number, y: number): boolean {
   if (!inMapD(x, y)) return false;
   const i = y * MAP_W + x;
   if (grid.terrain[i] === WATER) return false;
-  if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC) return false;
+  // An industry (>= 0), a town tile, or a standing wheat field / tree block:
+  // the same three occupancy stamps every other build rule refuses (#298),
+  // and the ones this function's own contract in `DamRefusal` names.
+  if (grid.occupancy[i] >= 0 || grid.occupancy[i] === TOWN_OCC
+    || grid.occupancy[i] === FIELD_OCC) return false;
   // `builtAt` is the game's own "something stands here" report — the same
   // one track.ts' refusal reads, so a bank under a depot or a platform can
   // never double as a dam's footing.
