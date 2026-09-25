@@ -147,10 +147,20 @@ export function clampCamera(c: Camera): Camera {
 export const panBy = (c: Camera, dx: number, dy: number): Camera =>
   clampCamera({ ...c, x: c.x + dx, y: c.y + dy });
 
+/**
+ * Centre the camera on a WORLD point (M1 #254: the minimap's click/drag lands
+ * here). The world point projects to the viewport centre, then the usual
+ * clamp applies — so a point off the island's edge settles exactly where
+ * `centerOnTile` would for the same spot.
+ */
+export function centerOnWorld(c: Camera, wx: number, wy: number): Camera {
+  return clampCamera({ ...c, x: c.vw / 2 - wx * c.zoom, y: c.vh / 2 - wy * c.zoom });
+}
+
 /** Centre the camera on a tile (recentre button). */
 export function centerOnTile(c: Camera, tx: number, ty: number): Camera {
   const [wx, wy] = tileToScreen(tx, ty);
-  return clampCamera({ ...c, x: c.vw / 2 - wx * c.zoom, y: c.vh / 2 - wy * c.zoom });
+  return centerOnWorld(c, wx, wy);
 }
 
 export const centerOnMap = (c: Camera): Camera =>
