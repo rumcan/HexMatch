@@ -156,6 +156,7 @@ chain, in order:
 | `tools/make-ref-cells.mjs` | Extract the OpenGFX reference cell(s) + silhouette aspect ratio for prompt conditioning (`--out`, `--all-town`). |
 | `tools/audit-raw-art.mjs` | Pre-fit audit of a raw: parcel edge slopes (`\|dy/dx\| ≈ 0.5` = the 2:1 family) and a left/right luma light-direction proxy. |
 | `tools/fit-building-art.mjs` | Key the magenta backing, trim, scale to the reference span (`--scale-mult N` to nudge), place on a compliant `@2x` master. |
+| `tools/normalize-building-art.mjs` | **F5 (#273)** — for art drawn flatter than 2:1 or on a non-square footprint: measure the ground base (lower support lines), shear both edges to ±0.5, scale the drawn base to the footprint diagonal, seat it on the anchor, report `edgeOffset2x` / `planRatio`. `--mirror` writes `<name>_r` (the swapped footprint), `--lighting-check` measures a mirror's two wall bands. |
 | `tools/clean-magenta-fringe.mjs` | Hue-family pass that removes despilled mauve keylines along silhouettes (survivors of the keyer's distance bands) and zeroes RGB under transparent pixels. |
 | `tools/make-building-pngs.mjs` | Downscale to 1×/0.5× and update `assets/buildings/manifest.json`. |
 | `tools/overlay-building-template.mjs` | Composite each master over its `assets/buildings-src/templates/<w>x<h>@2x.png` guide with anchors aligned; prints `parcelPct` and `diamondRatio` (0.5 == true 2:1) per sprite. |
@@ -171,6 +172,16 @@ Notes that cost a session to learn:
 - Back raw generations up (`/tmp/raw-art/bak/`) before any further tooling.
 - Batch generators can return wide/tall images in an unexpected order; trust
   the fitted dimensions, not the file name, when mapping art to sprites.
+- **A rectangle needs its footprint DECLARED** (`assets/buildings-src/footprints.json`):
+  a 1×3 and a 2×2 are both 256² at 2×, so the compiler cannot tell them apart.
+  The name says it: `<w>x<h>` with `w` along grid x, `h` along grid y, so art
+  whose long side runs isometrically lower-left → upper-right is `1x2`/`1x3`/
+  `2x4`. `fit-building-art.mjs` cannot fit a drawing that does not already sit
+  on the game's angle (it scales the ALPHA BOX) — use
+  `normalize-building-art.mjs`, then `overlay-building-template.mjs` to read
+  the base's seat visually (the parcel is fine at 95–105 % of the guide; a
+  non-square diamond's `diamondRatio` is NOT 0.5, so read `edgeOffset2x` from
+  the normalize tool instead).
 
 ## Redo pass complete (2026-09-12)
 
