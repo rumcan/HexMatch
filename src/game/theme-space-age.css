@@ -239,3 +239,10 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .aside.left .build-btn:hover { background: var(--sa-panel-2) !important; }
 .aside.left .build-btn.active { background: var(--sa-orange) !important; color: var(--sa-on-orange); border-color: var(--sa-orange); }
 .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange); }
+
+/* the drawer's tabs share the strip's full width */
+@media (min-width: 761px) {
+  .aside.right .tabs { justify-content: stretch; }
+  .aside.right .tab { flex: 1 1 0; justify-content: center; min-width: 0; }
+  .aside.right .tab:last-child { border-right: 0; }
+}
