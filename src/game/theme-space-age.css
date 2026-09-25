@@ -256,3 +256,23 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 }
 .chip-n, .chip-r, .vp-badge b, .king-vp b, .ui-root .num { font-weight: 400 !important; }
 .logo { letter-spacing: .16em; }
+
+/* the old "ledger" parchment cards (dark text) become flat bone cards */
+:root { --ledger: linear-gradient(var(--sa-bone), var(--sa-bone)); }
+.offer, .feed-row, .help-col, .store-row, .tax-row, .tut-tip, .tut-ledger-row {
+  background: var(--sa-bone) !important; background-blend-mode: normal !important;
+  color: var(--sa-ink) !important; border: 1px solid var(--sa-ink) !important; box-shadow: none !important;
+}
+.offer *, .feed-row *, .help-col *, .store-row *, .tax-row *, .tut-tip *, .tut-ledger-row * { color: inherit; }
+.help-col p, .tut-tip, .tut-ledger-row { color: #2a3034 !important; font-family: var(--sans); }
+.help-col p b, .tut-tip b, .tut-ledger-row b { color: var(--sa-ink) !important; }
+.help-col h3 { color: var(--sa-orange-lo) !important; border-bottom-color: #b9b3a6 !important; font-weight: 500; }
+.banner { background: var(--sa-ink) !important; color: var(--sa-bone) !important; }
+/* secondary buttons: outlined, not lemon */
+.big-btn.ghost, .tut-nav button:not(:last-child), [data-act="tut-prev"] {
+  background: transparent !important; color: var(--sa-bone) !important;
+  border: 1px solid var(--sa-line-hi) !important;
+}
+.big-btn.ghost:hover, [data-act="tut-prev"]:hover { background: var(--sa-panel-2) !important; }
+.big-btn.ghost.danger { color: var(--sa-red) !important; border-color: var(--sa-red) !important; }
+[data-act="tut-prev"]:disabled { opacity: .35; }
