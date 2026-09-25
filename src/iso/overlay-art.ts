@@ -107,10 +107,10 @@ export interface OverlayStyle {
  * a new colour — the overlay is part of the same chrome as the panels.
  */
 export const DEFAULT_OVERLAY_STYLE: OverlayStyle = {
-  valid: { ink: "#ffd98a", fill: "#ffb02e", tint: "#ffd98a", glow: "#ffb02e" },
-  bad: { ink: "#e2704f", fill: "#b23a26", tint: "#e2704f", glow: "#b23a26" },
-  reach: { ink: "#c9a24a", fill: "#c9a24a", tint: "#c9a24a", glow: "#c9a24a" },
-  node: { ink: "#f2dca6", fill: "#f2dca6", tint: "#f2dca6", glow: "#f2dca6" },
+  valid: { ink: "#8fd6de", fill: "#4fb3bf", tint: "#8fd6de", glow: "#4fb3bf" },
+  bad: { ink: "#f07a64", fill: "#e2553f", tint: "#f07a64", glow: "#e2553f" },
+  reach: { ink: "#f08a24", fill: "#f08a24", tint: "#f08a24", glow: "#f08a24" },
+  node: { ink: "#eee6d4", fill: "#eee6d4", tint: "#eee6d4", glow: "#eee6d4" },
   fillTop: 0.30,
   fillBottom: 0.11,
   inkAlpha: 0.92,
