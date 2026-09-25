@@ -591,6 +591,12 @@ export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
  *     already — the FIRST one to have a road at the resource takes it, and no
  *     further Depot may be built for it (see `planDepotPlacement`'s
  *     "industry-taken" refusal, which is the same set read from the other side);
+ *   • #400: a rail platform is a Depot for this rule, never a stronger one.
+ *     It claims its industry the moment it stands (so nobody slips a Depot in
+ *     while the line is laid) but it does not take an industry another seat's
+ *     running Depot already holds, and placing one there is the same
+ *     `industry-taken` refusal. The only way to take a held industry is a
+ *     battle (`siteRights`);
  *   • "a road at the resource" is `isServiced` — a Depot dropped on open ground
  *     claims nothing, because a Depot with no network behind it produces
  *     nothing and must not be able to sterilise a district for its owner's
@@ -606,13 +612,30 @@ export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
  */
 export function industryLocks(state: EconomyState): Map<number, Harvester> {
   const locks = new Map<number, Harvester>();
+  // Road Depots first, in build order, and only once serviced. #400: a
+  // platform is a Depot for claiming but never a stronger one — it does not
+  // take an industry a running Depot already holds, whichever was built
+  // first. (Before this, a platform claimed in the same pass and won whenever
+  // it stood earlier in the list, which switched the other seat's Depot off
+  // with no battle.)
   for (const h of state.harvesters) {
-    if (h.closed) continue;
-    // A platform claims its industry the moment it stands — its line may take
-    // a while to lay, and nobody may slip a Depot in meanwhile. A road Depot
-    // still claims only once its road is in.
-    if (!isRailDepot(h) && !isServiced(state.track, h, state.rail)) continue;
+    if (h.closed || isRailDepot(h)) continue;
+    if (!isServiced(state.track, h, state.rail)) continue;
     for (const ind of industriesInCatchment(state.grid, h)) {
+      if (!locks.has(ind.id)) locks.set(ind.id, h);
+    }
+  }
+  // A platform claims its industry the moment it stands — its line may take
+  // a while to lay, and nobody may slip a Depot in meanwhile — but only an
+  // industry no other seat already holds (a running Depot from the pass
+  // above, or an earlier platform). Shared battle rights are not a takeover:
+  // the Depot stays the lock, and both seats draw through `heldIndustries`.
+  // Two platforms break ties by build order, the same way two Depots do.
+  for (const h of state.harvesters) {
+    if (h.closed || !isRailDepot(h)) continue;
+    for (const ind of industriesInCatchment(state.grid, h)) {
+      const held = locks.get(ind.id);
+      if (held && held.owner !== h.owner) continue;
       if (!locks.has(ind.id)) locks.set(ind.id, h);
     }
   }
@@ -791,8 +814,15 @@ export function railYield(
   const ownerId = ownerIdOf(state, owner);
   if (ownerId === 0) return {};
   const out: Yield = {};
+  // #400: a running line does not take an industry another seat holds. The
+  // clock pays holds through `harvesterYield`; this pass used to add the
+  // industry's output again for whoever's train was running, battle or not.
+  // Shared rights are the one exception — the same draw `heldIndustries` pays.
+  const locks = industryLocks(state);
   for (const id of railServicedIndustries(rail, ownerId)) {
     if (already?.has(id)) continue;
+    const holder = locks.get(id);
+    if (holder && holder.owner !== owner && !state.siteRights?.get(id)?.rights.includes(owner)) continue;
     const ind = state.grid.industries.find((i) => i.id === id);
     if (!ind || ind.banditUntil > now) continue;    // blockaded: no output
     const def = INDUSTRY_BY_KEY[ind.type];

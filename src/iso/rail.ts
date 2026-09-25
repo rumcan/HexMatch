@@ -738,6 +738,11 @@ export type RailRefusal =
   | "foreign-rail" | "component-conflict" | "no-anchor" | "anchor-taken"
   | "no-network" | "exit-blocked" | "overlap" | "anchor-range" | "train-in-way"
   | "not-yours" | "missing" | "track-blocked"
+  /**
+   * #400: the anchor industry is already held. The same refusal a second Depot
+   * gets (`industry-taken`) — a platform is a Depot for claiming, never stronger.
+   */
+  | "industry-taken"
   /** R2 (#266): the tile would hang a side connection on a standing rail bridge. */
   | "bridge-junction"
   /** E4 (#268): the step climbs more than `SLOPES.railMaxStep`, or a level
@@ -767,6 +772,9 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "not-yours": "That isn't yours.",
   missing: "That is not there.",
   "track-blocked": "The platform's track side is blocked — turn it (R) or move it.",
+  // The Depot click's own sentence (`placeHarvester`), so the two tools refuse
+  // a held industry in the same words.
+  "industry-taken": "That industry is already claimed — only one Depot may hold it.",
   "bridge-junction": "A bridge stays straight — no track can join its side.",
   "too-steep": "Too steep for rail — a climb needs 3 tiles of run.",
   "slope-diagonal": "Rail may not run diagonally across a slope.",
@@ -1250,6 +1258,15 @@ export function platformRefusal(
   factories: { ownerId: number; tx: number; ty: number; id?: number; rot?: number }[],
   ownerId: number, tx: number, ty: number, view: RailView,
   anchor?: RailAnchor | null,
+  /**
+   * #400: industry ids this seat may not claim — `lockedIndustryIdsFor` in
+   * economy.ts, the same set `planDepotPlacement` refuses a second Depot
+   * against. A platform anchored to one of them is `industry-taken`. Omitted
+   * only for a geometry probe (a line fixture, a slope check); the click, the
+   * host and the rival always pass it, so a platform is never stronger than
+   * a Depot.
+   */
+  locked?: ReadonlySet<number>,
 ): RailRefusal {
   if (!inMapT(tx, ty)) return "off-map";
   const [w, h] = PLATFORM_FOOTPRINT[view];
@@ -1286,6 +1303,11 @@ export function platformRefusal(
   const taken = structures.some((s) => s.kind === "platform" && s.ownerId === ownerId
     && s.anchor && s.anchor.kind === chosen.kind && s.anchor.id === chosen.id);
   if (taken) return "anchor-taken";
+  // #400: the chosen industry is already held, and this seat has no battle
+  // rights to it. A plant anchor holds nothing, so it is never this refusal.
+  // Checked after `anchor-taken` so "you already have one here" stays the
+  // more specific sentence when both apply.
+  if (chosen.kind === "industry" && locked?.has(chosen.id)) return "industry-taken";
   return "ok";
 }
 
