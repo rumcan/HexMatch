@@ -281,7 +281,7 @@ describe("vector overlay: painting a site", () => {
     const inks = rec.of("stroke").map((c) => String(c.props.strokeStyle));
     expect(inks.length).toBeGreaterThanOrEqual(2);
     for (const ink of inks) {
-      expect(ink.startsWith("rgba(255, 217, 138")).toBe(true);   // --gold2
+      expect(ink.startsWith("rgba(143, 214, 222")).toBe(true);   // Space Age aqua-hi (valid ink)
       expect(parseFloat(ink.slice(ink.lastIndexOf(",") + 1))).toBeGreaterThan(0.85);
     }
   });
@@ -303,7 +303,7 @@ describe("vector overlay: painting a site", () => {
     const inks = rec.of("stroke").map((c) => String(c.props.strokeStyle));
     expect(inks.some((s) => s.startsWith(rgba(DEFAULT_OVERLAY_STYLE.bad.ink, 1).slice(0, 13))))
       .toBe(true);
-    expect(inks.every((s) => !s.includes("255, 217, 138"))).toBe(true);   // no amber on a refusal
+    expect(inks.every((s) => !s.includes("143, 214, 222"))).toBe(true);   // no valid-aqua on a refusal
   });
 
   it("the reach band is dashed, faint, and never paints under the footprint", () => {
@@ -394,7 +394,7 @@ describe("vector overlay: the ghost building", () => {
     // the hue the verdict picked
     const tintOf = (s: typeof okSurfaces) => s[0].rec.gradients[0].stops[0][1];
     expect(tintOf(okSurfaces)).not.toBe(tintOf(badSurfaces));
-    expect(tintOf(badSurfaces)).toContain("226, 112, 79");   // --danger2
+    expect(tintOf(badSurfaces)).toContain("240, 122, 100");   // Space Age red ink
     // a refusal does not float: same y at two different times
     const a = bad.of("drawImage")[0].args[2];
     const again = runWith(false, []);

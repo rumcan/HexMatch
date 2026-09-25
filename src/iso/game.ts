@@ -3991,7 +3991,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function setCityPick(on: boolean): void {
     cityPick = on;
     window.clearTimeout(cityPickTimer);
-    if (on) cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
+    if (on) {
+      cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
+      // Playtest (2026-09): a build tool in the hand owns every map click, so
+      // picking a city with Dirt Road still armed built road. Put the tool
+      // down first; the map shows the upgrade cursor until the pick ends.
+      if (tool !== "select") armTool("select");
+    }
+    ui.el.dataset.pick = on ? "city" : "";
     syncUpgradeMarkers();
   }
   function syncUpgradeMarkers(): void {

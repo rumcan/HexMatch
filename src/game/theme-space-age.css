@@ -223,3 +223,9 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .menu-btn .mb-tag { font-family: var(--sans); color: var(--sa-bone-dim); letter-spacing: 0; text-transform: none; }
 .menu-btn.primary .mb-tag, .start-primary small { color: var(--sa-on-lemon); opacity: .8; }
 .menu-leaderboard { background: var(--sa-panel); border: 1px solid var(--sa-ink); border-radius: 0; box-shadow: none; }
+
+/* city pick (Upgrade city with several cities): an upgrade-arrow cursor */
+.ui-root[data-pick="city"] .map-canvas, .ui-root[data-pick="city"] .map-canvas canvas {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Crect x='1' y='1' width='26' height='26' fill='%231f2427' stroke='%23f2d64b' stroke-width='2'/%3E%3Cpath d='M14 6l7 8h-4v8h-6v-8H7z' fill='%23f2d64b'/%3E%3C/svg%3E") 14 14, pointer;
+}
+.label-upgrade { background: var(--sa-lemon); color: var(--sa-on-lemon); border-radius: 0; }
