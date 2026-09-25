@@ -425,3 +425,31 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange) !important; }
 }
 .build-btn .bb-mid small { color: var(--sa-bone-dim); }
+
+/* ── header on phones and tablets: one clean row ─────────────────── */
+@media (max-width: 1100px) {
+  .topbar .chip-r { display: none; }
+  .topbar .chip { padding: 2px 6px 2px 3px; }
+  .topbar .chip-n { font-size: 12px; }
+}
+@media (max-width: 760px) {
+  :root { --topbar-h: 48px; }
+  .topbar {
+    display: flex !important; flex-wrap: nowrap !important; align-items: center !important;
+    grid-template-columns: none !important; grid-template-rows: none !important;
+    height: calc(var(--topbar-h) + var(--safe-top)) !important;
+    padding: var(--safe-top) 6px 0 !important; gap: 6px !important;
+  }
+  .topbar .kingdoms {
+    order: 1; flex: 0 1 auto !important; position: static !important; transform: none !important;
+    margin: 0 !important; justify-content: flex-start !important; gap: 4px !important; height: auto !important;
+  }
+  .topbar .kingdoms > * { height: 36px !important; margin: 0 !important; }
+  .topbar .top-right {
+    order: 2; flex: 1 1 auto !important; position: static !important; transform: none !important;
+    display: flex !important; justify-content: flex-end !important; align-items: center !important;
+    gap: 2px !important; margin: 0 !important; height: auto !important; width: auto !important;
+  }
+  .topbar .top-right .vp-badge { margin-right: auto !important; font-size: 13px; padding: 4px 8px; }
+  .topbar .icon-btn { width: 36px; height: 36px; }
+}
