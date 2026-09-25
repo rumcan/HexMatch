@@ -470,8 +470,9 @@ describe("RAIL-04 one train per connected owner component", () => {
     expect(compA).toBeDefined();
     expect(compB).toBeDefined();
     expect(compA).not.toBe(compB);
-    // A connector from A's far port down and across to B's near port.
-    const connector: [number, number][] = [...col(20, 3, 30), ...row(30, 21, 23)];
+    // #401: reach the merge with legal 45° bends, rather than failing the
+    // turn rule first. Keep the merge tile and every assertion unchanged.
+    const connector: [number, number][] = [[20, 3], ...col(21, 4, 29), ...row(30, 22, 23)];
     const res = lay(grid, track, state, 1, connector);
     expect(res.why).toBe("component-conflict");
     expect(res.built[res.built.length - 1]).toEqual([22, 30]);   // stopped one tile short
