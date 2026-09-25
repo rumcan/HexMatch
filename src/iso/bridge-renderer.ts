@@ -26,6 +26,7 @@
 // material and by the Railway panel, not by paint.
 // ══════════════════════════════════════════════════════════════════════════
 import type { GroundPoint } from "./road-geometry";
+import { FLAT_DRAPER, type Draper } from "./elevation";
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -155,16 +156,25 @@ export function deckLines(d: BridgeDeck): {
   return { planks, kerbs, railings, posts };
 }
 
-/** Trace a polyline into the CURRENT path (the caller owns `beginPath`). */
-function traceInto(ctx: Ctx2D, points: readonly GroundPoint[]): void {
+/**
+ * Trace a polyline into the CURRENT path (the caller owns `beginPath`).
+ *
+ * E2 (#267): through the draper like every other ground-plane painter. A deck
+ * stands on WATER, and water is level 0 on a map with elevation, so in practice
+ * this is the identity for a bridge — but a deck's ends meet the banks, and it
+ * is the draper that puts them on the same surface the road on either side is
+ * drawn on.
+ */
+function traceInto(ctx: Ctx2D, points: readonly GroundPoint[], elev: Draper = FLAT_DRAPER): void {
   if (!points.length) return;
-  ctx.moveTo(points[0][0], points[0][1]);
-  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+  const pts = elev.path(points);
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
 }
 
 /** Trace a closed quad into the CURRENT path. */
-function traceQuad(ctx: Ctx2D, quad: readonly GroundPoint[]): void {
-  traceInto(ctx, quad);
+function traceQuad(ctx: Ctx2D, quad: readonly GroundPoint[], elev: Draper = FLAT_DRAPER): void {
+  traceInto(ctx, quad, elev);
   ctx.closePath();
 }
 
@@ -175,6 +185,7 @@ function traceQuad(ctx: Ctx2D, quad: readonly GroundPoint[]): void {
  */
 export function paintBridgeDecks(
   ctx: Ctx2D, decks: readonly BridgeDeck[], style: BridgeStyle = DEFAULT_BRIDGE_STYLE,
+  elev: Draper = FLAT_DRAPER,
 ): void {
   if (!decks.length) return;
   ctx.save();
@@ -184,14 +195,14 @@ export function paintBridgeDecks(
   // 1. The surface, opaque: it has to cover the water texture underneath.
   ctx.fillStyle = style.deck;
   ctx.beginPath();
-  for (const d of decks) traceQuad(ctx, deckQuad(d));
+  for (const d of decks) traceQuad(ctx, deckQuad(d), elev);
   ctx.fill();
 
   // 2. Cross-beams, under the surface's traffic — the deck's visible structure.
   ctx.strokeStyle = style.plank;
   ctx.lineWidth = 0.05;
   ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).planks) traceInto(ctx, line);
+  for (const d of decks) for (const line of deckLines(d).planks) traceInto(ctx, line, elev);
   ctx.stroke();
 
   ctx.restore();
@@ -204,6 +215,7 @@ export function paintBridgeDecks(
  */
 export function paintBridgeRailings(
   ctx: Ctx2D, decks: readonly BridgeDeck[], style: BridgeStyle = DEFAULT_BRIDGE_STYLE,
+  elev: Draper = FLAT_DRAPER,
 ): void {
   if (!decks.length) return;
   ctx.save();
@@ -214,27 +226,27 @@ export function paintBridgeRailings(
   ctx.strokeStyle = style.kerb;
   ctx.lineWidth = 0.06;
   ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).kerbs) traceInto(ctx, line);
+  for (const d of decks) for (const line of deckLines(d).kerbs) traceInto(ctx, line, elev);
   ctx.stroke();
 
   ctx.globalAlpha = 1;
   ctx.strokeStyle = style.railingEdge;
   ctx.lineWidth = RAILING_WIDTH + 0.03;
   ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).railings) traceInto(ctx, line);
+  for (const d of decks) for (const line of deckLines(d).railings) traceInto(ctx, line, elev);
   ctx.stroke();
 
   ctx.strokeStyle = style.railing;
   ctx.lineWidth = RAILING_WIDTH;
   ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).railings) traceInto(ctx, line);
+  for (const d of decks) for (const line of deckLines(d).railings) traceInto(ctx, line, elev);
   ctx.stroke();
 
   // The posts, last: short ticks across the railings, so the fence lights up
   // as a fence and not as two painted stripes.
   ctx.lineWidth = RAILING_WIDTH * 0.8;
   ctx.beginPath();
-  for (const d of decks) for (const post of deckLines(d).posts) traceInto(ctx, post);
+  for (const d of decks) for (const post of deckLines(d).posts) traceInto(ctx, post, elev);
   ctx.stroke();
 
   ctx.restore();
