@@ -116,6 +116,8 @@ export interface Grid {
    *   cross them. The L17 grown ring is visual only and is not reported here.
    */
   builtAt?: (tx: number, ty: number) => GridBuilt | null;
+  /** Seed-derived elevation levels. Option-off maps contain all zeroes. */
+  height?: Uint8Array;
   /**
    * R1 (#260): the river layer. One byte per tile, non-zero where a generated
    * river flows. River tiles are ALSO `WATER` in `terrain` (so every gameplay
@@ -132,6 +134,8 @@ export interface Grid {
 export interface MapGenOptions {
   /** Generate 1–3 seeded rivers. OFF (default) keeps every seed byte-identical. */
   rivers?: boolean;
+  /** Generate the seed-derived height map. OFF (default) keeps old maps flat. */
+  elevation?: boolean;
 }
 
 export type GridBuilt = "rail" | "rail-x" | "rail-y" | "platform" | "depot" | "plant";
@@ -1744,6 +1748,104 @@ function placeTowns(
 }
 
 /**
+ * Build a small, deliberately conservative height field. This is kept separate
+ * from terrain generation so enabling it cannot consume (or perturb) the
+ * historical RNG stream. Fixed tiles are flattened first, then the remaining
+ * field is relaxed until every 4-neighbour slope is drawable.
+ *
+ * Rivers are assigned level zero. That is the lowest level on every river
+ * course, and consequently makes the downhill/no-uphill contract independent
+ * of which meander the river generator selected.
+ */
+function makeElevation(
+  seed: number,
+  terrain: Uint8Array,
+  rivers: Uint8Array | undefined,
+  industries: readonly Industry[],
+  towns: readonly Town[],
+): Uint8Array {
+  const n = MAP_W * MAP_H;
+  const height = new Uint8Array(n);
+  const fixed = new Uint8Array(n);
+  const rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
+
+  // Distance from an edge gives the broad coast-to-hills shape. The seeded
+  // jitter supplies variation without making adjacent tiles discontinuous.
+  for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
+    const i = idx(x, y);
+    if (terrain[i] === WATER || rivers?.[i]) {
+      fixed[i] = 1;
+      height[i] = 0;
+      continue;
+    }
+    const edge = Math.min(x, y, MAP_W - 1 - x, MAP_H - 1 - y);
+    height[i] = Math.min(4, Math.max(1, Math.floor(edge / 10) + (rng() < 0.28 ? 1 : 0)));
+  }
+
+  const flatten = (tiles: readonly [number, number][]) => {
+    const valid = tiles.filter(([x, y]) => inBounds(x, y));
+    if (!valid.length) return;
+    let level = Math.min(...valid.map(([x, y]) => height[idx(x, y)]));
+    // A footprint beside sea/river water cannot be higher than the one-step
+    // slope band above it. This also handles a town whose broad footprint
+    // reaches the ragged coastline.
+    // Settlements and industries are deliberately on the low shelf. Besides
+    // being a useful building convention, this leaves a one-level buffer for
+    // the surrounding coast and for later bridge work.
+    level = Math.min(level, 1);
+    for (const [x, y] of valid) {
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+        const nx = x + dx, ny = y + dy;
+        if (inBounds(nx, ny) && fixed[idx(nx, ny)] && height[idx(nx, ny)] === 0) level = 0;
+        if (inBounds(nx, ny) && terrain[idx(nx, ny)] === WATER) level = Math.min(level, 1);
+      }
+    }
+    for (const [x, y] of valid) {
+      const i = idx(x, y);
+      fixed[i] = 1;
+      height[i] = level;
+    }
+  };
+  for (const ind of industries) {
+    const tiles: [number, number][] = [];
+    for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+      for (let x = ind.tx; x < ind.tx + ind.w; x++) tiles.push([x, y]);
+    }
+    flatten(tiles);
+  }
+  for (const town of towns) flatten([...town.houses, ...town.roads, [town.tx, town.ty]]);
+
+  // Repeatedly project each unfixed tile into the intersection of the
+  // one-level bands around its neighbours. Fixed footprints and water are
+  // never changed. More passes than the map diameter makes the result stable
+  // even on a coast with a large height discontinuity.
+  for (let pass = 0; pass < MAP_W + MAP_H + 8; pass++) {
+    const next = height.slice();
+    for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
+      const i = idx(x, y);
+      if (fixed[i]) continue;
+      let low = 0, high = 4;
+      for (const [dx, dy] of [
+        [-1, 0], [1, 0], [0, -1], [0, 1],
+        [-1, -1], [1, -1], [-1, 1], [1, 1],
+      ] as const) {
+        const nx = x + dx, ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const neighbour = height[idx(nx, ny)];
+        low = Math.max(low, neighbour - 1);
+        high = Math.min(high, neighbour + 1);
+      }
+      // If noisy neighbours disagree, prefer the upper bound: water/sea is a
+      // hard zero and lowering the intervening tile lets the next pass lower
+      // its inland neighbour too.
+      next[i] = low > high ? high : Math.max(low, Math.min(high, height[i]));
+    }
+    height.set(next);
+  }
+  return height;
+}
+
+/**
  * Generate a deterministic 144×144 iso grid. Same seed → byte-identical
  * `terrain`, `occupancy` and `industries` across contexts (T1 determinism).
  *
@@ -1825,13 +1927,19 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
     }
   }
   fillCoastalHoles(terrain, MAP_W, MAP_H, WATER, SAND);
+  // Elevation is intentionally computed after all map placement. Thus every
+  // generated industry and town footprint can be flat without changing the
+  // placement RNG stream. Option-off still returns a flat compatibility map.
+  const height = opts.elevation
+    ? makeElevation(s, terrain, riverMask, list, towns)
+    : new Uint8Array(MAP_W * MAP_H);
   // fillCoastalHoles only fills sea-disconnected WATER; rivers reach the sea so
   // they survive — but re-assert the mask as water regardless, so the layer
   // the renderer reads can never disagree with the terrain.
   if (riverMask) for (let i = 0; i < riverMask.length; i++) if (riverMask[i]) terrain[i] = WATER;
 
   return {
-    w: MAP_W, h: MAP_H, terrain, industries: list, towns, publicRoads, occupancy: occ, seed: s,
+    w: MAP_W, h: MAP_H, terrain, height, industries: list, towns, publicRoads, occupancy: occ, seed: s,
     rivers: riverMask,
   };
 }
@@ -1865,6 +1973,10 @@ export function resolveMapSeed(search = typeof location !== "undefined" ? locati
 // ── helpers ──
 export const terrainAt = (g: Grid, tx: number, ty: number): number =>
   inBounds(tx, ty) ? g.terrain[idx(tx, ty)] : WATER;
+
+/** Read a tile's generated elevation; synthetic/legacy grids are flat. */
+export const heightAt = (g: Grid, tx: number, ty: number): number =>
+  inBounds(tx, ty) ? (g.height?.[idx(tx, ty)] ?? 0) : 0;
 
 export const industryAt = (g: Grid, tx: number, ty: number): Industry | null => {
   if (!inBounds(tx, ty)) return null;

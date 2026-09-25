@@ -96,7 +96,7 @@ import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
-  FIELD_OCC, generateMap, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
+  FIELD_OCC, generateMap, heightAt, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
   TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
   tileInFootprint, townHouseAt, townObstacleTiles, rotatedSpan,
   type Grid, type Industry, type Town,
@@ -541,6 +541,8 @@ export interface IsoGameOptions {
    * regenerates the map from the seed alone, so rivers are not on the wire yet.
    */
   rivers?: boolean;
+  /** E1 (#261): force seed-derived elevation; absent reads `?elevation=1`. */
+  elevation?: boolean;
   /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
@@ -734,6 +736,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // alone and rivers are not on the wire yet, so MP deliberately ignores it.
   const riversParam = (() => { try { return new URLSearchParams(location.search).get("rivers"); } catch { return null; } })();
   const riversOn = (opts.rivers ?? riversParam === "1") && isSolo() && !storyOn;
+  const elevationParam = (() => { try { return new URLSearchParams(location.search).get("elevation"); } catch { return null; } })();
+  const elevationOn = (opts.elevation ?? elevationParam === "1") && isSolo() && !storyOn;
   const freshLink = (() => { try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; } })();
   // A rivers boot never reads or writes the save slot: resuming a rivers map
   // without the flag would regenerate a different (riverless) terrain under
@@ -758,7 +762,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
   // carrying its own seed, as always.
   const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
-  const grid: Grid = generateMap(seed, { rivers: riversOn });
+  const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn });
   // SCENERY: decals + clumped trees, a pure function of the seed (so a guest
   // regenerates exactly the host's woodland from the seed alone — scenery is
   // never on the wire). Computed before the towns stamp their roads because
@@ -11055,6 +11059,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   (window as unknown as Record<string, unknown>).__iso = {
     get phase() { return phase; },
     get tool() { return tool; },
+    /** E1 (#261): inspect the regenerated height map without coupling callers to its storage. */
+    heightAt: (tx: number, ty: number) => heightAt(grid, tx, ty),
     /** L1a (#232): the new-loop feature flag, read-only — it is a boot fact
      *  (`opts.newLoop`, or dev-only `?loop=new`; never on in production, in a
      *  room or in a story contract). */
