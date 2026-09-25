@@ -643,20 +643,45 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
   let bs = 0;               // backing px per CSS px
   let cssW = 0, cssH = 0;   // the canvas' laid-out CSS box
 
+  // ── #386: the plate publishes its live height ────────────────────────────
+  // `--minimap-h` on the ui root — the same way ui.ts publishes --board-px —
+  // so anything that stacks in this lane can read how tall the plate is
+  // without touching layout: 0 while the plate is folded away (display:none
+  // measures 0), its border-box height while it shows. The chat dock is the
+  // first reader (ui.ts measures the same box in the tick a state changes,
+  // then publishes --chat-lift from dockLayout()); the sabotage event window
+  // hard-codes today's height and is the named follow-up. Dataset twin for
+  // jsdom and tests, same trick as root.dataset.boardPx.
+  const uiRoot = host.closest<HTMLElement>(".ui-root");
+  function publishPlateHeight(): void {
+    if (!uiRoot) return;
+    const px = Math.max(0, host.offsetHeight || 0);
+    uiRoot.style.setProperty("--minimap-h", `${px}px`);
+    uiRoot.dataset.minimapH = String(px);
+  }
+
   // ── sizing: observed, never polled ───────────────────────────────────────
   // One observer watches the plate (to mount the canvas the first time it is
-  // laid out) and then the canvas (its box: 0×0 while the plate is folded).
-  // Nothing here reads layout per frame.
+  // laid out, and to publish the height above whenever its box changes —
+  // shown↔folded, a window resize, the phone regime) and then the canvas
+  // (its box: 0×0 while the plate is folded). Nothing here reads layout per
+  // frame.
   const ro = typeof ResizeObserver === "function"
     ? new ResizeObserver((entries) => {
       for (const e of entries) {
-        if (e.target === host && !canvas && e.contentRect.width > 0) mount();
-        else if (e.target === canvas) { cssW = e.contentRect.width; cssH = e.contentRect.height; }
+        if (e.target === host) {
+          publishPlateHeight();
+          if (!canvas && e.contentRect.width > 0) mount();
+        } else if (e.target === canvas) { cssW = e.contentRect.width; cssH = e.contentRect.height; }
       }
     })
     : null;
   // Without an observer (old engines): measure now and on window resizes.
+  // (A show/hide without a resize can leave --minimap-h stale there; the
+  // chat dock does not depend on it — it measures the plate itself — and
+  // every engine with a real layout has ResizeObserver.)
   const remeasure = () => {
+    publishPlateHeight();
     if (!canvas && host.clientWidth > 0) mount();
     if (canvas) { cssW = canvas.clientWidth; cssH = canvas.clientHeight; }
   };
