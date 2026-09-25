@@ -20,6 +20,7 @@
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.
 // ══════════════════════════════════════════════════════════════════════════
+import { mountTerrainGl, terrainGlWanted, type TerrainGl } from "./terrain-gl-adapter";
 import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
 import atlas1 from "../../assets/iso-atlas/atlas@1x.png";
@@ -1962,6 +1963,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return c;
   };
   const canvases = { terrain: mk(1), structures: mk(2), overlay: mk(3) };
+  // Terrain-GL (opt-in, docs/TERRAIN_GL.md): the WebGL2 ground mounts under
+  // the 2D stack; null = no WebGL2 / not asked for, and the 2D ground stays.
+  const terrainGl: TerrainGl | null = terrainGlWanted() ? mountTerrainGl(ui.mapHost, grid, seed) : null;
   const stage = ui.mapHost;
   // GFX-01: the tilt-shift composite. It mounts its own canvas above the
   // three layers and stays `display: none` until the setting says otherwise,
@@ -10413,6 +10417,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const w = Math.max(1, Math.floor(stage.clientWidth * d));
     const h = Math.max(1, Math.floor(stage.clientHeight * d));
     for (const c of Object.values(canvases)) { c.width = w; c.height = h; }
+    terrainGl?.resize(w, h);
     mini.resize(w, h);
     commitCamera(resizeCamera(cam, w, h));
   };
@@ -11530,6 +11535,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     atlasRef = atlas;
     renderer = new IsoRenderer(canvases, atlas, cam, world);
+    if (terrainGl) {
+      renderer.externalGround = true;
+      renderer.onTileInvalidated = (tx, ty) => terrainGl.invalidateTiles([[tx, ty]]);
+    }
     renderer.setDecals(scenery);
     // PERF-01: the boot policy's terrain, applied before the first frame —
     // a performance-mode boot draws the flat static ground from frame one
@@ -11700,6 +11709,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         .concat(truckItems(trucks, atlasRef ?? undefined))
         .concat(trainItems(rail, atlasRef ?? undefined));
       const { items, ghost } = overlayFrame();
+      terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
       mini.paint();
       floats.frame(t);
@@ -13003,6 +13013,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     flashLayer.clear();
     cancelAnimationFrame(raf);
     ro.disconnect();
+    terrainGl?.dispose();
     root.classList.remove("iso-game");
     root.innerHTML = "";
   };
