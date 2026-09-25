@@ -134,17 +134,44 @@ runtime files go under `assets/`.
 
 ### 5.2 Buildings (and anything that sits on a footprint)
 
+Declare the sprite in `assets/buildings-src/footprints.json` first — a
+rectangle's name is `<w>x<h>` with `w` along grid x and `h` along grid y, so
+art whose LONG side runs isometrically lower-left → upper-right is `1x2`,
+`1x3`, `2x4` (and its `_r` mirror `2x1`, `3x1`, `4x2`). Nothing else can tell
+the compiler what canvas a 1×3 and a 2×2 (both 256²) mean.
+
 ```bash
-# 1. fit loose art onto the authoring canvas (keys a solid background if the
-#    art has no alpha; trims; scales to the reference's ground span; anchors)
+# 1a. art that already sits on the game's angle: fit it by its alpha box
 node tools/fit-building-art.mjs <sprite-name> tools/art-src/<t>/<name>-raw.png
+# 1b. art drawn flatter than 2:1 (most AI art): measure the base, shear it
+#     onto the footprint diamond, declare the foot room it reports
+node tools/normalize-building-art.mjs <sprite-name> tools/art-src/<t>/<name>-raw.png
+#     …and the other orientation, if the lighting allows it (see below)
+node tools/normalize-building-art.mjs <sprite-name> tools/art-src/<t>/<name>-raw.png --mirror
 # 2. only if it was magenta-keyed: remove the mauve keyline
 node tools/clean-magenta-fringe.mjs <sprite-name>
 # 3. build the runtime PNGs + manifest (assets/buildings/)
 node tools/make-building-pngs.mjs <sprite-name>
-# 4. check the base sits inside its footprint diamond
+# 4. check the base sits inside its footprint diamond (also reviews the F5 set)
 node tools/footprint-check.mjs
+# 5. eyeball the parcel against its template guide + the scale figure
+node tools/overlay-building-template.mjs <sprite-name>
 ```
+
+`normalize-building-art.mjs` reports what it measured and what it could not
+fix (see its header): `edgeOffset2x` is how far each front edge misses its
+diamond edge; `cornerError2x` is where the drawing's own plan proportions
+cannot match the declaration (the shear fixes angles, not proportions);
+`planRatio` compares the two. A `planRatio` off by more than ~1.5× means the
+art is drawn for the other orientation — declare that one.
+
+**Lighting:** the world's light is upper-LEFT — every shipped master has a
+lighter south-west wall than south-east (ratio 1.2–1.8). Check a mirror with
+`node tools/normalize-building-art.mjs --lighting-check <file>` before shipping
+it; a mirror that flips the light reads as a second sun next to the first
+(which is why trees are never mirrored). A raw drawing that itself comes back
+lit from the right (`shops_1x3`, 2026-09) is the one case to call out in the PR
+rather than hide: its `_r` mirror is the one on the house convention.
 
 Details of the authoring canvas and anchor: `docs/building-layers.md`,
 `assets/buildings-src/README.md`, templates in `assets/buildings-src/templates/`
