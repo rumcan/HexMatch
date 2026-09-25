@@ -549,3 +549,35 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .tp-city .k-cost { font-family: var(--serif); font-size: 12px; white-space: nowrap; }
 .tp-city .k-cost .cargo-ic { width: 14px; height: 14px; vertical-align: -2px; }
 .tp-retune { grid-template-columns: 1fr; }
+
+/* TUT-02: bone chips and a bone ledger total, dark ink, orange as the accent.
+   Light text on lemon and dark text on the dark plate both fail here. */
+.tut-chain-node {
+  background: var(--sa-bone) !important;
+  border: 1px solid var(--sa-ink) !important;
+  box-shadow: none !important;
+}
+.tut-chain-node b { color: var(--sa-ink) !important; }
+.tut-chain-arrow { color: var(--sa-orange) !important; opacity: 1; }
+.tut-points b { color: var(--sa-orange-hi) !important; }
+.tut-ledger-total {
+  background: var(--sa-bone) !important;
+  color: var(--sa-ink) !important;
+  border: 1px solid var(--sa-ink) !important;
+  border-left: 3px solid var(--sa-orange) !important;
+  box-shadow: none !important;
+}
+.tut-ledger-total span, .tut-ledger-total strong { color: var(--sa-ink) !important; text-shadow: none; }
+.tut-dot.on { background-color: var(--sa-orange); border-color: var(--sa-orange-hi); }
+@media (max-width: 760px) {
+  #iso-tutorial, #iso-battle-howto {
+    align-items: flex-start;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+  .tut-card { max-height: calc(100dvh - 16px); }
+  .tut-shot { max-height: 28dvh; }
+  .tut-title { overflow-wrap: anywhere; }
+  .tut-dots { flex-wrap: wrap; }
+  .tut-dot.on::before { background-color: var(--sa-orange); border-color: var(--sa-orange-hi); }
+}

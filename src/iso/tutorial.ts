@@ -1,19 +1,34 @@
-// TUT-01 — starting tutorial, new loop only (L15 #230)
-// No tokens, no bank, no blessings, no board sabotage. The loop is:
-// build road/rail to city/depot, match-3 when building depot sets yield,
-// resources tick via yield×distance×road/rail, spend on depot tree + city upgrades.
+// TUT-01 / TUT-02 — starting tutorial.
 //
-// THE GATE: the tour opens on a first solo game with no save (game.ts owns
-// the save/seat half of that) and never again once the player has pressed
-// "Never show this again" — this module owns the storage half
-// (`shouldShowTutorial`), with `?tutorial=0/1` overriding for playtests.
-// The projector paints the card with the shipped `.tut-*` CSS classes and
-// walks it with Back/Next plus one persistent exit; the figure copy is read
-// from the authoritative tables, never retyped.
+// The tour is the new loop's. game.ts only raises it when that loop is on;
+// `newLoop: false` keeps a retired-loop branch so a replay on the hatch does
+// not teach the clock as if the always-on board were still the game.
+//
+// THE GATE: opens on a first solo game with no save (game.ts owns the
+// save/seat half) and never again once the player has pressed "Never show
+// this again" — this module owns the storage half (`shouldShowTutorial`),
+// with `?tutorial=0/1` overriding for playtests.
+//
+// THE COPY IS READ, NOT TYPED. Prices, bands, yields and the ★ line come
+// from the tables the placement and the scorer use. The win line is the
+// caller's `vpTarget` (game.ts passes `winTarget()`), never a typed split
+// of 12 / 10 / 5. Dirt is free, so the setup allowance is not taught.
+//
+// Rail is its own card. Five rules (stone, platform-as-Depot, one train,
+// 45° turns, no diagonal on a slope) do not fit the roads card's one list.
+// Battles stay a Depot bullet plus the battle How to Play, not a tenth card.
+//
+// The projector paints the shipped `.tut-*` classes, including the veil,
+// the step dots and the ledger total the browser specs walk.
 import {
-  CARGO, CARGOES, TRANSPORT, VICTORY, TUNING,
+  BUILD_COSTS, BATTLE_RULES, CARGO, CARGOES, DEPOT_LEVELS, DIFFICULTY_RULES,
+  DISTANCE, TOWN_UPGRADES, TRANSPORT, TUNING, VICTORY,
 } from "./config";
-import { DEPOT_COST, costCompact, costLabel } from "./construction";
+import {
+  DEPOT_COST, DEPOT_RETUNE_COST, FREE_SETUP_DEPOTS, costCompact, costLabel,
+} from "./construction";
+import { SLOPE_REFUSAL_TEXT } from "./slopes";
+import { SABOTAGE } from "../game/config";
 import { fmtVp } from "./victory";
 import { coarsePointer } from "./touch";
 import { sfx } from "../audio/sfx";
@@ -21,6 +36,7 @@ import { GEM_ART } from "../game/gem-art";
 import shotPlant from "../../assets/tutorial/plant.webp";
 import shotDepot from "../../assets/tutorial/depot.webp";
 import shotRoads from "../../assets/tutorial/roads.webp";
+import shotRail from "../../assets/tutorial/rail.webp";
 import shotBoard from "../../assets/tutorial/board.webp";
 import shotExpand from "../../assets/tutorial/expand.webp";
 import shotDesk from "../../assets/tutorial/desk.webp";
@@ -45,13 +61,11 @@ export function setTutorialDismissed(
   try {
     if (never) storage.setItem(TUTORIAL_STORAGE_KEY, TUTORIAL_NEVER);
     else storage.removeItem(TUTORIAL_STORAGE_KEY);
-  } catch { }
+  } catch { /* private mode: the tour simply asks again next boot */ }
 }
 
-// ── the gate ──────────────────────────────────────────────────────────────
 // `?tutorial=0` sits a boot out (e2e gameplay specs, playtest links);
-// `?tutorial=1` asks again even over "never" (a reviewer, a screenshot).
-// Anything else defers to the stored preference.
+// `?tutorial=1` asks again even over "never". Anything else defers to storage.
 const OFF_VALUES = new Set(["0", "off", "never", "no"]);
 const ON_VALUES = new Set(["1", "on", "yes"]);
 
@@ -70,7 +84,13 @@ export interface BoardCell { cargo: import("./config").Cargo | null; hit?: boole
 export interface TutorialFigureChain { kind: "chain"; nodes: { icon: string; label: string }[]; caption: string }
 export interface TutorialFigureShot { kind: "shot"; src: string; alt: string; caption: string }
 export interface TutorialFigureBoard { kind: "board"; cells: BoardCell[][]; caption: string }
-export interface TutorialFigureLedger { kind: "ledger"; rows: { icon: string; label: string; vp: string }[]; caption: string }
+export interface TutorialFigureLedger {
+  kind: "ledger";
+  rows: { icon: string; label: string; vp: string }[];
+  caption: string;
+  /** The finish line, printed as the ledger total. Absent on cards that are not a race. */
+  total?: string;
+}
 export type TutorialFigure = TutorialFigureChain | TutorialFigureShot | TutorialFigureBoard | TutorialFigureLedger;
 
 export interface TutorialStep {
@@ -86,187 +106,291 @@ export interface TutorialStep {
 export interface TutorialContext {
   vpTarget: number;
   freeTrack: number;
+  /**
+   * False is the retired loop (always-on board, tokened gems). Absent or
+   * true is the loop the game ships: a tuning session, then the clock.
+   */
   newLoop?: boolean;
+}
+
+const star = (n: number): string => `${fmtVp(n)}★`;
+
+/** Paying ★ rows on the new loop. A zero row (the retired rung) is not taught. */
+function loopLedgerRows(): { icon: string; label: string; vp: string }[] {
+  const holdCap = fmtVp(VICTORY.loop.holdCap);
+  const candidates: { icon: string; label: string; vp: number }[] = [
+    { icon: "🛖", label: "A Depot running", vp: VICTORY.loop.type },
+    { icon: "🛣️", label: "A route fully paved", vp: VICTORY.loop.route },
+    { icon: "🏙️", label: "A city upgrade tier", vp: VICTORY.loop.city },
+    { icon: "⭐", label: "A Depot at the top level", vp: VICTORY.loop.maxDepot },
+    { icon: "⚔", label: `A contested hold, at most ${holdCap}★`, vp: VICTORY.loop.hold },
+  ];
+  return candidates.filter((r) => r.vp > 0).map((r) => ({
+    icon: r.icon, label: r.label, vp: `+${star(r.vp)}`,
+  }));
+}
+
+function freeDepotLine(): string {
+  const later = `Every Depot after that costs ${costLabel(DEPOT_COST)}.`;
+  if (FREE_SETUP_DEPOTS <= 0) return `A Depot costs ${costLabel(DEPOT_COST)}.`;
+  if (FREE_SETUP_DEPOTS === 1) return `Your first Depot is free. ${later}`;
+  return `Your first ${FREE_SETUP_DEPOTS} Depots are free. ${later}`;
 }
 
 export function buildTutorialSteps(ctx: TutorialContext): TutorialStep[] {
   const coarse = coarsePointer();
+  const retired = ctx.newLoop === false;
   const dirt = costCompact(TRANSPORT.dirt.cost);
-
-  const star = (n: number) => `${fmtVp(n)}★`;
+  const road = costCompact(TRANSPORT.road.cost);
+  // The allowance only buys tiles that cost something. Dirt is free, so it
+  // is not taught; a rebalance that charges for gravel brings the countdown back.
   const allowance = ctx.freeTrack > 0
     ? `, and your setup allowance pays for the first ${ctx.freeTrack} of them`
-    : ", and the setup allowance pays for your first tiles";
+    : "";
+  const dirtLine = dirt === "free"
+    ? `<b>Dirt Road</b> is ${dirt}, tile after tile.`
+    : `<b>Dirt Road</b> costs ${dirt} a tile${allowance}.`;
+  const rail = costCompact(BUILD_COSTS.rail);
+  const caps = DEPOT_LEVELS.caps.map((n) => `×${n}`).join(" → ");
+  const waitMin = Math.round(BATTLE_RULES.challengePlayerCooldownMs / 60_000);
+  const easy = DIFFICULTY_RULES.easy;
+  const normal = DIFFICULTY_RULES.normal;
+  const hard = DIFFICULTY_RULES.hard;
+  const city0 = TOWN_UPGRADES[0];
+  const line = `${ctx.vpTarget}★`;
+
+  const cargoTip = `Six cargoes, six gem colours: ${CARGOES.map((c) => `${CARGO[c].icon} ${CARGO[c].name}`).join(" · ")}.`;
 
   return [
     {
       id: "loop",
       kicker: "HEXMATCH INDUSTRIES",
       title: "One island, one loop",
-      lede: "You have bought a freight concern on an island with more industry than anyone can carry. Everything feeds one loop:",
+      lede: retired
+        ? "You have bought a freight concern on an island with more industry than anyone can carry. Deliveries feed the board, and the board feeds the purse."
+        : "You have bought a freight concern on an island with more industry than anyone can carry. Everything feeds one loop:",
       figure: {
         kind: "chain",
-        nodes: [
-          { icon: "⛰️", label: "Resource node" },
-          { icon: "🛖", label: "Depot" },
-          { icon: "🛤️", label: "Roads & Rail" },
-          { icon: "🏭", label: "Match-3 tuning" },
-          { icon: "📦", label: "Yield × distance × road" },
-          { icon: "★", label: "Expand" },
-        ],
-        caption: "Every connected Depot ticks cargo in on the clock — the match-3 session that tunes it decides how fast.",
+        nodes: retired
+          ? [
+            { icon: "⛰️", label: "Resource" },
+            { icon: "🛖", label: "Depot" },
+            { icon: "🛤️", label: "Road" },
+            { icon: "🏭", label: "Plant" },
+            { icon: "💎", label: "Board" },
+            { icon: "📦", label: "Purse" },
+          ]
+          : [
+            { icon: "🛖", label: "Depot" },
+            { icon: "💎", label: "Match-3" },
+            { icon: "×", label: "The tick" },
+            { icon: "📦", label: "Purse" },
+            { icon: "★", label: "Upgrades" },
+          ],
+        caption: retired
+          ? "A connected Depot stamps tokened gems. Only a tokened gem pays into the purse."
+          : "A Depot is tuned, then it ticks yield × distance × haul into the purse. The purse pays the depot tree and the city.",
       },
-      points: [
-        "A <b>resource node</b> (farm, forest, ore mine, quarry, oil rig, gold mine) makes cargo. A <b>Depot</b> built within its reach picks that cargo up.",
-        "Build <b>Dirt Road</b> (free) and <b>Road</b> (faster hauling) and <b>Rail</b> (fastest) to the <b>City</b>. Distance matters — longer lines pay less per tick.",
-        "When you build a Depot you play a short <b>match-3 tuning session</b>. Your score sets that Depot's <b>yield</b> — how much it ticks.",
-        "Cargo ticks into your <b>purse</b> every clock tick: <b>yield × distanceFactor × transportFactor</b>. Spend it on the depot tree and city upgrades.",
-      ],
-      tip: `Six cargoes, six gem colours: ${CARGOES.map((c) => `${CARGO[c].icon} ${CARGO[c].name}`).join(" · ")}.`,
+      points: retired
+        ? [
+          "A resource node makes cargo. A Depot built against it picks that cargo up and sends it to your plant.",
+          "Deliveries stamp tokened gems on the board. Only a tokened gem pays.",
+          "The purse along the top is what you spend. Gold buys sabotage, never a road or a Depot.",
+        ]
+        : [
+          "Build a Depot against a resource, then play a short match-3 tuning session. The score sets that Depot's yield.",
+          `The clock then ticks cargo in: yield × distance × haul. Haul does not change the tick — a paved Road makes the trucks faster instead.`,
+          "The purse pays the depot tree and the city upgrades. Gold, from a played session or a Gold Mine, buys Challenges and Black Market cards, never construction.",
+        ],
+      tip: cargoTip,
     },
     {
       id: "plant",
       kicker: "STEP 1 · THE CITY",
       title: "Your city is the hub",
-      lede: "The city is where every depot delivers. Roads and rail all run to it.",
+      lede: "The city is where every Depot delivers. Nothing ticks until a route can reach it.",
       figure: {
         kind: "shot",
         src: shotPlant,
-        alt: "City with depot roads",
-        caption: "Every depot needs a road to the city. Distance and road tier decide the payout.",
+        alt: "The city previewed beside a town, the delivery end of every route",
+        caption: "The city is the delivery end. Every Depot needs a road or a rail line that can reach it.",
       },
       points: [
-        "The <b>city</b> is the delivery end of every route. Nothing pays until a Depot can reach it by road or rail.",
-        "Build <b>Dirt Road</b> (free) and <b>Road</b> (costs, but faster hauling) and later <b>Rail</b> — rail is fastest, but needs platforms.",
-        "The inspector tells you a tile's distance factor and transport factor — the two multipliers on every tick.",
+        "Place the city beside your town. Roads and rail all run back to it.",
+        `The first city upgrade costs ${costCompact(city0.cost)}, adds ${Math.round(city0.bonus * 100)}% to every Depot's tick, and pays ${star(VICTORY.loop.city)}.`,
+        "The Plant card sits at the bottom right once the city is down. It is where you upgrade the city and retune.",
       ],
-      tip: `Later city upgrades cost cargo and give +${star(VICTORY.loop.city)} each — depth over breadth.`,
+      tip: "A Depot with no route to the city claims nothing and pays nothing.",
     },
     {
       id: "depot",
       kicker: "STEP 2 · COLLECT IT",
-      title: "Build a Depot beside a resource node",
-      lede: "Build → Depot, then click the ground you want it on.",
+      title: "A Depot beside the resource",
+      lede: "Build, then Depot, then the ground you want it on. The lot has to touch the industry.",
       figure: {
         kind: "shot",
         src: shotDepot,
-        alt: "A Depot previewed near an ore mine",
-        caption: "The shaded square is its 4×4 catchment — the ore mine it reaches is what this Depot collects.",
+        alt: "A Depot previewed so its lot shares an edge with an industry",
+        caption: "The lot is 2×2 and must share an edge with the industry. Hover shows the tiles it would take.",
       },
       points: [
-        "A Depot needs an industry inside its <b>4×4 catchment</b> — hover shows the tiles it would take.",
-        "<b>One Depot per industry.</b> First to connect keeps it.",
-        `Your <b>first Depot is free</b>. Every Depot after it costs ${costLabel(DEPOT_COST)}, and one you cannot pay for is refused without spending.`,
+        "Set the 2×2 lot against the industry so they share an edge. R turns the entrance. Roads join on that open side.",
+        freeDepotLine(),
+        "The first Depot to serve an industry holds it. An unconnected Depot claims nothing, so it cannot lock a node away by accident.",
+        `Taking a held industry is Challenge, then a battle — ${BATTLE_RULES.challengeGold} Gold, then a ${waitMin}-minute wait. The first win shares the site. A second win in a row closes the loser's Depot. Decline forfeits.`,
+        "A Challenge opens once you hold every industry of one cargo, every town is taken, or you have fallen far enough behind. How battles work, in the menu, is the rest of the fight.",
       ],
-      tip: "A Depot on open ground with no road claims nothing — it can never lock a node away by accident.",
+      tip: "A platform beside an industry is a Depot too. It will not take one the other seat already holds.",
     },
     {
       id: "roads",
       kicker: "STEP 3 · CONNECT IT",
-      title: "Join them with roads and rail",
-      lede: "Build → Dirt Road, then drag from the Depot to your City.",
+      title: "Join them with roads",
+      lede: "Build, then Dirt Road, then drag from the Depot to your city. One continuous run is enough.",
       figure: {
         kind: "shot",
         src: shotRoads,
-        alt: "Road joining Depot to City",
-        caption: "One continuous run is all it takes: the depot starts ticking the moment it reaches the city.",
+        alt: "A dirt road joining a Depot to the city",
+        caption: "One continuous gravel run is enough. The Depot starts ticking the moment the route reaches the city.",
       },
       points: [
-        `<b>Dirt Road</b> is ${dirt} a tile${allowance}.`,
-        "<b>Road</b> is faster hauling (×1.6). <b>Rail</b> is fastest — build a platform at each end, then a line.",
-        "Distance falloff: the longer the path, the smaller the <b>distanceFactor</b>. The inspector shows it per depot.",
-        "Town ring roads and public highways carry your traffic too.",
+        `${dirtLine} It is the gravel every route starts on.`,
+        `A run of ${DISTANCE.nearTiles} tiles or fewer pays in full. Up to ${DISTANCE.midTiles} pays ${DISTANCE.mid}×, and farther pays ${DISTANCE.far}×.`,
+        `<b>Road</b> costs ${road}. It does not multiply the tick. Trucks run faster on it than on gravel, and a fully paved route pays ${star(VICTORY.loop.route)}.`,
+        "Town ring roads and public highways carry your traffic too. A protest on a public tile stops every truck through it, including yours.",
       ],
       tip: coarse
-        ? "One finger drags a run; a tap lays one tile. + / − / 🎯 zoom and recenter."
-        : "Left-drag lays a run. Middle-drag pans, wheel zooms, 🎯 recentres.",
+        ? "One finger drags a run tile by tile. A tap lays one tile. Two fingers zoom."
+        : "Left-drag lays a run. Middle-drag pans, the wheel zooms, and right-click puts the tool down.",
+    },
+    {
+      id: "rail",
+      kicker: "STEP 4 · THE FAST LINE",
+      title: "Rail turns gently",
+      lede: "Rail is the fast line between an industry and your city. It is not a second gravel road.",
+      figure: {
+        kind: "shot",
+        src: shotRail,
+        alt: "A platform beside an industry, a rail line turning 45 degrees, and a slope a diagonal may not cross",
+        caption: "A platform beside an industry is a Depot. The line turns 45 degrees, and a diagonal may not cross a slope.",
+      },
+      points: [
+        retired
+          ? `<b>Rail</b> costs ${rail} a tile. A platform beside an industry acts as a Depot for that industry.`
+          : `<b>Rail</b> costs ${rail} a tile. A platform beside an industry is a Depot: it claims that industry, opens a tuning session, and ticks when its train runs.`,
+        "One train per connected network. A second line that would join two running trains is refused.",
+        "A train can go straight or turn 45°. It cannot take a sharp corner.",
+        SLOPE_REFUSAL_TEXT["slope-diagonal"],
+      ],
+      tip: "R turns a platform. The Railway panel, while a rail tool is in your hand, lists the lines you can run.",
     },
     {
       id: "board",
-      kicker: "STEP 4 · TUNE IT",
+      kicker: "STEP 5 · TUNE IT",
       title: "Match-3 tunes a Depot",
-      lede: "Building a Depot opens the board for a short tuning session — the board is not up otherwise.",
+      lede: retired
+        ? "The board stays up in the Processing Plant for the whole match. Deliveries are what put cargo on it."
+        : "Building a Depot opens a short tuning session. The board is not up otherwise.",
       figure: {
         kind: "shot",
         src: shotBoard,
-        alt: "Tuning board open",
-        caption: `The plate above the board counts moves and shows the yield your score is worth. Swap two neighbours to line up 3 or more.`,
+        alt: retired
+          ? "The Processing Plant board, with tokened gems waiting to be matched"
+          : "The tuning session window open over the map",
+        caption: retired
+          ? "Swap two neighbours to line up 3 or more. Only a tokened gem pays."
+          : "The plate counts the moves left and the yield the score is worth. Swap two neighbours to line up 3 or more.",
       },
-      points: [
-        "A session is <b>bounded</b>: a fixed number of moves. When the last one resolves the board closes.",
-        `Every gem you clear is <b>score</b>. The score becomes the Depot's <b>yield level</b> — ×${TUNING.minYield} at zero, ×${TUNING.maxYield} at ${TUNING.targetScore} gems, and higher the more you clear (no ceiling) — and a connected Depot ticks its cargo at exactly that rate.`,
-        "<b>5 in a row</b> forges a <b>bomb</b> — swap it to blow that whole colour. Combos and cascades bank bonus points.",
-        "Finish keeps the score you have; ✕ abandons and leaves the Depot on the default yield.",
-        "<b>Difficulty</b> changes what a yield does over time. <b>Easy</b>: one session per Depot, weak still lands decent, nothing cools. <b>Normal</b>: one more session with each upgrade, yield never drops. <b>Hard</b>: tuned Depot cools, re-match can lower it.",
-        "On Normal and Hard the plate offers <b>Retune</b> for your weakest Depot when one is owed.",
-      ],
-      tip: `🪙 Gold gems only drop while a Depot sits beside a gold mine. Every Depot is tuned once as it is built.`,
+      points: retired
+        ? [
+          "Deliveries stamp tokened gems, and only a tokened gem pays into the purse.",
+          "The board stays up. Matching is the whole match, not a session you finish.",
+          "Swap two neighbours to line up 3 or more of a colour. Five in a row forges a bomb.",
+        ]
+        : [
+          `A session is <b>bounded</b>: ${TUNING.moves} moves, then the board closes.`,
+          `Every gem you clear is score. The score becomes the Depot's yield — ×${TUNING.minYield} at zero, ×${TUNING.maxYield} at ${TUNING.targetScore} gems — and what sticks is capped by that Depot's level.`,
+          "Five in a row forges a bomb. Finish keeps the score you have. ✕ abandons and does not raise the yield.",
+          `Easy starts at ×${easy.minYield} on a clean board. Normal ices ${normal.obstacles.frost} gems. Hard ices ${hard.obstacles.frost} and drops ${hard.obstacles.girders} girders. On every difficulty the yield never drops, and you can retune any time for ${costCompact(DEPOT_RETUNE_COST)}.`,
+        ],
+      tip: retired
+        ? "Gold gems are the sabotage purse. Construction never spends Gold."
+        : `A played session pays ${TUNING.minGold} to ${TUNING.maxGold} Gold. Abandoning pays none. A Gold Mine ticks Gold like any other cargo.`,
     },
     {
       id: "expand",
-      kicker: "STEP 5 · SPEND IT",
+      kicker: "STEP 6 · SPEND IT",
       title: "Turn cargo into empire",
-      lede: "Connected Depots tick cargo into your purse — the chips along the bottom of the screen.",
+      lede: "Connected Depots tick cargo into the purse along the top of the screen. That purse is what you spend.",
       figure: {
         kind: "shot",
         src: shotExpand,
-        alt: "Purse chips and Feed tab",
-        caption: "Your purse runs along the bottom; the Feed tab logs every event.",
+        alt: "The bottom drawer open on Bank, with the purse in the top bar",
+        caption: "The purse runs along the top. The drawer is Bank, Market, Black Market, Feed and Quests.",
       },
       points: [
-        "That purse is the only money in the game. It buys Depots, roads, rail, city upgrades and the depot tree.",
-        "<b>Ore is the gate.</b> Dirt Road is free, but Road, Rail and the second Depot all want ore.",
-        "<b>Feed</b> logs every event of the match, and the inspector answers a hover with what a tile is and what it is worth.",
-        `Another <b>City upgrade</b> widens your base rate and gives +${star(VICTORY.loop.city)}.`,
+        "Construction spends cargo, never Gold. Gold buys Challenges and Black Market cards.",
+        `Click a Depot to raise its yield cap ${caps}. The top level pays ${star(VICTORY.loop.maxDepot)}. Score past the cap pays Gold.`,
+        `The first city upgrade costs ${costCompact(city0.cost)} and pays ${star(VICTORY.loop.city)}. Each tier raises what every Depot ticks.`,
+        `Blockade costs ${SABOTAGE.bandit.gold} Gold and stops an industry's Depots. Protest costs ${SABOTAGE.protest.gold} Gold and shuts a public road, yours included. Feed logs every event.`,
       ],
-      tip: "Black Market cards (Blockade, Protest) cost Gold and land on the rival. A Protest ✊ shuts any public road for 2:00 — every truck stops, including yours.",
+      tip: "The bank trades cargo for cargo. It never touches Gold.",
     },
     {
       id: "victory",
-      kicker: "STEP 6 · WIN IT",
+      kicker: "STEP 7 · WIN IT",
       title: "How Victory Points are earned",
-      lede: `First to ${ctx.vpTarget}★ wins. Four sources pay:`,
+      lede: `First to ${ctx.vpTarget}★ wins. These are the sources that pay:`,
       figure: {
         kind: "ledger",
-        rows: [
-          { icon: "🔷", label: "A Depot running", vp: `+${star(VICTORY.loop.type)}` },
-          { icon: "🛣️", label: "A Depot route fully paved", vp: `+${star(VICTORY.loop.route)}` },
-          { icon: "🏙️", label: "A city upgrade tier", vp: `+${star(VICTORY.loop.city)}` },
-          { icon: "⭐", label: "A Depot upgraded to level 3", vp: `+${star(VICTORY.loop.maxDepot)}` },
-        ],
-        caption: `More depots, better roads, a bigger city — ${ctx.vpTarget}★. Different plans win.`,
+        rows: retired
+          ? [
+            { icon: "🛣️", label: "A paved tile", vp: `+${star(VICTORY.upgrade)}` },
+            { icon: "🏭", label: "An extra plant", vp: `+${star(VICTORY.plant)}` },
+            { icon: "🚉", label: "A platform", vp: `+${star(VICTORY.platform)}` },
+          ]
+          : loopLedgerRows(),
+        total: line,
+        caption: retired
+          ? `Paves, plants and platforms — first to ${line}.`
+          : `Depots, paved routes, the city, and a couple of holds — first to ${line}.`,
       },
-      points: [
-        `Every <b>Depot</b> that is connected and producing pays ${star(VICTORY.loop.type)} — cut its road and it stops paying.`,
-        `A Depot's <b>route</b> to your plant pays ${star(VICTORY.loop.route)} more once every tile of it is paved Road (no gravel left).`,
-        `A <b>city tier</b> is a city upgrade — ${star(VICTORY.loop.city)} each, never revoked.`,
-        `Click a Depot to <b>upgrade</b> it: its yield cap goes ×2 → ×4 → ×6, and level 3 pays ${star(VICTORY.loop.maxDepot)}. Score past the cap pays Gold.`,
-      ],
-      tip: `Roads themselves score nothing — they make your depots tick faster. Dirt is free, Road is faster hauling.`,
+      points: retired
+        ? [
+          `A paved tile pays ${star(VICTORY.upgrade)}. Dirt itself scores nothing.`,
+          `An extra plant pays ${star(VICTORY.plant)}, and a platform pays ${star(VICTORY.platform)}.`,
+          `First to ${ctx.vpTarget}★ wins. The line on the badge is the one this match is racing.`,
+        ]
+        : [
+          `Every Depot that is connected and producing pays ${star(VICTORY.loop.type)}. Cut its route and it stops paying.`,
+          `A route to your city pays ${star(VICTORY.loop.route)} once every tile of it is paved. A city tier pays ${star(VICTORY.loop.city)} and is never revoked.`,
+          `A Depot at the top level pays ${star(VICTORY.loop.maxDepot)}. A contested hold pays ${star(VICTORY.loop.hold)}, and at most ${star(VICTORY.loop.holdCap)} of those stars count.`,
+          "A single road tile scores nothing. The star is for the whole route, once every tile of it is paved.",
+        ],
+      tip: "Different plans win. Breadth, a paved network, a taller city, or a couple of holds.",
     },
     {
       id: "desk",
-      kicker: "STEP 7 · THE DESK",
-      title: "The map is not the whole game",
-      lede: "Gold buys sabotage. The Feed tells you what happened. The inspector tells you what a tile is worth.",
+      kicker: "STEP 8 · THE DESK",
+      title: "Where everything lives",
+      lede: "The map is the island. The tools, the purse and the menu live around it.",
       figure: {
         kind: "shot",
         src: shotDesk,
-        alt: "Black Market, Feed, and inspector",
-        // #299: on the new loop the plant is no longer a tab — the session
-        // owns its own window over the map, and the rail keeps Bank, Feed
-        // and the plant's idle card. The retired loop keeps the old strip.
-        caption: ctx.newLoop === false
-          ? "Right column: Processing Plant and Feed tabs — the board comes up in the plant one while a Depot is being tuned."
-          : "Right column: Bank and Feed tabs over the plant's idle card — while a Depot is being tuned, the board comes up in its own session window over the map.",
+        alt: "The left tool rail, the bottom drawer, the Plant card and the minimap",
+        caption: retired
+          ? "Right column: Processing Plant and Feed tabs — the board stays up in the plant."
+          : "The drawer holds Bank, Market, Black Market, Feed and Quests. While a Depot is tuned, the board opens in its own session window.",
       },
       points: [
-        "<b>Gold</b> 🪙 is earned from gold-mine access or combos. It buys Black Market sabotage only — never construction.",
-        "<b>Blockade</b> ⛓ stops an industry's depots for 45s. <b>Protest</b> ✊ shuts any public road for 2:00 — every depot through that tile stops earning, including your own.",
-        "<b>Security Forces</b> turn both away — hired with ordinary materials.",
-        "The <b>Feed</b> logs every event. The <b>inspector</b> (hover) says what a tile is, its distance factor and its transport factor.",
+        "On a wide screen the tools stand in a rail on the left. Hover one to see its price before you build.",
+        "The drawer along the bottom holds Bank, Market, Black Market, Feed and Quests. A tab opens it. The same tab again closes it.",
+        "The Plant card is bottom right. The minimap is top right. The menu holds difficulty, sound, recenter and names over the map.",
+        "On a phone the bottom bar switches Map, Build and Economy. Build is the tool list. Economy is the drawer.",
       ],
-      tip: "The rival plays the same loop you do — road/rail to city/depot, tuning sessions for yield, spending on tree + city. No paving-for-points, no plant-for-points, no bank, no blessings.",
+      tip: coarse
+        ? "One finger pans the map. A tap places a building or lays one tile. Two fingers zoom. The bottom bar switches Map, Build and Economy."
+        : "Middle-drag pans, the wheel zooms, and right-click puts the tool down. The menu is the ☰ at the top right.",
     },
   ];
 }
@@ -288,21 +412,21 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
 }
 
 export interface ShowTutorialOptions {
-  /** Skip the gate — the ❔ help modal's replay does this on purpose. */
+  /** Skip the gate — the help modal's replay does this on purpose. */
   force?: boolean;
   vpTarget: number;
   freeTrack: number;
-  /** The loop the booted game runs — the desk card names its rail. */
+  /** False is the retired loop. Absent or true is the loop the game ships. */
   newLoop?: boolean;
-  /** Gate overrides for tests/playtests; defaults read the live boot. */
+  /** Gate overrides for tests and playtests; defaults read the live boot. */
   search?: string;
   storage?: TutorialStorage | null;
   onClose?: (result: TutorialResult) => void;
   /**
-   * B7 (#252): another reference card on the same projector — the battle
-   * How to Play (`battle-howto.ts`) passes its own cards, overlay id and
-   * last-button label, and hides "Never show this again" (a page opened on
-   * purpose has nothing to never show). Absent = the starting tour.
+   * Another reference card on the same projector — the battle How to Play
+   * passes its own cards, overlay id and last-button label, and hides
+   * "Never show this again" (a page opened on purpose has nothing to dismiss
+   * forever). Absent = the starting tour.
    */
   steps?: TutorialStep[];
   overlayId?: string;
@@ -314,13 +438,10 @@ export interface ShowTutorialOptions {
 
 export function showTutorial(
   root: HTMLElement,
-  opts: ShowTutorialOptions = { vpTarget: 12, freeTrack: 0 },
+  opts: ShowTutorialOptions = { vpTarget: VICTORY.loop.target, freeTrack: 0 },
 ): TutorialHandle | null {
   const search = opts.search ?? (typeof location !== "undefined" ? location.search : "");
   const storage = opts.storage === undefined ? liveStorage() : opts.storage;
-  // THE GATE (rule 1 of the module header): a remembered "never" or an
-  // explicit `?tutorial=0` means no card at all — the caller (game.ts boot,
-  // the help modal) renders nothing and hands on to the difficulty prompt.
   if (!opts.force && !shouldShowTutorial(search, storage)) return null;
 
   const steps = opts.steps && opts.steps.length
@@ -328,14 +449,14 @@ export function showTutorial(
     : buildTutorialSteps({ vpTarget: opts.vpTarget, freeTrack: opts.freeTrack, newLoop: opts.newLoop });
   let idx = 0;
 
-  // The projector emits the classes the shipped CSS styles (`#iso-tutorial`
-  // and the `.tut-*` block in src/game/styles.css) — the plate, the ledger
-  // paper, the blueprint figure — and carries the `data-step`/`data-act`
-  // hooks the unit and e2e suites walk it by.
   const overlay = el("div", "");
   overlay.id = opts.overlayId ?? "iso-tutorial";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
+
+  // The veil is the other "for now" exit. It sits under the card; a click
+  // on the card never reaches it.
+  const shade = el("div", "tut-shade");
 
   const card = el("div", "tut-card");
   const head = el("div", "tut-head");
@@ -358,7 +479,20 @@ export function showTutorial(
   const never = el("button", "tut-never", "Never show this again") as HTMLButtonElement;
   never.type = "button";
   never.dataset.act = "tut-never";
-  const spacer = el("span", "tut-spacer");
+  const dots = el("div", "tut-dots");
+  steps.forEach((s, i) => {
+    const dot = el("button", "tut-dot") as HTMLButtonElement;
+    dot.type = "button";
+    dot.dataset.step = s.id;
+    dot.setAttribute("aria-label", s.title);
+    dot.onclick = () => {
+      if (idx === i) return;
+      idx = i;
+      render();
+      sfx.play("open");
+    };
+    dots.appendChild(dot);
+  });
   const nav = el("div", "tut-nav");
   const prev = el("button", "big-btn ghost", "← Back") as HTMLButtonElement;
   prev.type = "button";
@@ -367,22 +501,24 @@ export function showTutorial(
   next.type = "button";
   next.dataset.act = "tut-next";
   nav.append(prev, next);
-  if (opts.showNever === false) foot.append(spacer, nav);
-  else foot.append(never, spacer, nav);
+  if (opts.showNever === false) foot.append(dots, nav);
+  else foot.append(never, dots, nav);
 
   card.append(head, body, foot);
-  overlay.appendChild(card);
+  overlay.append(shade, card);
 
   const caption = (text: string) => el("div", "tut-fig-cap", text);
 
   const renderFigure = (fig: TutorialFigure) => {
     figureEl.className = `tut-fig tut-fig-${fig.kind}`;
-    figureEl.innerHTML = "";
+    figureEl.replaceChildren();
     if (fig.kind === "chain") {
       const chain = el("div", "tut-chain");
       fig.nodes.forEach((n, i) => {
         const node = el("div", "tut-chain-node");
-        node.innerHTML = `<i class="tut-chain-ic">${n.icon}</i><b>${n.label}</b>`;
+        const ic = el("i", "tut-chain-ic", n.icon);
+        const label = el("b", "", n.label);
+        node.append(ic, label);
         chain.appendChild(node);
         if (i < fig.nodes.length - 1) chain.appendChild(el("i", "tut-chain-arrow", "→"));
       });
@@ -415,13 +551,20 @@ export function showTutorial(
       const ledger = el("div", "tut-ledger");
       for (const row of fig.rows) {
         const r = el("div", "tut-ledger-row");
-        r.innerHTML =
-          `<span class="tut-ledger-ic">${row.icon}</span>` +
-          `<span class="tut-ledger-copy"><b>${row.label}</b></span>` +
-          `<span class="tut-ledger-vp">${row.vp}</span>`;
+        const ic = el("span", "tut-ledger-ic", row.icon);
+        const copy = el("span", "tut-ledger-copy");
+        copy.appendChild(el("b", "", row.label));
+        const vp = el("span", "tut-ledger-vp", row.vp);
+        r.append(ic, copy, vp);
         ledger.appendChild(r);
       }
-      figureEl.append(ledger, caption(fig.caption));
+      figureEl.appendChild(ledger);
+      if (fig.total) {
+        const total = el("div", "tut-ledger-total");
+        total.append(el("span", "", "The line"), el("strong", "", fig.total));
+        figureEl.appendChild(total);
+      }
+      figureEl.appendChild(caption(fig.caption));
     }
   };
 
@@ -432,15 +575,18 @@ export function showTutorial(
     titleEl.textContent = s.title;
     ledeEl.innerHTML = s.lede;
     renderFigure(s.figure);
-    pointsEl.innerHTML = "";
+    pointsEl.replaceChildren();
     for (const p of s.points) {
       const li = el("li", "");
       li.innerHTML = p;
       pointsEl.appendChild(li);
     }
     tipEl.textContent = s.tip;
-    // Back has nowhere to go on step one; the last step's key is the one
-    // that ends the tour (and finishing is NOT dismissing).
+    dots.querySelectorAll<HTMLButtonElement>(".tut-dot").forEach((d, i) => {
+      const on = i === idx;
+      d.classList.toggle("on", on);
+      d.setAttribute("aria-current", on ? "step" : "false");
+    });
     prev.disabled = idx === 0;
     const last = idx === steps.length - 1;
     next.dataset.act = last ? "tut-done" : "tut-next";
@@ -451,7 +597,8 @@ export function showTutorial(
   const promise = new Promise<TutorialResult>((res) => { resolve = res; });
   let closed = false;
   const close = (reason: TutorialCloseReason = "dismissed") => {
-    if (closed) return;   // the promise settles once, however many doors slam
+    document.removeEventListener("keydown", onKey);
+    if (closed) return;
     closed = true;
     overlay.remove();
     const result: TutorialResult = { reason };
@@ -461,6 +608,16 @@ export function showTutorial(
   };
   const destroy = () => close("dismissed");
 
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      close("dismissed");
+      return;
+    }
+    if (e.key === "ArrowRight") { e.preventDefault(); next.click(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); prev.click(); }
+  };
+
   prev.onclick = () => { if (idx > 0) { idx--; render(); sfx.play("open"); } };
   next.onclick = () => {
     if (idx < steps.length - 1) { idx++; render(); sfx.play("open"); }
@@ -468,7 +625,9 @@ export function showTutorial(
   };
   closeBtn.onclick = () => close();
   never.onclick = () => { setTutorialDismissed(true, storage); close("never"); };
+  shade.onclick = () => close("dismissed");
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close("dismissed"); });
+  document.addEventListener("keydown", onKey);
 
   render();
   (opts.mount ?? root).appendChild(overlay);

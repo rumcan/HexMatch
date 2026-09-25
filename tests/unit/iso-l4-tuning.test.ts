@@ -613,9 +613,13 @@ describe.skip("L4 the level travels, and the shipped loop is untouched", () => {
   });
 
   it("describes the new loop in the opening copy (tour + setup toast)", async () => {
+    // The no-flag builder is the loop the game ships. `newLoop: false` is the
+    // hatch's tour, and it still has to describe the board that loop has.
     const shipped = buildTutorialSteps({ vpTarget: 10, freeTrack: 12 });
     const tuned = buildTutorialSteps({ vpTarget: 10, freeTrack: 12, newLoop: true });
-    expect(JSON.stringify(tuned)).not.toBe(JSON.stringify(shipped));
+    const retired = buildTutorialSteps({ vpTarget: 10, freeTrack: 12, newLoop: false });
+    expect(JSON.stringify(shipped)).toBe(JSON.stringify(tuned));
+    expect(JSON.stringify(tuned)).not.toBe(JSON.stringify(retired));
 
     const loop = tuned.find((s) => s.id === "loop")!;
     expect(loop.points.join(" ")).toMatch(/tuning session/i);
@@ -623,9 +627,9 @@ describe.skip("L4 the level travels, and the shipped loop is untouched", () => {
     expect(board.title).toMatch(/tune/i);
     expect(board.points.join(" ")).toMatch(/yield/i);
     expect(board.points.join(" ")).toContain(`×${TUNING.maxYield}`);
+    expect(board.points.join(" ")).not.toMatch(/tokened/i);
 
-    // the shipped tour still promises the board that loop actually has
-    const oldBoard = shipped.find((s) => s.id === "board")!;
+    const oldBoard = retired.find((s) => s.id === "board")!;
     expect(oldBoard.points.join(" ")).toMatch(/tokened/i);
 
     // …and the setup toast on a real new-loop boot speaks the clock, not tokens.

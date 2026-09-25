@@ -41,8 +41,9 @@ import { type CargoBag } from "../iso/purse";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, TUNING, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
-import { DEPOT_COST } from "../iso/construction";
+import { BATTLE_RULES, BUILD_COSTS, CARGO, CARGOES, DIFFICULTY_RULES, DISTANCE, TRANSPORT, VICTORY, TUNING, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
+import { DEPOT_COST, costCompact } from "../iso/construction";
+import { SLOPE_REFUSAL_TEXT } from "../iso/slopes";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
 // RAIL-04 (#178): the buttons print the railway's real prices and its real
@@ -4806,16 +4807,19 @@ export function createOriginalUi(
       : "";
     sfx.play("open");
     modalRoot.classList.remove("hidden");
+    const easy = DIFFICULTY_RULES.easy;
+    const normal = DIFFICULTY_RULES.normal;
+    const hard = DIFFICULTY_RULES.hard;
     modalRoot.innerHTML = `
       <div class="modal-back"></div>
       <div class="modal box">
         <h2>Hexmatch Industries</h2>
-        <p class="sub">Build road & rail to city & depots, tune depots with match-3, earn yield×distance×road. First to <b>${hudVpTarget}★</b> wins.</p>
+        <p class="sub">Place a Depot, tune it, and let it tick. First to <b>${hudVpTarget}★</b> wins.</p>
         <div class="help-cols">
-          <div class="help-col"><h3>The Territory</h3><p>Place <b>Depots</b> beside resource nodes. Build <b>Dirt Road</b> (free, ×1.0) and <b>Road</b> (faster hauling ×1.6) and <b>Rail</b> (fastest) to the <b>City</b>. Distance matters — longer lines have smaller <b>distanceFactor</b>. The inspector shows yield, distance and transport per depot.</p>
-<p><h3>How you score</h3><p>Points come from three things: every <b>Depot running</b> (connected and producing, +${VICTORY.loop.type}★, lost if its road is cut), every Depot <b>route fully paved</b> to your plant (+${VICTORY.loop.route}★, lost if a tile goes back to gravel) every <b>city upgrade tier</b> (+${VICTORY.loop.city}★) and every Depot <b>upgraded to level 3</b> (+${VICTORY.loop.maxDepot}★). Click a Depot to upgrade (yield cap ×2 → ×4 → ×6) or retune it. First to ${hudVpTarget}★ wins.</p><p>Move the camera with <b>WASD</b> or <b>middle mouse</b> (wheel zooms). Right-click drops the tool. The pointer reads the map via the inspector.</p>${TOUCH_CONTROLS}<p>Top-bar <b>Aa Names</b> toggles name tags.</p></div>
-          <div class="help-col"><h3>Tuning</h3><p>Building a Depot opens a <b>bounded match-3 session</b>. Score becomes the Depot's <b>yield</b> — ×${TUNING.minYield} at zero, ×${TUNING.maxYield} at ${TUNING.targetScore} gems, and <b>no ceiling</b>: the more you clear, the higher it goes. A connected Depot then ticks <b>yield × distanceFactor × transportFactor</b> cargo per clock tick. <b>5 in a row</b> makes a bomb. Finish keeps score; ✕ abandons for default yield. Difficulty changes decay: Easy never cools, Normal never drops, Hard can cool and lower.</p></div>
-          <div class="help-col"><h3>Gold & Defence</h3><p><b>Gold</b> 🪙 is from gold-mine access or combos. It buys <b>Black Market</b> sabotage and <b>Challenges</b> (12 Gold) — never construction. Click an industry with Select to Challenge once a cargo is a monopoly (or every town is taken). First win shares the site; a second consecutive win closes the loser's Depot. Decline is a forfeit. <b>Blockade</b> ⛓ stops an industry's depots for 45s, <b>Protest</b> ✊ shuts a public road for 2:00 (every truck through it stops, including yours). <b>Security Forces</b> (ordinary materials) turn both away. <b>Feed</b> logs every event.</p></div>
+          <div class="help-col"><h3>The Territory</h3><p>Place a <b>Depot</b> so its 2×2 lot shares an edge with a resource. <b>Dirt Road</b> is ${costCompact(TRANSPORT.dirt.cost)}, tile after tile. <b>Road</b> costs ${costCompact(BUILD_COSTS.road)} and makes trucks faster — it does not multiply the tick. A run of ${DISTANCE.nearTiles} tiles or fewer pays in full; up to ${DISTANCE.midTiles} pays ${DISTANCE.mid}×; farther pays ${DISTANCE.far}×. <b>Rail</b> costs ${costCompact(BUILD_COSTS.rail)} a tile. A platform beside an industry is a Depot. One train per connected network. Turns must be 45° or less. ${SLOPE_REFUSAL_TEXT["slope-diagonal"]}</p>
+<h3>How you score</h3><p>A running Depot (+${VICTORY.loop.type}★), a fully paved route (+${VICTORY.loop.route}★), a city tier (+${VICTORY.loop.city}★), a top-level Depot (+${VICTORY.loop.maxDepot}★), and a contested hold (+${VICTORY.loop.hold}★, at most ${VICTORY.loop.holdCap}★). First to ${hudVpTarget}★ wins.</p><p>Move the camera with <b>WASD</b> or <b>middle mouse</b> (wheel zooms). Right-click puts the tool down. The menu holds difficulty, sound, recenter and names.</p>${TOUCH_CONTROLS}</div>
+          <div class="help-col"><h3>Tuning</h3><p>Building a Depot opens a <b>bounded match-3 session</b> of ${TUNING.moves} moves. Score becomes the Depot's <b>yield</b> — ×${TUNING.minYield} at zero, ×${TUNING.maxYield} at ${TUNING.targetScore} gems. What sticks is capped by that Depot's level; score past the cap pays Gold. A connected Depot ticks yield × distance × haul. Haul does not change the tick. Five in a row forges a bomb. Finish keeps the score; abandoning does not raise the yield. Easy starts at ×${easy.minYield} on a clean board. Normal ices ${normal.obstacles.frost} gems. Hard also drops ${hard.obstacles.girders} girders. The yield never drops on any difficulty.</p></div>
+          <div class="help-col"><h3>Gold and claims</h3><p><b>Gold</b> comes from a played tuning session or a Gold Mine. It buys <b>Black Market</b> cards and <b>Challenges</b> (${BATTLE_RULES.challengeGold} Gold) — never a road or a Depot. A held industry is taken only by Challenge, then a battle. The first win shares the site; a second win in a row closes the loser's Depot. Decline forfeits. <b>Blockade</b> (${SABOTAGE.bandit.gold} Gold) stops an industry's Depots. <b>Protest</b> (${SABOTAGE.protest.gold} Gold) shuts a public road, including yours. Security Forces, paid in ordinary cargo, turn both away. <b>Feed</b> logs the match.</p><p>The tools stand in a rail on the left; hover one for its price. The bottom drawer is Bank, Market, Black Market, Feed and Quests. The Plant card is bottom right. The minimap is top right.</p></div>
         </div>
         <div class="confirm-row">
           <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>

@@ -27,7 +27,7 @@ import { showSettingsSheet, type SettingsSheetHandle } from "../iso/settings-she
 import { showStorePanel, type StorePanelHandle } from "../game/store-panel";
 import { loadStore } from "../game/store";
 import { FREE_SETUP_TRACK } from "../iso/game";
-import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
+import { VICTORY } from "../iso/config";
 import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
 import { STORY_MODE_ENABLED } from "../story/flag";
@@ -81,8 +81,9 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
     if (!howTo || !howToRef.current) return;
     const handle = showTutorial(howToRef.current, {
       force: true,
-      vpTarget: RIVAL_SKILLS[resolveSkillKey()].winTarget,
+      vpTarget: VICTORY.loop.target,
       freeTrack: FREE_SETUP_TRACK,
+      newLoop: true,
     });
     tourRef.current = handle;
     if (!handle) { setHowTo(false); return; }
@@ -186,7 +187,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             Settings<span className="mb-tag">graphics · miniature · performance · sound</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setHowTo(true)}>
-            How to Play<span className="mb-tag">eight cards, one loop</span>
+            How to Play<span className="mb-tag">nine cards, one loop</span>
           </button>
           {/* MON-1 (#367): the Store door — unlockables bought with RUN Bits. */}
           {import.meta.env.DEV ? (

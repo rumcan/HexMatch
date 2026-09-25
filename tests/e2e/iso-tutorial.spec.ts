@@ -27,7 +27,7 @@ import { bootBudget } from "./boot";
 
 const BASE = "/";
 const TOUR = "#iso-tutorial";
-const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory", "desk"];
+const STEP_IDS = ["loop", "plant", "depot", "roads", "rail", "board", "expand", "victory", "desk"];
 
 // ── save control ──────────────────────────────────────────────────────────
 // The game autosaves every 5s AND on `pagehide`, so the moment a spec
@@ -52,13 +52,10 @@ const readSave = (page: import("@playwright/test").Page) =>
  * fresh game by construction; without it, a second boot is a RESUME.
  */
 async function boot(page: import("@playwright/test").Page, extra = "", opts: { fresh?: boolean } = {}) {
-  // L1f (#237): this spec walks the tour of the RETIRED loop — a 4-row ★
-  // ledger ending on 10★/5★ and the roads card counting down the 12 free
-  // tiles. The new loop re-voices those same steps (its ledger pays ★ for
-  // depot types, rungs and city upgrades to 12★), and that tour is walked in
-  // `iso-loop-default.spec.ts`; `?loop=old` is what keeps THESE assertions
-  // about the copy the escape hatch still shows.
-  await page.goto(`${BASE}?seed=79&loop=old${extra}`);
+  // The tour belongs to the loop the game ships. `?loop=old` stands no tour
+  // (game.ts), so this spec boots the same way a player does — seed only —
+  // and walks the nine cards, the 5-row ledger and the live 12★ line.
+  await page.goto(`${BASE}?seed=79${extra}`);
   if (opts.fresh) {
     await page.evaluate((k) => localStorage.removeItem(k), SAVE_KEY);
     expect(await hasSave(page)).toBe(false);
@@ -102,8 +99,8 @@ test("TUT-01 the first boot walks the tour, then hands over to the difficulty", 
 
   // Walk it with the real button, and check each step painted its own figure.
   const expectFigure = async (id: string) => {
-    if (id === "loop") return expect(tour.locator(".tut-chain-node")).toHaveCount(7);
-    if (id === "victory") return expect(tour.locator(".tut-ledger-row")).toHaveCount(4);
+    if (id === "loop") return expect(tour.locator(".tut-chain-node")).toHaveCount(5);
+    if (id === "victory") return expect(tour.locator(".tut-ledger-row")).toHaveCount(5);
     // every other step shows a real screenshot of the game, and it loads
     const img = tour.locator("img.tut-shot");
     await expect(img).toHaveCount(1);
@@ -115,9 +112,9 @@ test("TUT-01 the first boot walks the tour, then hands over to the difficulty", 
     await expect(tour).toHaveAttribute("data-step", id);
     await expectFigure(id);
   }
-  // the finish line the ledger prints is the shipped one (no difficulty yet)
+  // the finish line the ledger prints is the new loop's (no difficulty changes it)
   await tour.locator('[data-step="victory"]').click();
-  await expect(tour.locator(".tut-ledger-total")).toContainText("10★");
+  await expect(tour.locator(".tut-ledger-total")).toContainText("12★");
   await tour.locator('[data-step="desk"]').click();
   await expect(tour.locator('[data-act="tut-done"]')).toBeVisible();
 
@@ -129,7 +126,7 @@ test("TUT-01 the first boot walks the tour, then hands over to the difficulty", 
   // AI-02's prompt is what the tour hands over to.
   await page.locator("#iso-skill-prompt [data-skill='normal']").click();
   await expect(page.locator("#iso-skill-prompt")).toHaveCount(0);
-  await expect(page.locator("#iso-vp")).toContainText("/10");
+  await expect(page.locator("#iso-vp")).toContainText("/12");
 
   // …and the game underneath is still in the boot phase the tour was covering:
   // nothing was placed, nothing was charged, no clock ran off without the player.
@@ -224,21 +221,23 @@ test("TUT-01 a resumed game skips the tour without touching the preference", asy
 });
 
 test("TUT-01 the tour quotes the live game, and ?tutorial=0 keeps it out of the way", async ({ page }) => {
-  await pickDifficulty(page, "easy");   // the Easy chair races a 5★ line
+  await pickDifficulty(page, "easy");   // Easy no longer shortens the new-loop line
 
   await boot(page);
   const tour = page.locator(TOUR);
   await expect(tour).toBeVisible();
   await tour.locator('[data-step="victory"]').click();
   await expect(tour).toHaveAttribute("data-step", "victory");
-  // AI-04: the ★ line belongs to the difficulty the boot resolved, so the
-  // ledger the tour prints is the one the HUD badge shows beside it.
-  await expect(tour.locator(".tut-ledger-total")).toContainText("5★");
-  await expect(page.locator("#iso-vp")).toContainText("/5");
-  // the roads step quotes the allowance the live player record carries
+  // The new loop races VICTORY.loop.target on every difficulty. Easy's 5★ is
+  // the retired hatch only, so the ledger and the badge must both say 12.
+  await expect(tour.locator(".tut-ledger-total")).toContainText("12★");
+  await expect(tour.locator(".tut-ledger-total")).not.toContainText("5★");
+  await expect(page.locator("#iso-vp")).toContainText("/12");
+  // Dirt is free. The card must not count down an allowance that buys nothing.
   await tour.locator('[data-step="roads"]').click();
   await expect(tour).toHaveAttribute("data-step", "roads");
-  await expect(tour.locator(".tut-points")).toContainText("first 12 of them");
+  await expect(tour.locator(".tut-points")).toContainText("is free, tile after tile");
+  await expect(tour.locator(".tut-points")).not.toContainText(/pays for the first \d+ of them/);
   // Mid-tour there is no Done — the last key is "Next" until the final step.
   await expect(tour.locator('[data-act="tut-done"]')).toHaveCount(0);
   await expect(tour.locator('[data-act="tut-next"]')).toBeVisible();

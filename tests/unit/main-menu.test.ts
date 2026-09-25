@@ -161,7 +161,7 @@ describe("MainMenu — the front door", () => {
     mount();
     act(() => { button(/^How to Play/).click(); });
     await Promise.resolve();
-    // …and still gets the eight cards when they ask by name (force: true)
+    // …and still gets the nine-card tour when they ask by name (force: true)
     expect(document.querySelector("#iso-tutorial")).not.toBeNull();
     const host2 = document.querySelector(".menu-howto");
     expect(host2).not.toBeNull();

@@ -10931,7 +10931,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       settingsView = view;
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
-    menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    menuItem("How to Play", "the reference card, then the tour", () => ui.showHelp());
     // B7 (#252): the battle page, one tap from the same menu
     menuItem("How battles work", "turns, mana, abilities, stakes", () => { showBattleHowto(); });
     // MON-1 (#367): the Store — the same panel the front door raises, over

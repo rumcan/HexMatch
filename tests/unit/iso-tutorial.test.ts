@@ -29,8 +29,9 @@ import {
   setTutorialDismissed, shouldShowTutorial, showTutorial,
   type TutorialHandle, type TutorialResult,
 } from "../../src/iso/tutorial";
-import { CARGOES, TRANSPORT, VICTORY, TUNING } from "../../src/iso/config";
+import { BUILD_COSTS, BATTLE_RULES, CARGOES, TRANSPORT, VICTORY, TUNING } from "../../src/iso/config";
 import { DEPOT_COST, costCompact, costLabel } from "../../src/iso/construction";
+import { SLOPE_REFUSAL_TEXT } from "../../src/iso/slopes";
 import { fmtVp } from "../../src/iso/victory";
 
 /** The boot context game.ts passes: the shipped line and the full allowance. */
@@ -42,7 +43,7 @@ const store = (init: Record<string, string> = {}) => ({
   removeItem: (k: string) => { delete init[k]; },
 });
 
-const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory", "desk"];
+const STEP_IDS = ["loop", "plant", "depot", "roads", "rail", "board", "expand", "victory", "desk"];
 
 let host: HTMLDivElement;
 let open: TutorialHandle | null = null;
@@ -181,18 +182,25 @@ describe("TUT-01 content", () => {
   it("quotes the authoritative prices, not a retyped number", () => {
     expect(text("depot")).toContain(costLabel(DEPOT_COST));
     expect(text("roads")).toContain(costCompact(TRANSPORT.dirt.cost));
-    expect(text("roads")).toContain(String(CTX.freeTrack));
+    expect(text("roads")).toContain(costCompact(TRANSPORT.road.cost));
+    expect(text("rail")).toContain(costCompact(BUILD_COSTS.rail));
+    expect(text("rail")).toContain(SLOPE_REFUSAL_TEXT["slope-diagonal"]);
+    // Dirt is free, so the setup allowance is not a rule the card teaches.
+    expect(text("roads")).not.toContain(`first ${CTX.freeTrack}`);
   });
 
   it("quotes the victory table and the live ★ line", () => {
     const win = text("victory");
     expect(win).toContain(`First to ${CTX.vpTarget}★ wins`);
     expect(win).toContain(`+${fmtVp(VICTORY.loop.type)}★`);
-    expect(win).toContain(`+${fmtVp(VICTORY.loop.rung)}★`);
+    expect(win).toContain(`+${fmtVp(VICTORY.loop.route)}★`);
     expect(win).toContain(`+${fmtVp(VICTORY.loop.city)}★`);
-    expect(win).toContain(`+${fmtVp(VICTORY.platform)}★`);
-    // …and the tour says plainly that roads themselves score nothing
-    expect(win).toMatch(/roads themselves score nothing/i);
+    expect(win).toContain(`+${fmtVp(VICTORY.loop.maxDepot)}★`);
+    expect(win).toContain(`+${fmtVp(VICTORY.loop.hold)}★`);
+    // rung pays nothing, so it is not a row. A platform is not scored on this loop.
+    expect(win).not.toContain(`+${fmtVp(VICTORY.loop.rung)}★`);
+    expect(win).not.toMatch(/platform/i);
+    expect(win).toMatch(/a single road tile scores nothing/i);
   });
 
   it("quotes the tuning session it is describing", () => {
@@ -225,7 +233,9 @@ describe("TUT-01 content", () => {
     };
     expect(join("victory")).toContain("First to 5★ wins");
     expect(join("victory")).not.toContain(`First to ${VICTORY.loop.target}★ wins`);
-    expect(join("roads")).toContain("first 3 of them");
+    // Dirt is free on this loop, so a shorter allowance must not reappear as a countdown.
+    expect(join("roads")).toContain("is free, tile after tile");
+    expect(join("roads")).not.toContain("first 3 of them");
     expect(join("roads")).not.toContain("first 12 of them");
   });
 });
@@ -240,7 +250,9 @@ describe("TUT-01 the card", () => {
     expect(screen.dataset.step).toBe("loop");
     expect(screen.querySelector(".tut-title")!.textContent).toBe("One island, one loop");
     // the loop figure is the chain, one node per station, arrows between
-    expect(screen.querySelectorAll(".tut-chain-node")).toHaveLength(6);
+    expect(screen.querySelectorAll(".tut-chain-node")).toHaveLength(5);
+    expect(screen.querySelector(".tut-shade")).toBeTruthy();
+    expect(screen.querySelectorAll(".tut-dot")).toHaveLength(STEP_IDS.length);
     expect(screen.querySelectorAll(".tut-points li").length).toBeGreaterThanOrEqual(3);
     // Back has nowhere to go on step one
     expect((screen.querySelector('[data-act="tut-prev"]') as HTMLButtonElement).disabled).toBe(true);
@@ -296,6 +308,20 @@ describe("TUT-01 the card", () => {
     handle.destroy();
   });
 
+  it("Escape dismisses without remembering, and a dot jumps to that card", async () => {
+    const handle = show();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(await handle.promise).toEqual({ reason: "dismissed" });
+    expect(localStorage.getItem(TUTORIAL_STORAGE_KEY)).toBeNull();
+
+    show();
+    click('[data-step="rail"]');
+    expect(tour()!.dataset.step).toBe("rail");
+    expect(tour()!.querySelector(".tut-ledger-total")).toBeNull();
+    click('[data-step="victory"]');
+    expect(tour()!.querySelector(".tut-ledger-total")!.textContent).toContain(`${CTX.vpTarget}★`);
+  });
+
   it("the never-show-again button is the only exit that remembers", async () => {
     const handle = show();
     click('[data-act="tut-never"]');
@@ -346,7 +372,7 @@ describe("TUT-01 figures", () => {
   };
 
   it("shows a real screenshot of the game on every map and HUD step", () => {
-    const shots = ["plant", "depot", "roads", "board", "expand", "desk"];
+    const shots = ["plant", "depot", "roads", "rail", "board", "expand", "desk"];
     const srcs = new Set<string>();
     for (const id of shots) {
       const fig = figureAt(id);
@@ -364,12 +390,14 @@ describe("TUT-01 figures", () => {
   it("itemises the point sources on the victory ledger", () => {
     const fig = figureAt("victory");
     const rows = [...fig.querySelectorAll(".tut-ledger-row")];
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(rows[0].textContent).toContain(`+${fmtVp(VICTORY.loop.type)}★`);
-    expect(rows[1].textContent).toContain(`+${fmtVp(VICTORY.loop.rung)}★`);
+    expect(rows[1].textContent).toContain(`+${fmtVp(VICTORY.loop.route)}★`);
     expect(rows[2].textContent).toContain(`+${fmtVp(VICTORY.loop.city)}★`);
-    expect(rows[3].textContent).toContain(`+${fmtVp(VICTORY.platform)}★`);
-    // the caption prints the line the seat is racing — the live ★ target
+    expect(rows[3].textContent).toContain(`+${fmtVp(VICTORY.loop.maxDepot)}★`);
+    expect(rows[4].textContent).toContain(`+${fmtVp(VICTORY.loop.hold)}★`);
+    expect(fig.textContent).not.toMatch(/platform/i);
+    expect(fig.querySelector(".tut-ledger-total")!.textContent).toContain(`${CTX.vpTarget}★`);
     expect(fig.querySelector(".tut-fig-cap")!.textContent).toContain(`${CTX.vpTarget}★`);
   });
 });
@@ -385,29 +413,42 @@ describe("TUT-01 the tour teaches the loop the game runs", () => {
 
   it("you build a depot beside a resource node", () => {
     expect(steps[2].title).toMatch(/depot/i);
-    expect(JSON.stringify(steps[2])).toMatch(/4×4 catchment/);
+    expect(JSON.stringify(steps[2])).toMatch(/share an edge/);
+    expect(JSON.stringify(steps[2])).toMatch(/2×2/);
+    expect(JSON.stringify(steps[2])).toContain(String(BATTLE_RULES.challengeGold));
+    expect(JSON.stringify(steps[2])).toMatch(/Challenge/);
   });
 
-  it("you connect it with roads, and the first tiles are on the house", () => {
+  it("you connect it with roads, and gravel is free tile after tile", () => {
     expect(steps[3].title).toMatch(/road/i);
     expect(JSON.stringify(steps[3])).toMatch(/dirt road/i);
-    expect(JSON.stringify(steps[3])).toContain(`the first ${CTX.freeTrack} of them`);
+    expect(JSON.stringify(steps[3])).toContain("is free, tile after tile");
+    expect(JSON.stringify(steps[3])).not.toContain(`the first ${CTX.freeTrack} of them`);
+  });
+
+  it("rail is its own card: stone, a platform Depot, one train, a gentle turn", () => {
+    expect(steps[4].id).toBe("rail");
+    const rail = JSON.stringify(steps[4]);
+    expect(rail).toContain(costCompact(BUILD_COSTS.rail));
+    expect(rail).toMatch(/45/);
+    expect(rail).toMatch(/one train per connected network/i);
+    expect(rail).toContain(SLOPE_REFUSAL_TEXT["slope-diagonal"]);
   });
 
   it("and then match-3 tunes what the depot ticks", () => {
-    expect(steps[4].title).toMatch(/match-3/i);
-    expect(JSON.stringify(steps[4])).toMatch(/swap two/i);
-    expect(JSON.stringify(steps[4])).toMatch(/yield/i);
+    expect(steps[5].title).toMatch(/match-3/i);
+    expect(JSON.stringify(steps[5])).toMatch(/swap two/i);
+    expect(JSON.stringify(steps[5])).toMatch(/yield/i);
   });
 
   it("the cargo you collect is what you spend", () => {
-    expect(steps[5].title).toMatch(/empire/i);
-    expect(JSON.stringify(steps[5])).toMatch(/purse/i);
+    expect(steps[6].title).toMatch(/empire/i);
+    expect(JSON.stringify(steps[6])).toMatch(/purse/i);
   });
 
   it("and the ★ line is how you win", () => {
-    expect(steps[6].title).toMatch(/victory points/i);
-    expect(steps[6].lede).toMatch(new RegExp(`First to ${CTX.vpTarget}★ wins`, "i"));
+    expect(steps[7].title).toMatch(/victory points/i);
+    expect(steps[7].lede).toMatch(new RegExp(`First to ${CTX.vpTarget}★ wins`, "i"));
   });
 });
 
@@ -433,13 +474,15 @@ describe("the desk card names the rail that exists, on both loops", () => {
     expect(line).not.toMatch(/session window/);
   });
 
-  it("the new loop names Bank, Feed and the session window — never a Plant tab or Market", () => {
+  it("the new loop names the drawer, including Market, and the session window", () => {
     const line = captionOf(true);
-    expect(line).toMatch(/^Right column:/);
+    expect(line).not.toMatch(/^Right column:/);
     expect(line).toMatch(/Bank/);
+    expect(line).toMatch(/Market/);
+    expect(line).toMatch(/Black Market/);
     expect(line).toMatch(/Feed/);
+    expect(line).toMatch(/Quests/);
     expect(line).toMatch(/session window/);
-    expect(line).not.toMatch(/Market/);
     expect(line).not.toMatch(/Plant (and Feed )?tabs/);
   });
 });
