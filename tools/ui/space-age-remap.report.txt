@@ -1,0 +1,1088 @@
+.iso-inspect | border-radius: var(--r) -> 0
+.iso-inspect | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.iso-inspect | box-shadow: 0 10px 26px rgba(0, 0, 0, .5), inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+/* ── the room ───────────────────────────────────────────────────── `.vignette` is the single overlay above the three map canvases (z-index 1 over mapHost's z-index 0) and below every panel. `pointer-events: none` throughout, so the map keeps every gesture. It used to print the war-room backdrop (`--room`, the same photograph behind the difficulty prompt) and a smoke tile OVER the whole map, plus a .46-alpha darkening ramp and a 150px corner crush. That is a grade applied to the TERRAIN: the ground textures are authored to a palette, and having an unrelated photograph soft-lit across them at 12% meant the grass on screen was never the grass in the file — it read as a screen someone forgot to fade out. The surround still carries the room (`.ui-root` paints it BEHIND the canvases, where it frames the map instead of tinting it), so nothing is lost but the veil. What is left is a plain corner falloff: enough to seat the map in the frame, far too little to change a colour anyone is trying to judge. */ .vignette | box-shadow: rgba(5, 3, 2, .34) -> rgba(1, 4, 5, 0.34)
+/* ── the room ───────────────────────────────────────────────────── `.vignette` is the single overlay above the three map canvases (z-index 1 over mapHost's z-index 0) and below every panel. `pointer-events: none` throughout, so the map keeps every gesture. It used to print the war-room backdrop (`--room`, the same photograph behind the difficulty prompt) and a smoke tile OVER the whole map, plus a .46-alpha darkening ramp and a 150px corner crush. That is a grade applied to the TERRAIN: the ground textures are authored to a palette, and having an unrelated photograph soft-lit across them at 12% meant the grass on screen was never the grass in the file — it read as a screen someone forgot to fade out. The surround still carries the room (`.ui-root` paints it BEHIND the canvases, where it frames the map instead of tinting it), so nothing is lost but the veil. What is left is a plain corner falloff: enough to seat the map in the frame, far too little to change a colour anyone is trying to judge. */ .vignette | box-shadow: rgba(242, 220, 166, .05) -> rgb(var(--c-bone) / 0.05)
+/* ── the room ───────────────────────────────────────────────────── `.vignette` is the single overlay above the three map canvases (z-index 1 over mapHost's z-index 0) and below every panel. `pointer-events: none` throughout, so the map keeps every gesture. It used to print the war-room backdrop (`--room`, the same photograph behind the difficulty prompt) and a smoke tile OVER the whole map, plus a .46-alpha darkening ramp and a 150px corner crush. That is a grade applied to the TERRAIN: the ground textures are authored to a palette, and having an unrelated photograph soft-lit across them at 12% meant the grass on screen was never the grass in the file — it read as a screen someone forgot to fade out. The surround still carries the room (`.ui-root` paints it BEHIND the canvases, where it frames the map instead of tinting it), so nothing is lost but the veil. What is left is a plain corner falloff: enough to seat the map in the frame, far too little to change a colour anyone is trying to judge. */ .vignette | box-shadow: inset 0 0 110px 8px rgba(1, 4, 5, 0.34),
+    inset 0 2px 0 rgb(var(--c-bone) / 0.05) -> none
+.panel-title | box-shadow: rgba(255, 176, 46, .1) -> rgb(var(--c-orange) / 0.1)
+/* the plate's stamp: a brass lozenge stands in for the emoji the old HUD used */ .panel-title::before | background: linear-gradient(135deg, var(--brass-hi), var(--brass-lo)) -> var(--brass-hi)
+/* the plate's stamp: a brass lozenge stands in for the emoji the old HUD used */ .panel-title::before | box-shadow: rgba(255, 176, 46, .45) -> rgb(var(--c-orange) / 0.45)
+/* the plate's stamp: a brass lozenge stands in for the emoji the old HUD used */ .panel-title::before | box-shadow: 0 0 8px rgb(var(--c-orange) / 0.45), inset 0 0 0 1px rgba(0, 0, 0, .5) -> none
+/* ── top bar ────────────────────────────────────────────────────── */ .topbar | background: rgba(28, 19, 12, .94) -> rgba(16, 22, 24, 0.94)
+/* ── top bar ────────────────────────────────────────────────────── */ .topbar | background: rgba(10, 7, 5, .74) -> rgba(4, 9, 10, 0.74)
+/* ── top bar ────────────────────────────────────────────────────── */ .topbar | background: rgba(10, 7, 5, .5) -> rgba(4, 9, 10, 0.5)
+/* ── top bar ────────────────────────────────────────────────────── */ .topbar | box-shadow: rgba(255, 176, 46, .16) -> rgb(var(--c-orange) / 0.16)
+/* ── top bar ────────────────────────────────────────────────────── */ .topbar | box-shadow: inset 0 -2px 0 rgb(var(--c-orange) / 0.16), 0 10px 30px rgba(0, 0, 0, .55) -> none
+.logo | text-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+.logo | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.logo | text-shadow: 0 -1px 0 #000, 0 1px 0 rgb(var(--c-bone) / 0.14), 0 0 22px rgb(var(--c-orange) / 0.3) -> none
+/* resource footer — centred bar along the bottom */ .resbar | background: rgba(9, 6, 4, .96) -> rgba(3, 7, 9, 0.96)
+/* resource footer — centred bar along the bottom */ .resbar | background: rgba(9, 6, 4, .66) -> rgba(3, 7, 9, 0.66)
+/* resource footer — centred bar along the bottom */ .resbar | background: rgba(9, 6, 4, .28) -> rgba(3, 7, 9, 0.28)
+/* resource footer — centred bar along the bottom */ .resbar | background: linear-gradient(0deg, rgba(3, 7, 9, 0.96), rgba(3, 7, 9, 0.66) 60%, rgba(3, 7, 9, 0.28)) -> rgba(3, 7, 9, 0.96)
+/* resource footer — centred bar along the bottom */ .resbar | box-shadow: rgba(255, 176, 46, .12) -> rgb(var(--c-orange) / 0.12)
+/* resource footer — centred bar along the bottom */ .resbar | box-shadow: inset 0 2px 0 rgb(var(--c-orange) / 0.12), 0 -10px 26px rgba(0, 0, 0, .5) -> none
+/* the purse is a row of struck medallions on the baize */ .chip | background: rgba(56, 42, 26, .62) -> rgba(40, 46, 48, 0.62)
+/* the purse is a row of struck medallions on the baize */ .chip | background: rgba(12, 9, 6, .88) -> rgba(6, 11, 12, 0.88)
+/* the purse is a row of struck medallions on the baize */ .chip | background: linear-gradient(180deg, rgba(40, 46, 48, 0.62), rgba(6, 11, 12, 0.88)) -> rgba(40, 46, 48, 0.62)
+/* the purse is a row of struck medallions on the baize */ .chip | border-radius: var(--r) -> 0
+/* the purse is a row of struck medallions on the baize */ .chip | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+/* the purse is a row of struck medallions on the baize */ .chip | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.14), inset 0 0 12px rgba(0, 0, 0, .5), 0 4px 12px rgba -> none
+.chip:hover | background: rgba(78, 58, 34, .72) -> rgba(57, 64, 66, 0.72)
+.chip:hover | background: rgba(16, 12, 8, .9) -> rgba(8, 14, 15, 0.9)
+.chip:hover | background: linear-gradient(180deg, rgba(57, 64, 66, 0.72), rgba(8, 14, 15, 0.9)) -> rgba(57, 64, 66, 0.72)
+.chip:hover | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+.chip:hover | box-shadow: rgba(255, 176, 46, .45) -> rgb(var(--c-orange) / 0.45)
+.chip:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.2), 0 0 16px -4px rgb(var(--c-orange) / 0.45) -> none
+.chip-n | text-shadow: 0 1px 0 #000 -> none
+/* the victory counter is an engraved brass plaque */ .vp-badge | background: rgba(94, 66, 26, .5) -> rgba(98, 63, 31, 0.5)
+/* the victory counter is an engraved brass plaque */ .vp-badge | background: rgba(16, 11, 6, .86) -> rgba(7, 13, 15, 0.86)
+/* the victory counter is an engraved brass plaque */ .vp-badge | background: linear-gradient(180deg, rgba(98, 63, 31, 0.5), rgba(7, 13, 15, 0.86)) -> rgba(98, 63, 31, 0.5)
+/* the victory counter is an engraved brass plaque */ .vp-badge | border-radius: var(--r) -> 0
+/* the victory counter is an engraved brass plaque */ .vp-badge | box-shadow: rgba(242, 220, 166, .22) -> rgb(var(--c-bone) / 0.22)
+/* the victory counter is an engraved brass plaque */ .vp-badge | box-shadow: rgba(255, 176, 46, .12) -> rgb(var(--c-orange) / 0.12)
+/* the victory counter is an engraved brass plaque */ .vp-badge | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.22), inset 0 0 14px rgb(var(--c-orange) / 0.12), 0 4px -> none
+/* the victory counter is an engraved brass plaque */ .vp-badge | text-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+/* the victory counter is an engraved brass plaque */ .vp-badge | text-shadow: 0 0 14px rgb(var(--c-orange) / 0.5), 0 -1px 0 #000 -> none
+/* AI-01: the rival difficulty selector in the top bar */ .rival-skill | border-radius: var(--r) -> 0
+/* AI-01: the rival difficulty selector in the top bar */ .rival-skill | background: rgba(12, 8, 5, .6) -> rgba(5, 10, 11, 0.6)
+/* AI-01: the rival difficulty selector in the top bar */ .rival-skill | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+/* AI-01: the rival difficulty selector in the top bar */ .rival-skill | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+.rival-skill-sel | border: rgba(226, 112, 79, .38) -> rgb(var(--c-red) / 0.38)
+.rival-skill-sel | border-radius: 2px -> 0
+.rival-skill-sel | background: rgba(78, 30, 18, .5) -> rgba(73, 36, 0, 0.5)
+.rival-skill-sel | background: rgba(16, 10, 7, .86) -> rgba(7, 13, 14, 0.86)
+.rival-skill-sel | background: linear-gradient(180deg, rgba(73, 36, 0, 0.5), rgba(7, 13, 14, 0.86)) -> rgba(73, 36, 0, 0.5)
+.rival-skill-sel:focus | box-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+.rival-skill-sel:focus | box-shadow: 0 0 12px -2px rgb(var(--c-orange) / 0.5) -> none
+.rival-skill-sel option | background: #14100b -> #0c1213
+.vp-star | text-shadow: 0 0 12px var(--gold-glow) -> none
+.icon-btn | border-radius: var(--r) -> 0
+.icon-btn | background: rgba(58, 44, 28, .5) -> rgba(41, 48, 50, 0.5)
+.icon-btn | background: rgba(12, 9, 6, .86) -> rgba(6, 11, 12, 0.86)
+.icon-btn | background: linear-gradient(180deg, rgba(41, 48, 50, 0.5), rgba(6, 11, 12, 0.86)) -> rgba(41, 48, 50, 0.5)
+.icon-btn | box-shadow: rgba(242, 220, 166, .16) -> rgb(var(--c-bone) / 0.16)
+.icon-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.16), 0 3px 10px rgba(0, 0, 0, .5) -> none
+.icon-btn | text-shadow: 0 1px 2px #000 -> none
+.icon-btn:hover | background: rgba(96, 70, 34, .62) -> rgba(100, 67, 38, 0.62)
+.icon-btn:hover | background: rgba(20, 14, 9, .9) -> rgba(10, 17, 18, 0.9)
+.icon-btn:hover | background: linear-gradient(180deg, rgba(100, 67, 38, 0.62), rgba(10, 17, 18, 0.9)) -> rgba(100, 67, 38, 0.62)
+.icon-btn:hover | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+.icon-btn:hover | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+.icon-btn:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 0 16px -3px rgb(var(--c-orange) / 0.6) -> none
+.names-btn.active | background: rgba(96, 70, 34, .62) -> rgba(100, 67, 38, 0.62)
+.names-btn.active | background: rgba(20, 14, 9, .9) -> rgba(10, 17, 18, 0.9)
+.names-btn.active | background: linear-gradient(180deg, rgba(100, 67, 38, 0.62), rgba(10, 17, 18, 0.9)) -> rgba(100, 67, 38, 0.62)
+.names-btn.active | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+.names-btn.active | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+.names-btn.active | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 0 16px -3px rgb(var(--c-orange) / 0.6) -> none
+/* SFX-01 — the sound switch. It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of them: a bolted key on the top bar. Only the muted state differs, and it differs the way the theme says everything should — the lamp goes out of it. The glyph (🔊 / 🔇) is swapped by ui.ts from the one persisted setting, and `aria-pressed` follows the MUTED state, so a screen reader hears "muted, pressed" rather than having to guess which way the toggle runs. */ .sound-btn.sound-off | border-color: rgba(107, 81, 35, .5) -> rgb(var(--c-line) / 0.5)
+/* SFX-01 — the sound switch. It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of them: a bolted key on the top bar. Only the muted state differs, and it differs the way the theme says everything should — the lamp goes out of it. The glyph (🔊 / 🔇) is swapped by ui.ts from the one persisted setting, and `aria-pressed` follows the MUTED state, so a screen reader hears "muted, pressed" rather than having to guess which way the toggle runs. */ .sound-btn.sound-off | background: rgba(34, 27, 18, .5) -> rgba(23, 30, 31, 0.5)
+/* SFX-01 — the sound switch. It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of them: a bolted key on the top bar. Only the muted state differs, and it differs the way the theme says everything should — the lamp goes out of it. The glyph (🔊 / 🔇) is swapped by ui.ts from the one persisted setting, and `aria-pressed` follows the MUTED state, so a screen reader hears "muted, pressed" rather than having to guess which way the toggle runs. */ .sound-btn.sound-off | background: rgba(9, 7, 5, .88) -> rgba(4, 8, 10, 0.88)
+/* SFX-01 — the sound switch. It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of them: a bolted key on the top bar. Only the muted state differs, and it differs the way the theme says everything should — the lamp goes out of it. The glyph (🔊 / 🔇) is swapped by ui.ts from the one persisted setting, and `aria-pressed` follows the MUTED state, so a screen reader hears "muted, pressed" rather than having to guess which way the toggle runs. */ .sound-btn.sound-off | background: linear-gradient(180deg, rgba(23, 30, 31, 0.5), rgba(4, 8, 10, 0.88)) -> rgba(23, 30, 31, 0.5)
+/* SFX-01 — the sound switch. It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of them: a bolted key on the top bar. Only the muted state differs, and it differs the way the theme says everything should — the lamp goes out of it. The glyph (🔊 / 🔇) is swapped by ui.ts from the one persisted setting, and `aria-pressed` follows the MUTED state, so a screen reader hears "muted, pressed" rather than having to guess which way the toggle runs. */ .sound-btn.sound-off | box-shadow: rgba(242, 220, 166, .06) -> rgb(var(--c-bone) / 0.06)
+/* SFX-01 — the sound switch. It wears the same brass plate as 🎯 and ❔ beside it, because it IS one of them: a bolted key on the top bar. Only the muted state differs, and it differs the way the theme says everything should — the lamp goes out of it. The glyph (🔊 / 🔇) is swapped by ui.ts from the one persisted setting, and `aria-pressed` follows the MUTED state, so a screen reader hears "muted, pressed" rather than having to guess which way the toggle runs. */ .sound-btn.sound-off | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.06), 0 3px 10px rgba(0, 0, 0, .55) -> none
+.rail-toggle | background: rgba(52, 39, 25, .85) -> rgba(36, 43, 45, 0.85)
+.rail-toggle | background: rgba(12, 8, 6, .92) -> rgba(5, 10, 11, 0.92)
+.rail-toggle | background: linear-gradient(180deg, rgba(36, 43, 45, 0.85), rgba(5, 10, 11, 0.92)) -> rgba(36, 43, 45, 0.85)
+.rail-toggle | box-shadow: rgba(242, 220, 166, .18) -> rgb(var(--c-bone) / 0.18)
+.rail-toggle | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.18), 0 4px 14px rgba(0, 0, 0, .5) -> none
+.rail-toggle:hover | background: rgba(98, 68, 24, .8) -> rgb(var(--c-line) / 0.8)
+.rail-toggle:hover | background: rgba(16, 11, 7, .94) -> rgba(7, 13, 15, 0.94)
+.rail-toggle:hover | background: linear-gradient(180deg, rgb(var(--c-line) / 0.8), rgba(7, 13, 15, 0.94)) -> rgb(var(--c-line) / 0.8)
+.rail-toggle:hover | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+.rail-toggle:hover | box-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+.rail-toggle:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 0 16px -4px rgb(var(--c-orange) / 0.5) -> none
+/* the build menu folds left, so its key hangs on the panel's right edge; the board folds right, so its key hangs on the panel's left edge — each bevels the way its panel does, minus the edge that melts into it */ .rail-toggle-left | border-radius: var(--r) 0 0 var(--r) -> 0
+.rail-toggle-right | border-radius: 0 var(--r) var(--r) 0 -> 0
+.king | border-radius: var(--r) -> 0
+.king | background: rgba(50, 37, 23, .48) -> rgba(34, 41, 43, 0.48)
+.king | background: rgba(10, 7, 5, .8) -> rgba(4, 9, 10, 0.8)
+.king | background: linear-gradient(180deg, rgba(34, 41, 43, 0.48), rgba(4, 9, 10, 0.8)) -> rgba(34, 41, 43, 0.48)
+.king | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.king | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1), 0 4px 14px rgba(0, 0, 0, .45) -> none
+.king:hover | background: rgba(76, 56, 32, .6) -> rgba(55, 62, 64, 0.6)
+.king:hover | background: rgba(14, 10, 7, .84) -> rgba(7, 12, 14, 0.84)
+.king:hover | background: linear-gradient(180deg, rgba(55, 62, 64, 0.6), rgba(7, 12, 14, 0.84)) -> rgba(55, 62, 64, 0.6)
+.king:hover | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+.king:hover | box-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+.king:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.2), 0 0 18px -6px rgb(var(--c-orange) / 0.5) -> none
+.king.self | background: rgba(120, 84, 30, .34) -> rgba(125, 80, 37, 0.34)
+.king.self | background: rgba(12, 8, 5, .82) -> rgba(5, 10, 11, 0.82)
+.king.self | background: linear-gradient(180deg, rgba(125, 80, 37, 0.34), rgba(5, 10, 11, 0.82)) -> rgba(125, 80, 37, 0.34)
+.king.targetable:hover | background: rgba(178, 58, 38, .3) -> rgba(166, 76, 0, 0.3)
+.king-name | text-shadow: 0 1px 0 #000 -> none
+.king-name .you | background: linear-gradient(180deg, var(--brass-hi), var(--brass-lo)) -> var(--brass-hi)
+.king-name .you | color: #14100b -> #0c1213
+.king-name .you | border-radius: 2px -> 0
+.king-name .you | box-shadow: 0 1px 3px rgba(0, 0, 0, .6) -> none
+.king-bar | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+.king-bar | box-shadow: inset 0 0 0 1px rgb(var(--c-bone) / 0.12) -> none
+.king-vp | text-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.king-vp | text-shadow: 0 0 14px rgb(var(--c-orange) / 0.35), 0 -1px 0 #000 -> none
+.build-btn | border-radius: var(--r) -> 0
+.build-btn | background-color: #14100b -> #0c1213
+.build-btn | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+.build-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.12), 0 6px 18px rgba(0, 0, 0, .5) -> none
+.build-btn:hover | box-shadow: rgba(242, 220, 166, .26) -> rgb(var(--c-bone) / 0.26)
+.build-btn:hover | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+.build-btn:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.26), 0 0 22px -6px rgb(var(--c-orange) / 0.55), 0 8px  -> none
+.build-btn:active | box-shadow: inset 0 2px 10px rgba(0, 0, 0, .7) -> none
+/* RAIL-04: the railway's four buttons. The noir sigil sheet is pre-baked and has no railway emblem in it, so these keep the plate and take a brass rule down the left instead — the group reads as one section without borrowing a road's artwork. (An emblem is a follow-up art pass.) */ .build-btn.bg-rail, .build-btn.bg-platform, .build-btn.bg-raildepot, .build-btn.bg-railway | border-left: rgba(200, 161, 58, .55) -> rgb(var(--c-line) / 0.55)
+/* The city upgrade, under the Processing Plant: no emblem in the noir sheet yet, so a brass rule marks it like the railway group; greyed until the materials are in the purse. */ .build-btn.bg-city | border-left: rgba(200, 161, 58, .85) -> rgb(var(--c-line) / 0.85)
+.rail-row | border-radius: 4px -> 0
+.rail-row | border-left: rgba(200, 161, 58, .45) -> rgb(var(--c-line) / 0.45)
+.rail-act | border-radius: 3px -> 0
+.rail-act | color: #f3ead6 -> #e4edef
+.rail-act | background: rgba(200, 161, 58, .18) -> rgb(var(--c-line) / 0.18)
+.rail-act | border: rgba(200, 161, 58, .5) -> rgb(var(--c-line) / 0.5)
+.rail-act:hover | background: rgba(200, 161, 58, .32) -> rgb(var(--c-line) / 0.32)
+/* scrim — the lamp is on the right, the reading on the left. It fades out at the gutter (`--sigil-gutter`), so the last glyph of a label always sits on the dark half and never on bare, lit artwork. */ .build-btn::before | background: rgba(8, 5, 3, .94) -> rgba(3, 6, 8, 0.94)
+/* scrim — the lamp is on the right, the reading on the left. It fades out at the gutter (`--sigil-gutter`), so the last glyph of a label always sits on the dark half and never on bare, lit artwork. */ .build-btn::before | background: rgba(8, 5, 3, .88) -> rgba(3, 6, 8, 0.88)
+/* scrim — the lamp is on the right, the reading on the left. It fades out at the gutter (`--sigil-gutter`), so the last glyph of a label always sits on the dark half and never on bare, lit artwork. */ .build-btn::before | background: rgba(10, 7, 4, .58) -> rgba(4, 8, 10, 0.58)
+/* scrim — the lamp is on the right, the reading on the left. It fades out at the gutter (`--sigil-gutter`), so the last glyph of a label always sits on the dark half and never on bare, lit artwork. */ .build-btn::before | background: rgba(12, 8, 5, .18) -> rgba(5, 10, 11, 0.18)
+/* scrim — the lamp is on the right, the reading on the left. It fades out at the gutter (`--sigil-gutter`), so the last glyph of a label always sits on the dark half and never on bare, lit artwork. */ .build-btn::before | background: rgba(255, 176, 46, .06) -> rgb(var(--c-orange) / 0.06)
+.bb-mid b | text-shadow: 0 -1px 0 #000, 0 1px 3px rgba(0,0,0,.9) -> none
+.bb-mid small | text-shadow: 0 1px 3px rgba(0,0,0,.9) -> none
+.build-btn.active | box-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.build-btn.active | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+.build-btn.active | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+.build-btn.active | box-shadow: inset 0 0 0 1px rgb(var(--c-orange) / 0.35),
+    inset 0 1px 0 rgb(var(--c-bone) / 0.3), -> none
+.build-btn.active::before | background: rgba(48, 30, 6, .94) -> rgba(29, 36, 37, 0.94)
+.build-btn.active::before | background: rgba(34, 21, 5, .86) -> rgba(19, 25, 27, 0.86)
+.build-btn.active::before | background: rgba(20, 13, 4, .5) -> rgba(9, 16, 17, 0.5)
+.build-btn.active::before | background: rgba(255, 176, 46, .12) -> rgb(var(--c-orange) / 0.12)
+.sab-btn | border-radius: var(--r) -> 0
+.sab-btn | background-color: #140c0a -> #090f11
+.sab-btn | border: rgba(140, 52, 34, .5) -> rgba(131, 64, 0, 0.5)
+.sab-btn | border-left: rgba(200, 74, 48, .72) -> rgba(185, 93, 0, 0.72)
+.sab-btn | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.sab-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1), 0 6px 18px rgba(0, 0, 0, .5) -> none
+/* scrim keeps the description legible over the art — it ends at the sigil gutter */ .sab-btn::before | background: rgba(9, 5, 4, .95) -> rgba(3, 7, 8, 0.95)
+/* scrim keeps the description legible over the art — it ends at the sigil gutter */ .sab-btn::before | background: rgba(10, 6, 4, .9) -> rgba(4, 8, 9, 0.9)
+/* scrim keeps the description legible over the art — it ends at the sigil gutter */ .sab-btn::before | background: rgba(14, 8, 6, .58) -> rgba(5, 11, 12, 0.58)
+/* scrim keeps the description legible over the art — it ends at the sigil gutter */ .sab-btn::before | background: rgba(16, 9, 6, .14) -> rgba(6, 12, 13, 0.14)
+/* scrim keeps the description legible over the art — it ends at the sigil gutter */ .sab-btn::before | background: rgba(16, 9, 6, 0) -> rgba(6, 12, 13, 0)
+.sab-btn:hover | border-color: rgba(226, 112, 79, .8) -> rgb(var(--c-red) / 0.8)
+.sab-btn:hover | box-shadow: rgba(242, 220, 166, .22) -> rgb(var(--c-bone) / 0.22)
+.sab-btn:hover | box-shadow: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.sab-btn:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.22), 0 0 22px -6px rgb(var(--c-red) / 0.6), 0 8px 20px -> none
+.sab-top, .sab-desc | text-shadow: 0 1px 4px rgba(0,0,0,.95) -> none
+.sab-btn.active | background-color: rgba(60, 18, 10, .6) -> rgba(56, 24, 0, 0.6)
+.sab-btn.active | box-shadow: rgba(226, 112, 79, .4) -> rgb(var(--c-red) / 0.4)
+.sab-btn.active | box-shadow: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.sab-btn.active | box-shadow: inset 0 0 0 1px rgb(var(--c-red) / 0.4), 0 0 26px -6px rgb(var(--c-red) / 0.6) -> none
+.sab-btn.disabled:hover | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.sab-btn.disabled:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1), 0 6px 18px rgba(0, 0, 0, .5) -> none
+.reset-btn | border-radius: 2px -> 0
+.reset-btn | background: rgba(52, 39, 25, .6) -> rgba(36, 43, 45, 0.6)
+.reset-btn | background: rgba(12, 8, 6, .86) -> rgba(5, 10, 11, 0.86)
+.reset-btn | background: linear-gradient(180deg, rgba(36, 43, 45, 0.6), rgba(5, 10, 11, 0.86)) -> rgba(36, 43, 45, 0.6)
+.reset-btn | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+.reset-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.12) -> none
+.reset-btn:hover | background: rgba(120, 40, 26, .5) -> rgba(112, 52, 0, 0.5)
+.reset-btn:hover | border-color: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.bank-btn | border-radius: var(--r) -> 0
+.bank-btn | background: rgba(56, 42, 26, .5) -> rgba(40, 46, 48, 0.5)
+.bank-btn | background: rgba(12, 8, 6, .86) -> rgba(5, 10, 11, 0.86)
+.bank-btn | background: linear-gradient(180deg, rgba(40, 46, 48, 0.5), rgba(5, 10, 11, 0.86)) -> rgba(40, 46, 48, 0.5)
+.bank-btn | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+.bank-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.14) -> none
+.bank-btn:hover | background: rgba(98, 68, 24, .55) -> rgb(var(--c-line) / 0.55)
+.bank-btn:hover | background: rgba(16, 11, 7, .88) -> rgba(7, 13, 15, 0.88)
+.bank-btn:hover | background: linear-gradient(180deg, rgb(var(--c-line) / 0.55), rgba(7, 13, 15, 0.88)) -> rgb(var(--c-line) / 0.55)
+.bank-btn:hover | box-shadow: rgba(242, 220, 166, .26) -> rgb(var(--c-bone) / 0.26)
+.bank-btn:hover | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+.bank-btn:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.26), 0 0 18px -4px rgb(var(--c-orange) / 0.55) -> none
+.stat | border-radius: 2px -> 0
+.stat.blk | background: rgba(255, 176, 46, .16) -> rgb(var(--c-orange) / 0.16)
+.stat.blk | border-color: rgba(255, 176, 46, .34) -> rgb(var(--c-orange) / 0.34)
+.combo-bank.full | background: rgba(255, 166, 43, .12) -> rgb(var(--c-orange) / 0.12)
+.combo-bank.full | box-shadow: 0 0 12px var(--gold-glow) -> none
+.combo-bank i.on | background: radial-gradient(circle at 34% 28%, var(--brass-hi), var(--gold) 60%, var(--gold-d)) -> var(--brass-hi)
+.combo-bank i.on | box-shadow: 0 0 9px var(--gold-glow), inset 0 1px 0 rgba(255, 255, 255, .4) -> none
+.combo-bank.full .cb-n | text-shadow: 0 0 10px var(--gold) -> none
+.upbar | border-radius: 2px -> 0
+.upbar | box-shadow: inset 0 1px 3px rgba(0, 0, 0, .9) -> none
+.upbar-fill | background: linear-gradient(90deg, var(--gold-d), var(--gold) 55%, var(--gold2)) -> var(--gold-d)
+.upbar-fill | box-shadow: 0 0 8px var(--gold-glow), inset 0 1px 0 rgba(255, 255, 255, .35) -> none
+/* ── L4 (#218) — the tuning plate ──────────────────────────────── The board's own instrument, bolted under the plant header: which Depot is being tuned, how many of the session's moves are left, what the match-3 has scored so far and the yield level that score is worth. Idle (no session on the new loop) it shrinks to one engraved line, and the board beneath it is down — so the plate is the only thing saying why. */ .tuning-plate | background: rgba(52, 39, 25, .5) -> rgba(36, 43, 45, 0.5)
+/* ── L4 (#218) — the tuning plate ──────────────────────────────── The board's own instrument, bolted under the plant header: which Depot is being tuned, how many of the session's moves are left, what the match-3 has scored so far and the yield level that score is worth. Idle (no session on the new loop) it shrinks to one engraved line, and the board beneath it is down — so the plate is the only thing saying why. */ .tuning-plate | background: rgba(10, 8, 6, .84) -> rgba(5, 9, 11, 0.84)
+/* ── L4 (#218) — the tuning plate ──────────────────────────────── The board's own instrument, bolted under the plant header: which Depot is being tuned, how many of the session's moves are left, what the match-3 has scored so far and the yield level that score is worth. Idle (no session on the new loop) it shrinks to one engraved line, and the board beneath it is down — so the plate is the only thing saying why. */ .tuning-plate | background: linear-gradient(180deg, rgba(36, 43, 45, 0.5), rgba(5, 9, 11, 0.84)) -> rgba(36, 43, 45, 0.5)
+/* ── L4 (#218) — the tuning plate ──────────────────────────────── The board's own instrument, bolted under the plant header: which Depot is being tuned, how many of the session's moves are left, what the match-3 has scored so far and the yield level that score is worth. Idle (no session on the new loop) it shrinks to one engraved line, and the board beneath it is down — so the plate is the only thing saying why. */ .tuning-plate | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+/* ── L4 (#218) — the tuning plate ──────────────────────────────── The board's own instrument, bolted under the plant header: which Depot is being tuned, how many of the session's moves are left, what the match-3 has scored so far and the yield level that score is worth. Idle (no session on the new loop) it shrinks to one engraved line, and the board beneath it is down — so the plate is the only thing saying why. */ .tuning-plate | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.12) -> none
+.tp-finish | background: rgba(56, 42, 26, .6) -> rgba(40, 46, 48, 0.6)
+.tp-finish | background: rgba(12, 8, 6, .86) -> rgba(5, 10, 11, 0.86)
+.tp-finish | background: linear-gradient(180deg, rgba(40, 46, 48, 0.6), rgba(5, 10, 11, 0.86)) -> rgba(40, 46, 48, 0.6)
+.tp-finish:hover | background: rgba(98, 68, 24, .5) -> rgb(var(--c-line) / 0.5)
+/* #301: when moves are spent, Finish is the primary highlighted action. */ .tp-finish.primary | background: rgba(98, 68, 24, .7) -> rgb(var(--c-line) / 0.7)
+/* #301: when moves are spent, Finish is the primary highlighted action. */ .tp-finish.primary | background: rgba(40, 26, 10, .9) -> rgba(24, 31, 32, 0.9)
+/* #301: when moves are spent, Finish is the primary highlighted action. */ .tp-finish.primary | background: linear-gradient(180deg, rgb(var(--c-line) / 0.7), rgba(24, 31, 32, 0.9)) -> rgb(var(--c-line) / 0.7)
+/* #301: when moves are spent, Finish is the primary highlighted action. */ .tp-finish.primary | box-shadow: rgba(242, 220, 166, .18) -> rgb(var(--c-bone) / 0.18)
+/* #301: when moves are spent, Finish is the primary highlighted action. */ .tp-finish.primary | box-shadow: rgba(242, 220, 166, .18) -> rgb(var(--c-bone) / 0.18)
+/* #301: when moves are spent, Finish is the primary highlighted action. */ .tp-finish.primary | box-shadow: 0 0 0 1px rgb(var(--c-bone) / 0.18), inset 0 1px 0 rgb(var(--c-bone) / 0.18) -> none
+.tp-finish.primary:hover | background: rgba(120, 84, 30, .8) -> rgba(125, 80, 37, 0.8)
+.tp-finish.primary:hover | background: rgba(50, 32, 12, .92) -> rgba(31, 38, 39, 0.92)
+.tp-finish.primary:hover | background: linear-gradient(180deg, rgba(125, 80, 37, 0.8), rgba(31, 38, 39, 0.92)) -> rgba(125, 80, 37, 0.8)
+.tp-abandon:hover | border-color: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.tp-abandon:hover | background: rgba(120, 40, 26, .5) -> rgba(112, 52, 0, 0.5)
+/* L5 (#219) — the city key, bolted under the session plate. The plate is "what your economy is worth right now", so the one thing match-3 buys besides a Depot's yield lives on the same surface: the price, the bonus a full session would set, and why it is off when it is. It never shows without the new loop (`paintTown` hides it on the shipped one). */ .tp-city | background: rgba(56, 42, 26, .6) -> rgba(40, 46, 48, 0.6)
+/* L5 (#219) — the city key, bolted under the session plate. The plate is "what your economy is worth right now", so the one thing match-3 buys besides a Depot's yield lives on the same surface: the price, the bonus a full session would set, and why it is off when it is. It never shows without the new loop (`paintTown` hides it on the shipped one). */ .tp-city | background: rgba(12, 8, 6, .86) -> rgba(5, 10, 11, 0.86)
+/* L5 (#219) — the city key, bolted under the session plate. The plate is "what your economy is worth right now", so the one thing match-3 buys besides a Depot's yield lives on the same surface: the price, the bonus a full session would set, and why it is off when it is. It never shows without the new loop (`paintTown` hides it on the shipped one). */ .tp-city | background: linear-gradient(180deg, rgba(40, 46, 48, 0.6), rgba(5, 10, 11, 0.86)) -> rgba(40, 46, 48, 0.6)
+.tp-city:hover | background: rgba(98, 68, 24, .5) -> rgb(var(--c-line) / 0.5)
+/* L6 (#220): the re-match key. It lives in the idle row (never while a session is up) and it is only shown at all when the difficulty owes one — so Easy keeps the plain engraved line, and Normal/Hard get this beside it. Same brass treatment as the plate's Finish, because it does the same kind of thing. */ .tp-retune | background: rgba(56, 42, 26, .6) -> rgba(40, 46, 48, 0.6)
+/* L6 (#220): the re-match key. It lives in the idle row (never while a session is up) and it is only shown at all when the difficulty owes one — so Easy keeps the plain engraved line, and Normal/Hard get this beside it. Same brass treatment as the plate's Finish, because it does the same kind of thing. */ .tp-retune | background: rgba(12, 8, 6, .86) -> rgba(5, 10, 11, 0.86)
+/* L6 (#220): the re-match key. It lives in the idle row (never while a session is up) and it is only shown at all when the difficulty owes one — so Easy keeps the plain engraved line, and Normal/Hard get this beside it. Same brass treatment as the plate's Finish, because it does the same kind of thing. */ .tp-retune | background: linear-gradient(180deg, rgba(40, 46, 48, 0.6), rgba(5, 10, 11, 0.86)) -> rgba(40, 46, 48, 0.6)
+.tp-retune:hover | background: rgba(98, 68, 24, .5) -> rgb(var(--c-line) / 0.5)
+.session-back | background: rgba(4, 3, 2, .58) -> rgba(1, 4, 5, 0.58)
+.session-back | background: rgba(4, 3, 2, .92) -> rgba(1, 4, 5, 0.92)
+.session-back | background: rgba(4, 3, 2, .86) -> rgba(1, 4, 5, 0.86)
+.session-frame | box-shadow: rgba(255, 176, 46, .28) -> rgb(var(--c-orange) / 0.28)
+.session-frame | box-shadow: rgba(242, 220, 166, .16) -> rgb(var(--c-bone) / 0.16)
+.session-frame | box-shadow: 0 30px 80px rgba(0, 0, 0, .78),
+    0 0 70px -18px rgb(var(--c-orange) / 0.28),
+    inse -> none
+/* #300 — the RESULTS pop-up a tuning session ends on. It rides in the session frame (position: relative, above) over the plate and the final board, which stay in view, dimmed and inert, until Confirm. The score counts up, then the yield it sets; the stars light as the count passes their bars (`TUNING_STARS`, config.ts). `.counting` is the count-up, `.done` its end — the final numbers also ride on data-* from frame one. */ .session-results | background: rgba(4, 3, 2, .6) -> rgba(1, 4, 5, 0.6)
+/* #300 — the RESULTS pop-up a tuning session ends on. It rides in the session frame (position: relative, above) over the plate and the final board, which stay in view, dimmed and inert, until Confirm. The score counts up, then the yield it sets; the stars light as the count passes their bars (`TUNING_STARS`, config.ts). `.counting` is the count-up, `.done` its end — the final numbers also ride on data-* from frame one. */ .session-results | background: rgba(4, 3, 2, .88) -> rgba(1, 4, 5, 0.88)
+/* #300 — the RESULTS pop-up a tuning session ends on. It rides in the session frame (position: relative, above) over the plate and the final board, which stay in view, dimmed and inert, until Confirm. The score counts up, then the yield it sets; the stars light as the count passes their bars (`TUNING_STARS`, config.ts). `.counting` is the count-up, `.done` its end — the final numbers also ride on data-* from frame one. */ .session-results | background: radial-gradient(70% 62% at 50% 45%, rgba(1, 4, 5, 0.6), rgba(1, 4, 5, 0.88)) -> rgba(1, 4, 5, 0.6)
+/* #300 — the RESULTS pop-up a tuning session ends on. It rides in the session frame (position: relative, above) over the plate and the final board, which stay in view, dimmed and inert, until Confirm. The score counts up, then the yield it sets; the stars light as the count passes their bars (`TUNING_STARS`, config.ts). `.counting` is the count-up, `.done` its end — the final numbers also ride on data-* from frame one. */ .session-results | border-radius: inherit -> 0
+.sr-card | background: #1a140e -> #101618
+.sr-card | background: #0a0806 -> #05090b
+.sr-card | background: linear-gradient(180deg, #101618, #05090b) -> #101618
+.sr-card | border-radius: var(--r) -> 0
+.sr-card | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+.sr-card | box-shadow: 0 18px 50px rgba(0, 0, 0, .8),
+    0 0 60px -20px var(--gold-glow),
+    inset 0 1px 0 rg -> none
+.sr-head | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.sr-head | text-shadow: 0 0 22px rgb(var(--c-orange) / 0.3) -> none
+.sr-star | color: rgba(201, 162, 74, .2) -> rgb(var(--c-line) / 0.2)
+.sr-star | text-shadow: 0 1px 0 rgba(0, 0, 0, .6) -> none
+.sr-star.lit | text-shadow: #6b3d05 -> #6b3d06
+.sr-star.lit | text-shadow: 0 0 16px var(--gold-glow), 0 1px 0 #6b3d06 -> none
+.sr-rows | border-radius: var(--r) -> 0
+.sr-confirm | color: #14100b -> #0c1213
+.sr-confirm | background: linear-gradient(180deg, var(--gold2), var(--gold)) -> var(--gold2)
+.sr-confirm | border-radius: var(--r) -> 0
+.sr-confirm | box-shadow: 0 0 18px -4px var(--gold-glow) -> none
+/* the name is engraved like a modal title — display face, carved lip — and sealed with the house stroke cross (src/game/hud-icons.ts) */ .cross-pick-title | text-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+/* the name is engraved like a modal title — display face, carved lip — and sealed with the house stroke cross (src/game/hud-icons.ts) */ .cross-pick-title | text-shadow: 0 -1px 0 rgba(0, 0, 0, .9), 0 1px 0 rgb(var(--c-bone) / 0.12), 0 0 18px var(--pick-glow) -> none
+.cross-pick.broken .cross-pick-title .ic-chip | stroke: #120d09 -> #090f11
+.cross-pick-btn::before | border-radius: 1px -> 0
+.cross-pick-btn span | text-shadow: 0 1px 0 #000 -> none
+.cross-pick-btn.sel::after | border-radius: 2px -> 0
+.cross-pick-btn.sel::after | background: linear-gradient(180deg, var(--brass-hi), var(--brass) 60%, var(--brass-lo)) -> var(--brass-hi)
+.cross-pick-btn.sel::after | color: #14100b -> #0c1213
+.cross-pick-btn.sel::after | box-shadow: 0 1px 4px rgba(0, 0, 0, .7), inset 0 1px 0 rgba(255, 255, 255, .5) -> none
+.cross-pick.broken .cross-pick-btn.sel::after | background: #8f7a4e -> #9a7453
+.cross-pick.broken .cross-pick-btn.sel::after | background: linear-gradient(180deg, var(--brass-hi), #9a7453 60%, var(--brass-lo)) -> var(--brass-hi)
+.hp-label | text-shadow: 0 0 10px var(--gold), 0 2px 4px #000 -> none
+.hp-body span | text-shadow: 0 2px 6px #000 -> none
+/* ── tabs — the folders of one case file ────────────────────────── */ .tabs | box-shadow: rgba(255, 176, 46, .12) -> rgb(var(--c-orange) / 0.12)
+.tab | border-radius: var(--r) var(--r) 0 0 -> 0
+.tab | background-color: rgba(10, 7, 5, .5) -> rgba(4, 9, 10, 0.5)
+.tab | box-shadow: rgba(242, 220, 166, .08) -> rgb(var(--c-bone) / 0.08)
+.tab | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.08) -> none
+.tab:hover | background-color: rgba(46, 33, 20, .6) -> rgba(31, 37, 39, 0.6)
+.tab.active | background-color: rgba(74, 52, 26, .72) -> rgba(51, 58, 60, 0.72)
+.tab.active | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+.tab.active | box-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.tab.active | box-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.tab.active | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), inset 0 12px 18px -12px rgb(var(--c-orange) / 0.35 -> none
+.tab.active | text-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+.tab.active | text-shadow: 0 0 12px rgb(var(--c-orange) / 0.5), 0 -1px 0 #000 -> none
+/* ── trade — the escrow slip ────────────────────────────────────── */ .trade-form | background: rgba(38, 28, 18, .7) -> rgba(25, 31, 33, 0.7)
+/* ── trade — the escrow slip ────────────────────────────────────── */ .trade-form | background: rgba(10, 7, 5, .82) -> rgba(4, 9, 10, 0.82)
+/* ── trade — the escrow slip ────────────────────────────────────── */ .trade-form | border-radius: var(--r) -> 0
+/* ── trade — the escrow slip ────────────────────────────────────── */ .trade-form | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+/* ── trade — the escrow slip ────────────────────────────────────── */ .trade-form | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.12), 0 4px 14px rgba(0, 0, 0, .45) -> none
+.res-sel, .res-num | border-radius: 2px -> 0
+.res-sel, .res-num | background: rgba(56, 42, 26, .5) -> rgba(40, 46, 48, 0.5)
+.res-sel, .res-num | background: rgba(8, 6, 4, .9) -> rgba(3, 7, 8, 0.9)
+.res-sel, .res-num | background: linear-gradient(180deg, rgba(40, 46, 48, 0.5), rgba(3, 7, 8, 0.9)) -> rgba(40, 46, 48, 0.5)
+.res-sel, .res-num | box-shadow: inset 0 1px 3px rgba(0, 0, 0, .6) -> none
+.res-sel:focus, .res-num:focus | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+.res-sel:focus, .res-num:focus | box-shadow: inset 0 1px 3px rgba(0, 0, 0, .6), 0 0 12px -2px rgb(var(--c-orange) / 0.55) -> none
+.res-sel option | background: #14100b -> #0c1213
+/* the button that signs the slip */ .post-btn | border-radius: var(--r) -> 0
+/* the button that signs the slip */ .post-btn | background: rgba(112, 78, 24, .6) -> rgba(118, 74, 32, 0.6)
+/* the button that signs the slip */ .post-btn | background: rgba(26, 17, 8, .9) -> rgba(14, 20, 22, 0.9)
+/* the button that signs the slip */ .post-btn | background: linear-gradient(180deg, rgba(118, 74, 32, 0.6), rgba(14, 20, 22, 0.9)) -> rgba(118, 74, 32, 0.6)
+/* the button that signs the slip */ .post-btn | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+/* the button that signs the slip */ .post-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 4px 14px rgba(0, 0, 0, .5) -> none
+/* the button that signs the slip */ .post-btn | text-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+/* the button that signs the slip */ .post-btn | text-shadow: 0 -1px 0 #000, 0 0 14px rgb(var(--c-orange) / 0.35) -> none
+.post-btn:hover | background: rgba(150, 104, 30, .72) -> rgba(157, 99, 41, 0.72)
+.post-btn:hover | background: rgba(36, 23, 9, .92) -> rgba(21, 27, 29, 0.92)
+.post-btn:hover | background: linear-gradient(180deg, rgba(157, 99, 41, 0.72), rgba(21, 27, 29, 0.92)) -> rgba(157, 99, 41, 0.72)
+.post-btn:hover | box-shadow: rgba(242, 220, 166, .4) -> rgb(var(--c-bone) / 0.4)
+.post-btn:hover | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+.post-btn:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.4), 0 0 22px -4px rgb(var(--c-orange) / 0.6) -> none
+/* every live offer is a visiting card with the sender's ribbon */ .offer | border-radius: var(--r) -> 0
+/* every live offer is a visiting card with the sender's ribbon */ .offer | background: rgba(214, 190, 146, .9) -> rgba(224, 185, 151, 0.9)
+/* every live offer is a visiting card with the sender's ribbon */ .offer | background: rgba(176, 150, 108, .88) -> rgba(184, 146, 113, 0.88)
+/* every live offer is a visiting card with the sender's ribbon */ .offer | border: rgba(60, 42, 22, .6) -> rgba(41, 47, 49, 0.6)
+/* every live offer is a visiting card with the sender's ribbon */ .offer | color: #1d1409 -> #111719
+/* every live offer is a visiting card with the sender's ribbon */ .offer | box-shadow: 0 4px 12px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .3) -> none
+.offer:hover | box-shadow: 0 6px 16px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .4), 0 0 0 1px var(--pc) -> none
+.offer-who | color: #3a2a16 -> #282f31
+.offer-t | color: #6b533a -> #525a5c
+.offer-body | color: #17100a -> #0d1314
+.offer-body .arrow | color: #6b533a -> #525a5c
+.mini | border-radius: 2px -> 0
+.mini | background: linear-gradient(180deg, rgba(30, 84, 56, .8), rgba(10, 30, 20, .9)) -> rgba(30, 84, 56, .8)
+.mini | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14) -> none
+.mini:hover | background: linear-gradient(180deg, rgba(44, 116, 78, .9), rgba(14, 42, 28, .92)) -> rgba(44, 116, 78, .9)
+.mini:hover | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 0 16px -4px rgba(99, 192, 138, .6) -> none
+.mini.danger | background: rgba(96, 30, 18, .85) -> rgba(89, 40, 0, 0.85)
+.mini.danger | background: rgba(26, 8, 5, .9) -> rgba(9, 15, 17, 0.9)
+.mini.danger | background: linear-gradient(180deg, rgba(89, 40, 0, 0.85), rgba(9, 15, 17, 0.9)) -> rgba(89, 40, 0, 0.85)
+.mini.danger | color: #ffc7b4 -> rgb(var(--c-bone) / 1)
+.mini.danger | border-color: rgba(226, 112, 79, .5) -> rgb(var(--c-red) / 0.5)
+.mini.danger:hover | background: rgba(132, 42, 26, .9) -> rgba(123, 55, 0, 0.9)
+.mini.danger:hover | background: rgba(36, 11, 7, .92) -> rgba(15, 21, 22, 0.92)
+.mini.danger:hover | background: linear-gradient(180deg, rgba(123, 55, 0, 0.9), rgba(15, 21, 22, 0.92)) -> rgba(123, 55, 0, 0.9)
+.mini.danger:hover | box-shadow: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.mini.danger:hover | box-shadow: 0 0 16px -4px rgb(var(--c-red) / 0.6) -> none
+.tray-group | border-radius: var(--r) -> 0
+.tray-group | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+.tray-group | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.14), 0 8px 22px rgba(0, 0, 0, .55) -> none
+.tray-group:hover | box-shadow: rgba(242, 220, 166, .26) -> rgb(var(--c-bone) / 0.26)
+.tray-group:hover | box-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+.tray-group:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.26), 0 10px 26px rgba(0, 0, 0, .6), 0 0 20px -8px rgb( -> none
+.tray-group:hover .tray-showmore | background: rgba(255, 176, 46, .1) -> rgb(var(--c-orange) / 0.1)
+.more-count | background: radial-gradient(circle at 34% 28%, var(--brass-hi), var(--gold) 58%, var(--gold-d)) -> var(--brass-hi)
+.more-count | color: #14100b -> #0c1213
+.more-count | box-shadow: 0 1px 4px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .45) -> none
+.tray-more .tray-offer | box-shadow: rgba(242, 220, 166, .06) -> rgb(var(--c-bone) / 0.06)
+.tray-more .tray-offer | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.06) -> none
+.post-btn.disabled | background: rgba(10, 7, 5, .6) -> rgba(4, 9, 10, 0.6)
+.post-btn.disabled | box-shadow: inset 0 1px 3px rgba(0, 0, 0, .6) -> none
+/* ── bank tab — the counting house ────────────────────────────────── */ .bank-fixed | box-shadow: inset 0 1px 3px rgba(0, 0, 0, .7) -> none
+/* PP-08: the standing "Gold is reserved for Black Market sabotage" rule, shown at the top of the Black Market panel — house rules, chalked up. */ .gold-rule | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+/* PP-08: the standing "Gold is reserved for Black Market sabotage" rule, shown at the top of the Black Market panel — house rules, chalked up. */ .gold-rule | text-shadow: 0 0 12px rgb(var(--c-orange) / 0.3) -> none
+.feed-row | border-radius: 0 var(--r) var(--r) 0 -> 0
+.feed-row | color: #1c1204 -> #0f1517
+.feed-row | box-shadow: 0 2px 8px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .34) -> none
+.toast | border-radius: var(--r) -> 0
+.toast | background: rgba(38, 28, 19, .94) -> rgba(25, 32, 33, 0.94)
+.toast | background: rgba(10, 7, 5, .94) -> rgba(4, 9, 10, 0.94)
+.toast | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+.toast | box-shadow: 0 10px 28px rgba(0, 0, 0, .66), inset 0 1px 0 rgb(var(--c-bone) / 0.14) -> none
+.toast-x | border-radius: 2px -> 0
+.toast-x:hover | background: rgba(80, 56, 22, .6) -> rgba(56, 63, 65, 0.6)
+.rival-quip-face | border: rgba(226, 112, 79, .55) -> rgb(var(--c-red) / 0.55)
+.rival-quip-face | box-shadow: inset 0 0 12px rgba(0, 0, 0, .45) -> none
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar while a tool is armed. It replaced a full-width two-line work order that restated the tool and its price — both already on the Build button — and on a phone covered the build list and half the map. What is left is the verdict the button cannot state (the rule a Depot is placed by, why a tile or a purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its text and ellipsises instead of wrapping. pointer-events: none — it appears EXACTLY when the player is mid-gesture (dragging the first road), and a box eating the bottom of the map at that moment is the "the game isn't working" look. Only the ✕ re-arms itself below, and it is a real cancel: ui.ts routes it to the pointer tool, which is what clears this line. In the phone regime the held-tool chip carries the same verdict instead (see .toolchip), so the two never stack. */ .modebar | border-radius: var(--r) -> 0
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar while a tool is armed. It replaced a full-width two-line work order that restated the tool and its price — both already on the Build button — and on a phone covered the build list and half the map. What is left is the verdict the button cannot state (the rule a Depot is placed by, why a tile or a purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its text and ellipsises instead of wrapping. pointer-events: none — it appears EXACTLY when the player is mid-gesture (dragging the first road), and a box eating the bottom of the map at that moment is the "the game isn't working" look. Only the ✕ re-arms itself below, and it is a real cancel: ui.ts routes it to the pointer tool, which is what clears this line. In the phone regime the held-tool chip carries the same verdict instead (see .toolchip), so the two never stack. */ .modebar | background-color: rgba(10, 7, 5, .92) -> rgba(4, 9, 10, 0.92)
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar while a tool is armed. It replaced a full-width two-line work order that restated the tool and its price — both already on the Build button — and on a phone covered the build list and half the map. What is left is the verdict the button cannot state (the rule a Depot is placed by, why a tile or a purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its text and ellipsises instead of wrapping. pointer-events: none — it appears EXACTLY when the player is mid-gesture (dragging the first road), and a box eating the bottom of the map at that moment is the "the game isn't working" look. Only the ✕ re-arms itself below, and it is a real cancel: ui.ts routes it to the pointer tool, which is what clears this line. In the phone regime the held-tool chip carries the same verdict instead (see .toolchip), so the two never stack. */ .modebar | box-shadow: rgba(242, 220, 166, .22) -> rgb(var(--c-bone) / 0.22)
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar while a tool is armed. It replaced a full-width two-line work order that restated the tool and its price — both already on the Build button — and on a phone covered the build list and half the map. What is left is the verdict the button cannot state (the rule a Depot is placed by, why a tile or a purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its text and ellipsises instead of wrapping. pointer-events: none — it appears EXACTLY when the player is mid-gesture (dragging the first road), and a box eating the bottom of the map at that moment is the "the game isn't working" look. Only the ✕ re-arms itself below, and it is a real cancel: ui.ts routes it to the pointer tool, which is what clears this line. In the phone regime the held-tool chip carries the same verdict instead (see .toolchip), so the two never stack. */ .modebar | box-shadow: rgba(255, 176, 46, .4) -> rgb(var(--c-orange) / 0.4)
+/* #187 — the placement hint: ONE slim line, pinned above the resource bar while a tool is armed. It replaced a full-width two-line work order that restated the tool and its price — both already on the Build button — and on a phone covered the build list and half the map. What is left is the verdict the button cannot state (the rule a Depot is placed by, why a tile or a purse refuses, the ★ a road drag buys), in a 32px box that shrinks to its text and ellipsises instead of wrapping. pointer-events: none — it appears EXACTLY when the player is mid-gesture (dragging the first road), and a box eating the bottom of the map at that moment is the "the game isn't working" look. Only the ✕ re-arms itself below, and it is a real cancel: ui.ts routes it to the pointer tool, which is what clears this line. In the phone regime the held-tool chip carries the same verdict instead (see .toolchip), so the two never stack. */ .modebar | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.22), 0 8px 22px rgba(0, 0, 0, .6), 0 0 24px -12px rgb( -> none
+/* A refusal reads in the theme's warm red, and stays in its own case — it is a sentence the player has to parse, not an engraved label. */ .mb-txt i | color: #ffb3a0 -> rgb(var(--c-bone) / 1)
+.mb-cost | text-shadow: rgba(255, 176, 46, .45) -> rgb(var(--c-orange) / 0.45)
+.mb-cost | text-shadow: 0 0 12px rgb(var(--c-orange) / 0.45) -> none
+.mb-cancel | border-radius: 2px -> 0
+.mb-cancel | background: rgba(96, 30, 18, .8) -> rgba(89, 40, 0, 0.8)
+.mb-cancel | background: rgba(26, 8, 5, .9) -> rgba(9, 15, 17, 0.9)
+.mb-cancel | background: linear-gradient(180deg, rgba(89, 40, 0, 0.8), rgba(9, 15, 17, 0.9)) -> rgba(89, 40, 0, 0.8)
+.mb-cancel | color: #ffc7b4 -> rgb(var(--c-bone) / 1)
+.mb-cancel | border: rgba(226, 112, 79, .5) -> rgb(var(--c-red) / 0.5)
+.mb-cancel | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12) -> none
+.mb-cancel:hover | background: rgba(132, 42, 26, .9) -> rgba(123, 55, 0, 0.9)
+.mb-cancel:hover | background: rgba(36, 11, 7, .92) -> rgba(15, 21, 22, 0.92)
+.mb-cancel:hover | background: linear-gradient(180deg, rgba(123, 55, 0, 0.9), rgba(15, 21, 22, 0.92)) -> rgba(123, 55, 0, 0.9)
+.banner b | color: #3a2408 -> #242b2c
+.banner b | text-shadow: 0 1px 0 rgba(255, 255, 255, .35) -> none
+/* the message itself — the only thing here that must be read at a glance: 13px of the body face, dark ink, no typewriter texture fighting it */ .banner small | color: #1f1405 -> #111819
+.banner-close | border-radius: 2px -> 0
+.banner-close | border: rgba(60, 42, 22, .5) -> rgba(41, 47, 49, 0.5)
+.banner-close | background: rgba(28, 19, 9, .18) -> rgba(16, 22, 24, 0.18)
+.banner-close | color: #3a2a16 -> #282f31
+.banner-close:hover | background: rgba(28, 19, 9, .34) -> rgba(16, 22, 24, 0.34)
+.banner-close:hover | color: #f2e6c8 -> rgb(var(--c-bone) / 1)
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | border-radius: var(--r) -> 0
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | color: #f2e6c8 -> rgb(var(--c-bone) / 1)
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | background: rgba(26, 18, 10, .92) -> rgba(15, 21, 23, 0.92)
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | background: rgba(12, 8, 4, .94) -> rgba(5, 10, 11, 0.94)
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | background: linear-gradient(180deg, rgba(15, 21, 23, 0.92), rgba(5, 10, 11, 0.94)) -> rgba(15, 21, 23, 0.92)
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+/* ── L8 (#222): the objective line ────────────────────────────────────────── The new loop is always answering "what do I do next" in one line — the banner's lane, but it is NOT the banner. When a real banner owns the lane (protest countdown, disconnect, won) the objective tucks behind it; on its own it reads as a compact brass reminder rather than the full posted sheet, so a player never mistakes a goal for a dismissible alert. Shares the same mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane is visible). */ .objective | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.14), 0 8px 22px rgba(0,0,0,.5) -> none
+.quests-head | border-radius: var(--r) -> 0
+.quests-head | color: #f2e6c8 -> rgb(var(--c-bone) / 1)
+.quests-head | background: rgba(26, 18, 10, .9) -> rgba(15, 21, 23, 0.9)
+.quests-head | background: rgba(12, 8, 4, .92) -> rgba(5, 10, 11, 0.92)
+.quests-head | background: linear-gradient(180deg, rgba(15, 21, 23, 0.9), rgba(5, 10, 11, 0.92)) -> rgba(15, 21, 23, 0.9)
+.quests-head | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.quests-head | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1), 0 6px 16px rgba(0,0,0,.45) -> none
+.quests-head:hover | color: #fff6dd -> rgb(var(--c-bone) / 1)
+.quests-head .q-count | border-radius: 8px -> 0
+.quests-head .q-count | color: #201507 -> #12191a
+.quests-head .q-count | background: #8a6a33 -> #93653a
+.quests-head .q-count | background: linear-gradient(180deg, var(--brass), #93653a) -> var(--brass)
+.quest | border-radius: var(--r) -> 0
+.quest | background: rgba(26, 18, 10, .92) -> rgba(15, 21, 23, 0.92)
+.quest | background: rgba(10, 7, 4, .94) -> rgba(4, 8, 10, 0.94)
+.quest | background: linear-gradient(180deg, rgba(15, 21, 23, 0.92), rgba(4, 8, 10, 0.94)) -> rgba(15, 21, 23, 0.92)
+.quest | border: rgba(150, 118, 66, .5) -> rgba(158, 113, 72, 0.5)
+.quest | box-shadow: 0 6px 16px rgba(0,0,0,.4) -> none
+.quest .q-text | color: #ecdfc2 -> #d9e2e4
+.quest .q-reward | color: #e8cf9a -> rgb(var(--c-bone) / 1)
+.q-hide | border-radius: 2px -> 0
+.q-hide | color: #d9c9a3 -> #c3ccce
+.q-hide | background: rgba(12, 8, 4, .8) -> rgba(5, 10, 11, 0.8)
+.q-hide:hover | color: #fff6dd -> rgb(var(--c-bone) / 1)
+.q-x | border-radius: 2px -> 0
+.q-x | color: #d9c9a3 -> #c3ccce
+.q-x | background: rgba(12, 8, 4, .7) -> rgba(5, 10, 11, 0.7)
+.q-x:hover | color: #fff6dd -> rgb(var(--c-bone) / 1)
+.modal-back | background: rgba(4, 3, 2, .84) -> rgba(1, 4, 5, 0.84)
+/* The dialog is a plate like any other: felt inset, brass edge, and the frame's corners painted in by `::after` at their own size. Nine-slicing this instead would stretch the iron between the ornaments — see the corner rule above. */ .modal.box | box-shadow: rgba(255, 176, 46, .25) -> rgb(var(--c-orange) / 0.25)
+/* The dialog is a plate like any other: felt inset, brass edge, and the frame's corners painted in by `::after` at their own size. Nine-slicing this instead would stretch the iron between the ornaments — see the corner rule above. */ .modal.box | box-shadow: 0 34px 90px rgba(0, 0, 0, .8), 0 0 60px -20px rgb(var(--c-orange) / 0.25) -> none
+.modal h2 | text-shadow: rgba(242, 220, 166, .16) -> rgb(var(--c-bone) / 0.16)
+.modal h2 | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.modal h2 | text-shadow: 0 -1px 0 #000, 0 1px 0 rgb(var(--c-bone) / 0.16), 0 0 26px rgb(var(--c-orange) / 0.3) -> none
+/* the seal, set above the title like a stamp on a letterhead */ .modal h2::before | filter: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+/* the rules are printed matter: manila, typewritten, pinned at one corner */ .help-col | background: rgba(216, 194, 152, .93) -> rgb(var(--c-bone) / 0.93)
+/* the rules are printed matter: manila, typewritten, pinned at one corner */ .help-col | background: rgba(176, 152, 112, .9) -> rgba(184, 148, 116, 0.9)
+/* the rules are printed matter: manila, typewritten, pinned at one corner */ .help-col | border: rgba(58, 40, 20, .6) -> rgba(39, 45, 47, 0.6)
+/* the rules are printed matter: manila, typewritten, pinned at one corner */ .help-col | border-radius: 2px -> 0
+/* the rules are printed matter: manila, typewritten, pinned at one corner */ .help-col | color: #1e1509 -> #12181a
+/* the rules are printed matter: manila, typewritten, pinned at one corner */ .help-col | box-shadow: 0 8px 20px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .34) -> none
+.help-col h3 | color: #4a2c07 -> #4b2b0a
+.help-col h3 | border-bottom: rgba(74, 44, 7, .35) -> rgba(75, 43, 10, 0.35)
+.help-col p | color: #2a1d0c -> #1b2123
+.help-col p b | color: #120c05 -> #080e10
+/* the brass "sign here" button */ .big-btn | border-radius: var(--r) -> 0
+/* the brass "sign here" button */ .big-btn | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+/* the brass "sign here" button */ .big-btn | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 6px 18px rgba(0, 0, 0, .55) -> none
+/* the brass "sign here" button */ .big-btn | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+/* the brass "sign here" button */ .big-btn | text-shadow: 0 -1px 0 #000, 0 0 14px rgb(var(--c-orange) / 0.3) -> none
+.big-btn:hover | box-shadow: rgba(242, 220, 166, .4) -> rgb(var(--c-bone) / 0.4)
+.big-btn:hover | box-shadow: rgba(255, 176, 46, .7) -> rgb(var(--c-orange) / 0.7)
+.big-btn:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.4), 0 0 26px -6px rgb(var(--c-orange) / 0.7), 0 8px 20 -> none
+.big-btn.ghost | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.big-btn.ghost | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+.big-btn.ghost:hover | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+.big-btn.ghost:hover | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.2) -> none
+.gfx-row | border-bottom: rgba(107, 81, 35, .45) -> rgb(var(--c-line) / 0.45)
+.gfx-seg button, .gfx-switch | border-radius: var(--r) -> 0
+.gfx-seg button, .gfx-switch | background: rgba(58, 44, 28, .5) -> rgba(41, 48, 50, 0.5)
+.gfx-seg button, .gfx-switch | background: rgba(12, 9, 6, .86) -> rgba(6, 11, 12, 0.86)
+.gfx-seg button, .gfx-switch | background: linear-gradient(180deg, rgba(41, 48, 50, 0.5), rgba(6, 11, 12, 0.86)) -> rgba(41, 48, 50, 0.5)
+.gfx-seg button, .gfx-switch | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.gfx-seg button, .gfx-switch | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+.gfx-seg button.on, .gfx-switch.on | color: #171004 -> #0c1214
+.gfx-seg button.on, .gfx-switch.on | background: linear-gradient(180deg, var(--brass-hi), var(--brass)) -> var(--brass-hi)
+.gfx-seg button.on, .gfx-switch.on | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+.gfx-seg button.on, .gfx-switch.on | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 16px -3px rgb(var(--c-orange) / 0.6) -> none
+/* PERF-01: the miniature switch, dimmed while performance mode suppresses the pass (its stored choice survives; the row copy says why). */ .gfx-switch:disabled | box-shadow: rgba(242, 220, 166, .05) -> rgb(var(--c-bone) / 0.05)
+/* PERF-01: the miniature switch, dimmed while performance mode suppresses the pass (its stored choice survives; the row copy says why). */ .gfx-switch:disabled | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.05) -> none
+/* ── SETTINGS-01: the ☰ popover ── */ .iso-topmenu | border-radius: var(--r) -> 0
+/* ── SETTINGS-01: the ☰ popover ── */ .iso-topmenu | background: rgba(34, 25, 16, .97) -> rgba(22, 28, 30, 0.97)
+/* ── SETTINGS-01: the ☰ popover ── */ .iso-topmenu | background: rgba(10, 7, 5, .98) -> rgba(4, 9, 10, 0.98)
+/* ── SETTINGS-01: the ☰ popover ── */ .iso-topmenu | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+/* ── SETTINGS-01: the ☰ popover ── */ .iso-topmenu | box-shadow: 0 18px 44px rgba(0, 0, 0, .65), inset 0 1px 0 rgb(var(--c-bone) / 0.14) -> none
+.iso-topmenu .tm-head | border-bottom: rgba(107, 81, 35, .45) -> rgb(var(--c-line) / 0.45)
+.iso-topmenu .tm-close | background: rgba(236, 213, 164, .04) -> rgb(var(--c-bone) / 0.04)
+.iso-topmenu .tm-close | border-radius: var(--r) -> 0
+.iso-topmenu .tm-close | box-shadow: rgba(242, 220, 166, .08) -> rgb(var(--c-bone) / 0.08)
+.iso-topmenu .tm-close | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.08) -> none
+.iso-topmenu .tm-item | border-radius: var(--r) -> 0
+.iso-topmenu .tm-item:hover, .iso-topmenu .tm-item:focus-visible | background: rgba(255, 176, 46, .06) -> rgb(var(--c-orange) / 0.06)
+.big-btn.danger | color: #ffc7b4 -> rgb(var(--c-bone) / 1)
+.big-btn.danger | border-color: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.big-btn.danger | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), 0 6px 18px rgba(0, 0, 0, .55) -> none
+.big-btn.danger:hover | box-shadow: rgba(226, 112, 79, .7) -> rgb(var(--c-red) / 0.7)
+.big-btn.danger:hover | box-shadow: 0 0 26px -6px rgb(var(--c-red) / 0.7), 0 8px 20px rgba(0, 0, 0, .6) -> none
+.store-topup | background: rgba(58, 44, 28, .5) -> rgba(41, 48, 50, 0.5)
+.store-topup | background: rgba(12, 9, 6, .86) -> rgba(6, 11, 12, 0.86)
+.store-topup | background: linear-gradient(180deg, rgba(41, 48, 50, 0.5), rgba(6, 11, 12, 0.86)) -> rgba(41, 48, 50, 0.5)
+.store-topup | border-radius: var(--r) -> 0
+.store-topup | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.store-topup | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+.store-topup:hover | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+.store-topup:hover | box-shadow: 0 0 16px -4px rgb(var(--c-orange) / 0.55) -> none
+.store-row | background: rgba(208, 186, 146, .92) -> rgba(182, 191, 193, 0.92)
+.store-row | background: rgba(170, 146, 108, .88) -> rgba(143, 152, 154, 0.88)
+.store-row | border: rgba(58, 40, 20, .55) -> rgba(39, 45, 47, 0.55)
+.store-row | border-radius: 2px -> 0
+.store-row | color: #1e1509 -> #12181a
+.store-row | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 3px 12px rgba(0, 0, 0, .45) -> none
+.store-icon | border: rgba(58, 40, 20, .45) -> rgba(39, 45, 47, 0.45)
+.store-icon | border-radius: 2px -> 0
+.store-icon | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28) -> none
+.store-name | color: #20160a -> #13191b
+.store-unlocks | color: #3a2a14 -> #282f30
+.store-soon | color: #5a4526 -> #434b4c
+.store-rowmsg.bad | color: #7a2b12 -> #723500
+.store-price | color: #2a1d0c -> #1b2123
+.store-buy | color: #171004 -> #0c1214
+.store-buy | background: linear-gradient(180deg, var(--brass-hi), var(--brass)) -> var(--brass-hi)
+.store-buy | border-radius: var(--r) -> 0
+.store-buy | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+.store-buy | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 0 16px -3px rgb(var(--c-orange) / 0.6) -> none
+.store-buy:disabled | background: rgba(58, 44, 28, .5) -> rgba(41, 48, 50, 0.5)
+.store-buy:disabled | background: rgba(12, 9, 6, .86) -> rgba(6, 11, 12, 0.86)
+.store-buy:disabled | background: linear-gradient(180deg, rgba(41, 48, 50, 0.5), rgba(6, 11, 12, 0.86)) -> rgba(41, 48, 50, 0.5)
+.store-buy:disabled | box-shadow: rgba(242, 220, 166, .08) -> rgb(var(--c-bone) / 0.08)
+.store-buy:disabled | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.08) -> none
+.tax-row | background: rgba(206, 182, 138, .9) -> rgba(216, 177, 143, 0.9)
+.tax-row | background: rgba(168, 143, 104, .86) -> rgba(175, 139, 108, 0.86)
+.tax-row | border: rgba(58, 40, 20, .55) -> rgba(39, 45, 47, 0.55)
+.tax-row | border-radius: 2px -> 0
+.tax-row | color: #221708 -> #141b1c
+.tax-row | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 3px 10px rgba(0, 0, 0, .45) -> none
+.tax-nm | color: #1c1206 -> #0f1517
+.tax-ct | color: #4a3520 -> #343b3d
+.tax-ct b | color: #120c05 -> #080e10
+.tax-btn | border-radius: 2px -> 0
+.tax-btn | border: rgba(58, 40, 20, .6) -> rgba(39, 45, 47, 0.6)
+.tax-btn | background: rgba(28, 19, 9, .16) -> rgba(16, 22, 24, 0.16)
+.tax-btn | color: #241708 -> #151b1d
+.tax-btn:hover | background: rgba(120, 84, 26, .5) -> rgba(126, 80, 34, 0.5)
+.tax-btn:hover | color: #ffeecb -> #e9f2f4
+::-webkit-scrollbar-track | box-shadow: rgba(107, 81, 35, .4) -> rgb(var(--c-line) / 0.4)
+::-webkit-scrollbar-track | box-shadow: inset 0 0 0 1px rgb(var(--c-line) / 0.4) -> none
+::-webkit-scrollbar-thumb | background: linear-gradient(180deg, var(--brass), var(--brass-lo)) -> var(--brass)
+::-webkit-scrollbar-thumb | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35) -> none
+::-webkit-scrollbar-thumb:hover | background: linear-gradient(180deg, var(--brass-hi), var(--brass)) -> var(--brass-hi)
+.fab, .recenter-btn | background: rgba(255, 176, 46, .16) -> rgb(var(--c-orange) / 0.16)
+.fab, .recenter-btn | background: rgba(8, 5, 3, .92) -> rgba(3, 6, 8, 0.92)
+.fab, .recenter-btn | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+.fab, .recenter-btn | box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgb(var(--c-bone) / 0.2) -> none
+.lobby-error | color: #ffc7b4 -> rgb(var(--c-bone) / 1)
+.lobby-error | background: rgba(96, 30, 18, .35) -> rgba(89, 40, 0, 0.35)
+.room-code b | background: rgba(104, 74, 24, .6) -> rgba(110, 70, 31, 0.6)
+.room-code b | background: rgba(18, 12, 6, .92) -> rgba(8, 14, 16, 0.92)
+.room-code b | border-radius: var(--r) -> 0
+.room-code b | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+.room-code b | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+.room-code b | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 0 26px -8px rgb(var(--c-orange) / 0.55) -> none
+.room-code b | text-shadow: 0 0 18px var(--gold-glow), 0 -1px 0 #000 -> none
+/* a seat is a place setting at the table */ .seat | background: rgba(30, 22, 15, .6) -> rgba(19, 25, 27, 0.6)
+/* a seat is a place setting at the table */ .seat | background: rgba(8, 6, 4, .8) -> rgba(3, 7, 8, 0.8)
+/* a seat is a place setting at the table */ .seat | background: linear-gradient(180deg, rgba(19, 25, 27, 0.6), rgba(3, 7, 8, 0.8)) -> rgba(19, 25, 27, 0.6)
+/* a seat is a place setting at the table */ .seat | border-radius: var(--r) -> 0
+.seat.filled | background: rgba(74, 52, 24, .55) -> rgba(51, 58, 60, 0.55)
+.seat.filled | background: rgba(12, 8, 5, .85) -> rgba(5, 10, 11, 0.85)
+.seat.filled | background: linear-gradient(180deg, rgba(51, 58, 60, 0.55), rgba(5, 10, 11, 0.85)) -> rgba(51, 58, 60, 0.55)
+.seat.filled | box-shadow: rgba(242, 220, 166, .16) -> rgb(var(--c-bone) / 0.16)
+.seat.filled | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.16) -> none
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | border-top: #c9a24a -> rgb(var(--c-line) / 1)
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | border-radius: var(--r) -> 0
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | background: rgba(38, 28, 18, .55) -> rgba(25, 31, 33, 0.55)
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | background: rgba(10, 7, 5, .82) -> rgba(4, 9, 10, 0.82)
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | background: linear-gradient(180deg, rgba(25, 31, 33, 0.55), rgba(4, 9, 10, 0.82)) -> rgba(25, 31, 33, 0.55)
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+/* ── #186: the host's Game settings ───────────────────────────────────────── One felt card under the seat list, in the same idiom as the seat rows: a brass keyline on the left of anything that is a SETTING, dimmed brass for anything that is only a label. The panel is the host's to move and the guest's to read, so a guest gets the identical card with every group disabled — same words, no dials that lie about being turnable. */ .match-settings | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.12) -> none
+.ms-head h2 | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.ms-group | border-top: rgba(201, 162, 74, .22) -> rgb(var(--c-line) / 0.22)
+.ms-seat | background: rgba(30, 22, 15, .6) -> rgba(19, 25, 27, 0.6)
+.ms-seat | background: rgba(8, 6, 4, .8) -> rgba(3, 7, 8, 0.8)
+.ms-seat | background: linear-gradient(180deg, rgba(19, 25, 27, 0.6), rgba(3, 7, 8, 0.8)) -> rgba(19, 25, 27, 0.6)
+.ms-seat | border-radius: var(--r) -> 0
+.ms-swatch | box-shadow: 0 0 8px -1px currentColor -> none
+.ms-badge | border-radius: 2px -> 0
+.ms-badge.ai | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.ms-skill | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.ms-skill | background: #181512 -> #111718
+.ms-skill | border: #594b3b -> #484f51
+.ms-skill | border-radius: 2px -> 0
+.ms-preset.on | color: #1b130b -> #101618
+.ms-preset.on | border-color: #e9a83e -> rgb(var(--c-orange) / 1)
+.ms-preset.on | background: #e9a83e -> rgb(var(--c-orange) / 1)
+.ms-preset.on small | color: rgba(27, 19, 11, .75) -> rgba(16, 22, 24, 0.75)
+.ms-stepper input | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.ms-stepper input | background: #181512 -> #111718
+.ms-stepper input | border: #594b3b -> #484f51
+.ms-summary | border-top: rgba(201, 162, 74, .22) -> rgb(var(--c-line) / 0.22)
+.ms-summary | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+/* ── AI-02: the start-of-game difficulty prompt (src/iso/skill-picker.ts) ── A clean felt card with one brass keyline. The old four brass corner bosses competed with the three choices and crowded the title, so this screen has no ::after ornament and no ornament-derived title padding. */ #iso-skill-prompt | background: rgba(6, 4, 3, .86) -> rgba(2, 5, 6, 0.86)
+#iso-skill-prompt .iso-skill-card | background: rgba(34, 25, 16, .94) -> rgba(22, 28, 30, 0.94)
+#iso-skill-prompt .iso-skill-card | background: rgba(10, 7, 5, .96) -> rgba(4, 9, 10, 0.96)
+#iso-skill-prompt .iso-skill-card | box-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+#iso-skill-prompt .iso-skill-card | box-shadow: 0 26px 70px rgba(0, 0, 0, .72), 0 0 60px -18px rgb(var(--c-orange) / 0.3) -> none
+#iso-skill-prompt h2 | text-shadow: rgba(242, 220, 166, .16) -> rgb(var(--c-bone) / 0.16)
+#iso-skill-prompt h2 | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+#iso-skill-prompt h2 | text-shadow: 0 -1px 0 #000, 0 1px 0 rgb(var(--c-bone) / 0.16), 0 0 28px rgb(var(--c-orange) / 0.3) -> none
+#iso-skill-prompt .iso-skill-choice | background-color: rgba(14, 10, 7, .86) -> rgba(7, 12, 14, 0.86)
+#iso-skill-prompt .iso-skill-choice | border-radius: var(--r) -> 0
+#iso-skill-prompt .iso-skill-choice | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+#iso-skill-prompt .iso-skill-choice | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.12), 0 6px 16px rgba(0, 0, 0, .5) -> none
+#iso-skill-prompt .iso-skill-choice:hover, #iso-skill-prompt .iso-skill-choice:focus | box-shadow: rgba(242, 220, 166, .3) -> rgb(var(--c-bone) / 0.3)
+#iso-skill-prompt .iso-skill-choice:hover, #iso-skill-prompt .iso-skill-choice:focus | box-shadow: rgba(255, 176, 46, .6) -> rgb(var(--c-orange) / 0.6)
+#iso-skill-prompt .iso-skill-choice:hover, #iso-skill-prompt .iso-skill-choice:focus | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.3), 0 0 26px -6px rgb(var(--c-orange) / 0.6), 0 8px 18 -> none
+#iso-skill-prompt .iso-skill-label | text-shadow: 0 -1px 0 #000 -> none
+/* ── LOAD-01: the loading screen (src/iso/loading-screen.ts) ───────────── Same smoke-and-felt room as the difficulty prompt it follows, so the pick reads as walking into the next room rather than a cut to a spinner. */ #iso-loading | background: rgba(6, 4, 3, .94) -> rgba(2, 5, 6, 0.94)
+#iso-loading .iso-loading-card | background: rgba(34, 25, 16, .94) -> rgba(22, 28, 30, 0.94)
+#iso-loading .iso-loading-card | background: rgba(10, 7, 5, .96) -> rgba(4, 9, 10, 0.96)
+#iso-loading .iso-loading-card | box-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+#iso-loading .iso-loading-card | box-shadow: 0 26px 70px rgba(0, 0, 0, .72), 0 0 60px -18px rgb(var(--c-orange) / 0.3) -> none
+#iso-loading h2 | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+#iso-loading h2 | text-shadow: 0 -1px 0 #000, 0 0 28px rgb(var(--c-orange) / 0.3) -> none
+#iso-loading .iso-loading-track | box-shadow: inset 0 1px 3px rgba(0, 0, 0, .8) -> none
+#iso-loading .iso-loading-bar | background: linear-gradient(180deg, var(--brass-hi), var(--gold) 55%, var(--brass-lo)) -> var(--brass-hi)
+#iso-loading .iso-loading-bar | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+#iso-loading .iso-loading-bar | box-shadow: 0 0 14px rgb(var(--c-orange) / 0.55) -> none
+#iso-loading .iso-loading-bar::after | background: rgba(255, 244, 214, .45) -> rgba(237, 246, 249, 0.45)
+#iso-loading .iso-loading-steps | border-top: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+/* ── TUT-01: the starting tutorial (src/iso/tutorial.ts) ─────────────────── The difficulty card's felt plate, one bay longer: a stepper with a painted figure, typed bullets and a ledger-paper footnote. It sits ABOVE the ❔ modal (60) and the difficulty card (90) because the tour can be replayed from inside the help modal and must never hide under the thing that opened it. Like every other overlay it paints over the HUD boxes without moving one of them — the corridor picker's geometry is untouched. The four figure kinds the projector can build (`chain`, `iso`, `board`, `ledger`) each get one block below, on the container INSIDE the plate — the `.tut-fig-<kind>` class the plate also carries is a selector hook for the tests, not a look. A step with no figure paints no plate at all and the bullets move up. */ #iso-tutorial, #iso-battle-howto | background: rgba(6, 4, 3, .88) -> rgba(2, 5, 6, 0.88)
+.tut-card | background: rgba(34, 25, 16, .95) -> rgba(22, 28, 30, 0.95)
+.tut-card | background: rgba(10, 7, 5, .96) -> rgba(4, 9, 10, 0.96)
+.tut-card | box-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.tut-card | box-shadow: 0 30px 80px rgba(0, 0, 0, .78), 0 0 60px -18px rgb(var(--c-orange) / 0.3) -> none
+.tut-title | text-shadow: rgba(242, 220, 166, .16) -> rgb(var(--c-bone) / 0.16)
+.tut-title | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.tut-title | text-shadow: 0 -1px 0 #000, 0 1px 0 rgb(var(--c-bone) / 0.16), 0 0 26px rgb(var(--c-orange) / 0.3) -> none
+.tut-x | border-radius: var(--r) -> 0
+.tut-x | background-color: rgba(12, 9, 6, .7) -> rgba(6, 11, 12, 0.7)
+.tut-x | box-shadow: rgba(242, 220, 166, .08) -> rgb(var(--c-bone) / 0.08)
+.tut-x | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.08) -> none
+.tut-x:hover | color: #ffd0bd -> #d5dee0
+.tut-x:hover | border-color: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+/* the footnote is printed matter: the same ledger paper the help columns use */ .tut-tip | color: #2a1d0c -> #1b2123
+/* the footnote is printed matter: the same ledger paper the help columns use */ .tut-tip | background: rgba(216, 194, 152, .93) -> rgb(var(--c-bone) / 0.93)
+/* the footnote is printed matter: the same ledger paper the help columns use */ .tut-tip | background: rgba(176, 152, 112, .9) -> rgba(184, 148, 116, 0.9)
+/* the footnote is printed matter: the same ledger paper the help columns use */ .tut-tip | border: rgba(58, 40, 20, .6) -> rgba(39, 45, 47, 0.6)
+/* the footnote is printed matter: the same ledger paper the help columns use */ .tut-tip | border-radius: 2px -> 0
+/* the footnote is printed matter: the same ledger paper the help columns use */ .tut-tip | box-shadow: 0 8px 20px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .34) -> none
+.tut-tip b | color: #120c05 -> #080e10
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | border-radius: var(--r) -> 0
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | background: rgba(255, 176, 46, .05) -> rgb(var(--c-orange) / 0.05)
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | background: rgba(255, 176, 46, .05) -> rgb(var(--c-orange) / 0.05)
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | background: rgba(8, 6, 4, .88) -> rgba(3, 7, 8, 0.88)
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | background: rgba(15, 11, 8, .7) -> rgba(7, 13, 15, 0.7)
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | box-shadow: rgba(242, 220, 166, .07) -> rgb(var(--c-bone) / 0.07)
+/* ── the figure plate: a blueprint under the lamp ── */ .tut-fig | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.07), inset 0 0 34px rgba(0, 0, 0, .6) -> none
+.tut-chain-node | border-radius: var(--r) -> 0
+.tut-chain-node | background-color: rgba(14, 10, 7, .82) -> rgba(7, 12, 14, 0.82)
+.tut-chain-node | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.tut-chain-node | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1), 0 4px 12px rgba(0, 0, 0, .5) -> none
+.tut-shot | border: rgba(58, 40, 20, .7) -> rgba(39, 45, 47, 0.7)
+.tut-shot | border-radius: 2px -> 0
+.tut-shot | box-shadow: 0 6px 18px rgba(0, 0, 0, .55) -> none
+.tut-shot | background: rgba(8, 6, 4, .6) -> rgba(3, 7, 8, 0.6)
+.tut-tile | background-image: linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(0, 0, 0, .3)) -> none
+.t-rough | background-color: #4a3b24 -> #383f41
+.t-town | background-color: #6d5b43 -> #586062
+.t-industry | background-color: #4b3620 -> #353c3e
+.t-plant | background-color: #2b2118 -> #1e2526
+.t-depot | background-color: #6b5123 -> rgb(var(--c-line) / 1)
+.t-dirt | background-color: #8a7350 -> #71797b
+.tut-tile.ring-bad | filter: rgba(226, 112, 79, .95) -> rgb(var(--c-red) / 0.95)
+.tut-tile.ring-route | filter: rgba(255, 176, 46, .65) -> rgb(var(--c-orange) / 0.65)
+.tut-ledger-row | color: #221708 -> #141b1c
+.tut-ledger-row | background: rgba(206, 182, 138, .9) -> rgba(216, 177, 143, 0.9)
+.tut-ledger-row | background: rgba(168, 143, 104, .86) -> rgba(175, 139, 108, 0.86)
+.tut-ledger-row | border: rgba(58, 40, 20, .55) -> rgba(39, 45, 47, 0.55)
+.tut-ledger-row | border-radius: 2px -> 0
+.tut-ledger-row | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 3px 10px rgba(0, 0, 0, .45) -> none
+.tut-ledger-ic | color: #714515 -> #724416
+.tut-ledger-copy b | color: #1d1308 -> #101618
+.tut-ledger-copy small | color: #594324 -> #42494b
+.tut-ledger-vp | color: #422707 -> #292f31
+.tut-ledger-total | border-radius: var(--r) -> 0
+.tut-ledger-total | background-color: rgba(14, 10, 7, .82) -> rgba(7, 12, 14, 0.82)
+.tut-ledger-total | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.tut-ledger-total | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.1), 0 4px 12px rgba(0, 0, 0, .5) -> none
+.tut-ledger-total strong | text-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.tut-ledger-total strong | text-shadow: 0 0 16px rgb(var(--c-orange) / 0.35) -> none
+.tut-never | border-radius: var(--r) -> 0
+.tut-never | background-color: rgba(12, 9, 6, .72) -> rgba(6, 11, 12, 0.72)
+.tut-never | box-shadow: rgba(242, 220, 166, .08) -> rgb(var(--c-bone) / 0.08)
+.tut-never | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.08) -> none
+.tut-never:hover | color: #ffd0bd -> #d5dee0
+.tut-never:hover | border-color: rgba(226, 112, 79, .6) -> rgb(var(--c-red) / 0.6)
+.tut-never:hover | background-color: rgba(44, 19, 12, .72) -> rgba(22, 28, 30, 0.72)
+/* diamond pips: the tour is walked on the same lattice as the map */ .tut-dot | background-color: rgba(10, 7, 5, .8) -> rgba(4, 9, 10, 0.8)
+.tut-dot.on | box-shadow: rgba(255, 176, 46, .75) -> rgb(var(--c-orange) / 0.75)
+.tut-dot.on | box-shadow: 0 0 10px rgb(var(--c-orange) / 0.75) -> none
+.tut-dot::before | background-color: rgba(10, 7, 5, .8) -> rgba(4, 9, 10, 0.8)
+.tut-dot.on::before | box-shadow: rgba(255, 176, 46, .75) -> rgb(var(--c-orange) / 0.75)
+.tut-dot.on::before | box-shadow: 0 0 10px rgb(var(--c-orange) / 0.75) -> none
+/* ── AI-03: the rival-plant peek panel ──────────────────────────────────── Non-modal: sits over the top-right of the board, repaints from the live board every 350 ms (and on every rival move), so the player can WATCH the rival grind matches, clear ice and free girders in real time. It is a stakeout: cold light through a window, not the warm home board. */ #iso-rival-view | border-radius: var(--r) -> 0
+/* ── AI-03: the rival-plant peek panel ──────────────────────────────────── Non-modal: sits over the top-right of the board, repaints from the live board every 350 ms (and on every rival move), so the player can WATCH the rival grind matches, clear ice and free girders in real time. It is a stakeout: cold light through a window, not the warm home board. */ #iso-rival-view | box-shadow: 0 6px 24px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(210, 232, 246, .14), 0 0 24px -10px rgba( -> none
+#iso-rival-view .rb-close | border-radius: 2px -> 0
+#iso-rival-view .rb-grid | border-radius: 2px -> 0
+#iso-rival-view .rb-cell | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07) -> none
+#iso-rival-view .rb-chip | border-radius: 2px -> 0
+/* ── the small print ───────────────────────────────────────────── Keyboard focus is a brass ring, not a browser default, so it reads as part of the plate; selection is amber on ink, the way a highlighter marks a ledger line. Both are chrome-only: neither moves a box. */ :focus-visible | border-radius: 2px -> 0
+::selection | background: rgba(255, 176, 46, .28) -> rgb(var(--c-orange) / 0.28)
+/* Multiplayer start screen */ .start-screen | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+/* Multiplayer start screen */ .start-screen | background: rgba(72, 53, 36, .34) -> rgba(52, 59, 61, 0.34)
+.start-panel | border: #594b3b -> #484f51
+.start-panel | background: rgba(25, 22, 19, .94) -> rgba(18, 24, 25, 0.94)
+.start-panel | box-shadow: 0 20px 80px rgba(0,0,0,.45) -> none
+.start-kicker | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.start-subtitle | color: #a89b89 -> #969fa1
+.start-actions button, .start-panel button | border: #594b3b -> #484f51
+.start-actions button, .start-panel button | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.start-actions button:hover, .start-panel button:hover | border-color: #c98731 -> rgb(var(--c-orange) / 1)
+.start-actions button:hover, .start-panel button:hover | background: rgba(255,166,43,.1) -> rgb(var(--c-orange) / 0.1)
+.start-actions .start-primary, .start-panel .start-primary | color: #1b130b -> #101618
+.start-actions .start-primary, .start-panel .start-primary | border-color: #e9a83e -> rgb(var(--c-orange) / 1)
+.start-actions .start-primary, .start-panel .start-primary | background: #e9a83e -> rgb(var(--c-orange) / 1)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | color: #1b130b -> #101618
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | border-color: #ffd47e -> rgb(var(--c-orange) / 1)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | background: #ffd47e -> rgb(var(--c-orange) / 1)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | background: #e9a83e -> rgb(var(--c-orange) / 1)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | background: #d19434 -> #db8d42
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | background: linear-gradient(180deg, rgb(var(--c-orange) / 1), rgb(var(--c-orange) / 1) 60%, #db8d42) -> rgb(var(--c-orange) / 1)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | box-shadow: rgba(255, 212, 126, .45) -> rgb(var(--c-orange) / 0.45)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | box-shadow: rgba(255, 176, 46, .7) -> rgb(var(--c-orange) / 0.7)
+/* Playtest (2026-09): the generic start-button hover above painted a dark wash over the bright gold primary, leaving dark text on dark. A bright button brightens on hover instead, and keeps its dark label. */ .start-actions .start-primary:hover, .start-panel .start-primary:hover, .start-actions .start-primary:focus-visible, .start-panel .start-primary:focus-visible | box-shadow: 0 0 0 1px rgb(var(--c-orange) / 0.45), 0 0 18px -4px rgb(var(--c-orange) / 0.7) -> none
+.start-panel input | border: #594b3b -> #484f51
+.start-panel input | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.start-panel input | background: #181512 -> #111718
+.start-panel input:focus | border-color: #e9a83e -> rgb(var(--c-orange) / 1)
+/* #164: the rejoin offer — the room line names what is being walked back into, and the abandon door wears the warning colour its copy promises. */ .rejoin-room | color: #b7a98f -> #a4acaf
+.rejoin-room b | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.start-panel button.danger | color: #ffc7b4 -> rgb(var(--c-bone) / 1)
+.start-panel button.danger | border-color: rgba(226, 112, 79, .55) -> rgb(var(--c-red) / 0.55)
+.start-panel button.danger | background: rgba(96, 30, 18, .28) -> rgba(89, 40, 0, 0.28)
+.start-panel button.danger:hover | border-color: rgba(226, 112, 79, .85) -> rgb(var(--c-red) / 0.85)
+.start-panel button.danger:hover | background: rgba(132, 42, 26, .38) -> rgba(123, 55, 0, 0.38)
+.start-panel.start-modes .rank-block | border-top: rgba(89, 75, 59, .55) -> rgba(72, 79, 81, 0.55)
+.start-panel.start-modes .rank-block-note | color: #a89b89 -> #969fa1
+.start-panel.start-modes .start-back | color: #a89b89 -> #969fa1
+/* Group headings: SOLO / MULTIPLAYER, a hairline rule running out to the edge. */ .start-actions-label | color: #a89b89 -> #969fa1
+.start-actions-label::after | background: rgba(89, 75, 59, .55) -> rgba(72, 79, 81, 0.55)
+.rank-search-opt | border: rgba(89,75,59,.75) -> rgba(72, 79, 81, 0.75)
+.rank-search-opt | color: #a89b89 -> #969fa1
+.rank-search-opt.on | border-color: #e9a83e -> rgb(var(--c-orange) / 1)
+.rank-search-opt.on | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.rank-search-opt.on | background: rgba(255,166,43,.1) -> rgb(var(--c-orange) / 0.1)
+.rank-chip | border: #594b3b -> #484f51
+.rank-chip | border-radius: 999px -> 0
+.rank-chip-who | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.rank-chip-text small | color: #a89b89 -> #969fa1
+.rank-chip[data-tier="bronze"] .rank-chip-text b | color: #d29a63 -> #d49965
+.rank-chip[data-tier="gold"] .rank-chip-text b | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.rank-chip[data-tier="master"] .rank-chip-text b | color: #e8785f -> #db862b
+.rank-chip[data-tier="unranked"] .rank-chip-text b | color: #a89b89 -> #969fa1
+.rank-block-note | color: #a89b89 -> #969fa1
+.ladder-list li | border: rgba(89,75,59,.55) -> rgba(72, 79, 81, 0.55)
+.ladder-list li[data-rank="1"] | border-color: #e9a83e -> rgb(var(--c-orange) / 1)
+.ladder-list li[data-rank="1"] | background: rgba(255,166,43,.08) -> rgb(var(--c-orange) / 0.08)
+.ladder-place | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.ladder-note | color: #a89b89 -> #969fa1
+.ladder-mine | color: #a89b89 -> #969fa1
+/* The ledger's rating row (see `src/iso/ending.ts`) — the badge, the number and what the match did to it, between the scoreboard and the epilogue. */ .ending-rank | border: rgba(89,75,59,.7) -> rgba(72, 79, 81, 0.7)
+.ending-rank[data-state="up"] | border-color: rgba(233,168,62,.55) -> rgb(var(--c-orange) / 0.55)
+.ending-rank[data-state="down"] | border-color: rgba(120,80,70,.6) -> rgba(86, 93, 95, 0.6)
+.ending-rank[data-promoted="1"] | box-shadow: rgba(233,168,62,.35) -> rgb(var(--c-orange) / 0.35)
+.ending-rank[data-promoted="1"] | box-shadow: rgba(233,168,62,.18) -> rgb(var(--c-orange) / 0.18)
+.ending-rank[data-promoted="1"] | box-shadow: 0 0 0 1px rgb(var(--c-orange) / 0.35), 0 0 22px rgb(var(--c-orange) / 0.18) -> none
+.ending-rank-tier | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.ending-rank-delta.down | color: #e0896f -> #d69254
+.ending-rank-note | color: #a89b89 -> #969fa1
+.rank-delta.down | color: #e0896f -> #d69254
+.start-screen::before | background: rgba(255, 176, 46, .13) -> rgb(var(--c-orange) / 0.13)
+.start-screen::before | background: rgba(10, 8, 6, .5) -> rgba(5, 9, 11, 0.5)
+.start-screen::before | background: rgba(8, 6, 5, .74) -> rgba(3, 7, 9, 0.74)
+.start-screen::before | background: rgba(5, 4, 3, .86) -> rgba(2, 5, 6, 0.86)
+.start-screen::before | background: #0c0a08 -> #060c0d
+/* the campaign list stands in the noir office, not on the docks */ .start-screen.campaign::before | background: rgba(255, 176, 46, .1) -> rgb(var(--c-orange) / 0.1)
+/* the campaign list stands in the noir office, not on the docks */ .start-screen.campaign::before | background: rgba(10, 8, 6, .45) -> rgba(5, 9, 11, 0.45)
+/* the campaign list stands in the noir office, not on the docks */ .start-screen.campaign::before | background: rgba(8, 6, 5, .66) -> rgba(3, 7, 9, 0.66)
+/* the campaign list stands in the noir office, not on the docks */ .start-screen.campaign::before | background: rgba(5, 4, 3, .8) -> rgba(2, 5, 6, 0.8)
+/* the campaign list stands in the noir office, not on the docks */ .start-screen.campaign::before | background: #0c0a08 -> #060c0d
+.menu-embers span | background: #ffd98a -> rgb(var(--c-orange) / 1)
+.menu-embers span | background: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+.menu-embers span | background: rgba(255, 176, 46, 0) -> rgb(var(--c-orange) / 0)
+.menu-embers span | background: radial-gradient(circle, rgb(var(--c-orange) / 1) 0%, rgb(var(--c-orange) / 0.55) 45%, rgb( -> rgb(var(--c-orange) / 1)
+.menu-embers span | box-shadow: rgba(255, 176, 46, .5) -> rgb(var(--c-orange) / 0.5)
+.menu-embers span | box-shadow: 0 0 6px rgb(var(--c-orange) / 0.5) -> none
+.menu-card | border: #594b3b -> #484f51
+.menu-card | border-top: #c9a24a -> rgb(var(--c-line) / 1)
+.menu-card | background: rgba(34, 27, 20, .95) -> rgba(23, 30, 31, 0.95)
+.menu-card | background: rgba(19, 16, 13, .96) -> rgba(12, 18, 19, 0.96)
+.menu-card | box-shadow: 0 24px 90px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06) -> none
+.menu-emblem | filter: rgba(255, 176, 46, .22) -> rgb(var(--c-orange) / 0.22)
+.menu-title | color: #f4e9d2 -> #e3ecee
+.menu-title | text-shadow: rgba(255, 176, 46, .28) -> rgb(var(--c-orange) / 0.28)
+.menu-title | text-shadow: 0 0 26px rgb(var(--c-orange) / 0.28), 0 2px 0 rgba(0, 0, 0, .5) -> none
+.menu-sub | color: #a89b89 -> #969fa1
+.menu-btn | border: #594b3b -> #484f51
+.menu-btn | border-radius: var(--r, 3px) -> 0
+.menu-btn | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.menu-btn | background: rgba(21, 18, 14, .85) -> rgba(14, 20, 21, 0.85)
+.menu-btn | box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05) -> none
+.menu-btn:hover | border-color: #c98731 -> rgb(var(--c-orange) / 1)
+.menu-btn:hover | background: rgba(255, 166, 43, .16) -> rgb(var(--c-orange) / 0.16)
+.menu-btn:hover | background: rgba(255, 166, 43, .05) -> rgb(var(--c-orange) / 0.05)
+.menu-btn:hover | background: rgba(21, 18, 14, .85) -> rgba(14, 20, 21, 0.85)
+.menu-btn:hover | box-shadow: rgba(233, 168, 62, .25) -> rgb(var(--c-orange) / 0.25)
+.menu-btn:hover | box-shadow: 0 0 0 1px rgb(var(--c-orange) / 0.25), 0 6px 22px rgba(0, 0, 0, .4) -> none
+.menu-btn.primary | color: #1b130b -> #101618
+.menu-btn.primary | border-color: #e9a83e -> rgb(var(--c-orange) / 1)
+.menu-btn.primary | background: #f0c069 -> rgb(var(--c-bone) / 1)
+.menu-btn.primary | background: #c99a3e -> #d8904c
+.menu-btn.primary | background: #b98a34 -> #c68241
+.menu-btn.primary | background: linear-gradient(180deg, rgb(var(--c-bone) / 1), #d8904c 55%, #c68241) -> rgb(var(--c-bone) / 1)
+.menu-btn.primary | box-shadow: rgba(255, 176, 46, .18) -> rgb(var(--c-orange) / 0.18)
+.menu-btn.primary | box-shadow: 0 0 22px rgb(var(--c-orange) / 0.18), inset 0 1px 0 rgba(255, 255, 255, .4) -> none
+.menu-btn.primary:hover | background: #ffd47e -> rgb(var(--c-orange) / 1)
+.menu-btn.primary:hover | background: #d9a94c -> #e99f5a
+.menu-btn.primary:hover | background: #c2913a -> #ce8947
+.menu-btn.primary:hover | background: linear-gradient(180deg, rgb(var(--c-orange) / 1), #e99f5a 55%, #ce8947) -> rgb(var(--c-orange) / 1)
+.menu-btn.primary .mb-tag | color: #3a2a10 -> #282f30
+.menu-note | border: rgba(201, 162, 74, .55) -> rgb(var(--c-line) / 0.55)
+.menu-note | border-radius: var(--r, 3px) -> 0
+.menu-note | background: rgba(236, 224, 198, .07) -> rgb(var(--c-bone) / 0.07)
+.menu-note | color: #e8dcc0 -> #d6dfe1
+.menu-campaign | color: #8b7d68 -> #798183
+/* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01 panel reads, but seated under the menu card so the Top 10 is visible without leaving the menu. One felt plate with a brass crown, stacked under `.menu-card`; on a short viewport the start-screen media that makes the whole plate scroll includes this card via the shared margin rule. */ .menu-leaderboard | border: #594b3b -> #484f51
+/* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01 panel reads, but seated under the menu card so the Top 10 is visible without leaving the menu. One felt plate with a brass crown, stacked under `.menu-card`; on a short viewport the start-screen media that makes the whole plate scroll includes this card via the shared margin rule. */ .menu-leaderboard | border-top: #c9a24a -> rgb(var(--c-line) / 1)
+/* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01 panel reads, but seated under the menu card so the Top 10 is visible without leaving the menu. One felt plate with a brass crown, stacked under `.menu-card`; on a short viewport the start-screen media that makes the whole plate scroll includes this card via the shared margin rule. */ .menu-leaderboard | background: rgba(34, 27, 20, .95) -> rgba(23, 30, 31, 0.95)
+/* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01 panel reads, but seated under the menu card so the Top 10 is visible without leaving the menu. One felt plate with a brass crown, stacked under `.menu-card`; on a short viewport the start-screen media that makes the whole plate scroll includes this card via the shared margin rule. */ .menu-leaderboard | background: rgba(19, 16, 13, .96) -> rgba(12, 18, 19, 0.96)
+/* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01 panel reads, but seated under the menu card so the Top 10 is visible without leaving the menu. One felt plate with a brass crown, stacked under `.menu-card`; on a short viewport the start-screen media that makes the whole plate scroll includes this card via the shared margin rule. */ .menu-leaderboard | box-shadow: 0 16px 50px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .06) -> none
+.menu-leaderboard .ladder-name | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.menu-leaderboard .ladder-rating | color: #e9a83e -> rgb(var(--c-orange) / 1)
+.menu-ladder-link | border: #594b3b -> #484f51
+.menu-ladder-link | border-radius: var(--r, 3px) -> 0
+.menu-ladder-link | color: #efe4d0 -> rgb(var(--c-bone) / 1)
+.menu-ladder-link | background: rgba(21,18,14,.85) -> rgba(14, 20, 21, 0.85)
+.menu-ladder-link | box-shadow: inset 0 1px 0 rgba(255,255,255,.05) -> none
+.menu-ladder-link:hover | border-color: #c98731 -> rgb(var(--c-orange) / 1)
+.menu-ladder-link:hover | background: rgba(255,166,43,.16) -> rgb(var(--c-orange) / 0.16)
+.menu-ladder-link:hover | background: rgba(255,166,43,.05) -> rgb(var(--c-orange) / 0.05)
+.menu-ladder-link:hover | background: rgba(21,18,14,.85) -> rgba(14, 20, 21, 0.85)
+.menu-ladder-link:hover | box-shadow: rgba(233,168,62,.25) -> rgb(var(--c-orange) / 0.25)
+.menu-ladder-link:hover | box-shadow: 0 0 0 1px rgb(var(--c-orange) / 0.25), 0 6px 22px rgba(0,0,0,.4) -> none
+/* the tour projector (#iso-tutorial) hangs inside this host, full-bleed */ /* the game version + build id at the foot of the main menu (src/ui/version.ts) — now flows under the leaderboard, not pinned to the viewport */ .menu-foot | color: rgba(232, 220, 192, .38) -> rgba(214, 223, 225, 0.38)
+/* the mode screen answers the menu: same brass-crowned panel on the same living plate, so the two read as one room */ .start-panel | border-top: #c9a24a -> rgb(var(--c-line) / 1)
+.banner.narrated .banner-face | border: #c9a24a -> rgb(var(--c-line) / 1)
+.banner.narrated .banner-face | border-radius: 6px -> 0
+.banner.narrated .banner-face | background-color: rgba(40, 28, 14, .35) -> rgba(25, 32, 34, 0.35)
+.banner.narrated .banner-face | box-shadow: 0 3px 10px rgba(0, 0, 0, .4) -> none
+.banner.narrated b.banner-who | color: #86331c -> #7e3e00
+.banner.narrated b.banner-who | text-shadow: 0 1px 0 rgba(255, 255, 255, .3) -> none
+.banner.narrated::after | background: #c9b288 -> #d3ad8d
+.banner.narrated::after | border-right: rgba(60, 42, 22, .6) -> rgba(41, 47, 49, 0.6)
+.banner.narrated::after | border-bottom: rgba(60, 42, 22, .6) -> rgba(41, 47, 49, 0.6)
+/* ═══════════════════════════════════════════════════════════════════ Cinematic final ledger — victory fireworks / defeat ashes ═══════════════════════════════════════════════════════════════════ */ .ending-screen | background: #060403 -> #020506
+/* The supplied win/lose photographs (tools/make-ending-art.mjs), painted UNDER the shade's gradients so the card above still reads. `cover` on a centred position, because the art is a scene rather than a texture and must not tile or letterbox at any window shape. */ .ending-shade | background: rgba(255, 186, 58, .16) -> rgb(var(--c-bone) / 0.16)
+/* The supplied win/lose photographs (tools/make-ending-art.mjs), painted UNDER the shade's gradients so the card above still reads. `cover` on a centred position, because the art is a scene rather than a texture and must not tile or letterbox at any window shape. */ .ending-shade | background: rgba(22, 13, 7, .28) -> rgba(10, 16, 18, 0.28)
+/* The supplied win/lose photographs (tools/make-ending-art.mjs), painted UNDER the shade's gradients so the card above still reads. `cover` on a centred position, because the art is a scene rather than a texture and must not tile or letterbox at any window shape. */ .ending-shade | background: #060403 -> #020506
+.ending-screen.defeat .ending-shade | background: rgba(129, 45, 30, .14) -> rgba(120, 57, 0, 0.14)
+.ending-screen.defeat .ending-shade | background: rgba(21, 16, 14, .42) -> rgba(12, 18, 20, 0.42)
+.ending-card | background: rgba(42, 30, 19, .98) -> rgba(28, 34, 36, 0.98)
+.ending-card | background: rgba(9, 7, 5, .985) -> rgba(4, 8, 10, 0.985)
+.ending-card | border: #2b2117 -> #1e2426
+.ending-card | box-shadow: rgba(7,5,3,.9) -> rgba(3, 6, 7, 0.9)
+.ending-card | box-shadow: 0 34px 100px rgba(0,0,0,.88),
+    0 0 65px -20px color-mix(in srgb, var(--ending-accent)  -> none
+.ending-card::before | color: #171006 -> #0c1314
+.ending-card::before | border: #ffe7ad -> rgb(var(--c-bone) / 1)
+.ending-card::before | box-shadow: 0 0 28px color-mix(in srgb, var(--ending-accent) 44%, transparent) -> none
+.ending-title | text-shadow: rgba(255,176,46,.24) -> rgb(var(--c-orange) / 0.24)
+.ending-title | text-shadow: 0 2px 0 #000, 0 0 28px rgb(var(--c-orange) / 0.24) -> none
+.ending-screen.defeat .ending-title | color: #d8c6b4 -> #c3cbcd
+.ending-screen.defeat .ending-title | text-shadow: rgba(178,58,38,.22) -> rgba(166, 76, 0, 0.22)
+.ending-screen.defeat .ending-title | text-shadow: 0 2px 0 #000, 0 0 24px rgba(166, 76, 0, 0.22) -> none
+.ending-ledger | color: #211609 -> #131a1b
+.ending-ledger | background: rgba(239,226,198,.94) -> rgba(220, 229, 231, 0.94)
+.ending-ledger | background: rgba(190,163,119,.94) -> rgba(199, 158, 124, 0.94)
+.ending-ledger | background: rgba(67,43,18,.08) -> rgba(43, 50, 52, 0.08)
+.ending-ledger | border: #6d4d25 -> #704b29
+.ending-ledger | box-shadow: 0 9px 24px rgba(0,0,0,.55), inset 0 1px rgba(255,255,255,.42) -> none
+.ending-score-row | border-top: rgba(61,39,16,.18) -> rgba(39, 46, 48, 0.18)
+.ending-score-icon | color: #714515 -> #724416
+.ending-score-copy b | color: #1d1308 -> #101618
+.ending-score-copy small | color: #594324 -> #42494b
+.ending-score-vp | color: #422707 -> #292f31
+.ending-score-total | border-top: rgba(61,39,16,.45) -> rgba(39, 46, 48, 0.45)
+.ending-epilogue | color: #eee1c8 -> #dbe4e7
+.ending-final-beat | border-left: rgba(226, 112, 79, .65) -> rgb(var(--c-red) / 0.65)
+.ending-final-beat | background: rgba(92, 30, 18, .18) -> rgba(86, 39, 0, 0.18)
+.ending-final-face | border: rgba(226, 112, 79, .62) -> rgb(var(--c-red) / 0.62)
+.ending-rival-final | color: #cf8169 -> #c68952
+.ending-button | border-radius: 2px -> 0
+.ending-button:hover | background: rgba(255,176,46,.09) -> rgb(var(--c-orange) / 0.09)
+.ending-restart | color: #1b1105 -> #0e1416
+.ending-restart | border-color: #ffe5a2 -> rgb(var(--c-bone) / 1)
+.ending-restart | box-shadow: 0 0 22px -8px var(--ending-accent) -> none
+.ending-restart:hover | background: #ffe4a8 -> rgb(var(--c-bone) / 1)
+.ending-screen.defeat .ending-restart | color: #f4dfd6 -> #dde6e8
+.ending-screen.defeat .ending-restart | background: #743322 -> #6d3b00
+.ending-screen.defeat .ending-restart | border-color: #b85c42 -> #ae6716
+.ending-reopen | background: rgba(12,8,5,.92) -> rgba(5, 10, 11, 0.92)
+.ending-reopen | border-radius: 2px -> 0
+.ending-reopen | box-shadow: 0 8px 22px rgba(0,0,0,.65), 0 0 18px -8px var(--gold) -> none
+.ending-ash | background: #866e60 -> #6d7577
+.chapter-card | background: rgba(24, 17, 12, .92) -> rgba(14, 20, 21, 0.92)
+.chapter-card | background: rgba(12, 8, 6, .94) -> rgba(5, 10, 11, 0.94)
+.chapter-card | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+.chapter-card | box-shadow: 0 12px 30px rgba(0, 0, 0, .5), inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+.chapter-card:hover:not(.locked) | box-shadow: 0 16px 36px rgba(0, 0, 0, .6), 0 0 24px -12px var(--cc, var(--brass)) -> none
+.cc-face | border: rgba(201, 162, 74, .45) -> rgb(var(--c-line) / 0.45)
+.cc-face | box-shadow: inset 0 0 10px rgba(0, 0, 0, .5) -> none
+.start-panel .cc-more | background: rgba(12, 8, 6, .88) -> rgba(5, 10, 11, 0.88)
+.start-panel .cc-more:hover | background: rgba(24, 17, 12, .95) -> rgba(14, 20, 21, 0.95)
+/* CONTINUE-01 (#191): a contract with a live save wears a gold Continue ribbon (the card itself resumes), and its More toggle shares a button row with the destructive "Start over" door that clears the slot. */ .chapter-card.has-save | border-color: rgba(233, 168, 62, .55) -> rgb(var(--c-orange) / 0.55)
+.cc-continue | background: rgba(233, 168, 62, .1) -> rgb(var(--c-orange) / 0.1)
+.cc-continue | border: rgba(201, 162, 74, .5) -> rgb(var(--c-line) / 0.5)
+.start-panel .cc-restart | background: rgba(12, 8, 6, .88) -> rgba(5, 10, 11, 0.88)
+.start-panel .cc-restart:hover | background: rgba(24, 17, 12, .95) -> rgba(14, 20, 21, 0.95)
+/* tab strip — the sheet's only permanent header. It sits under the notch; the grip (see .tb-grip) rides its top edge. */ .ui-root[data-view="trade"] .tabs | background: rgba(24, 17, 11, .97) -> rgba(14, 20, 21, 0.97)
+/* tab strip — the sheet's only permanent header. It sits under the notch; the grip (see .tb-grip) rides its top edge. */ .ui-root[data-view="trade"] .tabs | background: rgba(12, 9, 6, .88) -> rgba(6, 11, 12, 0.88)
+/* tab strip — the sheet's only permanent header. It sits under the notch; the grip (see .tb-grip) rides its top edge. */ .ui-root[data-view="trade"] .tabs | background: linear-gradient(180deg, rgba(14, 20, 21, 0.97), rgba(6, 11, 12, 0.88)) -> rgba(14, 20, 21, 0.97)
+.tb-grip-pill | border-radius: 99px -> 0
+.tb-grip-pill | background: rgba(242, 220, 166, .38) -> rgb(var(--c-bone) / 0.38)
+.tb-grip-pill | box-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.tb-grip-pill | box-shadow: 0 0 10px rgb(var(--c-orange) / 0.3) -> none
+.battle-card | background: #17120d -> #0e1416
+.battle-card | background: #0a0806 -> #05090b
+.battle-card | border-radius: var(--r) -> 0
+.battle-card | box-shadow: 0 18px 50px rgba(0, 0, 0, .7), inset 0 0 0 1px rgba(0, 0, 0, .8) -> none
+.battle-side | border-radius: var(--r) -> 0
+.battle-side.turn | box-shadow: rgba(255, 176, 46, .25) -> rgb(var(--c-orange) / 0.25)
+.battle-side.turn | box-shadow: rgba(255, 176, 46, .12) -> rgb(var(--c-orange) / 0.12)
+.battle-side.turn | box-shadow: 0 0 0 1px rgb(var(--c-orange) / 0.25), 0 0 18px rgb(var(--c-orange) / 0.12) -> none
+.battle-side.low .battle-health-fill | background: linear-gradient(180deg, var(--danger2), var(--danger)) -> var(--danger2)
+.battle-health | background: #0c0906 -> #060b0c
+.battle-health | border-radius: 2px -> 0
+.battle-health-fill | background: linear-gradient(180deg, #7bc67b, #3f8f43) -> #7bc67b
+.battle-health-num | text-shadow: 0 1px 2px rgba(0, 0, 0, .9) -> none
+.battle-mana-bar | background: #0c0906 -> #060b0c
+.battle-mana-bar | border: rgba(107, 81, 35, .6) -> rgb(var(--c-line) / 0.6)
+.battle-mana-bar | border-radius: 1px -> 0
+.battle-mana-fill | background: linear-gradient(180deg, var(--gold2), var(--gold-d)) -> var(--gold2)
+.battle-mana-chip.full .battle-mana-fill | background: #fff3cf -> #ecf5f7
+.battle-mana-chip.full .battle-mana-fill | background: linear-gradient(180deg, #ecf5f7, var(--gold)) -> #ecf5f7
+.battle-mana-chip.full .battle-mana-fill | box-shadow: 0 0 6px var(--gold-glow) -> none
+/* B7 (#252): "?" — the battle How to Play, from inside the battle */ .battle-help | background: rgba(10, 8, 5, .7) -> rgba(5, 9, 11, 0.7)
+/* B7 (#252): the one-time first-battle hint — a strip at the foot of the viewport that never covers the board's middle and never blocks input. */ .battle-first-hint | color: #eadfc6 -> #d9e2e4
+/* B7 (#252): the one-time first-battle hint — a strip at the foot of the viewport that never covers the board's middle and never blocks input. */ .battle-first-hint | background: rgba(12, 9, 6, .94) -> rgba(6, 11, 12, 0.94)
+/* B7 (#252): the one-time first-battle hint — a strip at the foot of the viewport that never covers the board's middle and never blocks input. */ .battle-first-hint | box-shadow: 0 6px 22px rgba(0, 0, 0, .55) -> none
+.battle-first-hint button | color: #eadfc6 -> #d9e2e4
+.battle-first-hint .bfh-ok | color: #1a1206 -> #0f1516
+.battle-turn | text-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.battle-turn | text-shadow: 0 0 14px rgb(var(--c-orange) / 0.35) -> none
+.battle-timer | background: #0c0906 -> #060b0c
+.battle-timer | border-radius: 1px -> 0
+.battle-timer-fill | background: linear-gradient(90deg, var(--gold-d), var(--gold)) -> var(--gold-d)
+.battle-result | background: rgba(4, 3, 2, .8) -> rgba(1, 4, 5, 0.8)
+.battle-result-card | background: #17120d -> #0e1416
+.battle-result-card | background: #0a0806 -> #05090b
+.battle-result-card | background: linear-gradient(180deg, #0e1416, #05090b) -> #0e1416
+.battle-result-card | border-radius: var(--r) -> 0
+.battle-result-card | box-shadow: 0 14px 40px rgba(0, 0, 0, .75) -> none
+.battle-verdict | text-shadow: rgba(255, 176, 46, .3) -> rgb(var(--c-orange) / 0.3)
+.battle-verdict | text-shadow: 0 0 22px rgb(var(--c-orange) / 0.3) -> none
+.battle-continue | color: #14100b -> #0c1213
+.battle-continue | background: linear-gradient(180deg, var(--gold2), var(--gold)) -> var(--gold2)
+.battle-continue | border-radius: var(--r) -> 0
+.battle-ability | background: #241c13 -> #181f21
+.battle-ability | background: #16100a -> #0c1214
+.battle-ability | background: linear-gradient(180deg, #181f21, #0c1214) -> #181f21
+.battle-ability | border: #8a6d3f -> #916944
+.battle-ability | border-radius: 8px -> 0
+.battle-ability | color: #d8c49a -> rgb(var(--c-bone) / 1)
+.battle-ability.ready | border-color: #d0a862 -> #dda06b
+.battle-ability.ready | color: #f2e3bb -> #dde6e8
+.battle-ability.ready | box-shadow: rgba(208, 168, 98, .25) -> rgba(221, 160, 107, 0.25)
+.battle-ability.ready | box-shadow: 0 0 0 1px rgba(221, 160, 107, 0.25), 0 4px 12px rgba(0, 0, 0, .35) -> none
+.battle-ability.locked, .battle-ability.cooling, .battle-ability.poor, .battle-ability.waiting | border-color: #4a3d2c -> #3a4143
+.battle-ability.locked .ba-reason, .battle-ability.poor .ba-reason, .battle-ability.cooling .ba-reason | color: #c9a06a -> #cf9c6f
+.session-frame | background: rgba(24, 17, 11, .97) -> rgba(14, 20, 21, 0.97)
+.session-frame | background: rgba(9, 6, 4, .98) -> rgba(3, 7, 9, 0.98)
+.session-frame | background: linear-gradient(180deg, rgba(14, 20, 21, 0.97), rgba(3, 7, 9, 0.98)) -> rgba(14, 20, 21, 0.97)
+/* run.world feedback (2026-09): the first-game coach — the objective line becomes the one instruction, and the control it needs pulses. */ .objective.coach | box-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+/* run.world feedback (2026-09): the first-game coach — the objective line becomes the one instruction, and the control it needs pulses. */ .objective.coach | box-shadow: 0 0 0 2px rgb(var(--c-orange) / 0.35), 0 10px 28px rgba(0,0,0,.6) -> none
+/* VO-1: the spoken subtitle. Same speech plate as the rival wire, but that wire is display:none and a .toast would pollute the toast lane — so this caption sits above the resource bar, where a line can be read and skipped. */ .voice-sub | background: rgba(12, 9, 7, .97) -> rgba(6, 11, 12, 0.97)
+/* VO-1: the spoken subtitle. Same speech plate as the rival wire, but that wire is display:none and a .toast would pollute the toast lane — so this caption sits above the resource bar, where a line can be read and skipped. */ .voice-sub | background: rgba(28, 22, 14, .94) -> rgba(18, 24, 26, 0.94)
+/* VO-1: the spoken subtitle. Same speech plate as the rival wire, but that wire is display:none and a .toast would pollute the toast lane — so this caption sits above the resource bar, where a line can be read and skipped. */ .voice-sub | background: linear-gradient(100deg, rgba(6, 11, 12, 0.97), rgba(18, 24, 26, 0.94)) -> rgba(6, 11, 12, 0.97)
+/* VO-1: the spoken subtitle. Same speech plate as the rival wire, but that wire is display:none and a .toast would pollute the toast lane — so this caption sits above the resource bar, where a line can be read and skipped. */ .voice-sub | box-shadow: rgba(242, 220, 166, .1) -> rgb(var(--c-bone) / 0.1)
+/* VO-1: the spoken subtitle. Same speech plate as the rival wire, but that wire is display:none and a .toast would pollute the toast lane — so this caption sits above the resource bar, where a line can be read and skipped. */ .voice-sub | box-shadow: 0 12px 32px rgba(0, 0, 0, .66), inset 0 1px 0 rgb(var(--c-bone) / 0.1) -> none
+.voice-line-skip, .voice-skip | background: rgba(12, 9, 6, .9) -> rgba(6, 11, 12, 0.9)
+.voice-line-skip, .voice-skip | border-radius: var(--r) -> 0
+.gfx-voice-vol | accent-color: #c9a15b -> #d59964
+.coach-pulse | outline: rgba(255, 176, 46, .8) -> rgb(var(--c-orange) / 0.8)
+.tab-badge | border-radius: 999px -> 0
+.tab-badge | background: #ffb02e -> rgb(var(--c-orange) / 1)
+.tab-badge | color: #1a1208 -> #0f1516
+.battle-turns | color: #c9b890 -> #b3bbbd
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | background: #ffd479 -> rgb(var(--c-bone) / 1)
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | background: #e0a02a -> #ee963f
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | background: linear-gradient(180deg, rgb(var(--c-bone) / 1), #ee963f) !important -> rgb(var(--c-bone) / 1) !important
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | color: #1a1208 -> #0f1516
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | border: #fff0c0 -> rgb(var(--c-bone) / 1)
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | box-shadow: rgba(255, 196, 64, .45) -> rgb(var(--c-bone) / 0.45)
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | box-shadow: rgba(255, 176, 46, .9) -> rgb(var(--c-orange) / 0.9)
+/* 2026-09: city-pick mode — the town halls you can upgrade glow */ .label-upgrade | box-shadow: 0 0 0 3px rgb(var(--c-bone) / 0.45), 0 0 18px rgb(var(--c-orange) / 0.9) !important -> none
+/* ════════════════════════════════════════════════════════════════════ C2 (#257) — the chat panel. TWO STATES, ONE ELEMENT. Closed it is a slim bar on the desktop and a pill on a phone, both carrying the unread badge; open it is the log, the four preset keys, the composer and the two switches — a dock over the map on the desktop, a compact bottom sheet on a phone, parked above the bottom nav so the map keeps its middle. MULTIPLAYER ONLY. ui.ts builds none of this without a chat config, so a solo game never sees a panel — and none of these rules ever match. ════════════════════════════════════════════════════════════════════ */ .chat-dock | border-radius: var(--r) -> 0
+/* ════════════════════════════════════════════════════════════════════ C2 (#257) — the chat panel. TWO STATES, ONE ELEMENT. Closed it is a slim bar on the desktop and a pill on a phone, both carrying the unread badge; open it is the log, the four preset keys, the composer and the two switches — a dock over the map on the desktop, a compact bottom sheet on a phone, parked above the bottom nav so the map keeps its middle. MULTIPLAYER ONLY. ui.ts builds none of this without a chat config, so a solo game never sees a panel — and none of these rules ever match. ════════════════════════════════════════════════════════════════════ */ .chat-dock | background: rgba(30, 23, 15, .95) -> rgba(19, 26, 27, 0.95)
+/* ════════════════════════════════════════════════════════════════════ C2 (#257) — the chat panel. TWO STATES, ONE ELEMENT. Closed it is a slim bar on the desktop and a pill on a phone, both carrying the unread badge; open it is the log, the four preset keys, the composer and the two switches — a dock over the map on the desktop, a compact bottom sheet on a phone, parked above the bottom nav so the map keeps its middle. MULTIPLAYER ONLY. ui.ts builds none of this without a chat config, so a solo game never sees a panel — and none of these rules ever match. ════════════════════════════════════════════════════════════════════ */ .chat-dock | background: rgba(9, 6, 4, .96) -> rgba(3, 7, 9, 0.96)
+/* ════════════════════════════════════════════════════════════════════ C2 (#257) — the chat panel. TWO STATES, ONE ELEMENT. Closed it is a slim bar on the desktop and a pill on a phone, both carrying the unread badge; open it is the log, the four preset keys, the composer and the two switches — a dock over the map on the desktop, a compact bottom sheet on a phone, parked above the bottom nav so the map keeps its middle. MULTIPLAYER ONLY. ui.ts builds none of this without a chat config, so a solo game never sees a panel — and none of these rules ever match. ════════════════════════════════════════════════════════════════════ */ .chat-dock | box-shadow: rgba(242, 220, 166, .12) -> rgb(var(--c-bone) / 0.12)
+/* ════════════════════════════════════════════════════════════════════ C2 (#257) — the chat panel. TWO STATES, ONE ELEMENT. Closed it is a slim bar on the desktop and a pill on a phone, both carrying the unread badge; open it is the log, the four preset keys, the composer and the two switches — a dock over the map on the desktop, a compact bottom sheet on a phone, parked above the bottom nav so the map keeps its middle. MULTIPLAYER ONLY. ui.ts builds none of this without a chat config, so a solo game never sees a panel — and none of these rules ever match. ════════════════════════════════════════════════════════════════════ */ .chat-dock | box-shadow: 0 10px 26px rgba(0, 0, 0, .55), inset 0 1px 0 rgb(var(--c-bone) / 0.12) -> none
+.chat-head:hover | background: rgba(255, 176, 46, .06) -> rgb(var(--c-orange) / 0.06)
+.chat-badge | border-radius: 999px -> 0
+.chat-badge | background: linear-gradient(180deg, var(--gold2), var(--gold)) -> var(--gold2)
+.chat-badge | color: #241708 -> #151b1d
+.chat-badge | box-shadow: 0 0 10px -2px var(--gold-glow) -> none
+.chat-log | background: linear-gradient(180deg, rgba(0, 0, 0, .38), rgba(0, 0, 0, .12)) -> rgba(0, 0, 0, .38)
+.chat-preset | border-radius: var(--r) -> 0
+.chat-preset | background: rgba(236, 213, 164, .05) -> rgb(var(--c-bone) / 0.05)
+.chat-preset:hover | background: rgba(255, 176, 46, .12) -> rgb(var(--c-orange) / 0.12)
+.chat-input | border-radius: var(--r) -> 0
+.chat-input | background: rgba(6, 4, 3, .7) -> rgba(2, 5, 6, 0.7)
+.chat-input:focus | box-shadow: rgba(255, 176, 46, .35) -> rgb(var(--c-orange) / 0.35)
+.chat-send | border-radius: var(--r) -> 0
+.chat-send | background: rgba(255, 176, 46, .22) -> rgb(var(--c-orange) / 0.22)
+.chat-send | background: rgba(138, 90, 17, .25) -> rgba(143, 86, 28, 0.25)
+.chat-send | background: linear-gradient(180deg, rgb(var(--c-orange) / 0.22), rgba(143, 86, 28, 0.25)) -> rgb(var(--c-orange) / 0.22)
+.chat-tool | border: rgba(107, 81, 35, .6) -> rgb(var(--c-line) / 0.6)
+.chat-tool | border-radius: var(--r) -> 0
+.chat-tool | background: rgba(236, 213, 164, .03) -> rgb(var(--c-bone) / 0.03)
+.chat-tool.on | background: rgba(255, 176, 46, .16) -> rgb(var(--c-orange) / 0.16)
+.chat-tool.on | background: rgba(138, 90, 17, .12) -> rgba(143, 86, 28, 0.12)
+.chat-tool.on | background: linear-gradient(180deg, rgb(var(--c-orange) / 0.16), rgba(143, 86, 28, 0.12)) -> rgb(var(--c-orange) / 0.16)
+.chat-tool.on | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+.chat-tool.on | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.2), 0 0 10px -4px var(--gold-glow) -> none
+.ui-root[data-phone="1"] .chat-scrim:not(.hidden) | background: rgba(4, 3, 2, .5) -> rgba(1, 4, 5, 0.5)
+.ui-root[data-phone="1"] .chat-dock | border-radius: 999px -> 0
+.ui-root[data-phone="1"] .chat-dock.open | border-radius: var(--r) -> 0
+/* the key lights while the plate is up */ .fab.minimap-toggle[aria-pressed="true"] | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+/* the key lights while the plate is up */ .fab.minimap-toggle[aria-pressed="true"] | box-shadow: rgba(255, 176, 46, .55) -> rgb(var(--c-orange) / 0.55)
+/* the key lights while the plate is up */ .fab.minimap-toggle[aria-pressed="true"] | box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgb(var(--c-bone) / 0.2), 0 0 14px -3px rgb(var( -> none
+.radio-pill | border-radius: 999px -> 0
+.radio-pill | background: rgba(30, 22, 14, .94) -> rgba(19, 25, 27, 0.94)
+.radio-pill | background: rgba(10, 7, 5, .95) -> rgba(4, 9, 10, 0.95)
+.radio-pill | background: linear-gradient(180deg, rgba(19, 25, 27, 0.94), rgba(4, 9, 10, 0.95)) -> rgba(19, 25, 27, 0.94)
+.radio-pill | box-shadow: rgba(242, 220, 166, .14) -> rgb(var(--c-bone) / 0.14)
+.radio-pill | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.14), 0 8px 22px rgba(0, 0, 0, .55) -> none
+.radio-play, .radio-vol | background: rgba(56, 42, 26, .7) -> rgba(40, 46, 48, 0.7)
+.radio-play, .radio-vol | background: rgba(12, 9, 6, .9) -> rgba(6, 11, 12, 0.9)
+.radio-play, .radio-vol | background: linear-gradient(180deg, rgba(40, 46, 48, 0.7), rgba(6, 11, 12, 0.9)) -> rgba(40, 46, 48, 0.7)
+.radio-play[aria-pressed="true"] | color: #fff3d6 -> #edf6f8
+.radio-play[aria-pressed="true"] | box-shadow: 0 0 12px -3px var(--gold-glow) -> none
+/* the spinner — a plain ring, so the player adds no art to the build */ .radio-spin | border: rgba(242, 220, 166, .25) -> rgb(var(--c-bone) / 0.25)
+/* the volume popover — one small slider under the pill */ .radio-slider | border-radius: var(--r) -> 0
+/* the volume popover — one small slider under the pill */ .radio-slider | background: rgba(30, 22, 14, .97) -> rgba(19, 25, 27, 0.97)
+/* the volume popover — one small slider under the pill */ .radio-slider | background: rgba(9, 6, 4, .98) -> rgba(3, 7, 9, 0.98)
+/* the volume popover — one small slider under the pill */ .radio-slider | background: linear-gradient(180deg, rgba(19, 25, 27, 0.97), rgba(3, 7, 9, 0.98)) -> rgba(19, 25, 27, 0.97)
+/* the volume popover — one small slider under the pill */ .radio-slider | box-shadow: 0 10px 24px rgba(0, 0, 0, .6) -> none
+.radio-vol-range | accent-color: #c9a15b -> #d59964
+/* …and the text comes back on a long press (radio.ts sets data-peek). */ .radio-pill[data-peek="1"] .radio-now | border-radius: var(--r) -> 0
+/* …and the text comes back on a long press (radio.ts sets data-peek). */ .radio-pill[data-peek="1"] .radio-now | background: rgba(12, 8, 5, .96) -> rgba(5, 10, 11, 0.96)
+.radio-play | background: rgba(56, 42, 26, .82) -> rgba(40, 46, 48, 0.82)
+.radio-play | background: rgba(12, 9, 6, .92) -> rgba(6, 11, 12, 0.92)
+.radio-play | background: linear-gradient(180deg, rgba(40, 46, 48, 0.82), rgba(6, 11, 12, 0.92)) -> rgba(40, 46, 48, 0.82)
+.radio-play | box-shadow: rgba(242, 220, 166, .2) -> rgb(var(--c-bone) / 0.2)
+.radio-play | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.2), 0 6px 18px rgba(0, 0, 0, .55) -> none
+/* ── M2 (#256): Sabotage Event Window ─────────────────────────────── A small event window (not a full modal) for minimap sabotage markers. Shows a static illustration for that sabotage type, who did it, the target, time remaining, and "Go there" + close buttons. */ .sabotage-event-window | border-radius: var(--r) -> 0
+/* ── M2 (#256): Sabotage Event Window ─────────────────────────────── A small event window (not a full modal) for minimap sabotage markers. Shows a static illustration for that sabotage type, who did it, the target, time remaining, and "Go there" + close buttons. */ .sabotage-event-window | box-shadow: rgba(242, 220, 166, .18) -> rgb(var(--c-bone) / 0.18)
+/* ── M2 (#256): Sabotage Event Window ─────────────────────────────── A small event window (not a full modal) for minimap sabotage markers. Shows a static illustration for that sabotage type, who did it, the target, time remaining, and "Go there" + close buttons. */ .sabotage-event-window | box-shadow: inset 0 1px 0 rgb(var(--c-bone) / 0.18), 0 10px 28px rgba(0, 0, 0, .65) -> none
+.sabotage-window-header | border-bottom: rgba(242, 220, 166, .15) -> rgb(var(--c-bone) / 0.15)
+.sabotage-window-close | color: #a89f91 -> #9aa2a4
+.sabotage-window-close | border-radius: 3px -> 0
+.sabotage-image-slot | border-radius: calc(var(--r) - 2px) -> 0
+.sabotage-image-slot | background: #14100c -> #0c1214
+.sabotage-image-slot | border: rgba(242, 220, 166, .15) -> rgb(var(--c-bone) / 0.15)
+.sabotage-label | color: #8e8474 -> #7f8789
+.sabotage-val | color: #ede2cf -> #dce5e7
+.sabotage-countdown | color: #ffd75a -> rgb(var(--c-bone) / 1)

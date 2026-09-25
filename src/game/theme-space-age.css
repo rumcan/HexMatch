@@ -1,0 +1,502 @@
+/* ═══════════════════════════════════════════════════════════════════
+   UI SPACE AGE — docs/UI_SPACE_AGE_PLAN.md
+   Charcoal, orange, aqua and lemon; square corners; flat colour; no
+   gradients, bevels, rivets or glows. Loaded AFTER styles.css (App.tsx),
+   so the old token names below re-point every var() in styles.css.
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  /* palette */
+  --sa-ink: #0f1214; --sa-panel: #1f2427; --sa-panel-2: #2a3034; --sa-line: #343b3f; --sa-line-hi: #4a5357;
+  --sa-bone: #eee6d4; --sa-bone-dim: #b9b3a6; --sa-bone-mute: #7d786e;
+  --sa-orange: #f08a24; --sa-orange-hi: #ffb061; --sa-orange-lo: #8a4a0c; --sa-on-orange: #1f1204;
+  --sa-aqua: #4fb3bf; --sa-aqua-hi: #8fd6de; --sa-aqua-lo: #245a61;
+  --sa-lemon: #f2d64b; --sa-on-lemon: #2b2604;
+  --sa-red: #e2553f; --sa-green: #7cc47f; --sa-sky: #6fb0e0;
+  /* channels for the remap script: rgb(var(--c-x) / a) */
+  --c-orange: 240 138 36; --c-bone: 238 230 212; --c-ink: 15 18 20; --c-line: 74 83 87;
+  --c-red: 226 85 63; --c-lemon: 242 214 75; --c-aqua: 79 179 191;
+
+  /* old token names → new values */
+  --bg: var(--sa-ink); --walnut: var(--sa-panel); --iron-hi: var(--sa-panel-2);
+  --glass: #1f2427f5; --glass-hi: var(--sa-panel-2); --glass-lo: #0f1214e6;
+  --line: var(--sa-line); --line-hi: var(--sa-line-hi);
+  --brass: var(--sa-orange); --brass-hi: #fff3dc; --brass-lo: var(--sa-line-hi); --patina: var(--sa-aqua);
+  --txt: var(--sa-bone); --txt-dim: var(--sa-bone-dim); --txt-mute: var(--sa-bone-mute);
+  --gold: var(--sa-lemon); --gold2: #f7e58a; --gold-d: #8c7a1c; --gold-glow: transparent;
+  --danger: #c43e2c; --danger2: var(--sa-red); --good: var(--sa-green); --info: var(--sa-sky);
+  --r: 0;
+
+  /* the plate/texture system goes flat (layer syntax stays valid) */
+  --flat: linear-gradient(var(--sa-panel), var(--sa-panel));
+  --iron: var(--flat); --iron-big: var(--flat);
+  --plate-rivet: none; --plate-lamp: none; --plate-bevel: none; --plate-grain: none;
+  --plate-body: var(--flat); --plate-wash-brass: var(--flat);
+  --felt: var(--flat); --ledger: var(--flat); --smoke: none;
+  --corner-tl: none; --corner-tr: none; --corner-bl: none; --corner-br: none;
+  --boss-tl: none; --boss-tr: none; --boss-bl: none; --boss-br: none;
+  --seal: none; --seal-sm: none;
+  --room:
+    linear-gradient(115deg, transparent 0 62%, #f08a2414 62% 66%, transparent 66%),
+    linear-gradient(115deg, transparent 0 70%, #4fb3bf12 70% 72%, transparent 72%),
+    linear-gradient(var(--sa-ink), var(--sa-ink));
+
+  /* layout */
+  --topbar-h: 44px; --rail-w: 72px; --dock-h: 36px; --drawer-h: 0px;
+}
+
+/* ── P4: top bar ─────────────────────────────────────────────────── */
+.topbar {
+  background: var(--sa-panel);
+  background-blend-mode: normal;
+  border-bottom: 3px solid var(--sa-orange);
+  gap: 12px;
+}
+.logo { font-family: var(--display); font-weight: 600; font-size: 14px; letter-spacing: .14em; color: var(--sa-bone); gap: 6px; }
+.logo .logo-script {
+  font-family: var(--script); font-style: normal; font-weight: 400;
+  font-size: 21px; letter-spacing: 0; text-transform: none; color: var(--sa-orange);
+  margin-left: -2px; line-height: 1;
+}
+.logo-mark { display: none; }
+.topbar .chipbar { flex-wrap: nowrap; gap: 4px; justify-content: flex-start; overflow: hidden; }
+.topbar .chip { background: var(--sa-panel-2); border: 0; padding: 2px 8px 2px 4px; height: 28px; }
+.topbar .chip:hover { background: var(--sa-line); }
+.topbar .chip .chip-ic .cargo-ic { width: 18px; height: 18px; }
+.ui-root:not([data-phone="1"]) .resbar { display: none; }
+/* the camera and names keys moved into ☰ (the nodes stay for scripts/tests) */
+.topbar [data-act="recenter"], .topbar #iso-names { display: none; }
+.icon-btn { background: transparent; border: 1px solid transparent; color: var(--sa-bone-dim); }
+.icon-btn:hover, .icon-btn[aria-expanded="true"] { background: var(--sa-panel-2); border-color: var(--sa-line-hi); color: var(--sa-bone); }
+.vp-badge { background: var(--sa-panel-2); border: 0; color: var(--sa-lemon); font-family: var(--display); }
+/* ☰ menu: the Game row (difficulty + sound) */
+.tm-game { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--sa-line); }
+.tm-game .rival-skill { flex: 1; }
+.iso-topmenu { background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange); }
+.tm-item:hover { background: var(--sa-panel-2); }
+
+/* ── P5: left tool rail (desktop) ────────────────────────────────── */
+@media (min-width: 761px) {
+  .aside.left {
+    left: 0; top: calc(var(--topbar-h) + var(--safe-top) + 3px); bottom: 0;
+    width: var(--rail-w); overflow-x: hidden;
+    background: var(--sa-panel); border-right: 1px solid var(--sa-ink);
+  }
+  .aside.left > .panel { background: none; border: 0; padding: 0; }
+  .aside.left .panel-title { display: none; }
+  .aside.left .build-list { display: flex; flex-direction: column; gap: 0; }
+  .aside.left .build-btn {
+    flex-direction: column; justify-content: center; gap: 3px;
+    min-height: 58px; padding: 6px 2px; text-align: center;
+    background: none; border: 0; border-bottom: 1px solid var(--sa-line);
+    color: var(--sa-bone-dim);
+  }
+  .aside.left .build-btn:hover { background: var(--sa-panel-2); color: var(--sa-bone); }
+  .aside.left .build-btn.active, .aside.left .build-btn[aria-pressed="true"], .aside.left .build-btn.on {
+    background: var(--sa-orange); color: var(--sa-on-orange);
+  }
+  .aside.left .build-btn.disabled, .aside.left .build-btn:disabled { opacity: .45; }
+  .aside.left .bb-ico { display: block; line-height: 0; }
+  .aside.left .bb-mid { align-items: center; gap: 0; }
+  .aside.left .bb-mid b {
+    font-family: var(--sans); font-weight: 500; font-size: 11px; letter-spacing: 0;
+    text-transform: none; line-height: 1.15; color: inherit;
+  }
+  .aside.left .bb-mid small { display: none; }
+  .aside.left .rail-toggle-left { display: none; }
+  .ui-root[data-rail-left="1"] .aside.left { transform: none; }
+  /* the Railway panel (while a rail tool is held) floats beside the rail */
+  .aside.left .rail-panel {
+    position: fixed; left: calc(var(--rail-w) + 6px); top: calc(var(--topbar-h) + var(--safe-top) + 10px);
+    width: 300px; max-height: 60vh; overflow-y: auto; z-index: 31;
+    background: var(--sa-panel); border: 1px solid var(--sa-ink); border-left: 3px solid var(--sa-orange);
+  }
+}
+.bb-ico { display: none; }
+@media (min-width: 761px) { .aside.left .bb-ico { display: block; } }
+.tool-ico { display: block; margin: 0 auto; }
+.tool-card {
+  position: fixed; z-index: 41; left: calc(var(--rail-w) + 6px);
+  min-width: 170px; max-width: 280px; padding: 8px 12px;
+  background: var(--sa-bone); color: var(--sa-ink);
+  border-left: 3px solid var(--sa-orange);
+  font-family: var(--sans); font-size: 12px; line-height: 1.35;
+  pointer-events: none;
+}
+.tool-card b { display: block; font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; font-size: 11px; }
+.tool-card small { display: block; color: #3a3f42; font-size: 12px; }
+.tool-card.hidden { display: none; }
+
+/* ── P6: minimap top right ───────────────────────────────────────── */
+@media (min-width: 761px) {
+  .minimap-dock {
+    top: calc(var(--topbar-h) + var(--safe-top) + 11px); right: 8px; left: auto; bottom: auto;
+    width: clamp(150px, 13vw, 220px);
+    padding: 3px; background: var(--sa-panel); border: 1px solid var(--sa-ink); box-shadow: none;
+    transition: none;
+  }
+  .chat-dock { left: calc(var(--rail-w) + 12px); right: auto; bottom: calc(var(--dock-h) + 12px); }
+}
+
+/* ── P7: centered bottom drawer (was the right column) ───────────── */
+@media (min-width: 761px) {
+  .aside.right {
+    top: auto; bottom: 0; right: auto; left: 50%;
+    transform: translateX(-50%);
+    width: min(760px, calc(100vw - var(--rail-w) - 24px));
+    max-height: min(420px, 55vh);
+    flex-direction: column-reverse;
+    background: var(--sa-panel); border: 1px solid var(--sa-ink); border-bottom: 0;
+    border-top: 3px solid var(--sa-orange);
+    overflow: hidden;
+  }
+  .ui-root[data-rail-right="1"] .aside.right { transform: translateX(-50%); border-top-width: 0; }
+  .aside.right .rail-toggle-right { display: none; }
+  .aside.right > .panel { background: none; border: 0; margin: 0; padding: 0; min-height: 0; display: flex; flex-direction: column; }
+  .aside.right .tabs {
+    order: 99; display: flex; justify-content: center; gap: 0; margin: 0;
+    height: var(--dock-h); background: var(--sa-ink); border: 0; padding: 0;
+  }
+  .aside.right .tab {
+    flex: 0 0 auto; height: 100%; padding: 0 14px; gap: 6px;
+    background: none; border: 0; border-right: 1px solid var(--sa-line);
+    color: var(--sa-bone-dim); font-family: var(--sans); font-weight: 500; font-size: 12px;
+    letter-spacing: 0; text-transform: none; box-shadow: none;
+  }
+  .aside.right .tab:hover { background: var(--sa-panel-2); color: var(--sa-bone); }
+  .ui-root:not([data-rail-right="1"]) .aside.right .tab.active { background: var(--sa-bone); color: var(--sa-ink); }
+  .aside.right .tab-badge { background: var(--sa-orange); color: var(--sa-on-orange); }
+  .aside.right .pane { max-height: min(300px, 42vh); overflow-y: auto; padding: 10px 14px; }
+  .aside.right .plant-card { margin: 0; border: 0; border-bottom: 1px solid var(--sa-line); background: none; }
+  /* closed: only the strip */
+  .ui-root[data-rail-right="1"] .aside.right .pane,
+  .ui-root[data-rail-right="1"] .aside.right .plant-card,
+  .ui-root[data-rail-right="1"] .aside.right .tb-grip { display: none; }
+  /* hint pill and toasts ride above the drawer */
+  .modebar { bottom: calc(var(--drawer-h, 36px) + 10px); }
+}
+
+/* ── P8: buttons, dialogs, toasts, coach ─────────────────────────── */
+.post-btn, .big-btn, .bank-btn, .menu-btn.primary, .start-primary, .ending-button, .tax-btn {
+  background: var(--sa-lemon); color: var(--sa-on-lemon);
+  border: 0; border-radius: 0; box-shadow: none; text-shadow: none;
+  font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+}
+.post-btn:hover, .big-btn:hover, .bank-btn:hover, .menu-btn.primary:hover, .start-primary:hover, .ending-button:hover, .tax-btn:hover {
+  background: #f7e27a; color: var(--sa-on-lemon);
+}
+.post-btn:disabled, .big-btn:disabled, .bank-btn:disabled, .post-btn.disabled { background: var(--sa-line); color: var(--sa-bone-mute); }
+.menu-btn, .reset-btn, .tm-item {
+  background: var(--sa-panel-2); color: var(--sa-bone);
+  border: 1px solid var(--sa-line-hi); border-radius: 0; box-shadow: none;
+  font-family: var(--display); letter-spacing: .1em;
+}
+.menu-btn:hover, .reset-btn:hover { background: var(--sa-line); border-color: var(--sa-bone-dim); }
+.modal.box, .session-frame, .sr-card, .battle-card, .settings-sheet .modal.box, .iso-topmenu {
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  border-radius: 0; box-shadow: none;
+}
+.modal h2, .panel-title { font-family: var(--display); font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--sa-bone); }
+.modal h2::before, .panel-title::before { display: none; }
+.toast { background: var(--sa-panel); color: var(--sa-bone); border: 0; border-left: 3px solid var(--sa-aqua); border-radius: 0; box-shadow: none; }
+.toast.success { border-left-color: var(--sa-green); }
+.toast.danger { border-left-color: var(--sa-red); }
+.toast.info { border-left-color: var(--sa-aqua); }
+.banner, .banner.narrated {
+  background: var(--sa-ink); color: var(--sa-bone);
+  border: 0; border-left: 3px solid var(--sa-lemon); border-radius: 0; box-shadow: none;
+}
+.banner b { color: var(--sa-lemon); }
+input, select, textarea { border-radius: 0; }
+select, input[type="number"], input[type="text"] { background: var(--sa-ink); color: var(--sa-bone); border: 1px solid var(--sa-line-hi); }
+
+/* ── P9: front door (main menu + mode screen) ────────────────────── */
+.start-screen::before { background: var(--room); animation: none; filter: none; }
+.start-screen::after, .menu-embers { display: none; }
+.start-screen { background: var(--sa-ink); }
+.menu-card, .start-panel {
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  border-radius: 0; box-shadow: none;
+}
+.menu-emblem { display: none; }
+.menu-title { font-family: var(--display); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--sa-bone); }
+.start-kicker { color: var(--sa-orange); font-family: var(--display); letter-spacing: .16em; }
+.menu-btn .mb-tag { font-family: var(--sans); color: var(--sa-bone-dim); letter-spacing: 0; text-transform: none; }
+.menu-btn.primary .mb-tag, .start-primary small { color: var(--sa-on-lemon); opacity: .8; }
+.menu-leaderboard { background: var(--sa-panel); border: 1px solid var(--sa-ink); border-radius: 0; box-shadow: none; }
+
+/* city pick (Upgrade city with several cities): an upgrade-arrow cursor */
+.ui-root[data-pick="city"] .map-canvas, .ui-root[data-pick="city"] .map-canvas canvas {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Crect x='1' y='1' width='26' height='26' fill='%231f2427' stroke='%23f2d64b' stroke-width='2'/%3E%3Cpath d='M14 6l7 8h-4v8h-6v-8H7z' fill='%23f2d64b'/%3E%3C/svg%3E") 14 14, pointer;
+}
+.label-upgrade { border-radius: 0; }
+
+/* flat, no gradients: kill the old scrim/ornament overlays and plate fills */
+.build-btn::before, .build-btn.active::before,
+.aside.left .panel::after, .aside.right .panel::after, .panel::before, .panel::after { display: none !important; }
+.panel { background: var(--sa-panel); border-radius: 0; box-shadow: none; }
+.aside.left, .aside.left > .panel, .aside.left .build-list { background: var(--sa-panel) !important; border-radius: 0; box-shadow: none; }
+.aside.left .build-btn { background: var(--sa-panel) !important; background-image: none !important; }
+.aside.left .build-btn:hover { background: var(--sa-panel-2) !important; }
+@media (min-width: 761px) {
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active { background: var(--sa-orange) !important; color: var(--sa-on-orange); border-color: var(--sa-orange); }
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange); }
+}
+
+/* the drawer's tabs share the strip's full width */
+@media (min-width: 761px) {
+  .aside.right .tabs { justify-content: stretch; }
+  .aside.right .tab { flex: 1 1 0; justify-content: center; min-width: 0; }
+  .aside.right .tab:last-child { border-right: 0; }
+}
+
+/* lighter type: nothing heavier than 500 in the HUD and menus; numbers 400 */
+.ui-root b, .ui-root strong, .ui-root h1, .ui-root h2, .ui-root h3,
+.start-screen b, .start-screen strong, .start-screen h1, .start-screen h2,
+.logo, .panel-title, .modal h2, .menu-title, .menu-btn, .tab, .vp-badge, .king-name, .king-vp,
+.post-btn, .big-btn, .bank-btn, .menu-btn.primary, .start-primary, .ending-button, .tool-card b {
+  font-weight: 500 !important;
+}
+.chip-n, .chip-r, .vp-badge b, .king-vp b, .ui-root .num { font-weight: 400 !important; }
+.logo { letter-spacing: .16em; }
+
+/* the old "ledger" parchment cards (dark text) become flat bone cards */
+:root { --ledger: linear-gradient(var(--sa-bone), var(--sa-bone)); }
+.offer, .feed-row, .help-col, .store-row, .tax-row, .tut-tip, .tut-ledger-row {
+  background: var(--sa-bone) !important; background-blend-mode: normal !important;
+  color: var(--sa-ink) !important; border: 1px solid var(--sa-ink) !important; box-shadow: none !important;
+}
+.offer *, .feed-row *, .help-col *, .store-row *, .tax-row *, .tut-tip *, .tut-ledger-row * { color: inherit; }
+.help-col p, .tut-tip, .tut-ledger-row { color: #2a3034 !important; font-family: var(--sans); }
+.help-col p b, .tut-tip b, .tut-ledger-row b { color: var(--sa-ink) !important; }
+.help-col h3 { color: var(--sa-orange-lo) !important; border-bottom-color: #b9b3a6 !important; font-weight: 500; }
+.banner { background: var(--sa-ink) !important; color: var(--sa-bone) !important; }
+/* secondary buttons: outlined, not lemon */
+.big-btn.ghost, .tut-nav button:not(:last-child), [data-act="tut-prev"] {
+  background: transparent !important; color: var(--sa-bone) !important;
+  border: 1px solid var(--sa-line-hi) !important;
+}
+.big-btn.ghost:hover, [data-act="tut-prev"]:hover { background: var(--sa-panel-2) !important; }
+.big-btn.ghost.danger { color: var(--sa-red) !important; border-color: var(--sa-red) !important; }
+[data-act="tut-prev"]:disabled { opacity: .35; }
+
+/* Feed rows: dark, like the rest of the drawer */
+.feed-row {
+  background: var(--sa-panel-2) !important; color: var(--sa-bone) !important;
+  border: 0 !important; border-left: 3px solid var(--sa-line-hi) !important;
+}
+.feed-row * { color: inherit; }
+
+/* bottom-right dock: Plant card + battle/action pop-ups */
+.br-dock {
+  position: fixed; right: 8px; bottom: 8px; z-index: 36;
+  width: min(340px, calc(100vw - 16px));
+  display: flex; flex-direction: column-reverse; gap: 8px;
+  pointer-events: none;
+}
+.br-dock > * { pointer-events: auto; }
+.br-dock .plant-card, .br-dock .depot-card {
+  position: static; transform: none; left: auto; bottom: auto; width: auto; margin: 0;
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  padding: 10px 12px;
+}
+.br-dock .plant-card.hidden, .br-dock .depot-card.hidden { display: none; }
+@media (max-width: 760px) { .br-dock { bottom: calc(var(--resbar-gap, 60px) + 8px); } }
+/* inline cargo icons in notes */
+.pane-note .cargo-ic, .note-inline .cargo-ic { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin: 0 2px; }
+@media (min-width: 761px) {
+  /* keep the centred drawer clear of the bottom-right dock */
+  .aside.right { width: clamp(420px, calc(100vw - 2 * (340px + 20px)), 720px); }
+}
+
+/* ── drawer never runs under the bottom-right dock (tablet widths too) ── */
+@media (min-width: 761px) {
+  .aside.right {
+    left: calc(var(--rail-w) + 8px); right: calc(min(340px, 36vw) + 16px);
+    width: auto; max-width: 720px; margin-inline: auto; transform: none;
+  }
+  .ui-root[data-rail-right="1"] .aside.right { transform: none; }
+  .br-dock { width: min(340px, 36vw); }
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  .aside.right .tab .tab-ic { display: none; }
+  .aside.right .tab { padding: 0 6px; font-size: 11px; }
+}
+
+/* ── main menu: a left-aligned column; the ladder is background ── */
+.start-screen.menu {
+  display: block; padding: 0; min-height: 100vh; min-height: 100dvh;
+}
+.start-screen.menu > .menu-card {
+  position: fixed; left: 0; top: 0; bottom: 0; z-index: 2;
+  width: min(400px, 100vw); margin: 0; max-width: none;
+  display: flex; flex-direction: column; justify-content: center; align-items: stretch;
+  padding: 48px 40px; text-align: left;
+  border: 0; border-right: 3px solid var(--sa-orange); border-top: 0;
+}
+.start-screen.menu .menu-title { text-align: left; font-size: 30px; line-height: 1.1; margin-bottom: 4px; }
+.start-screen.menu .start-kicker, .start-screen.menu .menu-sub { text-align: left; }
+.start-screen.menu .menu-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 22px; }
+.start-screen.menu .menu-btn { text-align: left; padding: 12px 16px; }
+.start-screen.menu .menu-btn .mb-tag { display: block; text-align: left; margin: 2px 0 0; }
+.start-screen.menu > .menu-leaderboard {
+  position: fixed; right: 5vw; top: 50%; transform: translateY(-50%); z-index: 1;
+  width: min(420px, 40vw); margin: 0;
+  background: transparent; border: 0; opacity: .38; transition: opacity .2s;
+}
+.start-screen.menu > .menu-leaderboard:hover, .start-screen.menu > .menu-leaderboard:focus-within { opacity: 1; }
+.start-screen.menu > .menu-foot { position: fixed; left: 40px; bottom: 16px; z-index: 3; margin: 0; text-align: left; }
+@media (max-width: 760px) {
+  .start-screen.menu > .menu-card { position: relative; width: 100%; min-height: 100dvh; border-right: 0; padding: 32px 22px; }
+  .start-screen.menu > .menu-leaderboard { display: none; }
+  .start-screen.menu > .menu-foot { left: 22px; }
+}
+
+/* ── phone ──────────────────────────────────────────────────────── */
+.fab, .toolchip, .mnav button, .ui-root button { border-radius: 0 !important; }
+.fab {
+  background: var(--sa-panel) !important; color: var(--sa-bone) !important;
+  border: 1px solid var(--sa-ink) !important; box-shadow: none !important;
+}
+.toolchip { background: var(--sa-panel) !important; color: var(--sa-bone) !important; border: 1px solid var(--sa-orange) !important; box-shadow: none !important; }
+.mnav { background: var(--sa-ink) !important; border-top: 3px solid var(--sa-orange) !important; box-shadow: none !important; }
+.mnav button { background: transparent !important; color: var(--sa-bone-dim) !important; border: 0 !important; }
+.mnav button[aria-current="page"], .mnav button.active, .mnav button[aria-pressed="true"] { background: var(--sa-bone) !important; color: var(--sa-ink) !important; }
+@media (max-width: 760px) {
+  .resbar { background: var(--sa-panel) !important; border-top: 1px solid var(--sa-ink) !important; }
+  .topbar .logo { display: none; }
+  .topbar { gap: 6px; padding-left: 8px; padding-right: 8px; }
+  /* the Plant card lives in the Economy sheet on a phone; the dock keeps only pop-ups */
+  .br-dock .plant-card { display: none !important; }
+  .br-dock { left: 8px; right: 72px; width: auto; bottom: calc(var(--resbar-gap, 120px) + 8px); }
+}
+
+/* ladder: centred in the space right of the menu column */
+.start-screen.menu > .menu-leaderboard {
+  left: min(400px, 100vw); right: 0; width: auto; max-width: 440px; margin-inline: auto;
+  text-align: center;
+}
+.start-screen.menu > .menu-leaderboard .start-kicker,
+.start-screen.menu > .menu-leaderboard .menu-leaderboard-title,
+.start-screen.menu > .menu-leaderboard .menu-leaderboard-sub,
+.start-screen.menu > .menu-leaderboard .ladder-note { text-align: center; }
+
+/* Every lemon/orange-filled control reads DARK text (white on yellow was
+   unreadable). !important beats the old sheet's per-context text colours. */
+.big-btn:not(.ghost), .post-btn, .bank-btn, .menu-btn.primary, .start-primary, .ending-button, .tax-btn,
+.sr-confirm, .battle-continue, .battle-first-hint .bfh-ok, [data-confirm-ok], [data-act="tut-next"], [data-act="tut-done"] {
+  background: var(--sa-lemon) !important; color: var(--sa-on-lemon) !important; text-shadow: none !important;
+}
+.big-btn:not(.ghost) *, .post-btn *, .menu-btn.primary *, .start-primary *, .sr-confirm *, .battle-continue *, [data-confirm-ok] * { color: inherit !important; }
+.big-btn.danger:not(.ghost), [data-confirm-ok].danger { background: var(--sa-red) !important; color: #1f0a05 !important; }
+.quests-head .q-count, .chat-badge, .tab-badge, .menu-btn.primary:hover { color: var(--sa-on-orange) !important; }
+.menu-btn.primary:hover { background: #f7e27a !important; color: var(--sa-on-lemon) !important; }
+
+/* action cards (depot / industry / battle): quiet rows, not lemon slabs */
+.depot-card-acts { display: flex; flex-direction: column; gap: 6px; }
+.depot-card-acts .post-btn {
+  background: var(--sa-panel-2) !important; color: var(--sa-bone) !important;
+  border: 1px solid var(--sa-line-hi) !important; border-left: 3px solid var(--sa-orange) !important;
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px;
+  padding: 8px 10px; text-align: left;
+  font-family: var(--sans); font-size: 13px; font-weight: 500 !important; letter-spacing: 0; text-transform: none;
+}
+.depot-card-acts .post-btn:hover:not(:disabled) { background: var(--sa-line) !important; }
+.depot-card-acts .post-btn small {
+  font-family: var(--serif); font-size: 11.5px; font-weight: 400; color: var(--sa-bone-dim) !important;
+  text-transform: none; letter-spacing: 0;
+}
+.depot-card-acts .post-btn small .cargo-ic { width: 13px; height: 13px; vertical-align: -2px; }
+.depot-card-acts .post-btn:disabled { opacity: .45; }
+.depot-card-acts .mini {
+  align-self: flex-start; background: transparent !important; color: var(--sa-bone-dim) !important;
+  border: 1px solid var(--sa-line-hi) !important; padding: 4px 12px; font-family: var(--sans); text-transform: none;
+}
+
+/* selected build button, every layout (phone Build sheet included) */
+.build-btn { background: var(--sa-panel) !important; background-image: none !important; border: 0 !important; border-bottom: 1px solid var(--sa-line) !important; }
+.build-btn:hover { background: var(--sa-panel-2) !important; }
+.build-btn.active {
+  background: var(--sa-panel-2) !important; color: var(--sa-bone) !important;
+  border-left: 4px solid var(--sa-orange) !important;
+}
+.build-btn.active .bb-mid b { color: var(--sa-orange) !important; }
+.build-btn.active .bb-mid small { color: var(--sa-bone-dim) !important; }
+@media (min-width: 761px) {
+  /* the desktop rail keeps the solid orange tile (icon + one word reads fine) */
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active { background: var(--sa-orange) !important; border-left: 0 !important; color: var(--sa-on-orange) !important; }
+  .ui-root:not([data-phone="1"]) .aside.left .build-btn.active .bb-mid b { color: var(--sa-on-orange) !important; }
+}
+.build-btn .bb-mid small { color: var(--sa-bone-dim); }
+
+/* ── header on phones and tablets: one clean row ─────────────────── */
+@media (max-width: 1100px) {
+  .topbar .chip-r { display: none; }
+  .topbar .chip { padding: 2px 6px 2px 3px; }
+  .topbar .chip-n { font-size: 12px; }
+}
+@media (max-width: 760px) {
+  :root { --topbar-h: 48px; }
+  .topbar {
+    display: flex !important; flex-wrap: nowrap !important; align-items: center !important;
+    grid-template-columns: none !important; grid-template-rows: none !important;
+    height: calc(var(--topbar-h) + var(--safe-top)) !important;
+    padding: var(--safe-top) 6px 0 !important; gap: 6px !important;
+  }
+  .topbar .kingdoms {
+    order: 1; flex: 0 1 auto !important; position: static !important; transform: none !important;
+    margin: 0 !important; justify-content: flex-start !important; gap: 4px !important; height: auto !important;
+  }
+  .topbar .kingdoms > * { height: 36px !important; margin: 0 !important; }
+  .topbar .top-right {
+    order: 2; flex: 1 1 auto !important; position: static !important; transform: none !important;
+    display: flex !important; justify-content: flex-end !important; align-items: center !important;
+    gap: 2px !important; margin: 0 !important; height: auto !important; width: auto !important;
+  }
+  .topbar .top-right .vp-badge { margin-right: auto !important; font-size: 13px; padding: 4px 8px; }
+  .topbar .icon-btn { width: 36px; height: 36px; }
+}
+
+/* race: flat chips, no side bars; on narrow screens the ★ badge shows only the target */
+.king {
+  background: var(--sa-panel-2) !important; border: 0 !important; box-shadow: none !important;
+  border-bottom: 3px solid var(--sa-line-hi) !important; padding: 2px 8px 2px 2px !important; gap: 6px !important;
+}
+.king.self { border-bottom-color: var(--sa-aqua) !important; }
+.king:not(.self) { border-bottom-color: var(--sa-red) !important; }
+.king::before, .king::after { display: none !important; }
+.king-av { border: 0 !important; box-shadow: none !important; width: 30px !important; height: 30px !important; }
+.king-vp { color: var(--sa-lemon) !important; font-family: var(--sans); }
+.radio-pill { border-radius: 0 !important; background: var(--sa-panel-2) !important; border: 0 !important; box-shadow: none !important; }
+.radio-play, .radio-vol { border-radius: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }
+@media (max-width: 760px) {
+  .topbar .kingdoms .king-mid .king-name, .topbar .king-bar { display: none !important; }
+  .topbar .vp-badge { font-size: 0 !important; background: transparent !important; padding: 0 6px !important; }
+  .topbar .vp-badge::after { content: attr(data-target); font-size: 12px; color: var(--sa-bone-dim); }
+  .topbar .radio-pill { width: 36px; height: 36px; }
+}
+
+/* phone / tablet Build sheet: the rail's line icon, right-aligned in a square box */
+.ui-root[data-phone="1"] .build-btn { display: flex !important; flex-direction: row !important; align-items: center; gap: 12px; padding: 10px 12px 10px 14px !important; }
+.ui-root[data-phone="1"] .build-btn .bb-mid { order: 1; flex: 1; }
+.ui-root[data-phone="1"] .build-btn .bb-ico {
+  display: grid !important; place-items: center; order: 2; flex: 0 0 44px; width: 44px; height: 44px;
+  background: var(--sa-panel-2); border: 1px solid var(--sa-line-hi); color: var(--sa-bone);
+}
+.ui-root[data-phone="1"] .build-btn .bb-ico .tool-ico { width: 24px; height: 24px; }
+.ui-root[data-phone="1"] .build-btn.active .bb-ico { background: var(--sa-orange); border-color: var(--sa-orange); color: var(--sa-on-orange); }
+.ui-root[data-phone="1"] .build-btn { --sigil: none !important; }
+
+/* map inspector / placement-refusal hint: small, under the minimap (top right) */
+.iso-inspect {
+  position: fixed !important; left: auto !important;
+  right: 8px !important; top: calc(var(--topbar-h) + var(--safe-top) + 11px + clamp(150px, 13vw, 220px) * .6 + 12px) !important;
+  width: auto !important; max-width: min(240px, calc(100vw - 16px)) !important;
+  padding: 6px 10px !important; font-size: 12px !important; line-height: 1.35 !important;
+  background: var(--sa-panel) !important; color: var(--sa-bone) !important;
+  border: 0 !important; border-left: 3px solid var(--sa-aqua) !important; box-shadow: none !important;
+}
+.iso-inspect.bad { border-left-color: var(--sa-red) !important; }
+.iso-inspect i { color: var(--sa-red); font-style: normal; }
+@media (max-width: 760px) {
+  .iso-inspect { top: calc(var(--topbar-h) + var(--safe-top) + 8px) !important; left: 8px !important; right: auto !important; max-width: min(220px, 60vw) !important; font-size: 11.5px !important; }
+}

@@ -189,9 +189,11 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             How to Play<span className="mb-tag">eight cards, one loop</span>
           </button>
           {/* MON-1 (#367): the Store door — unlockables bought with RUN Bits. */}
+          {import.meta.env.DEV ? (
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setStore(true)}>
             Store<span className="mb-tag">unlockables · RUN Bits</span>
           </button>
+          ) : null}
         </nav>
         {STORY_MODE_ENABLED ? <p className="menu-campaign">
           {filed > 0

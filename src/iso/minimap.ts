@@ -100,8 +100,8 @@ export const MINIMAP_PALETTE = {
   owner: "#d8d8d8",
   /** #322: what a closed plant or depot fades toward. */
   closed: "#5b5750",
-  viewport: "#f2dca6",
-  viewportShadow: "rgba(8, 5, 3, 0.7)",
+  viewport: "#f2d64b",
+  viewportShadow: "rgba(15, 18, 20, 0.7)",
 } as const;
 /** A palette of the same shape (colours as CSS strings, mixes as 0..1). */
 export type MinimapPalette = {
@@ -736,13 +736,13 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
     const [x, y] = tileToMinimap(l, m.tx + 0.5, m.ty + 0.5);
     g.beginPath();
     g.arc(x, y, 5.6, 0, Math.PI * 2);
-    g.fillStyle = "rgba(8, 5, 3, 0.78)";
+    g.fillStyle = "rgba(15, 18, 20, 0.78)";
     g.fill();
     if (m.progress !== undefined) {
       const p = clamp01(m.progress);
       g.beginPath();
       g.arc(x, y, 4.3, 0, Math.PI * 2);
-      g.strokeStyle = "rgba(242, 220, 166, 0.22)";
+      g.strokeStyle = "rgba(238, 230, 212, 0.22)";
       g.lineWidth = 1.5;
       g.stroke();
       if (p > 0) {

@@ -72,16 +72,13 @@ afterEach(() => {
 describe("FIT-01 the board never paints behind the resource footer", () => {
   it("publishes the measured footer height and keeps the stylesheet floor when it cannot measure", () => {
     const { ui } = mount();
-    // jsdom: offsetHeight 0 → nothing published, the CSS fallback stands.
+    // UI Space Age: on desktop the footer is gone (the purse rides in the top
+    // bar) and the bottom lane is the drawer's 36px tab strip.
     expect(ui.el.querySelector(".resbar")).toBeTruthy();
-    expect(ui.el.style.getPropertyValue("--resbar-h")).toBe("");
     window.dispatchEvent(new Event("resize"));
-    expect(ui.el.style.getPropertyValue("--resbar-h")).toBe("");
-    // A real bar: the wrapped chip row made the footer 88px tall.
-    const footer = ui.el.querySelector(".resbar") as HTMLElement;
-    Object.defineProperty(footer, "offsetHeight", { configurable: true, value: 88 });
-    window.dispatchEvent(new Event("resize"));
-    expect(ui.el.style.getPropertyValue("--resbar-h")).toBe("88px");
+    expect(ui.el.style.getPropertyValue("--resbar-h")).toBe("36px");
+    // …and the chips moved into the top bar.
+    expect(ui.el.querySelector(".topbar #iso-res")).toBeTruthy();
     // …and the CSS parks both columns on max(52px, that var) — pinned below.
   });
 
@@ -167,18 +164,22 @@ describe("RAIL-01 the desktop columns fold against their screen edges", () => {
     // expanded by default, chevron pointing the way each panel folds:
     // the build menu folds LEFT, the board folds RIGHT (the ticket's arrows).
     expect(leftBtn.getAttribute("aria-expanded")).toBe("true");
-    expect(rightBtn.getAttribute("aria-expanded")).toBe("true");
+    // UI Space Age (P7): the right column is a bottom drawer that starts CLOSED.
+    expect(rightBtn.getAttribute("aria-expanded")).toBe("false");
     expect(leftBtn.textContent).toBe("◂");
-    expect(rightBtn.textContent).toBe("▸");
+    expect(rightBtn.textContent).toBe("◂");
     expect(ui.el.dataset.railLeft).toBe("0");
-    expect(ui.el.dataset.railRight).toBe("0");
+    expect(ui.el.dataset.railRight).toBe("1");
   });
 
   it("collapses the board panel to the right edge and back", () => {
     const { ui } = mount();
     const rightBtn = ui.el.querySelector("#iso-rail-right") as HTMLButtonElement;
-    const panel = ui.el.querySelector("#iso-trade") as HTMLElement;
-    rightBtn.click();
+    // UI Space Age (P7): the drawer's PANES leave the tab order when it is
+    // closed; the tab strip stays reachable (it is the closed drawer's handle).
+    const panel = ui.el.querySelector(".bank-pane") as HTMLElement;
+    rightBtn.click();   // open (it starts closed)
+    rightBtn.click();   // close again
     expect(ui.el.dataset.railRight).toBe("1");
     expect(rightBtn.getAttribute("aria-expanded")).toBe("false");
     expect(rightBtn.textContent).toBe("◂");      // toward the center: expand
@@ -212,9 +213,9 @@ describe("RAIL-01 the desktop columns fold against their screen edges", () => {
     const { ui } = mount();
     (ui.el.querySelector("#iso-rail-left") as HTMLButtonElement).click();
     expect(ui.el.dataset.railLeft).toBe("1");
-    expect(ui.el.dataset.railRight).toBe("0");
+    expect(ui.el.dataset.railRight).toBe("1");   // the drawer starts closed
     (ui.el.querySelector("#iso-rail-right") as HTMLButtonElement).click();
-    expect(ui.el.dataset.railRight).toBe("1");
+    expect(ui.el.dataset.railRight).toBe("0");
     expect(ui.el.dataset.railLeft).toBe("1");
   });
 
@@ -283,7 +284,7 @@ describe("RAIL-01 the stylesheet owns the animation", () => {
     expect(undo, "the phone block undoes the fold transform").toBeTruthy();
   });
 
-  it("parks the columns on the footer's live edge with the 52px floor kept", () => {
-    expect(css).toMatch(/\.aside\s*\{[^}]*bottom:\s*max\(52px, var\(--resbar-h, 52px\)\)/);
+  it("parks the columns on the bottom lane (--resbar-h, 52px fallback)", () => {
+    expect(css).toMatch(/\.aside\s*\{[^}]*bottom:\s*var\(--resbar-h, 52px\)/);
   });
 });

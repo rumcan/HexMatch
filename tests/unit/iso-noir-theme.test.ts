@@ -93,7 +93,7 @@ describe.skip("NOIR the sheet is valid CSS, not just valid prose", () => {
     for (const m of css.matchAll(/@font-face\s*\{[^}]*src:\s*url\("([^"]+)"\)/g)) {
       expect(existsSync(resolve(dirname(CSS_PATH), m[1])), m[1]).toBe(true);
     }
-    expect([...declared]).toEqual(["Cinzel", "Barlow Condensed", "Barlow Semi Condensed", "Special Elite"]);
+    expect([...declared]).toEqual(["Jost", "Barlow Semi Condensed"]);
   });
 });
 

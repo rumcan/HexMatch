@@ -21,6 +21,7 @@
 // it takes the live iso primitives (`board`, the local seat, the player purse)
 // and renders the same chrome from them.
 // ══════════════════════════════════════════════════════════════════════════
+import { toolIconSvg } from "../ui/icons";
 import {
   CELL, RES,
   SABOTAGE, SECURITY, type ResKey,
@@ -942,7 +943,7 @@ export function createOriginalUi(
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
-  top.appendChild(h("div", "logo", `<span class="logo-mark" aria-hidden="true"></span> HEXMATCH <em>INDUSTRIES</em>`));
+  top.appendChild(h("div", "logo", `HEXMATCH <em class="logo-script">Industries</em>`));
   const kingdoms = h("div", "kingdoms");
   top.appendChild(kingdoms);
   const right = h("div", "top-right");
@@ -1045,6 +1046,14 @@ export function createOriginalUi(
   chips.id = "iso-res";
   footer.appendChild(chips);
   root.appendChild(footer);
+  // UI Space Age (P4): on desktop the purse rides in the top bar (after the
+  // logo); a phone keeps its bottom bar. Re-homed on every viewport change.
+  const placeChips = () => {
+    const want = isPhoneViewport() ? footer : top;
+    if (chips.parentElement === want) return;
+    if (want === top) top.insertBefore(chips, kingdoms); else footer.appendChild(chips);
+  };
+  placeChips();
   // Mobile pass (2026-09): publish how much of the screen's bottom the
   // resource bar (plus anything under it, e.g. the phone nav) takes, LIVE —
   // the bar wraps to two rows on a phone as its chips fill in, and the
@@ -1094,6 +1103,12 @@ export function createOriginalUi(
   sp.appendChild(sabList);
 
   root.appendChild(left);
+
+  // UI Space Age: the bottom-right dock — the Plant card and the battle /
+  // action pop-ups stack here, clear of the centred drawer.
+  const brDock = h("div", "br-dock");
+  brDock.id = "iso-br-dock";
+  root.appendChild(brDock);
 
   // ── right: shared economy window ────────────────────────────
   const rightAside = h("aside", "aside right iso-panel");
@@ -1295,22 +1310,22 @@ export function createOriginalUi(
   const tabBlack = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.market}</i><span class="tab-l">Black Market</span>`);
   // TRADE (owner call, 2026-09): offers between the players, next to Bank.
   const tabMarket = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.trade}</i><span class="tab-l">Market</span>`);
-  tabMarket.onclick = () => setTab("market");
-  tabBlack.onclick = () => setTab("black");
-  tabBank.onclick = () => setTab("bank");
-  tabFeed.onclick = () => setTab("feed");
+  tabMarket.onclick = () => drawerTab("market");
+  tabBlack.onclick = () => drawerTab("black");
+  tabBank.onclick = () => drawerTab("bank");
+  tabFeed.onclick = () => drawerTab("feed");
   // Playtest (2026-09): the optional quests live in their own tab after Feed
   // (they floated over the map and got in the way). A badge counts the
   // quests the player has not looked at yet; they are never required.
   const tabQuests = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.quests}</i><span class="tab-l">Quests</span><span class="tab-badge hidden"></span>`);
-  tabQuests.onclick = () => setTab("quests");
+  tabQuests.onclick = () => drawerTab("quests");
   const questsBadge = tabQuests.querySelector(".tab-badge") as HTMLElement;
   // #299: the Plant tab only exists where the plant is a pane at all — the
   // retired loop. On the new loop the session moved out of the rail and into
   // its own window, so the strip is Bank / Feed and nothing else.
   const tabPlant = sessionMode ? null
     : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
-  if (tabPlant) tabPlant.onclick = () => setTab("plant");
+  if (tabPlant) tabPlant.onclick = () => drawerTab("plant");
   const tabDefs: [HTMLElement, TabName][] = sessionMode
     ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"], [tabQuests, "quests"]]
     : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"], [tabQuests, "quests"]];
@@ -1446,11 +1461,18 @@ export function createOriginalUi(
     card.appendChild(tuningPlate);
     plantCard = card;
     rightAside.appendChild(tp);
-    rightAside.appendChild(card);
+    brDock.appendChild(card);
     // The window is mounted OUTSIDE the rails so the backdrop covers them:
     // a running session owns the screen, top to bottom.
     root.appendChild(rightAside);
     root.appendChild(win);
+    // UI Space Age (P7): publish the drawer's live height so the hint pill
+    // and the toasts sit above it.
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => {
+        root.style.setProperty("--drawer-h", `${isPhoneViewport() ? 0 : Math.round(rightAside.getBoundingClientRect().height)}px`);
+      }).observe(rightAside);
+    }
   } else {
     tp.appendChild(qp);
     rightAside.appendChild(tp);
@@ -1470,7 +1492,9 @@ export function createOriginalUi(
   // a collapse the instant the viewport crosses to the sheet regime, and the
   // phone block drops the keys outright.
   let railLeftCollapsed = false;
-  let railRightCollapsed = false;
+  // UI Space Age (P7): on desktop the right column is a bottom drawer and it
+  // starts CLOSED (only its tab strip shows); the game opens it when needed.
+  let railRightCollapsed = !isPhoneViewport();
   let railSig = "\u0000";
   const railLeftBtn = h("button", "rail-toggle rail-toggle-left", "◂");
   const railRightBtn = h("button", "rail-toggle rail-toggle-right", "▸");
@@ -1514,10 +1538,13 @@ export function createOriginalUi(
     // the aside: the key lives beside the panel and stays reachable) removes
     // them from focus, pointer and AT traversal, and undoes itself on unfold.
     bp.inert = railLeftCollapsed;
-    tp.inert = railRightCollapsed;
+    // UI Space Age (P7): the tab strip is the closed drawer's handle, so only
+    // the panes leave the tab order when it folds.
+    for (const pane of [bankPane, marketPane, blackPane, feedPane, questsPane]) pane.inert = railRightCollapsed;
+    if (!sessionMode) qp.inert = railRightCollapsed;
     // #299: the plant card is rail content too — it leaves the tab order
     // with the column, same rule as the trade panel beside it.
-    if (plantCard) plantCard.inert = railRightCollapsed;
+    // (the plant card now lives in the bottom-right dock, never folded)
   }
   railLeftBtn.onclick = () => {
     if (isPhoneViewport()) return;
@@ -2082,6 +2109,27 @@ export function createOriginalUi(
   const visibleTools = TOOLS.filter((t) =>
     (opts.rail !== false || !RAIL_TOOL_KEYS.has(t.key))
     && (opts.dams !== false || t.key !== "dam"));
+  // UI Space Age (P5): the rail shows icon + name; the full name and the
+  // live price (the button's own <small>, read at show time) ride in one
+  // shared card beside the rail on hover / keyboard focus.
+  const toolCard = h("div", "tool-card hidden");
+  toolCard.setAttribute("role", "tooltip");
+  root.appendChild(toolCard);
+  const showToolCard = (b: HTMLElement) => {
+    const name = b.querySelector(".bb-mid b")?.innerHTML ?? "";
+    const sub = b.querySelector(".bb-mid small")?.innerHTML ?? "";
+    toolCard.innerHTML = `<b>${name}</b>${sub ? `<small>${sub}</small>` : ""}`;
+    const r = b.getBoundingClientRect();
+    toolCard.style.top = `${Math.round(r.top)}px`;
+    toolCard.classList.remove("hidden");
+  };
+  const hideToolCard = () => toolCard.classList.add("hidden");
+  function wireToolCard(b: HTMLElement) {
+    b.addEventListener("pointerenter", () => { if (!isPhoneViewport()) showToolCard(b); });
+    b.addEventListener("focus", () => { if (!isPhoneViewport()) showToolCard(b); });
+    b.addEventListener("pointerleave", hideToolCard);
+    b.addEventListener("blur", hideToolCard);
+  }
   let depotSub: HTMLElement | null = null;
   let cityBtn: HTMLButtonElement | null = null;
   let lastDepotSub = "\u0000";
@@ -2090,7 +2138,8 @@ export function createOriginalUi(
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
     const b = h("button", "build-btn bg-" + t.key);
     b.dataset.tool = t.key;
-    b.innerHTML = `<div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
+    b.innerHTML = `<span class="bb-ico">${toolIconSvg(t.key)}</span><div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
+    wireToolCard(b);
     b.onclick = () => {
       // Playtest (2026-09): a tap ARMS the tool, always. It used to toggle a
       // re-tapped tool off (#187) — and the game arms Dirt Road for you after
@@ -2108,7 +2157,8 @@ export function createOriginalUi(
     if (t.key === "plant") {
       cityBtn = h("button", "build-btn bg-city hidden");
       cityBtn.dataset.act = "city-upgrade";
-      cityBtn.innerHTML = `<div class="bb-mid"><b>Upgrade city</b><small></small></div>`;
+      cityBtn.innerHTML = `<span class="bb-ico">${toolIconSvg("city")}</span><div class="bb-mid"><b>Upgrade city</b><small></small></div>`;
+      wireToolCard(cityBtn);
       cityBtn.onclick = () => hooks.onTownUpgrade?.();
       buildList.appendChild(cityBtn);
     }
@@ -2201,7 +2251,7 @@ export function createOriginalUi(
     const unlocked = seat.unlocked;
     // 2026-09: the rung gate is off — the bank trades every good but Gold.
     if (unlocked === null || !DEPOT_RUNG_GATE) {
-      return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. ${cargoIconHtml("gold")} ${GOLD_RULE}`;
+      return `The bank always trades ${BANK_RATE} of one good for 1 of another. No rival required, no waiting. <span class="note-inline">${cargoIconHtml("gold")} ${GOLD_RULE}</span>`;
     }
     const open = CARGOES.filter((k) => bankAllowed(k, unlocked)).map((k) => CARGO[k].name);
     return `The bank trades ${BANK_RATE} of one good for 1 of another — but only within the rungs you have unlocked: `
@@ -2313,6 +2363,15 @@ export function createOriginalUi(
 
   // ── tabs / mobile ─────────────────────────────────────────────────────────
   let currentTab: TabName | null = null;
+  /** UI Space Age (P7): a tab click on the desktop drawer — a closed drawer
+   *  opens on that tab, the open drawer's active tab closes it. */
+  function drawerTab(t: TabName) {
+    if (!isPhoneViewport()) {
+      if (railRightCollapsed) { railRightCollapsed = false; paintRails(); setTab(t); return; }
+      if (currentTab === t) { railRightCollapsed = true; paintRails(); return; }
+    }
+    setTab(t);
+  }
   function setTab(t: TabName) {
     // PP-14b: a pending cross bounty lives inside the plant panel — switching
     // away would hide it mid-pick and the cascade would sit unseen until the
@@ -3303,7 +3362,16 @@ export function createOriginalUi(
     // is already being handled, and publish it; styles.css puts both columns
     // on max(52px, --resbar-h). jsdom lays nothing out (0) and keeps the
     // stylesheet's 52px fallback, so every pinned number below survives.
-    const resbarH = footer.offsetHeight;
+    placeChips();
+    // UI Space Age: the Plant card rides the bottom-right dock on desktop and
+    // the Economy sheet (the right aside) on a phone.
+    if (plantCard) {
+      const home = phone ? rightAside : brDock;
+      if (plantCard.parentElement !== home) home.appendChild(plantCard);
+    }
+    // UI Space Age: on desktop the footer is gone; the bottom lane is the
+    // drawer's tab strip (--dock-h, 36px).
+    const resbarH = phone ? footer.offsetHeight : 36;
     if (resbarH > 0) root.style.setProperty("--resbar-h", `${resbarH}px`);
     // RAIL-01: a collapse is a desktop affordance — crossing into the phone
     // regime hands the panels back to the sheets, unfolded.
@@ -3665,6 +3733,8 @@ export function createOriginalUi(
     const vpHtml = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">${target > 0 ? `/${target}` : " · Conquest"}</span>`;
     if (vpHtml !== lastVpHtml) {
       vp.innerHTML = vpHtml; lastVpHtml = vpHtml;
+      // UI Space Age: a phone shows only the race line here ("to 12★").
+      vp.dataset.target = target > 0 ? `to ${target}★` : "Conquest";
       // MOBILE-02: the SCORE is the milestone worth breaking a phone's view
       // for. The purse changes every cascade — a bar that re-dropped per
       // coin would be the flicker the wire was.
@@ -4297,7 +4367,7 @@ export function createOriginalUi(
       acts.appendChild(b);
     }
     card.appendChild(acts);
-    root.appendChild(card);
+    brDock.appendChild(card);
     depotCard = card;
     if (o.until != null && countEl) {
       const paintCount = () => {

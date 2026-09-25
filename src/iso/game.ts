@@ -96,7 +96,6 @@ import {
 } from "./camera";
 import { LEVEL_PX, elevationActive, tileSurfaceHeight } from "./elevation";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
-import { coarsePointer } from "./touch";
 import { IsoRenderer, type World } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
@@ -3996,9 +3995,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let cityPick = false;
   let cityPickTimer = 0;
   function setCityPick(on: boolean): void {
-    cityPick = on;
     window.clearTimeout(cityPickTimer);
-    if (on) cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
+    if (on) {
+      // Playtest (2026-09): a build tool in the hand owns every map click, so
+      // picking a city with Dirt Road still armed built road. Put the tool
+      // down first (before the flag, so arming doesn't cancel the pick).
+      if (tool !== "select") armTool("select");
+      cityPickTimer = window.setTimeout(() => setCityPick(false), 20_000);
+    }
+    cityPick = on;
+    ui.el.dataset.pick = on ? "city" : "";
     syncUpgradeMarkers();
   }
   function syncUpgradeMarkers(): void {
@@ -9988,6 +9994,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * a road drag left armed under the Depot tool would quote the wrong build.
    */
   function armTool(t: Tool) {
+    // Playtest (2026-09): picking any tool (Select included) ends a city pick
+    // and its upgrade cursor.
+    if (cityPick) setCityPick(false);
     // RAIL-05 (#182): the flag down means the tool does not exist. Refuse the
     // arm and keep whatever is already in the hand — a hotkey that would
     // summon a refused build is just a confusing one.
@@ -10879,6 +10888,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     popClose.textContent = "✕";
     popHead.append(popTitle, popClose);
     pop.appendChild(popHead);
+    // UI Space Age (P4): the difficulty select and the sound key move off the
+    // top bar into the menu's first row — same nodes, same ids and handlers.
+    const gameSec = document.createElement("div");
+    gameSec.className = "tm-game";
+    for (const q of [".rival-skill", "#iso-sound"]) {
+      const n = topRight.querySelector(q);
+      if (n) gameSec.appendChild(n);
+    }
+    if (gameSec.childElementCount) pop.appendChild(gameSec);
 
     let menuOpen = false;
     const setMenu = (on: boolean) => {
@@ -10914,7 +10932,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // MON-1 (#367): the Store — the same panel the front door raises, over
     // the game root, one instance at a time. An unreachable store paints a
     // sentence and closes like any other sheet; it never blocks the match.
-    menuItem("Store", "unlockables · RUN Bits", () => {
+    // Owner call (2026-09-25): the Store is dev-only until the RUN store
+    // items exist (much later).
+    if (import.meta.env.DEV) menuItem("Store", "unlockables · RUN Bits", () => {
       if (storeView) return;
       const view = showStorePanel(ui.el);
       storeView = view;
@@ -10938,10 +10958,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // MOBILE-01: on a coarse pointer the top bar sheds its 🎯 and Aa keys to
     // fit a thumb (styles.css ≤480px), so their actions move in here — the
     // same closures the top bar and the floating cluster call.
-    if (coarsePointer()) {
-      menuItem("Recenter Map", "jump back to your Factory", recenterCamera);
-      menuItem("Names Over The Map", "show or hide the place tags", toggleNames);
-    }    if (isSolo()) {
+    // UI Space Age (P4): the top bar keeps only the race, ?, ☰ and the radio;
+    // Recenter and Names live here on every device now.
+    menuItem("Recenter Map", "jump back to your Factory", recenterCamera);
+    menuItem("Names Over The Map", "show or hide the place tags", toggleNames);    if (isSolo()) {
       // MP-05 unchanged: a RESTART is solo-only, in a room the session owns
       // the match. The confirm-and-clear flow is AI-03's verbatim.
       menuItem("New Game", "clears the save and the difficulty pick", () => {
