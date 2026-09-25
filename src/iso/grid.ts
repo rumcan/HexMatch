@@ -122,6 +122,17 @@ export interface Grid {
   /** Seed-derived elevation levels. Option-off maps contain all zeroes. */
   height?: Uint8Array;
   /**
+   * F4 (#275): the Factory footprint THIS MAP plays with — the long
+   * `factory_2x4` span under the `shapes` option, absent on every legacy /
+   * option-OFF map (all rules then fall back to `FACTORY_FOOTPRINT`). Lives
+   * on the grid because the map is what carries the option: every factory
+   * rule that holds a grid reads it here, so the placement preview, the click
+   * handler, the rival's search and `builtAt` can never disagree about the
+   * footprint. Multiplayer regenerates from the seed alone (shapes are solo),
+   * so both seats always see the same value.
+   */
+  factoryFootprint?: [number, number];
+  /**
    * R1 (#260): the river layer. One byte per tile, non-zero where a generated
    * river flows. River tiles are ALSO `WATER` in `terrain` (so every gameplay
    * check — build refusal, rail terrain, placement — treats them as water);
@@ -2238,6 +2249,9 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   return {
     w: MAP_W, h: MAP_H, terrain, height, industries: list, towns, publicRoads, occupancy: occ, seed: s,
     rivers: riverMask,
+    // F4 (#275): shapes maps play with the long Factory footprint. OFF maps
+    // carry nothing, so every consumer keeps the legacy constant.
+    factoryFootprint: opts.shapes ? factoryFootprintFor(true) : undefined,
   };
 }
 
@@ -2313,6 +2327,14 @@ export function townGroundBytes(grid: Grid): Uint8Array | null {
 export const industryHasTile = (ind: Industry, tx: number, ty: number) =>
   tx >= ind.tx && tx < ind.tx + ind.w && ty >= ind.ty && ty < ind.ty + ind.h;
 
+/**
+ * F4 (#275): the Factory footprint a map plays with. Legacy / option-OFF maps
+ * carry no `factoryFootprint` and fall back to the constant, so every rule
+ * that reads this behaves exactly as before until the shapes option sets one.
+ */
+export const factoryFootprintOf = (grid: Pick<Grid, "factoryFootprint">): [number, number] =>
+  grid.factoryFootprint ?? FACTORY_FOOTPRINT;
+
 export const industryKey = (ind: Industry) => INDUSTRY_BY_KEY[ind.type];
 
 // ── PP-02: Factory placement must be next to a town ────────────────────────
@@ -2335,9 +2357,10 @@ export const isTownTile = (g: Grid, tx: number, ty: number): boolean =>
  */
 export function factoryTouchesTown(
   grid: Grid, tx: number, ty: number, rot = 0,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint?: readonly [number, number],
 ): boolean {
-  const [fw, fh] = rotatedSpan(footprint[0], footprint[1], rot);
+  const fp = footprint ?? factoryFootprintOf(grid);
+  const [fw, fh] = rotatedSpan(fp[0], fp[1], rot);
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -2370,9 +2393,10 @@ export interface FactoryPlacement {
  */
 export function canPlaceFactory(
   grid: Grid, tx: number, ty: number, rot = 0,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint?: readonly [number, number],
 ): FactoryPlacement {
-  const [fw, fh] = rotatedSpan(footprint[0], footprint[1], rot);
+  const fp = footprint ?? factoryFootprintOf(grid);
+  const [fw, fh] = rotatedSpan(fp[0], fp[1], rot);
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -2405,7 +2429,7 @@ export function canPlaceFactory(
  */
 export function startingTownReservations(
   grid: Grid,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint: readonly [number, number] = factoryFootprintOf(grid),
 ): [Town, Town] | null {
   // Collect eligible towns: at least one factory site touching the town
   // that is buildable, and a depot site within 12 tiles of that factory
@@ -2506,7 +2530,7 @@ export function startingTownReservations(
 /** Seat → reserved town (0=host,1=guest) */
 export function townForSeat(
   grid: Grid, seat: 0 | 1,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint: readonly [number, number] = factoryFootprintOf(grid),
 ): Town | null {
   const pair = startingTownReservations(grid, footprint);
   if (!pair) return grid.towns[seat] ?? grid.towns[0] ?? null;

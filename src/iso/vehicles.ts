@@ -29,6 +29,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { depotShoulders, plantShoulders, roadPath } from "./road-routing";
 import { DEPOT_SIZE, depotContains, lotTileBeside } from "./depot";
+import { factoryFootprintOf } from "./grid";
 export { roadPath } from "./road-routing";
 import type { DrawItem } from "./depth";
 import type { EconomyState } from "./economy";
@@ -176,7 +177,7 @@ export function roadDeliveryForHarvester(
   const route = roadPath(
     eco.track, h.ownerId,
     depotShoulders(eco.track, h.ownerId, h),
-    new Set(plantShoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty, conn.factory.rot ?? 0)
+    new Set(plantShoulders(eco.track, h.ownerId, conn.factory.tx, conn.factory.ty, conn.factory.rot ?? 0, factoryFootprintOf(eco.grid))
       .map(([x, y]) => tIdx(x, y))),
   );
   if (!route) return null;

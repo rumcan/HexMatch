@@ -58,7 +58,10 @@ import { distanceFactorForPath } from "./loop";
 import { climbLevels, railDragSlopeRefusals, roadStepRefusal, routeDistance } from "./slopes";
 // L17 (#245): the bank is back (3:1) — the rival's planner is real again.
 import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
-import { FIELD_OCC, ROUGH, factoryTouchesTown, rotatedSpan, type Grid, type Industry } from "./grid";
+import {
+  FIELD_OCC, ROUGH, factoryFootprintOf, factoryTouchesTown, rotatedSpan,
+  type Grid, type Industry,
+} from "./grid";
 import {
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
@@ -75,7 +78,8 @@ import {
   type EconomyState, type Harvester, type Factory,
 } from "./economy";
 import {
-  DEFAULT_FACING, depotEntranceTiles, depotFacings, depotSites, depotsOverlap, type DepotFacing,
+  DEFAULT_FACING, DEPOT_SIZE, depotEntranceTiles, depotFacings, depotSites, depotsOverlap,
+  type DepotFacing,
 } from "./depot";
 // RAILWAYS (#182): the rival's railway runs through the railway's OWN module —
 // its rules, its costs, its refusals. Nothing rail-shaped is re-derived below;
@@ -459,11 +463,14 @@ export function harvesterSpots(grid: Grid, ind: Industry): [number, number][] {
  * `owner === 0` keeps the legacy "any track tile" answer the unit tests pin;
  * a neutral flood admits no public ground at all.
  */
-export function networkTiles(track: Track, kind: TrackKind, factory: Factory): [number, number][] {
+export function networkTiles(
+  track: Track, kind: TrackKind, factory: Factory,
+  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+): [number, number][] {
   void kind;
   const out: [number, number][] = [];
   const owner = factory.ownerId;
-  const net = owner === 0 ? null : playerNetwork(track, owner, [factory], []);
+  const net = owner === 0 ? null : playerNetwork(track, owner, [factory], [], footprint);
   for (let y = 0; y < MAP_H; y++) {
     for (let x = 0; x < MAP_W; x++) {
       if (!hasTrack(track, "dirt", x, y) && !hasTrack(track, "road", x, y)) continue;
@@ -507,7 +514,7 @@ function blockedOnlyByPlant(grid: Grid, kind: TrackKind, x: number, y: number): 
 function departBesidePlant(
   grid: Grid, kind: TrackKind, factory: Factory, tx: number, ty: number,
 ): [number, number] | null {
-  const foot = plantFootprintTiles(factory.tx, factory.ty);
+  const foot = plantFootprintTiles(factory.tx, factory.ty, factory.rot ?? 0, factoryFootprintOf(grid));
   const inside = new Set(foot.map(([x, y]) => tIdx(x, y)));
   let best: [number, number] | null = null;
   let bestD = Infinity;
@@ -931,10 +938,15 @@ export function planCandidates(
   const { grid, track } = state;
   const out: Candidate[] = [];
   // A new 2×2 lot may not overlap a standing Depot or a Factory.
+  // F4: the Factory span is the map's own footprint in the plant's rotation —
+  // the old literal used the legacy size unrotated, which misjudged a long lot.
+  const ffp = factoryFootprintOf(grid);
   const lotTaken = (x: number, y: number): boolean =>
     state.harvesters.some((h) => depotsOverlap(h.tx, h.ty, x, y))
-    || state.factories.some((f) =>
-      x < f.tx + FACTORY_FOOTPRINT[0] && x + 2 > f.tx && y < f.ty + FACTORY_FOOTPRINT[1] && y + 2 > f.ty);
+    || state.factories.some((f) => {
+      const [fw, fh] = rotatedSpan(ffp[0], ffp[1], f.rot ?? 0);
+      return x < f.tx + fw && x + DEPOT_SIZE[0] > f.tx && y < f.ty + fh && y + DEPOT_SIZE[1] > f.ty;
+    });
   const free = Math.max(0, opts.free ?? 0);
   // PP-16: one claim map for the whole ranking pass — the same map
   // `harvesterYield` pays by and `planDepotPlacement` refuses by, read once
@@ -964,7 +976,7 @@ export function planCandidates(
   // cheap tier is also the right tier; `preferPaved` opts into the old order.
   const kinds: TrackKind[] = opts.preferPaved === true ? ["road", "dirt"] : ["dirt", "road"];
   for (const kindPref of kinds) {
-    const sources = networkTiles(track, kindPref, factory);
+    const sources = networkTiles(track, kindPref, factory, ffp);
     // T4: reject provably unaffordable destinations BEFORE running A*. On
     // the larger map, searching hundreds of long paved routes with zero ore
     // blocked the UI for seconds. This is only a lower bound; the real path
@@ -972,7 +984,7 @@ export function planCandidates(
     // A path's final segment starts at its last existing track tile (of ANY
     // owner, since tileCost charges neither), or at the factory with no track.
     // Its Manhattan length is a lower bound on the number of new tiles.
-    const existing = networkTiles(track, kindPref, { ...factory, ownerId: 0 });
+    const existing = networkTiles(track, kindPref, { ...factory, ownerId: 0 }, ffp);
     const maxFresh = affordableNewTiles(kindPref, opts.purse, free, newLoop);
     for (const ind of grid.industries) {
       const def = INDUSTRY_BY_KEY[ind.type];
@@ -1025,7 +1037,7 @@ export function planCandidates(
         // a shoulder outside the water would build a network the plant can
         // never join. Any real track tile in `sources` keeps the old answer.
         if (src && !canBuildOn(grid, kindPref, src[0], src[1])
-          && sources.every(([x, y]) => plantFootprintTiles(factory.tx, factory.ty)
+          && sources.every(([x, y]) => plantFootprintTiles(factory.tx, factory.ty, factory.rot ?? 0, ffp)
             .some(([px, py]) => px === x && py === y))
           && sources.every(([x, y]) => canBuildOn(grid, kindPref, x, y)
             || blockedOnlyByPlant(grid, kindPref, x, y))) {
@@ -1428,13 +1440,16 @@ export function laneRichness(grid: Grid, x: number, y: number): number {
 export function chooseRivalFactorySpot(
   grid: Grid, track: Track, awayFrom: [number, number], opts: RivalSpotOptions,
 ): [number, number, number] | null {
+  // F4: the rival searches with THIS map's Factory footprint — the shapes
+  // option's long lot where the map has one, the legacy square otherwise.
+  const fp = factoryFootprintOf(grid);
   // F3: try both orientations
   const spots: { x: number; y: number; rot: number; paved: boolean; town: boolean; d: number }[] = [];
   for (const rot of [0, 1]) {
-    const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+    const [fw, fh] = rotatedSpan(fp[0], fp[1], rot);
     for (let y = 2; y < MAP_H - 2 - fh; y += 2) {
       for (let x = 2; x < MAP_W - 2 - fw; x += 2) {
-        // check all tiles of the Factory footprint (FACTORY_FOOTPRINT), rotated
+        // check all tiles of the Factory footprint, rotated
         let allDirt = true, allPaved = true;
         for (let dy = 0; dy < fh; dy++) {
           for (let dx = 0; dx < fw; dx++) {
@@ -1464,11 +1479,12 @@ export function chooseRivalFactorySpot(
   const townSpots = spots.filter((s) => s.town);
   if (!townSpots.length) return null;
   // Reserve the player's whole Factory footprint, not just its origin tile.
-  // F3: footprint size depends on rot.
+  // F3: footprint size depends on rot. F4: both spans are the map's footprint
+  // (the player's factory is treated at rot 0 for the distance check, exactly
+  // as before — conservative, and unchanged for the square legacy lot).
   const apart = townSpots.filter((s) => {
-    const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], s.rot);
-    const [afw, afh] = FACTORY_FOOTPRINT; // awayFrom is player's factory, assume rot 0 for distance check (conservative)
-    // For simplicity, use player's factory as 2x2? Actually factory is 2x2 in current config, but use FACTORY_FOOTPRINT
+    const [fw, fh] = rotatedSpan(fp[0], fp[1], s.rot);
+    const [afw, afh] = fp;
     return s.x + fw <= awayFrom[0] || awayFrom[0] + afw <= s.x
       || s.y + fh <= awayFrom[1] || awayFrom[1] + afh <= s.y;
   });
@@ -1783,7 +1799,7 @@ export function paveCandidates(
       // far side of the block is the same live connection.
       // The Depot side is its gate — the components on its entrance tiles.
       const gate = depotComponents(comp.comp, h);
-      for (const c of componentsTouchingTiles(comp.comp, plantFootprintTiles(f.tx, f.ty))) {
+      for (const c of componentsTouchingTiles(comp.comp, plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(grid)))) {
         if (gate.has(c) && comp.roadComp[c] === 0) gravel.add(c);
       }
     }
@@ -2353,7 +2369,7 @@ function roadReachable(state: EconomyState, factory: Factory): Map<number, numbe
   const dist = new Map<number, number>();
   const queue: number[] = [];
   const owner = factory.ownerId;
-  const net = owner === 0 ? null : playerNetwork(track, owner, [factory], []);
+  const net = owner === 0 ? null : playerNetwork(track, owner, [factory], [], factoryFootprintOf(grid));
   const seed = (x: number, y: number) => {
     const i = tIdx(x, y);
     if (!dist.has(i)) { dist.set(i, 0); queue.push(i); }
@@ -2555,9 +2571,11 @@ export function planRailMove(
       const has = structuresOf(rail, ownerId, "platform")
         .some((p) => p.anchor?.kind === "plant" && p.anchor.id === (f.id ?? 0));
       if (has) continue;
+      const fp = factoryFootprintOf(grid);
+      const [fw, fh] = rotatedSpan(fp[0], fp[1], f.rot ?? 0);
       const spots = platformSpotsAround(
-        grid, rail, factories, ownerId, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
-        { kind: "plant", id: f.id ?? 0, tiles: plantFootprintTiles(f.tx, f.ty) }, 1,
+        grid, rail, factories, ownerId, f.tx, f.ty, fw, fh,
+        { kind: "plant", id: f.id ?? 0, tiles: plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, fp) }, 1,
       );
       if (spots.length) {
         const s = spots[0];
@@ -2607,9 +2625,11 @@ export function planRailMove(
     grid, rail, factories, ownerId, ind.tx, ind.ty, ind.w, ind.h,
     { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, limit,
   );
+  const plantFp = factoryFootprintOf(grid);
+  const [plantFw, plantFh] = rotatedSpan(plantFp[0], plantFp[1], factory.rot ?? 0);
   const plantSpots = (limit: number) => platformSpotsAround(
-    grid, rail, factories, ownerId, factory.tx, factory.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
-    { kind: "plant", id: factory.id ?? 0, tiles: plantFootprintTiles(factory.tx, factory.ty) }, limit,
+    grid, rail, factories, ownerId, factory.tx, factory.ty, plantFw, plantFh,
+    { kind: "plant", id: factory.id ?? 0, tiles: plantFootprintTiles(factory.tx, factory.ty, factory.rot ?? 0, plantFp) }, limit,
   );
 
   if (!plantPlat && !indPlat) {

@@ -33,7 +33,7 @@ import { roadPath, depotShoulders, plantShoulders } from "./road-routing";
 import { DEFAULT_FACING, depotEntranceTiles, industriesTouchingDepot, type DepotFacing } from "./depot";
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
-import type { Grid, Industry } from "./grid";
+import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
   plantFootprintTiles, type Track, type TrackKind,
@@ -474,7 +474,7 @@ export function resolveConnection(
     // The Depot side is its gate (the entrance tiles' own components).
     const gate = depotComponents(comp.comp, h);
     const shared = new Set<number>();
-    for (const c of componentsTouchingTiles(comp.comp, plantFootprintTiles(f.tx, f.ty))) {
+    for (const c of componentsTouchingTiles(comp.comp, plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid)))) {
       if (gate.has(c)) shared.add(c);
     }
     if (shared.size === 0) continue;
@@ -489,7 +489,7 @@ export function resolveConnection(
     // pure-gravel component: keep the old dirt tier's shortest-factory tie-break
     const route = roadPath(state.track, h.ownerId,
       depotShoulders(state.track, h.ownerId, h),
-      new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0).map(([x, y]) => tIdx(x, y))));
+      new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid)).map(([x, y]) => tIdx(x, y))));
     if (!route || route.length >= shortest) continue;
     shortest = route.length;
     best = {
@@ -543,7 +543,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
   const goals = new Set<number>();
   for (const f of state.factories) {
     if (f.owner !== h.owner || f.closed) continue;
-    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0)) {
+    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid))) {
       goals.add(tIdx(x, y));
     }
   }
@@ -564,7 +564,7 @@ export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
   const goals = new Set<number>();
   for (const f of state.factories) {
     if (f.owner !== h.owner || f.closed) continue;
-    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0)) goals.add(tIdx(x, y));
+    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid))) goals.add(tIdx(x, y));
   }
   if (goals.size === 0) return false;
   const route = roadPath(state.track, h.ownerId, from, goals);

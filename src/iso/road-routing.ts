@@ -99,10 +99,13 @@ export const depotShoulders = (
  */
 export function plantShoulders(
   track: Track, owner: number, tx: number, ty: number, rot = 0,
+  // F4 (#275): the map's Factory span — defaults to the legacy square via
+  // `plantFootprintTiles`, so grid-less callers and legacy maps are unchanged.
+  footprint?: readonly [number, number],
 ): [number, number][] {
   const out: [number, number][] = [];
   const seen = new Set<number>();
-  for (const [fx, fy] of plantFootprintTiles(tx, ty, rot)) {
+  for (const [fx, fy] of plantFootprintTiles(tx, ty, rot, footprint)) {
     for (const [x, y] of shoulders(track, owner, fx, fy)) {
       const i = tIdx(x, y);
       if (seen.has(i)) continue;

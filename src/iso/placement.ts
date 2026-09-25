@@ -40,7 +40,8 @@ import {
   industriesTouchingDepot, type DepotFacing,
 } from "./depot";
 import {
-  FIELD_OCC, GRASS, ROUGH, SAND, TOWN_OCC, rotatedSpan, type Grid, type Industry, type Town,
+  FIELD_OCC, GRASS, ROUGH, SAND, TOWN_OCC, factoryFootprintOf, rotatedSpan,
+  type Grid, type Industry, type Town,
 } from "./grid";
 import { buildRefusal, hasTrack, tIdx, type Track } from "./track";
 import { footprintFlatTiles } from "./slopes";
@@ -145,12 +146,13 @@ export function factoryFootprintTiles(
  */
 export function factoryAdjacencyRing(
   grid: Grid, tx: number, ty: number, rot = 0,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint?: readonly [number, number],
 ): [number, number][] {
+  const fp = footprint ?? factoryFootprintOf(grid);
   const out: [number, number][] = [];
   const seen = new Set<number>();
-  for (const [x, y] of factoryFootprintTiles(tx, ty, rot, footprint)) seen.add(tIdx(x, y));  // never the footprint
-  for (const [x, y] of factoryFootprintTiles(tx, ty, rot, footprint)) {
+  for (const [x, y] of factoryFootprintTiles(tx, ty, rot, fp)) seen.add(tIdx(x, y));  // never the footprint
+  for (const [x, y] of factoryFootprintTiles(tx, ty, rot, fp)) {
     for (const [dx, dy] of DIR4) {
       const nx = x + dx, ny = y + dy;
       if (!inGrid(grid, nx, ny)) continue;
@@ -188,9 +190,10 @@ export function townTilesOf(t: Town): [number, number][] {
 /** Towns with at least one tile in the footprint's edge-adjacency ring. */
 export function factoryQualifyingTowns(
   grid: Grid, tx: number, ty: number, rot = 0,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint?: readonly [number, number],
 ): Town[] {
-  const ring = new Set(factoryAdjacencyRing(grid, tx, ty, rot, footprint).map(([x, y]) => tIdx(x, y)));
+  const fp = footprint ?? factoryFootprintOf(grid);
+  const ring = new Set(factoryAdjacencyRing(grid, tx, ty, rot, fp).map(([x, y]) => tIdx(x, y)));
   return grid.towns.filter((t) =>
     townTilesOf(t).some(([x, y]) => ring.has(tIdx(x, y))));
 }
@@ -198,11 +201,12 @@ export function factoryQualifyingTowns(
 /** The ring tiles that belong to a qualifying town (drawn as node marks). */
 export function factoryQualifyingTownTiles(
   grid: Grid, tx: number, ty: number, rot = 0,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint?: readonly [number, number],
 ): [number, number][] {
-  const ring = new Set(factoryAdjacencyRing(grid, tx, ty, rot, footprint).map(([x, y]) => tIdx(x, y)));
+  const fp = footprint ?? factoryFootprintOf(grid);
+  const ring = new Set(factoryAdjacencyRing(grid, tx, ty, rot, fp).map(([x, y]) => tIdx(x, y)));
   const out: [number, number][] = [];
-  for (const t of factoryQualifyingTowns(grid, tx, ty, rot, footprint)) {
+  for (const t of factoryQualifyingTowns(grid, tx, ty, rot, fp)) {
     for (const [hx, hy] of townTilesOf(t)) {
       if (ring.has(tIdx(hx, hy))) out.push([hx, hy]);
     }
@@ -219,10 +223,11 @@ export function factoryQualifyingTownTiles(
  */
 export function factoryReachBand(
   grid: Grid, tx: number, ty: number, rot = 0,
-  footprint: readonly [number, number] = FACTORY_FOOTPRINT,
+  footprint?: readonly [number, number],
 ): [number, number][] {
+  const fp = footprint ?? factoryFootprintOf(grid);
   const out: [number, number][] = [];
-  for (const [x, y] of factoryAdjacencyRing(grid, tx, ty, rot, footprint)) {
+  for (const [x, y] of factoryAdjacencyRing(grid, tx, ty, rot, fp)) {
     const i = tIdx(x, y);
     const v = grid.terrain[i];
     if (v !== GRASS && v !== ROUGH && v !== SAND) continue;  // no water band (SAND is buildable beach)
@@ -299,7 +304,9 @@ export function planFactoryPlacement(
   grid: Grid, tx: number, ty: number, opts: FactoryPlanOptions = {},
 ): PlacementPlan {
   const rot = opts.rot ?? 0;
-  const fp = opts.footprint ?? FACTORY_FOOTPRINT;
+  // F4: the plan follows the map's own Factory footprint (the shapes option's
+  // long lot on a shapes map, the legacy constant everywhere else).
+  const fp = opts.footprint ?? factoryFootprintOf(grid);
   const footprint: PlanFootprintTile[] = [];
   let valid = true, why: string | null = null, code: string | null = null;
   // E4 (#268): the Factory needs a LEVEL footprint (see slopes.ts). The tiles
