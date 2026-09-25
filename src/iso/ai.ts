@@ -87,6 +87,7 @@ import {
 import {
   RAIL_COSTS, RAIL_PRESENT, RAIL_VIEWS, footprintFor,
   railCostOf, railTerrainOk, roadAt, railTileRefusal, railBridgePlan, buildRail,
+  railJoinTurnOk, previewRailBuild,
   platformRefusal, resolveAnchor, placePlatform,
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
   structureAt, structuresOf, railComponents, ownerRailTiles,
@@ -2205,7 +2206,7 @@ export function planRailRoute(
         n = cameFrom.get(n);
       }
       tiles.reverse();
-      return tiles;
+      if (validateRailDrag(grid, track, rail, ownerId, tiles).ok) return tiles;
     }
     closed.add(cur);
     const cxn = tile % MAP_W, cyn = (tile / MAP_W) | 0;
@@ -2215,6 +2216,7 @@ export function planRailRoute(
       const diag = sx !== 0 && sy !== 0;
       const nx = cxn + sx, ny = cyn + sy;
       if (!inMapT(nx, ny) || !inBox(nx, ny)) continue;
+      if (!railJoinTurnOk(rail, ownerId, cxn, cyn, nx, ny)) continue;
       // A level crossing is straight across: no diagonal on or off a road
       // tile, and no turn on one.
       if (diag && (hasRoad(cxn, cyn) || hasRoad(nx, ny))) continue;
@@ -2261,6 +2263,8 @@ export function planRailRoute(
 export function validateRailDrag(
   grid: Grid, track: Track, rail: RailState, ownerId: number, tiles: [number, number][],
 ): { ok: boolean; fresh: number; bridges: number; why: RailRefusal | null } {
+  const probe = previewRailBuild(grid, track, rail, ownerId, tiles);
+  if (probe.why !== "ok") return { ok: false, fresh: 0, bridges: 0, why: probe.why };
   const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
   // R2 (#266): the drag's crossing, judged on the whole gesture by the SAME
   // function the player's preview and `buildRail` read — a plan that walks

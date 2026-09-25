@@ -732,6 +732,78 @@ export function railNeighbours(
   return out;
 }
 
+/**
+ * #401: a stub has no turn. At a junction EVERY arm must have a drivable
+ * continuation. This admits a WYE, not a right-angle corner or a sharp spur:
+ * trains may choose only the <=45° transitions (railPath enforces those).
+ * Headings here point OUT from the tile, so reverse the arriving arm first.
+ */
+function railArmsTurnOk(arms: number[]): boolean {
+  return arms.length < 2 || arms.every((a) =>
+    arms.some((b) => a !== b && turnOk((a + 4) % 8, b)));
+}
+
+function railArms(state: RailState, ownerId: number, x: number, y: number): number[] {
+  return railNeighbours(state, ownerId, x, y).map(([nx, ny]) => octantOf(nx - x, ny - y));
+}
+
+/** The planner's local join check, including both ends of a proposed edge. */
+export function railJoinTurnOk(
+  state: RailState, ownerId: number, ax: number, ay: number, bx: number, by: number,
+): boolean {
+  const o = octantOf(bx - ax, by - ay);
+  return railArmsTurnOk([...new Set([...railArms(state, ownerId, ax, ay), o])])
+    && railArmsTurnOk([...new Set([...railArms(state, ownerId, bx, by), (o + 4) % 8])]);
+}
+
+/**
+ * Journal the small neighbourhood an explicit link + autotiling may change.
+ * Include distance two: an autotiled neighbour can link to its own neighbour.
+ * No whole-map copies per tile, and rollback restores reciprocal/diagonal bits,
+ * ownership AND revision exactly. Old sharp saves are not rewritten: only a
+ * newly gained arm can cause a refusal.
+ */
+function railEdit(state: RailState, tiles: [number, number][]) {
+  const before = new Map<number, { tile: number; owner: number; arms: number[] }>();
+  const revision = state.rail.revision;
+  for (const [x, y] of tiles) {
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (!inMapT(nx, ny)) continue;
+      const i = tIdx(nx, ny);
+      if (before.has(i)) continue;
+      const owner = effectiveOwner(state, nx, ny);
+      before.set(i, { tile: state.rail.tile[i], owner: state.rail.owner[i],
+        arms: owner ? railArms(state, owner, nx, ny) : [] });
+    }
+  }
+  return {
+    tooSharp: () => [...before].some(([i, old]) => {
+      const x = i % MAP_W, y = Math.floor(i / MAP_W);
+      const owner = effectiveOwner(state, x, y);
+      if (!owner) return false;
+      const arms = railArms(state, owner, x, y);
+      return arms.some((a) => !old.arms.includes(a)) && !railArmsTurnOk(arms);
+    }),
+    rollback: () => {
+      for (const [i, old] of before) {
+        state.rail.tile[i] = old.tile;
+        state.rail.owner[i] = old.owner;
+      }
+      state.rail.revision = revision;
+    },
+  };
+}
+
+/** A read-only build probe: exactly the same joins and prefix as the commit. */
+export function previewRailBuild(
+  grid: Grid, track: Track, state: RailState, ownerId: number, tiles: [number, number][],
+): RailBuildResult {
+  const probe: RailState = { ...state, rail: { ...state.rail,
+    tile: state.rail.tile.slice(), owner: state.rail.owner.slice() } };
+  return buildRail(grid, track, probe, ownerId, tiles);
+}
+
 // ── refusals: one vocabulary for the preview, the click, the rival, the host ─
 export type RailRefusal =
   | "ok" | "off-map" | "water" | "occupied" | "road-parallel" | "crossing-curve"
@@ -746,7 +818,8 @@ export type RailRefusal =
   /** E4 (#268): a diagonal link across a level change — a corner a train cannot take. */
   | "slope-diagonal"
   /** E4 (#268): a platform's / a rail depot's footprint straddles a level change. */
-  | "not-flat";
+  | "not-flat"
+  | "too-sharp";
 
 export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   ok: "",
@@ -771,6 +844,7 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "too-steep": "Too steep for rail — a climb needs 3 tiles of run.",
   "slope-diagonal": "Rail may not run diagonally across a slope.",
   "not-flat": "A flat footprint: the whole site must sit on one level.",
+  "too-sharp": "Too sharp for rail: turns must be 45° or less",
 };
 
 // ── placement: rail tiles ─────────────────────────────────────────────────
@@ -864,6 +938,11 @@ export function railTileRefusal(
   const steep = railJoinSlopeRefusal(grid, tx, ty, (x, y) =>
     inMapT(x, y) && (!!planned?.has(tIdx(x, y)) || sameOwnerRail(state, ownerId, x, y)));
   if (steep) return steep;
+  // A standalone tile still auto-links. Whole drags probe incrementally in
+  // buildRail, with their explicit links and planned diagonals in hand.
+  if (!planned && previewRailBuild(grid, track, state, ownerId, [[tx, ty]]).why === "too-sharp") {
+    return "too-sharp";
+  }
   return "ok";
 }
 
@@ -899,7 +978,7 @@ function sameOwnerRail(state: RailState, ownerId: number, x: number, y: number):
  * "only the tile plus its neighbours" discipline `track.ts` uses, so a drag of
  * twenty tiles is twenty small writes and never a map scan.
  */
-export function autotileRail(
+function proposeRailAutolinks(
   state: RailState, tiles: [number, number][], plannedDiag?: ReadonlySet<number>,
 ): void {
   const touched = new Set<number>();
@@ -935,6 +1014,13 @@ export function autotileRail(
     state.rail.tile[i] = mask | RAIL_PRESENT | (old & RAIL_DIAG);
   }
   state.rail.revision++;
+}
+
+/** Structure/demolition auto-link entry point: never introduce a sharp join. */
+export function autotileRail(state: RailState, tiles: [number, number][]): void {
+  const edit = railEdit(state, tiles);
+  proposeRailAutolinks(state, tiles);
+  if (edit.tooSharp()) edit.rollback();
 }
 
 export interface RailBuildResult {
@@ -984,6 +1070,11 @@ export function buildRail(
   let decks = 0;
   for (let n = 0; n < tiles.length; n++) {
     const [tx, ty] = tiles[n];
+    if (n > 0 && (Math.max(Math.abs(tx - tiles[n - 1][0]), Math.abs(ty - tiles[n - 1][1])) !== 1
+      || (n > 1 && !turnOk(octantOf(tx - tiles[n - 1][0], ty - tiles[n - 1][1]),
+        octantOf(tiles[n - 1][0] - tiles[n - 2][0], tiles[n - 1][1] - tiles[n - 2][1]))))) {
+      return { ok: built.length > 0, why: "too-sharp", cost: railCostOf(charged, decks), built };
+    }
     const why = slopeWhy.get(n)
       ?? (diagOverRoad(track, tiles, n) ? "crossing-curve"
         : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles));
@@ -993,30 +1084,30 @@ export function buildRail(
     // for the new tiles, exactly like a road drag over your own road.
     const already = (state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(tx, ty)] === ownerId;
-    if (!already) {
-      charged++;
-      if (bridgeTiles.has(tIdx(tx, ty))) decks++;      // R2: a deck is charged the deck price
-    }
-    const beforeTile = state.rail.tile[tIdx(tx, ty)];
-    const beforeOwner = state.rail.owner[tIdx(tx, ty)];
+    const edit = railEdit(state, [[tx, ty]]);
     writeRailTile(state, ownerId, tx, ty);
     // A diagonal step from the previous tile of the drag is a diagonal link.
     const prev = n > 0 ? tiles[n - 1] : null;
     const link = prev && built.length > 0 && isDiagStep(prev[0], prev[1], tx, ty)
       ? diagSlot(prev[0], prev[1], tx, ty) : null;
-    const beforeLink = link ? state.rail.tile[link.i] : 0;
     if (link) state.rail.tile[link.i] |= link.bit;
     // An orthogonal step of the drag is an explicit join too (it must hold
     // even where one end sits on a diagonal).
     const ortho = prev && built.length > 0 && Math.abs(prev[0] - tx) + Math.abs(prev[1] - ty) === 1
       ? DIRS.find((d) => prev[0] + DIR[d][0] === tx && prev[1] + DIR[d][1] === ty) : undefined;
-    const beforePrev = prev ? state.rail.tile[tIdx(prev[0], prev[1])] : 0;
     if (ortho !== undefined && prev) {
       state.rail.tile[tIdx(prev[0], prev[1])] |= ortho;
       state.rail.tile[tIdx(tx, ty)] |= OPPOSITE[ortho];
     }
-    autotileRail(state, [[tx, ty]], plannedDiag);
-    if (!guardMerge) { built.push([tx, ty]); continue; }
+    proposeRailAutolinks(state, [[tx, ty]], plannedDiag);
+    if (edit.tooSharp()) {
+      edit.rollback();
+      return { ok: built.length > 0, why: "too-sharp", cost: railCostOf(charged, decks), built };
+    }
+    if (!guardMerge) {
+      if (!already) { charged++; if (bridgeTiles.has(tIdx(tx, ty))) decks++; }
+      built.push([tx, ty]); continue;
+    }
     const comp = railComponents(state, ownerId);
     const here = comp.get(tIdx(tx, ty)) ?? 0;
     const trainsHere = state.trains.filter((t) => {
@@ -1027,15 +1118,10 @@ export function buildRail(
       return (comp.get(tIdx(exit.tx, exit.ty)) ?? 0) === here;
     });
     if (trainsHere.length > 1) {
-      // Restore exactly what stood here before (a merge can be attempted over a
-      // tile that was already rail), then recompute the neighbourhood's bits.
-      if (link) state.rail.tile[link.i] = beforeLink;
-      if (ortho !== undefined && prev) state.rail.tile[tIdx(prev[0], prev[1])] = beforePrev;
-      state.rail.tile[tIdx(tx, ty)] = beforeTile;
-      state.rail.owner[tIdx(tx, ty)] = beforeOwner;
-      autotileRail(state, [[tx, ty]]);
+      edit.rollback();
       return { ok: built.length > 0, why: "component-conflict", cost: railCostOf(charged, decks), built };
     }
+    if (!already) { charged++; if (bridgeTiles.has(tIdx(tx, ty))) decks++; }
     built.push([tx, ty]);
   }
   // `charged`, not `built.length`: a drag that redraws rail you already own
@@ -1100,6 +1186,7 @@ export function railPreview(
   ax: number, ay: number, bx: number, by: number, xFirst = true,
 ): RailPreviewResult {
   const path = octPath(ax, ay, bx, by, xFirst);
+  const probe = previewRailBuild(grid, track, state, ownerId, path);
   const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
   // R2 (#266): the drag's crossing — the deck tiles, and the price each buys.
   const bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
@@ -1117,7 +1204,8 @@ export function railPreview(
   const noteObstacle = (from: number, firstWhy: RailRefusal) => {
     why = firstWhy;
     truncated = true;
-    for (let j = from; j < path.length; j++) {
+    blocked.push(path[from]);
+    for (let j = from + 1; j < path.length; j++) {
       const [bx, by] = path[j];
       if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles) === "ok") break;
       blocked.push([bx, by]);
@@ -1127,6 +1215,7 @@ export function railPreview(
     const [x, y] = path[i];
     const already = (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(x, y)] === ownerId;
+    if (i === probe.built.length && probe.why !== "ok") { noteObstacle(i, probe.why); break; }
     const shape = slopeWhy.get(i);
     if (shape) { noteObstacle(i, shape); break; }
     if (diagOverRoad(track, path, i)) { noteObstacle(i, "crossing-curve"); break; }
@@ -2512,7 +2601,13 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
       route: Array.isArray(t.route)
         ? t.route.map((r) => [...r] as [number, number])
         : (prevRoutes.get(t.id) ?? []).map((r) => [...r] as [number, number]),
-      dist: t.dist, planRevision: t.planRevision, dwellMs: t.dwellMs,
+      dist: t.dist,
+      // #401: preserve legacy track, but never resume a saved sharp route.
+      planRevision: t.route?.some((p, i, route) => i >= 2 && !turnOk(
+        octantOf(route[i - 1][0] - route[i - 2][0], route[i - 1][1] - route[i - 2][1]),
+        octantOf(p[0] - route[i - 1][0], p[1] - route[i - 1][1]),
+      )) ? -1 : t.planRevision,
+      dwellMs: t.dwellMs,
       dirBit: t.dirBit, resold: !!t.resold, blockedWhy: t.blockedWhy,
     });
   }
