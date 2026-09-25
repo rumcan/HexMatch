@@ -69,6 +69,7 @@ import { playHoly, prewarmHoly } from "./holy";
 // are only the moments that are not a button — a tab sliding, a toast saying
 // no, a gem clearing, the wire opening.
 import { attachUiSound, registerSoundPainter, soundLabel, sfx } from "../audio/sfx";
+import { dockLayout } from "./dock-layout";
 import type { Cue } from "../audio/cues";
 // VO-1: spoken lines. The coach cues the narrator; the bubble below is the
 // subtitle. A missing MP3 never throws — voice.ts shows the line anyway.
@@ -927,6 +928,8 @@ export function createOriginalUi(
   minimapBtn.onclick = () => {
     minimapHost.dataset.open = minimapShown() ? "0" : "1";
     syncMinimapKey();
+    // #386: the plate just showed or hid — the chat dock restacks on it.
+    syncDockLayout();
   };
   syncMinimapKey();
 
@@ -1054,6 +1057,8 @@ export function createOriginalUi(
     const r = footer.getBoundingClientRect();
     if (r.height <= 0) return;
     root.style.setProperty("--resbar-gap", `${Math.max(0, Math.round(window.innerHeight - r.top))}px`);
+    // #386: the bar is the lane both bottom-left docks stand on — restack.
+    syncDockLayout();
   };
   if (typeof ResizeObserver === "function") new ResizeObserver(publishResbarGap).observe(footer);
   window.addEventListener("resize", publishResbarGap);
@@ -1804,6 +1809,13 @@ export function createOriginalUi(
   if (chatCfg) {
     root.appendChild(chatDock);
     root.appendChild(chatScrim);
+    // #386: the plate's own observer — a belt over the direct syncs (paintZoom,
+    // the fab, setChatOpen, the footer), so any other change of its box
+    // restacks the dock too. Solo never reaches this line.
+    root.dataset.chatOpen = "0";
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => syncDockLayout()).observe(minimapHost);
+    }
   }
   // The panel is collapsed on boot: the map is the game, and a match opens on
   // it.
@@ -1896,6 +1908,10 @@ export function createOriginalUi(
   function setChatOpen(on: boolean): void {
     if (on === chatOpen) return;
     chatOpen = on;
+    // #386 (phone): the open sheet tucks the plate away — styles.css keys that
+    // rule off this flag. Set it FIRST, so the measure below sees the plate's
+    // post-tuck box in this same tick.
+    root.dataset.chatOpen = on ? "1" : "0";
     chatDock.classList.toggle("open", on);
     chatHead.setAttribute("aria-expanded", String(on));
     chatBody.classList.toggle("hidden", !on);
@@ -1917,6 +1933,53 @@ export function createOriginalUi(
       chatInput.blur();
       setChatNote(null);
     }
+    // #386: the open state changes the phone's base lane (pill → sheet) and
+    // tucks the plate — restack against what the DOM says now.
+    syncDockLayout();
+  }
+
+  // ── #386 — the bottom-left stack: chat over the minimap plate ────────────
+  // The PLATE is the anchor: nothing here ever moves it, so single-player
+  // (which has no chat config) stays pixel-identical — the guard below is
+  // that promise: a solo game never sets --chat-lift, --chat-max-h or
+  // data-chat-open, and matches none of the rules that read them.
+  //
+  // When the plate IS up, the chat dock sits directly above it (same left
+  // edge — styles.css mirrors the plate's own left rules — and 6px of air
+  // above its top edge); folded, the dock drops to its own base lane, today's
+  // place to the pixel. The rule itself is dockLayout() in
+  // src/game/dock-layout.ts, pinned by tests/unit/ui-dock-layout.test.ts;
+  // this function only gathers the LIVE numbers and publishes.
+  //
+  // The plate's height is measured here (offsetHeight: 0 while it is folded
+  // away, its box while it shows) rather than read back from --minimap-h:
+  // every caller below runs right AFTER the state that moved the plate
+  // changed — data-open, data-view, data-phone, data-chat-open — and the
+  // measure answers for that state in the same tick, where a
+  // ResizeObserver's publication would still be a frame behind.
+  // src/iso/minimap.ts publishes --minimap-h for everyone else who wants to
+  // stack over the plate.
+  function syncDockLayout(): void {
+    if (!chatCfg) return;
+    const resbarGap = parseFloat(root.style.getPropertyValue("--resbar-gap")) || 0;
+    // --safe-top is `env(safe-area-inset-top, …)` in styles.css; a browser
+    // resolves it to px, anything that cannot (jsdom) falls back to 0.
+    const safeTop = parseFloat(getComputedStyle(root).getPropertyValue("--safe-top")) || 0;
+    const { chatLift, chatMaxH } = dockLayout({
+      minimapH: minimapHost.offsetHeight,
+      chatOpen,
+      phone: isPhoneViewport(),
+      height: window.innerHeight,
+      resbarH: footer.offsetHeight,
+      resbarGap,
+      safeTop,
+    });
+    root.style.setProperty("--chat-lift", `${chatLift}px`);
+    root.style.setProperty("--chat-max-h", `${chatMaxH}px`);
+    // dataset twins of the custom properties (jsdom has no var() support —
+    // the same trick paintZoom uses for --board-px).
+    root.dataset.chatLift = String(chatLift);
+    root.dataset.chatMaxH = String(chatMaxH);
   }
 
   /**
@@ -3418,6 +3481,9 @@ export function createOriginalUi(
     boardWrap.dataset.zoom = String(z);
     root.dataset.boardPx = String(boardW);
     syncTopbarTuck();
+    // #386: the regime (data-phone), the resource-bar lane and the plate's
+    // box can all have moved with the window — restack the chat dock.
+    syncDockLayout();
   }
 
   /**
