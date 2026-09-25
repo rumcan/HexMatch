@@ -4322,13 +4322,13 @@ export function createOriginalUi(
     if (t.level >= t.maxLevel) {
       tpCity.disabled = true;
       tpCity.classList.add("done");
-      tpCity.innerHTML = `🏙 City upgraded — base rate +${Math.round(t.bonus * 100)}%`;
+      tpCity.innerHTML = `<span class="k-ico">${toolIconSvg("city")}</span><span class="k-main"><b>City upgraded</b><small>Base rate +${Math.round(t.bonus * 100)}%</small></span>`;
       tpCity.title = "The city is at its top level on the new loop.";
       return;
     }
     tpCity.classList.remove("done");
     tpCity.disabled = !t.affordable;
-    tpCity.innerHTML = `🏙 Upgrade city · ${costMarkup(t.cost)} → base rate +${Math.round(t.ceiling * 100)}%`;
+    tpCity.innerHTML = `<span class="k-ico">${toolIconSvg("city")}</span><span class="k-main"><b>Upgrade city</b><small>Base rate up to +${Math.round(t.ceiling * 100)}%</small></span><span class="k-cost">${costMarkup(t.cost)}</span>`;
     tpCity.title = t.affordable
       ? "Play a tuning session to confirm the upgrade — the score sets how much of the base-rate bonus lands."
       : (t.note ?? "Save up the materials first.");
