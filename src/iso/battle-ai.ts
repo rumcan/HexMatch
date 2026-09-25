@@ -178,9 +178,12 @@ const evalSwap = (
       }
     }
   }
-  // extra turns win games
-  if (biggest >= state.rules.extraTurnMinMatch) score += 9;
-  if (shaped && state.rules.extraTurnOnShape) score += 7;
+  // extra turns win games — unless B7's chain cap (#252) has already used
+  // up this seat's run of extras, when the turn passes whatever the shape
+  const cap = state.rules.extraTurnChain ?? 0;
+  const capped = cap > 0 && (state.state.chain ?? 0) >= cap;
+  if (!capped && biggest >= state.rules.extraTurnMinMatch) score += 9;
+  if (!capped && shaped && state.rules.extraTurnOnShape) score += 7;
 
   // paint back
   board.grid[r1][c1] = a;
@@ -246,11 +249,12 @@ const evalAbility = (state: BattleAiState, seat: BattleSeat, id: AbilityId): num
       return dmg * 3.4 - (def.costsTurn === false ? 0 : 4);
     }
     case "repair": {
-      const missing = state.rules.startHealth - me.health;
+      const full = me.maxHealth ?? state.rules.startHealth;
+      const missing = full - me.health;
       if (missing <= 0) return -8;
       const heal = Math.min(def.heal ?? 0, missing);
-      const danger = opp.health < state.rules.startHealth * 0.5 ? -3 : 0;
-      return heal * 2.6 + (me.health <= state.rules.startHealth * 0.35 ? 6 : 0) + danger;
+      const danger = opp.health < (opp.maxHealth ?? state.rules.startHealth) * 0.5 ? -3 : 0;
+      return heal * 2.6 + (me.health <= full * 0.35 ? 6 : 0) + danger;
     }
     case "smog": {
       // best when the opponent sits on a bank they are about to spend
@@ -341,6 +345,27 @@ const shadowScore = async (
 
 // ── the policy ──────────────────────────────────────────────────────────────
 
+/** B7 (#252): a free action below this value is not worth the fuss. */
+const FREE_CAST_MIN = 1;
+
+/**
+ * B7 (#252): the best FREE cast worth taking right now (`costsTurn: false`
+ * rows — Bribe, and since B7 Girders / Frost / Smog). A free action competes
+ * with nothing: it is cast first and the swap still follows, so it is never
+ * priced against the best swap (before B7 it was, and the rival never cast a
+ * control spell at all). `only` narrows the book (Easy sees just the Bribe).
+ */
+const bestFreeCast = (state: Battle, seat: BattleSeat, only?: (id: AbilityId) => boolean): RivalMove | null => {
+  let best: RivalMove | null = null;
+  let bestScore = FREE_CAST_MIN;
+  for (const id of BATTLE_ABILITY_ORDER) {
+    if (BATTLE_ABILITIES[id].costsTurn !== false || (only && !only(id))) continue;
+    const v = evalAbility(state, seat, id);
+    if (v > bestScore) { bestScore = v; best = { t: "ability", id, seat }; }
+  }
+  return best;
+};
+
 /**
  * B4 — the rival's move. `state` is the live battle (`Battle` satisfies
  * `BattleAiState`); `skill` is the preset key (`skill.ts`). Deterministic
@@ -357,8 +382,15 @@ export async function chooseBattleMove(
     return killShot(state, seat);
   }
 
+  // a kill shot first — then any free action worth taking (B7): it costs no
+  // turn, so the swap below still happens after it
+  const kill = killShot(state, seat);
+  if (kill) return kill;
+  const free = bestFreeCast(state, seat, policy.cast === "obvious" ? (id) => id === "bribe" : undefined);
+  if (free) return free;
+
   // spell or swap? each castable row priced against the best swap it would
-  // displace (a free action competes with nothing)
+  // displace (a free action competes with nothing — it went above)
   let best: RivalMove = { t: "swap", ...zip(swaps[0].mv) };
   let bestScore = swaps[0].score;
   for (const id of BATTLE_ABILITY_ORDER) {
@@ -421,6 +453,8 @@ const zip = (mv: [number, number, number, number]) =>
  */
 export function greedyBattleMove(state: Battle): RivalMove | null {
   const seat = state.state.turn;
+  const free = bestFreeCast(state, seat);   // B7: freebies first (see above)
+  if (free) return free;
   const swaps = evalAllSwaps(state, seat);
   let best: RivalMove | null = swaps.length ? { t: "swap", ...zip(swaps[0].mv) } : null;
   let bestScore = swaps.length ? swaps[0].score : -Infinity;

@@ -29,6 +29,7 @@ import { GEM_ART } from "./gem-art";
 import { BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
 import {
   createBattle, type AbilityOutcome, type Battle, type BattleMove, type BattleSeat, type TurnOutcome,
+  maxHealthOf,
 } from "./battle";
 import { GEM_TO_CARGO } from "../iso/quarry";
 import {
@@ -285,10 +286,11 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     const el = sideEls[seat];
     const fill = el.querySelector(".battle-health-fill") as HTMLElement;
     const num = el.querySelector(".battle-health-num") as HTMLElement;
-    const pct = Math.max(0, (p.health / rules.startHealth) * 100);
+    const full = maxHealthOf(p, rules);
+    const pct = Math.max(0, Math.min(100, (p.health / full) * 100));
     fill.style.width = pct + "%";
     num.textContent = `${p.health}`;
-    el.classList.toggle("low", p.health * 4 <= rules.startHealth);
+    el.classList.toggle("low", p.health * 4 <= full);
     for (const cargo of CARGOES) {
       const chip = el.querySelector(`.battle-mana-chip[data-cargo="${cargo}"]`) as HTMLElement;
       const mfill = chip.querySelector(".battle-mana-fill") as HTMLElement;
@@ -734,8 +736,10 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (out.heal > 0) showFloat(`+${out.heal} ♥`, true);
     const stolenTotal = (Object.values(out.stolen) as number[]).reduce((s, n) => s + n, 0);
     if (stolenTotal > 0) showFloat(`+${stolenTotal} ${CARGO.gold.icon} mana`, true);
-    if (out.frozen > 0) showFloat(`${out.frozen} gems frozen ❄`);
-    if (out.girders > 0) showFloat(`${out.girders} girders`);
+    // B7 (#252): a free Girders / Frost is ARMED — it lands when the turn passes
+    const later = out.costsTurn ? "" : " at turn end";
+    if (out.frozen > 0) showFloat(`${out.frozen} gems freeze${later} ❄`);
+    if (out.girders > 0) showFloat(`${out.girders} girders drop${later}`);
     if (out.smog > 0) showFloat("SMOG!", true);
     if (battle.state.over) {
       window.setTimeout(showResult, 700);
