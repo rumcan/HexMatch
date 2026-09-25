@@ -109,11 +109,12 @@ export function placementReasonText(code: string | null): string | null {
 const inGrid = (g: Grid, x: number, y: number) =>
   x >= 0 && y >= 0 && x < g.w && y < g.h;
 
-/** Every tile of the Factory footprint (including any off-map tail). */
-export function factoryFootprintTiles(tx: number, ty: number): [number, number][] {
+/** Every tile of the Factory footprint (including any off-map tail), rotated. */
+export function factoryFootprintTiles(tx: number, ty: number, rot = 0): [number, number][] {
+  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
   const out: [number, number][] = [];
-  for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-    for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) out.push([tx + dx, ty + dy]);
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) out.push([tx + dx, ty + dy]);
   }
   return out;
 }
@@ -123,12 +124,13 @@ export function factoryFootprintTiles(tx: number, ty: number): [number, number][
  * the town-adjacency area. A tile is included when it is an orthogonal
  * neighbour of any footprint tile, so diagonal-only contact stays out by
  * construction and the footprint's own tiles are never part of their own ring.
+ * F3: `rot` rotates the footprint.
  */
-export function factoryAdjacencyRing(grid: Grid, tx: number, ty: number): [number, number][] {
+export function factoryAdjacencyRing(grid: Grid, tx: number, ty: number, rot = 0): [number, number][] {
   const out: [number, number][] = [];
   const seen = new Set<number>();
-  for (const [x, y] of factoryFootprintTiles(tx, ty)) seen.add(tIdx(x, y));  // never the footprint
-  for (const [x, y] of factoryFootprintTiles(tx, ty)) {
+  for (const [x, y] of factoryFootprintTiles(tx, ty, rot)) seen.add(tIdx(x, y));  // never the footprint
+  for (const [x, y] of factoryFootprintTiles(tx, ty, rot)) {
     for (const [dx, dy] of DIR4) {
       const nx = x + dx, ny = y + dy;
       if (!inGrid(grid, nx, ny)) continue;
@@ -164,17 +166,17 @@ export function townTilesOf(t: Town): [number, number][] {
 }
 
 /** Towns with at least one tile in the footprint's edge-adjacency ring. */
-export function factoryQualifyingTowns(grid: Grid, tx: number, ty: number): Town[] {
-  const ring = new Set(factoryAdjacencyRing(grid, tx, ty).map(([x, y]) => tIdx(x, y)));
+export function factoryQualifyingTowns(grid: Grid, tx: number, ty: number, rot = 0): Town[] {
+  const ring = new Set(factoryAdjacencyRing(grid, tx, ty, rot).map(([x, y]) => tIdx(x, y)));
   return grid.towns.filter((t) =>
     townTilesOf(t).some(([x, y]) => ring.has(tIdx(x, y))));
 }
 
 /** The ring tiles that belong to a qualifying town (drawn as node marks). */
-export function factoryQualifyingTownTiles(grid: Grid, tx: number, ty: number): [number, number][] {
-  const ring = new Set(factoryAdjacencyRing(grid, tx, ty).map(([x, y]) => tIdx(x, y)));
+export function factoryQualifyingTownTiles(grid: Grid, tx: number, ty: number, rot = 0): [number, number][] {
+  const ring = new Set(factoryAdjacencyRing(grid, tx, ty, rot).map(([x, y]) => tIdx(x, y)));
   const out: [number, number][] = [];
-  for (const t of factoryQualifyingTowns(grid, tx, ty)) {
+  for (const t of factoryQualifyingTowns(grid, tx, ty, rot)) {
     for (const [hx, hy] of townTilesOf(t)) {
       if (ring.has(tIdx(hx, hy))) out.push([hx, hy]);
     }
@@ -187,10 +189,11 @@ export function factoryQualifyingTownTiles(grid: Grid, tx: number, ty: number): 
  * ring over free land only. Occupied tiles carry their own meaning — industry
  * tiles are deliberately NOT tinted (a Factory does not harvest the map
  * around it, PP-03) and town tiles are shown with node marks instead.
+ * F3: `rot` rotates the footprint.
  */
-export function factoryReachBand(grid: Grid, tx: number, ty: number): [number, number][] {
+export function factoryReachBand(grid: Grid, tx: number, ty: number, rot = 0): [number, number][] {
   const out: [number, number][] = [];
-  for (const [x, y] of factoryAdjacencyRing(grid, tx, ty)) {
+  for (const [x, y] of factoryAdjacencyRing(grid, tx, ty, rot)) {
     const i = tIdx(x, y);
     const v = grid.terrain[i];
     if (v !== GRASS && v !== ROUGH && v !== SAND) continue;  // no water band (SAND is buildable beach)
@@ -251,16 +254,20 @@ export interface FactoryPlanOptions {
    * to be, so the hand-built unit grids stay valid.
    */
   track?: Track;
+  /** F3 (#274): quarter-turns the footprint is rotated (0..3). */
+  rot?: number;
 }
 
 /** The full PP-03 placement plan for a Factory hover at (tx,ty). Validity is
- *  per footprint tile and matches `placeFactory`'s own checks exactly. */
+ *  per footprint tile and matches `placeFactory`'s own checks exactly.
+ *  F3: `opts.rot` rotates the footprint. */
 export function planFactoryPlacement(
   grid: Grid, tx: number, ty: number, opts: FactoryPlanOptions = {},
 ): PlacementPlan {
+  const rot = opts.rot ?? 0;
   const footprint: PlanFootprintTile[] = [];
   let valid = true, why: string | null = null, code: string | null = null;
-  for (const [x, y] of factoryFootprintTiles(tx, ty)) {
+  for (const [x, y] of factoryFootprintTiles(tx, ty, rot)) {
     let refusal = inGrid(grid, x, y) ? buildRefusal(grid, "road", x, y) : "out-of-bounds";
     // PP-17: a building never stands on a road. `buildRefusal` is the TRACK
     // rule (where paving over your own line is a legal no-op), so it cannot
@@ -284,15 +291,15 @@ export function planFactoryPlacement(
       });
     }
   }
-  const towns = factoryQualifyingTowns(grid, tx, ty);
+  const towns = factoryQualifyingTowns(grid, tx, ty, rot);
   if (opts.requireTown && valid && towns.length === 0) {
     valid = false; code = "not-near-town"; why = placementReasonText(code);
   }
   return {
     kind: "factory",
     footprint,
-    reach: valid ? factoryReachBand(grid, tx, ty) : [],
-    nodes: factoryQualifyingTownTiles(grid, tx, ty),
+    reach: valid ? factoryReachBand(grid, tx, ty, rot) : [],
+    nodes: factoryQualifyingTownTiles(grid, tx, ty, rot),
     valid,
     why,
     code,
