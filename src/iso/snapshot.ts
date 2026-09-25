@@ -201,6 +201,7 @@ export interface WirePlayer {
 export interface BlockadeWire {
   id: number;
   until: number;
+  owner?: string;
 }
 export interface ProtestWire {
   x: number;
