@@ -42,6 +42,8 @@ import {
 // `railOpenTo` / `railServicedIndustries` are the rail module's own rules; this
 // module only asks them the same question it asks the road tar.
 import { railOpenTo, railPath, railServesIndustry, railServicedIndustries, stopTile, type RailState } from "./rail";
+// E4 (#268): the climb term the L3 factor counts as extra distance.
+import { routeDistance } from "./slopes";
 // R3 (#270): the dam's record type only — the bonus arithmetic the clock
 // applies lives in `dams.ts`, and a type import keeps this leaf the way the
 // bridge rules already keep it.
@@ -513,13 +515,19 @@ export function resolveConnection(
  * One BFS with every owned plant's shoulders as goals, so "nearest" is one
  * flood, not one per plant.
  *
+ * E4 (#268): the number is the route's TILE COUNT PLUS ITS CLIMB — the extra
+ * distance `slopes.ts` charges for every level the route climbs or drops
+ * (`climbTiles`), so a Depot up a hill bands lower than the same length of flat
+ * road and the clock pays it slower. On a flat map the term is exactly 0 and
+ * the number is the tile count it always was.
+ *
  * Null when the Depot has no road route to any owned plant — unserviced, or
  * connected to nothing. The clock's `harvesterYield` gate already pays such a
  * Depot nothing, so the factor built on this is never a second gate.
  */
 export function depotPathLength(state: EconomyState, h: Harvester): number | null {
   // A platform-Depot's distance is its line's: rail tiles from its platform
-  // to the plant platform the train runs to.
+  // to the plant platform the train runs to (plus the line's own climb).
   if (isRailDepot(h)) {
     const rail = state.rail;
     const line = rail?.lines.find((l) => l.source === h.platformId && l.ownerId === h.ownerId);
@@ -527,7 +535,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
     const dst = line && rail!.structures.find((s) => s.id === line.dest);
     if (!rail || !src || !dst) return null;
     const route = railPath(rail, h.ownerId, [stopTile(src)], new Set([tIdx(...stopTile(dst))]));
-    return route ? route.length - 1 : null;
+    return route ? routeDistance(state.grid, route) - 1 : null;
   }
   // the Depot's ENTRANCE is where its road meets the network (depot.ts)
   const from = depotShoulders(state.track, h.ownerId, h);
@@ -541,7 +549,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
   }
   if (goals.size === 0) return null;
   const route = roadPath(state.track, h.ownerId, from, goals);
-  return route ? route.length : null;
+  return route ? routeDistance(state.grid, route) : null;
 }
 
 /**

@@ -49,11 +49,13 @@
 import { MAP_W, MAP_H } from "../game/config";
 import {
   TRANSPORT, UPGRADE_COST, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT, VICTORY, DEPOT_TREE,
-  DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DISTANCE, CARGOES,
+  DEPOT_TREE_ORDER, DEPOT_RUNG_GATE, DISTANCE, CARGOES, SLOPES,
   type Cargo, type DepotTypeDef,
 } from "./config";
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { distanceFactorForPath } from "./loop";
+// E4 (#268): the slope rules and costs — the same ones the drag enforces.
+import { climbLevels, railDragSlopeRefusals, roadStepRefusal, routeDistance } from "./slopes";
 // L17 (#245): the bank is back (3:1) — the rival's planner is real again.
 import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
 import { FIELD_OCC, ROUGH, factoryTouchesTown, rotatedSpan, type Grid, type Industry } from "./grid";
@@ -101,6 +103,16 @@ export const IMPASSABLE = Infinity;
  * longest sensible detour on land — a river is never the cheap shortcut.
  */
 export const COST_BRIDGE = 6;
+/**
+ * E4 (#268): one level of climb, ranked. The planner pays this on top of the
+ * tile price for every level a step rises or falls, so of two routes of equal
+ * length it lays the flat one — which is also the one the clock pays best (the
+ * L3 distance factor counts the climb as distance) and the one the lorry
+ * climbs without losing speed. Chosen against `COST_FLAT` 1: a level costs a
+ * tile and a half of detour, so the rival will walk one extra tile to avoid a
+ * one-level step but not three.
+ */
+export const COST_SLOPE = 1.5;
 
 /**
  * Cost of routing `kind` across one tile. Water and industry footprints are
@@ -133,6 +145,7 @@ export const COST_BRIDGE = 6;
  */
 export function stepCost(
   grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
+  from?: readonly [number, number],
 ): number {
   // R2 (#266): a river tile in a straight, ≤2-tile, land-ended run may be
   // BRIDGED. The A* is per tile and cannot see the drag's shape, so this is
@@ -148,6 +161,12 @@ export function stepCost(
       && tileAlreadyCarries(track, kind, tx, ty)) return COST_BRIDGE * COST_OWNED;
     return COST_BRIDGE;
   }
+  // E4 (#268): a road climbs at most one level per tile, so a step steeper than
+  // that is impassable to the planner exactly as it is refused to the drag
+  // (`from` is the tile the search came from; a caller without one — a probe, a
+  // one-tile question — keeps the pre-#268 answer). The legal climb is charged
+  // below, so a flat route of the same length always wins.
+  if (roadStepRefusal(grid, from, [tx, ty])) return IMPASSABLE;
   // Use the build rule itself: town tiles (TOWN_OCC = -2) block routes too.
   if (!canBuildOn(grid, kind, tx, ty, undefined, undefined, track)) return IMPASSABLE;
   const i = tIdx(tx, ty);
@@ -170,6 +189,12 @@ export function stepCost(
   // gravel spur. The reverse still holds: a paved plan over gravel pays
   // `UPGRADE_COST`, so it earns no discount (that is `tileAlreadyCarries`).
   if ((own || shared) && tileAlreadyCarries(track, kind, tx, ty)) c *= COST_OWNED;
+  // E4 (#268): the road's slope rule and its price, together — the step from
+  // `from` may climb at most `roadMaxStep` levels (steeper is refused to the
+  // drag and impassable here) and a legal climb is charged on top of the tile,
+  // after the trunk discount, because a climb is a climb on any road. Both
+  // terms are 0 on a flat map.
+  if (from) c += Math.abs(climbLevels(grid, from, [tx, ty])) * COST_SLOPE;
   return c;
 }
 
@@ -249,7 +274,7 @@ export function findPath(
       const ni = tIdx(nx, ny);
       if (closed.has(ni)) continue;
       // the goal itself may be unbuildable when we only need to reach beside it
-      const c = stepCost(grid, track, kind, nx, ny, owner);
+      const c = stepCost(grid, track, kind, nx, ny, owner, [cx, cy]);
       if (!isFinite(c) && !(ni === goal && adjacentTo)) continue;
       const tentative = (gScore.get(cur) ?? Infinity) + (isFinite(c) ? c : 0);
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
@@ -644,9 +669,13 @@ export function planFeasibility(
   );
   const bridgeTiles = bridge.deckTiles;          // TILE indices — see `BridgePlan`
   let executable = true;
-  for (const [x, y] of path.tiles) {
+  for (let n = 0; n < path.tiles.length; n++) {
+    const [x, y] = path.tiles[n];
     const i = tIdx(x, y);
-    if (!canBuildOn(grid, kind, x, y, undefined, undefined, track) && !bridgeTiles.has(i)) {
+    // E4 (#268): the step the path walked — the same one-level road rule the
+    // drag preview enforces, so a plan's legality is judged the way building it
+    // would be.
+    if (!canBuildOn(grid, kind, x, y, undefined, undefined, track, path.tiles[n - 1]) && !bridgeTiles.has(i)) {
       executable = false; continue;
     }
     if (hasTrack(track, kind, x, y)) continue;      // already ours: nothing to lay
@@ -1093,7 +1122,11 @@ export function planCandidates(
         const wanted = cargo !== null && want.has(cargo);
         const reach = Math.abs(factory.tx - gx) + Math.abs(factory.ty - gy);
         const lane = 1 / (1 + reach / (2 * DISTANCE.midTiles));
-        const worth = newLoop ? value * distanceFactorForPath(path.tiles.length) * lane : value;
+        // E4 (#268): the rival values a candidate by the distance the CLOCK
+        // will measure it at — the tile count plus the climb (`routeDistance`),
+        // so a depot up a hill is worth less to it than the same length of flat
+        // road, exactly as it will pay less.
+        const worth = newLoop ? value * distanceFactorForPath(routeDistance(grid, path.tiles)) * lane : value;
         const score = (worth / Math.max(0.3, path.cost)) * (wanted ? WANT_CARGO_BONUS : 1);
         out.push({ industry: ind, hx, hy, facing, path, kind: kindPref, cost, depotCost, score, value: worth });
         break;   // one spot per industry is enough — the cheapest we found
@@ -1563,9 +1596,11 @@ export function executeCandidate(
     (x, y) => railAt(state, x, y),
   );
   const bridgeTiles = bridge.deckTiles;          // TILE indices — see `BridgePlan`
-  for (const [x, y] of c.path.tiles) {
+  for (let n = 0; n < c.path.tiles.length; n++) {
+    const [x, y] = c.path.tiles[n];
     const bi = tIdx(x, y);
-    if (!canBuildOn(state.grid, c.kind, x, y, undefined, undefined, state.track) && !bridgeTiles.has(bi)) continue;
+    if (!canBuildOn(state.grid, c.kind, x, y, undefined, undefined, state.track, c.path.tiles[n - 1])
+      && !bridgeTiles.has(bi)) continue;
     if (hasTrack(state.track, c.kind, x, y)) continue;
     if (bridgeTiles.has(bi) && !tileAlreadyCarries(state.track, c.kind, x, y)) {
       spent = addCost(spent, BRIDGE_COST);       // a deck never rides the allowance
@@ -1996,6 +2031,7 @@ const RAIL_BRIDGE_STEP = 12;
  */
 export function railStepCost(
   grid: Grid, track: Track, rail: RailState, ownerId: number, tx: number, ty: number,
+  from?: readonly [number, number],
 ): number {
   if (!inMapT(tx, ty)) return IMPASSABLE;
   const i = tIdx(tx, ty);
@@ -2029,8 +2065,25 @@ export function railStepCost(
     if (!straight) return IMPASSABLE;         // the crossing is straight-only
     return RAIL_CROSSING_PENALTY;
   }
-  return grid.terrain[i] === ROUGH ? COST_ROUGH : COST_FLAT;
+  // E4 (#268): the rail grades. A step steeper than `railMaxStep` levels is
+  // impassable (the shared rule refuses it too), and a one-level step is dear
+  // (`RAIL_SLOPE_STEP`), so the A* walks the map's own long ramps rather than
+  // its one-tile jitter cliffs. The RAMP RUN itself is enforced by the search's
+  // own state (see `planRailRoute`) and re-checked on the finished drag by
+  // `validateRailDrag`.
+  //
+  // A step onto, off or along a bridge deck is EXEMPT, exactly as it is in the
+  // drag rule: a deck sits at water level and its bank is whatever height it
+  // is, so the approach is the bridge's structure, not a grade the line chose.
+  const deckStep = !railTerrainOk(grid, tx, ty)
+    || (!!from && !railTerrainOk(grid, from[0], from[1]));
+  const climb = from && !deckStep ? Math.abs(climbLevels(grid, from, [tx, ty])) : 0;
+  if (climb > SLOPES.railMaxStep) return IMPASSABLE;
+  return (grid.terrain[i] === ROUGH ? COST_ROUGH : COST_FLAT) + climb * RAIL_SLOPE_STEP;
 }
+
+/** E4 (#268): what one level of rail climb costs the ranker (see `railStepCost`). */
+const RAIL_SLOPE_STEP = 6;
 
 /** Rail's own admissible heuristic: octile distance at the cheapest step cost. */
 const railHeuristic = (ax: number, ay: number, bx: number, by: number) => {
@@ -2061,6 +2114,12 @@ function laneHeadingInto(rail: RailState, ownerId: number, x: number, y: number)
  * but the cost table is rail's own and the search is boxed around the two
  * endpoints: a line is a local job, and the box is what keeps a rival turn
  * from spending a road turn's worth of wall clock on it.
+ *
+ * E4 (#268): the state is (tile, heading, RAMP RUN) — the run is how many flat
+ * steps the line has taken since its last level change, and it is part of the
+ * key because the rail rule is a property of the RUN, not of a tile. Without
+ * it the planner would draw one-tile cliffs the drag rule then refuses; with
+ * it, every path it returns is a path `validateRailDrag` accepts.
  */
 export function planRailRoute(
   grid: Grid, track: Track, rail: RailState, ownerId: number,
@@ -2081,7 +2140,21 @@ export function planRailRoute(
   const startOct = laneHeadingInto(rail, ownerId, ax, ay);
   const goalLane = laneHeadingInto(rail, ownerId, bx, by);
   const goalOut = goalLane < 0 ? -1 : (goalLane + 4) % 8;   // the step from the goal into the lane
-  const start = tIdx(ax, ay) * 9 + (startOct < 0 ? 8 : startOct);
+  // E4 (#268): the search state carries the RAMP RUN as well — how many flat
+  // steps this line has taken since its last level change. A step that changes
+  // level needs `railRampRun` tiles of run behind it, which is exactly the rule
+  // `railDragSlopeRefusals` applies to a finished drag, so the planner cannot
+  // draw a drag the player's own preview would refuse.
+  // `run` counts the flat steps since the last level change, saturating at
+  // `FULL`; a change needs `run === FULL` behind it, which is exactly
+  // `railDragSlopeRefusals`'s "two changes at least `railRampRun` steps apart".
+  const R = Math.max(2, SLOPES.railRampRun);
+  const FULL = R - 1;
+  const S = 9 * R;
+  const key = (t: number, o: number, run: number) => t * S + o * R + run;
+  // The line starts AT a platform lane: whatever ran before it is the lane's
+  // business (the drag begins here), so the first level change is free.
+  const start = key(tIdx(ax, ay), startOct < 0 ? 8 : startOct, FULL);
   const hasRoad = (x: number, y: number) => roadAt(track, x, y) !== 0;
   // R2 (#266): a tile that is water — a river deck's tile, or the sea.
   const onDeck = (x: number, y: number) => !railTerrainOk(grid, x, y);
@@ -2105,12 +2178,13 @@ export function planRailRoute(
       break;
     }
     if (cur === -1) break;
-    const tile = Math.floor(cur / 9), oct = cur % 9;
+    const tile = Math.floor(cur / S), rem = cur % S;
+    const oct = Math.floor(rem / R), run = rem % R;
     if (tile === goal && (goalOut < 0 || oct === 8 || turnOk(oct, goalOut))) {
       const tiles: [number, number][] = [];
       let n: number | undefined = cur;
       while (n !== undefined) {
-        const t = Math.floor(n / 9);
+        const t = Math.floor(n / S);
         tiles.push([t % MAP_W, (t / MAP_W) | 0]);
         n = cameFrom.get(n);
       }
@@ -2135,9 +2209,20 @@ export function planRailRoute(
       // while it is on one.
       if (diag && (onDeck(cxn, cyn) || onDeck(nx, ny))) continue;
       if (onDeck(cxn, cyn) && oct !== 8 && o !== oct) continue;
-      const ni = tIdx(nx, ny) * 9 + o;
+      // E4 (#268): the slopes. A step steeper than one level is out; a diagonal
+      // that climbs is out (no 45° link on a slope); a level change needs the
+      // full run behind it. A step onto or off a bridge deck is a deck's own
+      // approach — no grade to keep, no run to spend (the same exemption the
+      // drag rule makes).
+      const deckStep = onDeck(cxn, cyn) || onDeck(nx, ny);
+      const climb = climbLevels(grid, [cxn, cyn], [nx, ny]);
+      if (!deckStep && Math.abs(climb) > SLOPES.railMaxStep) continue;
+      if (diag && climb !== 0 && !deckStep) continue;
+      if (!deckStep && climb !== 0 && run < FULL) continue;
+      const nrun = climb === 0 || deckStep ? Math.min(FULL, run + 1) : 0;
+      const ni = key(tIdx(nx, ny), o, nrun);
       if (closed.has(ni)) continue;
-      const c = railStepCost(grid, track, rail, ownerId, nx, ny);
+      const c = railStepCost(grid, track, rail, ownerId, nx, ny, [cxn, cyn]);
       if (!isFinite(c)) continue;
       const tentative = (gScore.get(cur) ?? Infinity) + (diag ? c * Math.SQRT2 : c);
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
@@ -2165,9 +2250,15 @@ export function validateRailDrag(
   // function the player's preview and `buildRail` read — a plan that walks
   // into the water is refused here even when its tiles look legal one by one.
   const bridgeTiles = railBridgePlan(grid, track, rail, ownerId, tiles, planned).deckTiles;
+  // E4 (#268): the drag's slope SHAPE too — the ramp run and the no-diagonal-
+  // on-a-slope rule, judged by the same function the player's preview and
+  // `buildRail` read, so a planned drag can never be one the game refuses.
+  const slopeWhy = railDragSlopeRefusals(grid, tiles, bridgeTiles);
   let fresh = 0, bridges = 0;
-  for (const [x, y] of tiles) {
-    const why = railTileRefusal(grid, track, rail, ownerId, x, y, planned, bridgeTiles);
+  for (let n = 0; n < tiles.length; n++) {
+    const [x, y] = tiles[n];
+    const why = slopeWhy.get(n)
+      ?? railTileRefusal(grid, track, rail, ownerId, x, y, planned, bridgeTiles);
     if (why !== "ok") return { ok: false, fresh: 0, bridges: 0, why };
     const i = tIdx(x, y);
     if ((rail.rail.tile[i] & RAIL_PRESENT) === 0 || rail.rail.owner[i] !== ownerId) {

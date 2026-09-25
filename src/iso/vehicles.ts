@@ -37,6 +37,7 @@ import {
   type Harvester,
 } from "./economy";
 import { depotRate, distanceFactor } from "./loop";
+import { gradeOf, uphillSpeed } from "./slopes";
 import {
   NE, SE, SW, NW, tIdx,
 } from "./track";
@@ -98,6 +99,15 @@ export interface Truck {
    *  upgraded tile speeds its lorry up from the next dispatch. Old saves /
    *  pre-AI-02 call sites without it drive at the uniform dirt pace. */
   segFast?: boolean[];
+  /**
+   *  E4 (#268): per-SEGMENT grade — the SIGNED levels the drawn surface rises
+   *  from route[k] to route[k+1] (`gradeOf` in slopes.ts). `tickTrucks` slows
+   *  the lorry down on whichever segments it is climbing, in the direction it
+   *  is driving, so the pace follows the hill: forwards up the slope, back
+   *  down it. 0 on every segment of a flat map, which is why an option-off map
+   *  behaves exactly as it did. Absent on old saves / hand-built trucks.
+   */
+  segClimb?: number[];
   /**
    * L7 (#221): the depot's effective tick-rate product (`yield × distance ×
    * transport`) stamped onto the lorry. `tickTrucks` multiplies `TRUCK_SPEED`
@@ -199,12 +209,16 @@ export function planTrucks(eco: EconomyState): Truck[] {
     // public network also earns the bonus — same rule the economy scores by.
     const segFast = plan.route.slice(0, -1).map(
       (a, k) => paved(a) || paved(plan.route[k + 1]));
+    // E4 (#268): the grade of every segment, off the DRAWN surface (slopes.ts).
+    const segClimb = plan.route.slice(0, -1).map(
+      (a, k) => gradeOf(eco.grid, a, plan.route[k + 1]));
     out.push({
       ownerId: h.ownerId,
       depotId: h.id,
       factory: [plan.factory.tx, plan.factory.ty],
       route: plan.route,
       segFast,
+      segClimb,
       depot: [h.tx, h.ty],
       rateMult: depotRate(h, distanceFactor(eco, h)),
       leg: 0, t: 0, reverse: false, waitMs: 0, deliveries: 0,
@@ -239,8 +253,14 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
     const max = truck.route.length - 1;
     if (max < 1) { truck.leg = 0; truck.t = 0; continue; }
     const rate = truckRateMultOf(truck);
-    const speed = (k: number): number =>
-      TRUCK_SPEED * rate * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+    // E4 (#268): `reverse` is passed in because the GRADE is signed: the lorry
+    // is slower on the segments it is climbing and keeps its pace on the flat
+    // and the way down, so the same segment is slow one way and quick the other.
+    const speed = (k: number, reverse: boolean): number => {
+      const climb = truck.segClimb?.[k] ?? 0;
+      return TRUCK_SPEED * rate * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1)
+        * uphillSpeed(reverse ? -climb : climb);
+    };
     // AI-02: integrate SEGMENT BY SEGMENT at each segment's own pace — the
     // triangle-fold over a uniform axis would be exact only when every leg
     // has the same speed. The loop still folds exactly at both ends (a huge
@@ -273,7 +293,7 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
           if (truck.t > 0 && cur && blocked.has(tIdx(cur[0], cur[1]))) break;
         }
       }
-      const v = speed(k);
+      const v = speed(k, truck.reverse);
       if (!truck.reverse) {
         const need = (1 - truck.t) / v;
         if (ms < need) { truck.t += ms * v; ms = 0; continue; }

@@ -43,6 +43,7 @@ import {
   FIELD_OCC, GRASS, ROUGH, SAND, TOWN_OCC, rotatedSpan, type Grid, type Industry, type Town,
 } from "./grid";
 import { buildRefusal, hasTrack, tIdx, type Track } from "./track";
+import { footprintFlatTiles } from "./slopes";
 import {
   industriesInCatchment, type Harvester,
 } from "./economy";
@@ -89,6 +90,11 @@ const REASON_TEXT: Record<string, string> = {
   "out-of-bounds": "it runs off the map",
   water: "it is on water",
   rough: "it is on rough ground",
+  // E4 (#268): the slope rules. "too-steep" is a track step the road rule
+  // refused (a footprint tile beside track two levels away); "not-flat" is the
+  // building's own footprint straddling a level change.
+  "too-steep": "that ground is too steep",
+  "not-flat": "it needs flat ground",
   occupied: "it overlaps an industry, a town or another building",
   field: "a field or trees stand there — demolish them first",
   track: "it overlaps a road",
@@ -267,8 +273,13 @@ export function planFactoryPlacement(
   const rot = opts.rot ?? 0;
   const footprint: PlanFootprintTile[] = [];
   let valid = true, why: string | null = null, code: string | null = null;
+  // E4 (#268): the Factory needs a LEVEL footprint (see slopes.ts). The tiles
+  // that break it are refused individually, so the overlay paints exactly the
+  // ground the building would hang off.
+  const offFlat = footprintFlatTiles(grid, factoryFootprintTiles(tx, ty, rot));
   for (const [x, y] of factoryFootprintTiles(tx, ty, rot)) {
     let refusal = inGrid(grid, x, y) ? buildRefusal(grid, "road", x, y) : "out-of-bounds";
+    if (refusal === null && offFlat?.some(([ox, oy]) => ox === x && oy === y)) refusal = "not-flat";
     // PP-17: a building never stands on a road. `buildRefusal` is the TRACK
     // rule (where paving over your own line is a legal no-op), so it cannot
     // see the existing surface — a Factory footprint must be clean ground, so
@@ -346,6 +357,13 @@ export function planDepotPlacement(
 ): PlacementPlan {
   const tiles = depotTiles(tx, ty);
   const tileWhy = tiles.map(([x, y]) => (inGrid(grid, x, y) ? buildRefusal(grid, "dirt", x, y) : "out-of-bounds"));
+  // E4 (#268): the 2×2 lot needs level ground. Only the tiles that disagree
+  // with the lot's own level are marked, so the rest of the site stays yellow.
+  const offFlat = footprintFlatTiles(grid, tiles);
+  if (offFlat) for (const [ox, oy] of offFlat) {
+    const k = tiles.findIndex(([x, y]) => x === ox && y === oy);
+    if (k >= 0 && tileWhy[k] === null) tileWhy[k] = "not-flat";
+  }
   let code: string | null = tileWhy.find((w) => w !== null) ?? null;
   if (code === null && harvesters.some((h) => depotsOverlap(h.tx, h.ty, tx, ty))) code = "depot-taken";
   if (code === null && opts.factories && opts.factories.some((f) => {
