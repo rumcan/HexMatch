@@ -3733,6 +3733,8 @@ export function createOriginalUi(
     const vpHtml = `<span class="vp-star">★</span> You ${fmtVp(yourVp)}<span class="vp-tot">${target > 0 ? `/${target}` : " · Conquest"}</span>`;
     if (vpHtml !== lastVpHtml) {
       vp.innerHTML = vpHtml; lastVpHtml = vpHtml;
+      // UI Space Age: a phone shows only the race line here ("to 12★").
+      vp.dataset.target = target > 0 ? `to ${target}★` : "Conquest";
       // MOBILE-02: the SCORE is the milestone worth breaking a phone's view
       // for. The purse changes every cascade — a bar that re-dropped per
       // coin would be the flicker the wire was.

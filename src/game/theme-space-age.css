@@ -453,3 +453,22 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .topbar .top-right .vp-badge { margin-right: auto !important; font-size: 13px; padding: 4px 8px; }
   .topbar .icon-btn { width: 36px; height: 36px; }
 }
+
+/* race: flat chips, no side bars; on narrow screens the ★ badge shows only the target */
+.king {
+  background: var(--sa-panel-2) !important; border: 0 !important; box-shadow: none !important;
+  border-bottom: 3px solid var(--sa-line-hi) !important; padding: 2px 8px 2px 2px !important; gap: 6px !important;
+}
+.king.self { border-bottom-color: var(--sa-aqua) !important; }
+.king:not(.self) { border-bottom-color: var(--sa-red) !important; }
+.king::before, .king::after { display: none !important; }
+.king-av { border: 0 !important; box-shadow: none !important; width: 30px !important; height: 30px !important; }
+.king-vp { color: var(--sa-lemon) !important; font-family: var(--sans); }
+.radio-pill { border-radius: 0 !important; background: var(--sa-panel-2) !important; border: 0 !important; box-shadow: none !important; }
+.radio-play, .radio-vol { border-radius: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }
+@media (max-width: 760px) {
+  .topbar .kingdoms .king-mid .king-name, .topbar .king-bar { display: none !important; }
+  .topbar .vp-badge { font-size: 0 !important; background: transparent !important; padding: 0 6px !important; }
+  .topbar .vp-badge::after { content: attr(data-target); font-size: 12px; color: var(--sa-bone-dim); }
+  .topbar .radio-pill { width: 36px; height: 36px; }
+}
