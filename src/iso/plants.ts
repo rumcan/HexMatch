@@ -26,7 +26,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { BUILD_COSTS, FACTORY_FOOTPRINT, type Cargo } from "./config";
 import { catchmentRect, rectContains } from "./economy";
-import { FIELD_OCC, TOWN_OCC, WATER, idx, inBounds, type Grid, type Town } from "./grid";
+import { FIELD_OCC, TOWN_OCC, WATER, idx, inBounds, rotatedSpan, type Grid, type Town } from "./grid";
 import { hasTrack, type Purse, type Track } from "./track";
 import type { EconomyState, Factory } from "./economy";
 import type { Industry } from "./grid";
@@ -56,11 +56,12 @@ export const PLANT_REFUSAL_TEXT: Record<PlantRefusal, string> = {
   "no-town": "A processing plant must be built next to a town.",
 };
 
-/** Every tile of the Factory footprint anchored at (tx,ty). */
-export function footprintTiles(tx: number, ty: number): [number, number][] {
+/** Every tile of the Factory footprint anchored at (tx,ty), rotated. */
+export function footprintTiles(tx: number, ty: number, rot = 0): [number, number][] {
+  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
   const out: [number, number][] = [];
-  for (let dy = 0; dy < FACTORY_FOOTPRINT[1]; dy++) {
-    for (let dx = 0; dx < FACTORY_FOOTPRINT[0]; dx++) out.push([tx + dx, ty + dy]);
+  for (let dy = 0; dy < fh; dy++) {
+    for (let dx = 0; dx < fw; dx++) out.push([tx + dx, ty + dy]);
   }
   return out;
 }
@@ -82,10 +83,10 @@ const townHasTile = (t: Town, tx: number, ty: number) =>
  * `factoryTouchesTown` in grid.ts). Ties (two towns touching one footprint)
  * resolve to the lowest town id so the answer is deterministic.
  */
-export function adjacentTown(grid: Grid, tx: number, ty: number): Town | null {
+export function adjacentTown(grid: Grid, tx: number, ty: number, rot = 0): Town | null {
   const EDGES: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
   let best: Town | null = null;
-  for (const [fx, fy] of footprintTiles(tx, ty)) {
+  for (const [fx, fy] of footprintTiles(tx, ty, rot)) {
     for (const [dx, dy] of EDGES) {
       const nx = fx + dx, ny = fy + dy;
       // A "town tile" is one the map actually stamped TOWN_OCC — a house, the
@@ -102,11 +103,11 @@ export function adjacentTown(grid: Grid, tx: number, ty: number): Town | null {
   return best;
 }
 
-/** Does any existing plant/depot of ANY player stand on this tile? */
+/** Does any existing plant/depot of ANY player stand on this tile? F3: uses rotated footprint. */
 export function buildingAt(state: EconomyState, tx: number, ty: number): boolean {
   for (const f of state.factories) {
-    if (tx >= f.tx && tx < f.tx + FACTORY_FOOTPRINT[0]
-      && ty >= f.ty && ty < f.ty + FACTORY_FOOTPRINT[1]) return true;
+    const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], f.rot ?? 0);
+    if (tx >= f.tx && tx < f.tx + fw && ty >= f.ty && ty < f.ty + fh) return true;
   }
   return state.harvesters.some((h) => h.tx === tx && h.ty === ty);
 }
@@ -115,11 +116,12 @@ export function buildingAt(state: EconomyState, tx: number, ty: number): boolean
  * The single legality rule for raising a processing plant. The preview overlay
  * and the actual placement both call this, so they can never disagree — and
  * so can the AI, which therefore cannot bypass town adjacency.
+ * F3: `rot` rotates the footprint.
  */
 export function plantRefusal(
-  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number,
+  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number, rot = 0,
 ): PlantRefusal | null {
-  for (const [x, y] of footprintTiles(tx, ty)) {
+  for (const [x, y] of footprintTiles(tx, ty, rot)) {
     if (!inBounds(x, y)) return "out-of-bounds";
     const i = idx(x, y);
     if (grid.terrain[i] === WATER) return "water";
@@ -127,12 +129,12 @@ export function plantRefusal(
     if (buildingAt(state, x, y)) return "building";
     if (hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y)) return "track";
   }
-  return adjacentTown(grid, tx, ty) ? null : "no-town";
+  return adjacentTown(grid, tx, ty, rot) ? null : "no-town";
 }
 
 export const canPlacePlant = (
-  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number,
-): boolean => plantRefusal(grid, track, state, tx, ty) === null;
+  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number, rot = 0,
+): boolean => plantRefusal(grid, track, state, tx, ty, rot) === null;
 
 /**
  * A town click means "build beside this town", not "bulldoze this house".
@@ -142,32 +144,36 @@ export const canPlacePlant = (
  * A null result means this town has no available plant site.
  */
 export function resolvePlantTarget(
-  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number,
+  grid: Grid, track: Track, state: EconomyState, tx: number, ty: number, rot?: number,
 ): [number, number] | null {
   if (!inBounds(tx, ty) || grid.occupancy[idx(tx, ty)] !== TOWN_OCC) return [tx, ty];
   const town = grid.towns.find((t) => townHasTile(t, tx, ty));
   if (!town) return null;
-  const [fw, fh] = FACTORY_FOOTPRINT;
+  const rots = rot === undefined ? [0, 1] : [rot];
   let best: [number, number] | null = null;
   let bestDistance = Infinity;
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   // Any legal footprint sharing an edge with a town tile must have an
   // origin in this range. Enumerate the boundary, not the entire map.
   for (const [hx, hy] of [[town.tx, town.ty], ...town.houses, ...(town.roads ?? [])]) {
-    for (let dy = -fh; dy <= 1; dy++) {
-      for (let dx = -fw; dx <= 1; dx++) {
-        const x = hx + dx, y = hy + dy;
-        if (!inBounds(x, y)) continue;
-        const key = idx(x, y);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        if (plantRefusal(grid, track, state, x, y) !== null) continue;
-        // Match addPlant's deterministic town association, including ties.
-        if (adjacentTown(grid, x, y)?.id !== town.id) continue;
-        const distance = Math.abs(x + (fw - 1) / 2 - tx) + Math.abs(y + (fh - 1) / 2 - ty);
-        if (distance < bestDistance || (distance === bestDistance
-          && (!best || key < idx(best[0], best[1])))) {
-          best = [x, y]; bestDistance = distance;
+    for (const r of rots) {
+      const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], r);
+      for (let dy = -fh; dy <= 1; dy++) {
+        for (let dx = -fw; dx <= 1; dx++) {
+          const x = hx + dx, y = hy + dy;
+          if (!inBounds(x, y)) continue;
+          const key = `${x},${y},${r}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (plantRefusal(grid, track, state, x, y, r) !== null) continue;
+          // Match addPlant's deterministic town association, including ties.
+          if (adjacentTown(grid, x, y, r)?.id !== town.id) continue;
+          const distance = Math.abs(x + (fw - 1) / 2 - tx) + Math.abs(y + (fh - 1) / 2 - ty);
+          const flatKey = idx(x, y);
+          if (distance < bestDistance || (distance === bestDistance
+            && (!best || flatKey < idx(best[0], best[1])))) {
+            best = [x, y]; bestDistance = distance;
+          }
         }
       }
     }
@@ -192,17 +198,19 @@ export const nextPlantId = (state: EconomyState, owner: string): number =>
  * once) — this only mutates the economy so save/load and the renderer see the
  * new site. Returns the plant, or null when the placement is illegal, so the
  * "charge then fail" path cannot exist: check first, charge, then call.
+ * F3: `rot` rotates the footprint and is stored on the plant.
  */
 export function addPlant(
   grid: Grid, track: Track, state: EconomyState,
-  owner: string, ownerId: number, tx: number, ty: number,
+  owner: string, ownerId: number, tx: number, ty: number, rot = 0,
 ): Factory | null {
-  if (!canPlacePlant(grid, track, state, tx, ty)) return null;
-  const town = adjacentTown(grid, tx, ty);
+  if (!canPlacePlant(grid, track, state, tx, ty, rot)) return null;
+  const town = adjacentTown(grid, tx, ty, rot);
   const plant: Factory = {
     owner, ownerId, tx, ty,
     id: nextPlantId(state, owner),
     townId: town ? town.id : null,
+    rot: rot & 3,
   };
   state.factories.push(plant);
   return plant;
@@ -237,8 +245,9 @@ function uncoveredIndustries(grid: Grid, state: EconomyState, owner: string): In
   return grid.industries.filter((ind) => !covered.has(ind.id));
 }
 
-const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number): boolean => {
-  const x1 = tx + FACTORY_FOOTPRINT[0] - 1, y1 = ty + FACTORY_FOOTPRINT[1] - 1;
+const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number, rot = 0): boolean => {
+  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+  const x1 = tx + fw - 1, y1 = ty + fh - 1;
   // distance from the industry's footprint box to the plant's footprint box
   const dx = Math.max(ind.tx - x1, tx - (ind.tx + ind.w - 1), 0);
   const dy = Math.max(ind.ty - y1, ty - (ind.ty + ind.h - 1), 0);
@@ -266,7 +275,7 @@ const nearFootprint = (ind: Industry, tx: number, ty: number, reach: number): bo
  */
 export function chooseAiPlantSpot(
   grid: Grid, track: Track, state: EconomyState, owner: string,
-): [number, number] | null {
+): [number, number, number] | null {
   const mine = openPlantsOf(state, owner);
   if (!mine.length && !plantsOf(state, owner).length) return null;
   // Own OPEN plants occupy a town. Opponent towns (and towns this seat won
@@ -291,9 +300,9 @@ export function chooseAiPlantSpot(
     return d;
   };
 
-  let best: [number, number] | null = null;
+  let best: [number, number, number] | null = null;
   let bestScore = -Infinity, bestD = Infinity;
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   for (const town of grid.towns) {
     if (used.has(town.id)) continue;
     for (const [hx, hy] of town.houses) {
@@ -301,23 +310,28 @@ export function chooseAiPlantSpot(
       // the legal footprints that touch the town stand just OUTSIDE that road
       // (their origin up to 3 tiles from a box-edge house). Scan wide enough
       // to see them; `canPlacePlant` is the one rule that decides.
-      for (let dy = -3; dy <= 2; dy++) {
-        for (let dx = -3; dx <= 2; dx++) {
-          const tx = hx + dx, ty = hy + dy;
-          const key = ty * grid.w + tx;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          if (!canPlacePlant(grid, track, state, tx, ty)) continue;
-          let reach = 0;
-          for (const ind of wanted) if (nearFootprint(ind, tx, ty, PLANT_REACH)) reach++;
-          const d = manhattan(tx, ty);
-          // 10 per industry in reach, 1 per tile of detour: reach dominates,
-          // distance only breaks ties between equally productive sites.
-          const prefer = adjacentTown(grid, tx, ty) && preferred.has(adjacentTown(grid, tx, ty)!.id) ? 50 : 0;
-          const score = reach * 10 - d + prefer;
-          if (score > bestScore || (score === bestScore && (d < bestD
-            || (d === bestD && key < (best ? best[1] * grid.w + best[0] : Infinity))))) {
-            bestScore = score; bestD = d; best = [tx, ty];
+      // F3: try both orientations, keep original generous -3..2 range so ring-adjacent sites are seen.
+      for (const rot of [0, 1]) {
+        for (let dy = -3; dy <= 2; dy++) {
+          for (let dx = -3; dx <= 2; dx++) {
+            const tx = hx + dx, ty = hy + dy;
+            const key = `${tx},${ty},${rot}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (!canPlacePlant(grid, track, state, tx, ty, rot)) continue;
+            let reach = 0;
+            for (const ind of wanted) if (nearFootprint(ind, tx, ty, PLANT_REACH, rot)) reach++;
+            const d = manhattan(tx, ty);
+            // 10 per industry in reach, 1 per tile of detour: reach dominates,
+            // distance only breaks ties between equally productive sites.
+            const at = adjacentTown(grid, tx, ty, rot);
+            const prefer = at && preferred.has(at.id) ? 50 : 0;
+            const score = reach * 10 - d + prefer;
+            const flatKey = ty * grid.w + tx;
+            if (score > bestScore || (score === bestScore && (d < bestD
+              || (d === bestD && flatKey < (best ? best[1] * grid.w + best[0] : Infinity))))) {
+              bestScore = score; bestD = d; best = [tx, ty, rot];
+            }
           }
         }
       }

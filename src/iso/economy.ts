@@ -124,6 +124,12 @@ export interface Factory {
    * and depots cannot route through it. Re-opens if the owner re-wins the town.
    */
   closed?: boolean;
+  /**
+   * F3 (#274): quarter-turns clockwise the footprint is rotated (0..3).
+   * Absent = 0 for legacy saves/snapshots. Non-square footprints use it to
+   * place w×h as h×w; square footprints are unchanged in every rotation.
+   */
+  rot?: number;
 }
 
 /**
@@ -467,7 +473,7 @@ export function resolveConnection(
     // pure-gravel component: keep the old dirt tier's shortest-factory tie-break
     const route = roadPath(state.track, h.ownerId,
       depotShoulders(state.track, h.ownerId, h),
-      new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty).map(([x, y]) => tIdx(x, y))));
+      new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0).map(([x, y]) => tIdx(x, y))));
     if (!route || route.length >= shortest) continue;
     shortest = route.length;
     best = {
@@ -515,7 +521,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
   const goals = new Set<number>();
   for (const f of state.factories) {
     if (f.owner !== h.owner || f.closed) continue;
-    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty)) {
+    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0)) {
       goals.add(tIdx(x, y));
     }
   }
@@ -536,7 +542,7 @@ export function depotRoutePaved(state: EconomyState, h: Harvester): boolean {
   const goals = new Set<number>();
   for (const f of state.factories) {
     if (f.owner !== h.owner || f.closed) continue;
-    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty)) goals.add(tIdx(x, y));
+    for (const [x, y] of plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0)) goals.add(tIdx(x, y));
   }
   if (goals.size === 0) return false;
   const route = roadPath(state.track, h.ownerId, from, goals);

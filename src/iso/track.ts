@@ -23,7 +23,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, type Grid } from "./grid";
+import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 
 // ── directions ────────────────────────────────────────────────────────────
@@ -459,8 +459,8 @@ export const trackOpenTo = (t: Track, owner: number, tx: number, ty: number): bo
  * and `drawOrigin` measures the footprint from the origin towards +x/+y. A
  * Depot is 1×1, so its origin tile IS its footprint.
  */
-export function plantFootprintTiles(tx: number, ty: number): [number, number][] {
-  const [fw, fh] = FACTORY_FOOTPRINT;
+export function plantFootprintTiles(tx: number, ty: number, rot = 0): [number, number][] {
+  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
   const out: [number, number][] = [];
   for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) out.push([tx + x, ty + y]);
   return out;
@@ -482,14 +482,14 @@ export function plantFootprintTiles(tx: number, ty: number): [number, number][] 
  *     building's own ground carries no gravel.
  */
 export function structureTiles(
-  factories: { ownerId: number; tx: number; ty: number }[],
+  factories: { ownerId: number; tx: number; ty: number; rot?: number }[],
   harvesters: { ownerId: number; tx: number; ty: number }[],
   owner: number,
 ): Set<number> {
   const out = new Set<number>();
   for (const f of factories) {
     if (f.ownerId !== owner) continue;
-    for (const [x, y] of plantFootprintTiles(f.tx, f.ty)) {
+    for (const [x, y] of plantFootprintTiles(f.tx, f.ty, (f as any).rot ?? 0)) {
       if (inMapT(x, y)) out.add(tIdx(x, y));
     }
   }
@@ -507,7 +507,7 @@ export function structureTiles(
 export function playerNetwork(
   track: Track,
   owner: number,
-  factories: { ownerId: number; tx: number; ty: number }[],
+  factories: { ownerId: number; tx: number; ty: number; rot?: number }[],
   harvesters: { ownerId: number; tx: number; ty: number }[],
 ): Set<number> {
   const seen = new Set<number>();
@@ -526,7 +526,7 @@ export function playerNetwork(
   // ground while the back corner was not.
   for (const f of factories) {
     if (f.ownerId !== owner) continue;
-    for (const [x, y] of plantFootprintTiles(f.tx, f.ty)) seed(x, y);
+    for (const [x, y] of plantFootprintTiles(f.tx, f.ty, (f as any).rot ?? 0)) seed(x, y);
   }
   // …and a truck Depot seeds its whole 2×2 lot, for the same reason.
   for (const h of harvesters) {

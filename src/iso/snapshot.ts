@@ -572,6 +572,12 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
       return new SnapshotError("malformed", "Snapshot carries a malformed depot tune tier.");
     }
   }
+  // F3 (#274): factory rot is optional (legacy absent=0), but when present must be 0..3
+  for (const f of o.factories as (Partial<Factory> | null)[]) {
+    if (f && f.rot !== undefined && (typeof f.rot !== "number" || !Number.isInteger(f.rot) || f.rot < 0 || f.rot > 3)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed factory rotation.");
+    }
+  }
   // #137: the seat list itself is optional (an empty world has nobody in it),
   // but when it travels it must be a list of readable records, and a setup
   // allowance that IS present must be a real number. A guest that quietly
