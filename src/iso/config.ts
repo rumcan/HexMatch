@@ -1256,6 +1256,16 @@ export function pickTownVariant(tx: number, ty: number, variants: readonly strin
   return variants[tileHash(tx, ty) % variants.length];
 }
 
+/**
+ * F4 (#275): a deterministic index in `[0, n)` keyed on a tile — the same
+ * spatial hash `pickTownVariant` uses, for picks that are not sprite lists
+ * (e.g. where inside a merged block a long building anchors). Never random:
+ * a re-render always makes the same choice.
+ */
+export function hashPick(tx: number, ty: number, n: number): number {
+  return n > 0 ? tileHash(tx, ty) % n : 0;
+}
+
 /** The atlas cell a town tile draws, chosen from every variant.
  *  With 43 variants a uniform pick already mixes homes, shops and the
  *  occasional tall block — no weighting needed. */
