@@ -52,6 +52,7 @@
 import { HW, HH, MAP_W, MAP_H, tileToScreen } from "../game/config";
 import { type Camera, centerOnWorld, mapWorldBounds, screenToWorld } from "./camera";
 import { GRASS, ROUGH, SAND, WATER, type Grid } from "./grid";
+import { FACTORY_FOOTPRINT } from "./config";
 import { PUBLIC_OWNER, plantFootprintTiles, type Track } from "./track";
 import { depotTiles } from "./depot";
 import { industryLocks, isRailDepot, type EconomyState } from "./economy";
@@ -506,7 +507,7 @@ export function paintNetwork(
 
 /** The live game state the scene is read from (all references, no copies). */
 export interface MinimapWorld {
-  grid: Pick<Grid, "towns" | "industries">;
+  grid: Pick<Grid, "towns" | "industries" | "factoryFootprint">;
   track: Track;
   /** Harvesters (Depots), factories (plants) and — for claims — the railway. */
   eco: EconomyState;
@@ -536,8 +537,11 @@ export function minimapSceneOf(w: MinimapWorld): MinimapScene {
     for (const [x, y] of tiles) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
     return { tx: x0, ty: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
   };
+  // F4 (#275): the map's Factory span, so the long shapes footprint boxes
+  // correctly on the minimap (legacy maps keep the square box).
+  const fp = w.grid.factoryFootprint ?? FACTORY_FOOTPRINT;
   for (const f of w.eco.factories) {
-    sites.push({ kind: "plant", ...box(plantFootprintTiles(f.tx, f.ty)), owner: f.ownerId, closed: !!f.closed });
+    sites.push({ kind: "plant", ...box(plantFootprintTiles(f.tx, f.ty, f.rot ?? 0, fp)), owner: f.ownerId, closed: !!f.closed });
   }
   // A platform-Depot is drawn as its platform (below), not as a truck lot.
   for (const h of w.eco.harvesters) {
