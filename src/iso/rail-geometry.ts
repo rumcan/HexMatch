@@ -61,11 +61,19 @@
 // reads, so a change of hands invalidates that tile's chunks and a future
 // owner-tinted detail cannot serve a stale raster.
 //
-// GRAPHICS TIERS CHANGE DETAIL ONLY. `rail-renderer.ts` derives the tier from
-// the atlas detail cap: High draws the ballast bed and individual crossing
-// boards, Medium keeps the bed, Low drops it and draws every second sleeper.
-// No tier moves a rail or changes its width — the ties a lower tier draws are
-// a SUBSET of the higher tier's, at the same coordinates.
+// GRAPHICS TIERS CHANGE DETAIL ONLY. `rail-renderer.ts` takes the tier from the
+// atlas detail cap and the CAMERA ZOOM (ART-4 / #402): the closest zoom draws
+// the gravel bed, the sleepers, the two rails and their lit edges; the middle
+// zoom drops the lit edge and the individual crossing boards; the far zoom
+// draws one thin two-tone line down the centre-lines. No tier moves a rail or
+// changes its width — the ties a lower tier draws are a SUBSET of the higher
+// tier's, at the same coordinates.
+//
+// THE CROSS-SECTION IS SMALL. ART-4 (#402): the owner's play-test said the
+// railway read "visually far too big" beside the painted map, so the section
+// was narrowed again — the bed is 0.42 of a tile (a paved road is 0.78), the
+// steel is a hairline, and the sleepers are short. The numbers below are the
+// whole of it; every painter reads them and nothing hard-codes a width.
 // ══════════════════════════════════════════════════════════════════════════
 import type { Dir } from "./track";
 import {
@@ -130,26 +138,41 @@ export function levelCrossing(roadMask: number, railMask: number): boolean {
 /**
  * Distance between the two rails' centre-lines.
  *
- * The authored PNG lanes are the contract here, because a platform's or a
- * depot's internal track has to meet the network's track at the port without a
- * step: `tools/make-railway-art.mjs` draws the platform lane's rails at ±0.16
- * and the depot's at ±0.15 of the lane centre-line, and the lane centre-line is
- * the tile row's centre-line — i.e. exactly the centre-line of the arms this
- * module builds. 0.32 is the platform's figure; it is within a fifth of a
- * screen pixel of the depot's at 1×.
+ * UNCHANGED by ART-4 (#402): the train cars' lanes (`tools/railway/cut_train.py`)
+ * and the depot's internal track are cut against this number, so narrowing it
+ * would put the wheels off the steel. The track is made small by the BED, the
+ * steel's width and the sleepers — never by moving the rails.
+ *
+ * 0.32 is the platform's authored figure and 0.24 the owner's own call
+ * (2026-09, -25%); the authored PNG lanes meet the network at a port, so a
+ * change here is a re-cut of `tools/make-railway-art.mjs`, not an edit.
  */
 export const RAIL_GAUGE = 0.24;   // owner call (2026-09): track 25% smaller (was 0.32)
-/** One rail's width. Also the art's figure (0.07 across). */
-export const RAIL_WIDTH = 0.0525;   // owner call (2026-09): track 25% smaller (was 0.07)
 /**
- * The dark "web" drawn under the rail head, so a 0.07-wide steel line reads as
- * a rail rather than as a painted stripe on the ballast. Not a separate object:
- * the head is stroked on top of it, concentric.
+ * One rail's width — the steel head, and the brightest line on the railway.
+ *
+ * ART-4 (#402): 0.036 is about the width of a road's painted centre-line
+ * (PAINT_WIDTH, 0.03), which is what "slim rails, two thin steel-grey lines"
+ * means at 1×: 1.3 px on screen at the 1× zoom, 2.6 px at the closest one.
  */
-export const RAIL_WEB_WIDTH = 0.0825;   // owner call (2026-09): track 25% smaller (was 0.11)
-/** Sleeper (tie) dimensions. The art's lane draws 0.48 × 0.09. */
-export const TIE_LENGTH = 0.36;   // owner call (2026-09): track 25% smaller (was 0.48)
-export const TIE_WIDTH = 0.0675;   // owner call (2026-09): track 25% smaller (was 0.09)
+export const RAIL_WIDTH = 0.036;   // ART-4 (#402): slim (was 0.0525)
+/**
+ * The dark line drawn UNDER the rail head, so a hairline of steel reads as a
+ * rail rather than as a painted stripe on the gravel. Not a separate object:
+ * the head is stroked over it, offset towards the light (see
+ * `RAIL_LIT_OFFSET` in `rail-renderer.ts`), which leaves a shadow along the
+ * rail's lower-right side — the whole of the "thin upper-left highlight".
+ */
+export const RAIL_WEB_WIDTH = 0.052;   // ART-4 (#402): slim (was 0.0825)
+/**
+ * Sleeper (tie) dimensions: 0.28 across the track, 0.05 along it.
+ *
+ * Shorter than the bed (0.42) with a gravel margin either side, and short
+ * enough that a bend's sleeper stays inside its own tile. The authored lane
+ * draws 0.48 × 0.09 and is an artifact of the art's own scale.
+ */
+export const TIE_LENGTH = 0.28;   // ART-4 (#402): slim (was 0.36)
+export const TIE_WIDTH = 0.05;   // ART-4 (#402): slim (was 0.0675)
 /**
  * Sleeper pitch on the absolute lattice. 0.23 in the art's platform lane; 0.25
  * here because 0.25 divides the half-tile exactly, so the half-integer ports are
@@ -157,14 +180,27 @@ export const TIE_WIDTH = 0.0675;   // owner call (2026-09): track 25% smaller (w
  * sleeper exactly on every join instead of drifting a little per tile.
  */
 export const TIE_SPACING = 0.25;
-/** The ballast bed, under the sleepers. */
-export const RAIL_BED_WIDTH = 0.465;   // owner call (2026-09): track 25% smaller (was 0.62)
-/** The soft edge under the bed, on each side (the roads' shoulder, in miniature). */
-export const RAIL_BED_SHOULDER = 0.045;   // owner call (2026-09): track 25% smaller (was 0.06)
+/**
+ * The ballast bed, under the sleepers.
+ *
+ * ART-4 (#402) — the one number the ticket is about. 0.42 of a tile is the
+ * middle of the spec's 40–45% band and 54% of a paved road's 0.78, so track
+ * reads narrower than a street at every zoom. Measured in GROUND units, which
+ * is the same thing as "a fraction of a tile's width": a tile is one unit
+ * across, and the bed is as wide as this in the direction across its run.
+ */
+export const RAIL_BED_WIDTH = 0.42;   // ART-4 (#402): was 0.465
+/**
+ * The soft edge under the bed, on each side (the roads' shoulder, in miniature).
+ * ART-4 (#402): drawn LIGHT — a gravel margin fading into the grass — rather
+ * than the dark rim it used to be, which is half of why the old track read as a
+ * wide dark band.
+ */
+export const RAIL_BED_SHOULDER = 0.028;   // ART-4 (#402): was 0.045
 /** A dead end's buffer stop: a beam across the rails, inset from the port. */
 export const RAIL_STOP_INSET = 0.1;
-export const RAIL_STOP_WIDTH = 0.075;   // owner call (2026-09): track 25% smaller (was 0.1)
-export const RAIL_STOP_LENGTH = 0.405;   // owner call (2026-09): track 25% smaller (was 0.54)
+export const RAIL_STOP_WIDTH = 0.06;   // ART-4 (#402): was 0.075
+export const RAIL_STOP_LENGTH = 0.36;   // ART-4 (#402): was 0.405 — a head taller than the sleepers
 /** A lone stub's piece of track, centred on its tile. */
 export const RAIL_STUB_LENGTH = 0.5;
 /** Crossing boards: how many, and the gap between them. */
