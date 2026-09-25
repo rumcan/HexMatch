@@ -20,6 +20,9 @@ import {
   type VoiceDeps, type VoiceLine, type VoicePlayback,
 } from "../../src/game/voice";
 import { showSettingsSheet } from "../../src/iso/settings-sheet";
+// MUSIC-1 (#377): the radio's switches sit beside the voice pair in the same
+// sheet, and the radio ducks through voice.ts's `onLine` hook.
+import { RADIO_STORAGE_KEY, radio, readRadioSettings } from "../../src/audio/radio";
 import linesJson from "../../assets/voice/lines.json";
 
 const LINES: VoiceLine[] = [
@@ -116,6 +119,37 @@ describe("VO-1 queue", () => {
     await h.v.whenIdle();
     expect(h.v.playingId).toBeNull();
     expect(h.v.queueIds).toEqual([]);
+  });
+
+  it("tells a listener when a line starts and when it is over (the radio's duck hook)", async () => {
+    const h = harness();
+    const beats: Array<string | null> = [];
+    const off = h.v.onLine((line) => beats.push(line?.id ?? null));
+
+    h.v.setNarration(true);
+    h.v.cue("coach:setup-factory");
+    // The line is up the moment it is accepted — the duck starts with it.
+    expect(beats).toEqual(["n-factory"]);
+    await flush();
+    h.ends[0]();
+    await h.v.whenIdle();
+    expect(beats).toEqual(["n-factory", null]);
+
+    // A skip that cuts a narrator off closes the beat as well: a radio must
+    // never stay ducked because the line it was ducking for is gone.
+    h.v.cue("coach:setup-harvester");
+    await flush();
+    h.v.skipNarration();
+    expect(beats.at(-1)).toBeNull();
+
+    // And an unsubscribe really unsubscribes.
+    off();
+    const seen = beats.length;
+    h.v.cue("rival:blockade");
+    await flush();
+    h.ends.at(-1)?.();
+    await h.v.whenIdle();
+    expect(beats.length).toBe(seen);
   });
 
   it("does not start the narrator until a first game asks, and skip drops the rest", async () => {
@@ -258,6 +292,50 @@ describe("VO-1 settings", () => {
     expect(JSON.parse(localStorage.getItem(VOICE_STORAGE_KEY)!).volume).toBeCloseTo(0.35);
     sheet.destroy();
     host.remove();
+  });
+
+  // MUSIC-1 (#377): the radio's three controls, in the same rows family as the
+  // voice pair and saved through the same kind of storage.
+  it("puts the Radio switch, its volume and Show radio player beside the voice toggle", () => {
+    localStorage.clear();
+    radio.setEnabled(true);
+    radio.setShow(true);
+    radio.setVolume(0.5);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const sheet = showSettingsSheet(host);
+    const sw = sheet.el.querySelector("[data-gfx='radio']") as HTMLButtonElement;
+    const show = sheet.el.querySelector("[data-gfx='radio-show']") as HTMLButtonElement;
+    const vol = sheet.el.querySelector("[data-gfx='radio-volume']") as HTMLInputElement;
+    expect(sw).toBeTruthy();
+    expect(sw.getAttribute("role")).toBe("switch");
+    expect(sw.textContent).toBe("ON");
+    expect(show.textContent).toBe("ON");
+    expect(vol.value).toBe("0.5");
+
+    sw.click();
+    expect(sw.textContent).toBe("OFF");
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(radio.settings.enabled).toBe(false);
+    expect(JSON.parse(localStorage.getItem(RADIO_STORAGE_KEY)!)).toMatchObject({ enabled: false });
+
+    show.click();
+    expect(show.textContent).toBe("OFF");
+    expect(radio.settings.show).toBe(false);
+    expect(JSON.parse(localStorage.getItem(RADIO_STORAGE_KEY)!)).toMatchObject({ show: false });
+
+    vol.value = "0.2";
+    vol.dispatchEvent(new Event("input"));
+    expect(radio.settings.volume).toBeCloseTo(0.2);
+    // "Survives a reload": a fresh read of the same storage has all three.
+    expect(readRadioSettings(localStorage)).toEqual({ enabled: false, show: false, volume: 0.2 });
+
+    sheet.destroy();
+    host.remove();
+    // Leave the singleton as the shipped defaults for the next file.
+    radio.setEnabled(true);
+    radio.setShow(true);
+    radio.setVolume(0.5);
   });
 });
 

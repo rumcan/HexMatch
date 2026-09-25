@@ -12930,6 +12930,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the game (the radio itself is the PLAYER's — it keeps playing across a
     // quit to the menu, where the settings sheet can still stop it).
     offVoiceDuck();
+    // A game that dies mid-line must not leave the mix ducked for the next one.
+    radio.duck(false);
     radioWidget.destroy();
     // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
     // open sheet is destroyed rather than orphaned over a dead board.

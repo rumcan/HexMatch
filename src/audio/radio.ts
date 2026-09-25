@@ -226,13 +226,15 @@ function step(s: RadioMachine, event: RadioEvent, url: string): RadioMachine {
 }
 
 /**
- * The backoff, in `failures`-in-a-row: 5 s, 10 s, 20 s, then a flat 30 s cap.
- * Pure, so the schedule is a test and not a stopwatch.
+ * How long to wait before the next attempt, given `failures` in a row: 5 s,
+ * 10 s, 20 s, then a flat 30 s cap. Pure, so the schedule is a test and not a
+ * stopwatch; the adapter is the only caller.
  */
 export function backoffDelayMs(failures: number): number {
-  const n = Math.max(0, Math.floor(Number.isFinite(failures) ? failures : 0));
-  const i = n - 1;
-  return i >= 0 && i < RADIO_RETRY_MS.length ? RADIO_RETRY_MS[i] : RADIO_RETRY_CAP_MS;
+  // A count of zero (or a nonsense one) waits the FIRST rung, not the cap: the
+  // shortest wait is the safe answer when the count is not what we expected.
+  const n = Number.isFinite(failures) ? Math.max(1, Math.floor(failures)) : 1;
+  return n <= RADIO_RETRY_MS.length ? RADIO_RETRY_MS[n - 1] : RADIO_RETRY_CAP_MS;
 }
 
 /** The element's volume: the set volume, or 30% of it while a voice line speaks. */
@@ -446,7 +448,7 @@ export function createRadio(deps: RadioDeps = {}): Radio {
   let settings = readRadioSettings(storage);
   let machine = radioInit(settings.enabled);
   let nowPlaying: string | null = null;
-  let el: RadioAudio | null = deps.audio ?? null;
+  let el: RadioAudio | null = null;
   /** The src we ourselves assigned — `audio.src` resolves to an absolute URL. */
   let loadedUrl: string | null = null;
   let retryTimer: number | null = null;
@@ -456,21 +458,34 @@ export function createRadio(deps: RadioDeps = {}): Radio {
   let onVisibility: (() => void) | null = null;
   const painters = new Set<(s: RadioSettings, m: RadioMachine) => void>();
 
+  /**
+   * The two rules the ticket pins (preload none, no CORS tricks) plus the three
+   * events that move the machine. A stubbed element with no events simply never
+   * reports back — the load timeout is then what closes the spinner.
+   */
+  function wire(audio: RadioAudio): RadioAudio {
+    try {
+      audio.preload = "none";
+      audio.addEventListener("playing", () => dispatch("loaded"));
+      audio.addEventListener("error", () => dispatch("error"));
+      // A live stream that "ends" is a stream that died: same door as an error.
+      audio.addEventListener("ended", () => dispatch("error"));
+    } catch { /* a stub with no events */ }
+    return audio;
+  }
+
   function ensureElement(): RadioAudio | null {
     if (el) return el;
     let made: RadioAudio | null = null;
     try { made = makeAudio(); } catch { made = null; }
     if (!made) return null;
-    try {
-      made.preload = "none";
-      made.addEventListener("playing", () => dispatch("loaded"));
-      made.addEventListener("error", () => dispatch("error"));
-      // A live stream that "ends" is a stream that died: same door as an error.
-      made.addEventListener("ended", () => dispatch("error"));
-    } catch { /* a stub with no events simply never reports */ }
-    el = made;
+    el = wire(made);
     return el;
   }
+
+  // An injected element (a test's fake, or a host that already has one) is
+  // wired at once: the wiring is the element's, not the first play's.
+  if (deps.audio) el = wire(deps.audio);
 
   function setElementVolume(v: number): void {
     try { if (el) el.volume = clamp01(v); } catch { /* a stubbed element */ }

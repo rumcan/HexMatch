@@ -5860,9 +5860,10 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 
    Desktop: one lane under the top bar, in the map's free right-hand strip —
    clear of the centred objective card, of the chat dock and the minimap (both
-   bottom-left), of the resource bar and of the fabs. The ☰ popover is z-55 and
-   simply overlays the pill while it is open; the loading screen (z-95) and the
-   modals (z-60) cover it the same way.
+   bottom-left), of the resource bar and of the fabs. The rival's stakeout panel
+   and the ☰ popover are allowed to cover it while they are open (they are
+   things the player just asked for); the loading screen (z-95) and the modals
+   (z-60) cover it the same way.
 
    Phone:   the lane is full-width there, so the pill waits UNDER whichever of
    the two is posted — a posted banner starts at the top bar, the objective line
@@ -5870,7 +5871,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    comes back on a long press; the volume lives in Settings, where the phone
    already has a slider for it). */
 .radio-dock {
-  position: fixed; z-index: 41;
+  /* 39: above the map, the inspector (35), the minimap plate (37) and the
+     resource bar (38) — BELOW the top bar (40) and below the two panels that
+     live in this very corner when the player opens them: the rival's stakeout
+     (`#iso-rival-view`, 40) and the ☰ popover (55). A panel the player just
+     opened is allowed to sit over the pill; the pill never sits over them. */
+  position: fixed; z-index: 39;
   top: calc(var(--topbar-h) + var(--safe-top) + 8px);
   right: calc(10px + env(safe-area-inset-right, 0px));
   pointer-events: none;      /* the dock is place; only the pill is a control */
