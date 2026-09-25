@@ -35,6 +35,8 @@ test("AI-01 picker: url wins, choice persists, switching is live", async ({ page
   page.on("pageerror", (e) => errors.push(String(e)));
 
   await bootIso(page, "&rival=hard");
+  // UI Space Age (P4): the difficulty select lives in the ☰ menu's Game row.
+  await page.locator("#iso-menu-btn").click();
   const sel = page.locator("#iso-rival-skill");
   await expect(sel).toBeVisible();
   await expect(sel).toHaveValue("hard");
