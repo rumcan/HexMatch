@@ -1,12 +1,76 @@
 {
-  "_note": "Declared footprints for building art (F1) \u2014 the authority for NEW art. A name maps to its footprint as a bare [w, h] (footRoom 0) or {footprint, footRoom}; e.g. \"windmill\": {\"footprint\": [1, 3], \"footRoom\": 24}. Anything absent here (and from the compiled + sheet manifests) only compiles when its canvas is one of the legacy squares (128/256/384/512\u00b2) \u2014 otherwise the compiler fails and names this file. Keys starting with _ are notes.",
-  "_example": {
-    "windmill": {
-      "footprint": [
-        1,
-        3
-      ],
-      "footRoom": 24
-    }
+  "_note": "Declared footprints for building art (F1) \u2014 the authority for NEW art. A name maps to its footprint as a bare [w, h] (footRoom 0) or {footprint, footRoom}; e.g. \"windmill\": {\"footprint\": [1, 3], \"footRoom\": 24}. Anything absent here (and from the compiled + sheet manifests) only compiles when its canvas is one of the legacy squares (128/256/384/512\u00b2) \u2014 otherwise the compiler fails and names this file. Keys starting with _ are notes. F5 (#273) non-square art: a rectangle's name is <w>x<h> with w along grid x and h along grid y, so a building whose LONG side runs isometrically lower-left \u2192 upper-right is 1x2 / 1x3 / 2x4 \u2014 and its #274 mirror (the same drawing turned to the other axis, `<name>_r`) is 2x1 / 3x1 / 4x2. \"mirror\": true marks a base name whose mirrored orientation was measured to be usable: the world's light is upper-LEFT (every shipped master's SW wall is 1.2\u20131.8\u00d7 its SE wall \u2014 check with `node tools/normalize-building-art.mjs --lighting-check <file>`), so a mirror flips it. All five pairs below ship BOTH orientations as real art, so nothing needs mirroring at draw time; the flag tells #275 the mirror is faithful. Exception measured, not hidden: `shops_1x3`'s raw drawing is lit from the RIGHT (ratio 0.48) and `shops_1x3_r` is the one that matches the house convention (2.05) \u2014 same geometry, opposite painted light.",
+  "terrace_1x2": {
+    "footprint": [
+      1,
+      2
+    ],
+    "mirror": true
+  },
+  "shops_1x3": {
+    "footprint": [
+      1,
+      3
+    ],
+    "footRoom": 8,
+    "mirror": true
+  },
+  "store_2x4": {
+    "footprint": [
+      2,
+      4
+    ],
+    "footRoom": 16,
+    "mirror": true
+  },
+  "depot_1x2": {
+    "footprint": [
+      1,
+      2
+    ],
+    "footRoom": 8,
+    "mirror": true
+  },
+  "factory_2x4": {
+    "footprint": [
+      2,
+      4
+    ],
+    "footRoom": 12,
+    "mirror": true
+  },
+  "terrace_1x2_r": {
+    "footprint": [
+      2,
+      1
+    ]
+  },
+  "shops_1x3_r": {
+    "footprint": [
+      3,
+      1
+    ],
+    "footRoom": 8
+  },
+  "store_2x4_r": {
+    "footprint": [
+      4,
+      2
+    ],
+    "footRoom": 16
+  },
+  "factory_2x4_r": {
+    "footprint": [
+      4,
+      2
+    ],
+    "footRoom": 12
+  },
+  "depot_1x2_r": {
+    "footprint": [
+      2,
+      1
+    ],
+    "footRoom": 8
   }
 }
