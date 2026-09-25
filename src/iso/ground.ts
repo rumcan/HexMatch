@@ -191,8 +191,8 @@ export type BlendEdgeKind = keyof GroundBlendConfig;
  */
 export const GROUND_BLEND_DEFAULTS: GroundBlendConfig = {
   sandGrass: { widthPx: 44, noiseScale: 15, contrast: 1.15 },
-  waterSand: { widthPx: 40, noiseScale: 13, contrast: 1.3 },
-  waterGrass: { widthPx: 34, noiseScale: 14, contrast: 1.1 },
+  waterSand: { widthPx: 38, noiseScale: 13, contrast: 1.3 },
+  waterGrass: { widthPx: 24, noiseScale: 13, contrast: 1.2 },
 };
 
 const cloneBlend = (c: GroundBlendConfig): GroundBlendConfig => ({
@@ -449,25 +449,29 @@ function paintClumps(
 /** The translucent washes the blend lays under and over the textured clumps. */
 export const BLEND_WASH = {
   /** Sand's mean colour (ART_PIPELINE §4 `#cdbb95`), for the soft halo. */
-  sand: "rgba(205, 187, 149, 0.34)",
+  sand: "rgba(205, 187, 149, 0.28)",
   /** Grass's mean colour (`#354312`). */
-  grass: "rgba(53, 67, 18, 0.30)",
+  grass: "rgba(53, 67, 18, 0.26)",
   /** Wet sand: the same beach, darkened and cooled by the tide. */
-  wetSand: "rgba(84, 74, 48, 0.42)",
+  wetSand: "rgba(84, 74, 48, 0.34)",
   /** Wet ground at a bank with no beach — the river-bank ink's tone. */
-  wetGrass: "rgba(24, 46, 40, 0.40)",
+  wetGrass: "rgba(24, 46, 40, 0.30)",
   /** Shallow water over the sand bar, the lighter cap colour `#3f8c94`. */
-  shallow: "rgba(63, 140, 148, 0.26)",
+  shallow: "rgba(63, 140, 148, 0.16)",
   /** Foam flecks — `FOAM_RGB`. */
-  foam: "rgba(255, 244, 214, 0.34)",
+  foam: "rgba(255, 244, 214, 0.3)",
 };
 
 /** The foam layer is a narrow, sparse slice of its edge's own band. */
 const BLEND_FOAM_BAND = 0.42;
 const BLEND_FOAM_CONTRAST = 1.15;
-/** How far the soft halo and the solid core reach, × the clump radius. */
-const BLEND_SOFT_K = 1.55;
-const BLEND_SOLID_K = 0.86;
+/**
+ * How far the soft halo and the solid core reach, × the clump radius. Exported
+ * so the software preview (`PREVIEW_BLEND=1` in the ART-2 test) can reproduce
+ * the paint layer for layer instead of guessing at it.
+ */
+export const BLEND_SOFT_K = 1.25;
+export const BLEND_SOLID_K = 0.86;
 
 /** The clump fields one chunk paints, already generated. */
 export interface BlendClumpSet {
@@ -971,18 +975,20 @@ export function paintElevatedGroundTiles(
   }
   ctx.globalAlpha = 1;
 
-  // ART-2 (#382): the dithered transition, over the material and the hillshade
-  // so a clump is lit like the ground it lies on. It is part of this paint, so
-  // it drapes with the surface instead of floating over it as an overlay.
-  paintGroundBlend(ctx, grid, batch.blend, patterns, scale, project, [tx0, ty0, tx1, ty1]);
-
   // The waterline: a soft dark foot where the ground meets the sea or a river,
   // which is the cliff/side shading a raised coast needs — the land beside
   // water always ramps down to it, so this is the edge the slope ends on.
   strokeSegments(ctx, batch.waterline, "rgba(28, 44, 34, 0.42)", 2.4 * scale);
   strokeSegments(ctx, batch.waterline, "rgba(12, 22, 18, 0.30)", 1 * scale);
 
+  // The river's opaque water before the dither, so the bank's water-side clumps
+  // ride on top of it instead of being swallowed (see the flat path).
   paintRiverWater(ctx, grid, tx0, ty0, tx1, ty1, project, px, py, scale);
+
+  // ART-2 (#382): the dithered transition, over the material and the hillshade
+  // so a clump is lit like the ground it lies on. It is part of this paint, so
+  // it drapes with the surface instead of floating over it as an overlay.
+  paintGroundBlend(ctx, grid, batch.blend, patterns, scale, project, [tx0, ty0, tx1, ty1]);
   ctx.restore();
 }
 
@@ -1081,10 +1087,16 @@ export function paintGroundTiles(
   // ART-2 (#382): the thick dithered transition, baked into this chunk's cache
   // surface. It covers both the seam feathered above and the waterline the
   // surf bands sit on, so the material never changes on a hairline again.
+  // The river's water first: it is an OPAQUE fill over the ocean, so the dither's
+  // water-side clumps (grass tufts, shallow wash, foam at a bank) must land on
+  // top of it, not underneath, or the river would swallow them.
+  paintRiverWater(ctx, grid, tx0, ty0, tx1, ty1, project, px, py, scale);
+  // ART-2 (#382): the thick dithered transition, baked into this chunk's cache
+  // surface. It covers both the seam feathered above and the waterline the
+  // surf bands sit on, so the material never changes on a hairline again.
   ctx.globalAlpha = 1;
   paintGroundBlend(ctx, grid, () => blendEdgesFor(grid, tx0, ty0, tx1, ty1), patterns, scale,
     project, [tx0, ty0, tx1, ty1]);
-  paintRiverWater(ctx, grid, tx0, ty0, tx1, ty1, project, px, py, scale);
   ctx.restore();
 }
 
