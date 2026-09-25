@@ -5663,3 +5663,93 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   border-color: var(--brass);
   box-shadow: 0 4px 16px rgba(0,0,0,.45), inset 0 1px 0 rgba(242, 220, 166, .2), 0 0 14px -3px rgba(255, 176, 46, .55);
 }
+
+/* ── M2 (#256): Sabotage Event Window ───────────────────────────────
+   A small event window (not a full modal) for minimap sabotage markers.
+   Shows a static illustration for that sabotage type, who did it, the target,
+   time remaining, and "Go there" + close buttons. */
+.sabotage-event-window {
+  position: fixed; z-index: 38;
+  left: 320px;
+  bottom: calc(max(52px, var(--resbar-h, 52px)) + 48px + 140px);
+  width: clamp(210px, 16vw, 276px);
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background:
+    var(--felt) 0 0 / 240px,
+    linear-gradient(180deg, var(--glass-hi), var(--glass) 46%, var(--glass-lo));
+  background-blend-mode: luminosity, normal;
+  border: 1px solid var(--brass-lo);
+  box-shadow: inset 0 1px 0 rgba(242, 220, 166, .18), 0 10px 28px rgba(0, 0, 0, .65);
+  color: var(--ink);
+  font-family: var(--sans);
+  pointer-events: auto;
+  transition: left .25s ease;
+}
+.sabotage-event-window.hidden { display: none; }
+.ui-root[data-rail-left="1"] .sabotage-event-window { left: 48px; }
+@media (max-width: 1180px) { .sabotage-event-window { left: 282px; } }
+@media (max-width: 900px) {
+  .sabotage-event-window, .ui-root[data-rail-left="1"] .sabotage-event-window { left: 10px; }
+}
+@media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .sabotage-event-window, .ui-root[data-rail-left="1"] .sabotage-event-window {
+    left: 10px;
+    bottom: calc(var(--resbar-gap, 130px) + 48px + 130px);
+    width: min(260px, calc(100vw - 86px));
+    transition: none;
+  }
+}
+.sabotage-window-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px; padding-bottom: 4px;
+  border-bottom: 1px solid rgba(242, 220, 166, .15);
+}
+.sabotage-window-title {
+  margin: 0; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--brass);
+}
+.sabotage-window-close {
+  background: transparent; border: none;
+  color: var(--ink-dim, #a89f91); font-size: 16px; line-height: 1;
+  cursor: pointer; padding: 2px 6px; border-radius: 3px;
+}
+.sabotage-window-close:hover {
+  color: var(--ink, #fff); background: rgba(255, 255, 255, 0.1);
+}
+.sabotage-image-slot {
+  width: 100%; aspect-ratio: 16 / 9;
+  border-radius: calc(var(--r) - 2px);
+  overflow: hidden; background: #14100c;
+  border: 1px solid rgba(242, 220, 166, .15);
+  margin-bottom: 8px;
+}
+.sabotage-illustration {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.sabotage-details {
+  font-size: 11px; line-height: 1.4; margin-bottom: 8px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.sabotage-detail-row {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.sabotage-label {
+  color: var(--ink-dim, #8e8474); font-family: var(--mono); font-size: 10px;
+}
+.sabotage-val {
+  color: var(--ink, #ede2cf); font-weight: 500;
+}
+.sabotage-countdown {
+  font-family: var(--mono); color: #ffd75a; font-weight: 600;
+}
+.sabotage-window-actions {
+  display: flex; gap: 6px;
+}
+.sabotage-goto-btn {
+  flex: 1; padding: 5px 8px; font-size: 11px;
+}
+.sabotage-dismiss-btn {
+  padding: 5px 8px; font-size: 11px;
+}

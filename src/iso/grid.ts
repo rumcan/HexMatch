@@ -42,6 +42,7 @@ export interface Industry {
   h: number;
   output: number;
   banditUntil: number;    // blockade expiry (0 = none) — legacy carry-over
+  banditOwner?: string;   // #256: attacker seat who bought the blockade
 }
 
 /** TOWN-1: a town is a cluster of house tiles around a center. */
