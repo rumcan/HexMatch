@@ -276,3 +276,10 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .big-btn.ghost:hover, [data-act="tut-prev"]:hover { background: var(--sa-panel-2) !important; }
 .big-btn.ghost.danger { color: var(--sa-red) !important; border-color: var(--sa-red) !important; }
 [data-act="tut-prev"]:disabled { opacity: .35; }
+
+/* Feed rows: dark, like the rest of the drawer */
+.feed-row {
+  background: var(--sa-panel-2) !important; color: var(--sa-bone) !important;
+  border: 0 !important; border-left: 3px solid var(--sa-line-hi) !important;
+}
+.feed-row * { color: inherit; }
