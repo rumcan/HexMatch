@@ -69,6 +69,9 @@ import { playHoly, prewarmHoly } from "./holy";
 // no, a gem clearing, the wire opening.
 import { attachUiSound, registerSoundPainter, soundLabel, sfx } from "../audio/sfx";
 import type { Cue } from "../audio/cues";
+// VO-1: spoken lines. The coach cues the narrator; the bubble below is the
+// subtitle. A missing MP3 never throws — voice.ts shows the line anyway.
+import { registerVoicePainter, voice, type VoiceLine } from "./voice";
 // PP-14b: the tycoon portraits live with the NOIR mugshots further down — one
 // set of faces, so the start-screen pick and the dossiers read the same files.
 
@@ -1562,6 +1565,33 @@ export function createOriginalUi(
   const objectiveEl = h("div", "objective hidden");
   objectiveEl.id = "iso-objective";
   root.appendChild(objectiveEl);
+  // VO-1: subtitle plate. The rival wire (`#iso-rival-quip`) is hidden by CSS,
+  // and a `.toast` would land in the lane the tests read, so this is the same
+  // speech plate parked as a caption. Empty until a line is actually speaking.
+  const voiceSub = h("aside", "voice-sub hidden");
+  voiceSub.id = "iso-voice-sub";
+  voiceSub.setAttribute("role", "status");
+  voiceSub.setAttribute("aria-live", "polite");
+  const voiceFace = h("span", "voice-sub-face");
+  voiceFace.setAttribute("aria-hidden", "true");
+  const voiceCopy = h("span", "voice-sub-copy");
+  const voiceLabel = h("b", "voice-sub-label");
+  const voiceText = h("span", "voice-sub-text");
+  const voiceLineSkip = h("button", "voice-line-skip hidden", "Skip");
+  voiceLineSkip.type = "button";
+  voiceLineSkip.dataset.sfx = "close";
+  voiceLineSkip.title = "Skip narration";
+  voiceCopy.append(voiceLabel, voiceText);
+  voiceSub.append(voiceFace, voiceCopy, voiceLineSkip);
+  root.appendChild(voiceSub);
+  const voiceSkip = h("button", "voice-skip hidden", "Skip narration");
+  voiceSkip.id = "iso-voice-skip";
+  voiceSkip.type = "button";
+  voiceSkip.dataset.sfx = "close";
+  const skipNarration = () => { try { voice.skipNarration(); } catch { /* garnish */ } };
+  voiceSkip.onclick = skipNarration;
+  voiceLineSkip.onclick = (e) => { e.stopPropagation(); skipNarration(); };
+  root.appendChild(voiceSkip);
   // L8 (#222): the optional quests — the objective line's siblings, and its
   // opposite in tone: the objective says what the LOOP needs next, a quest
   // suggests what a character would like. One slim line while it is collapsed
@@ -4310,7 +4340,15 @@ export function createOriginalUi(
   let coachOn = false;
   let coachDoneTimer = 0;
   let coachPulsed: Element | null = null;
-  function setCoach(on: boolean): void { coachOn = on; if (!on) pulseCoach(null); }
+  /** Last coach key we handed to the narrator, so paint() does not re-cue every frame. */
+  let lastVoiceCoach: string | null = null;
+  function setCoach(on: boolean): void {
+    coachOn = on;
+    if (on) {
+      try { voice.setNarration(true); } catch { /* garnish */ }
+    }
+    if (!on) pulseCoach(null);
+  }
   function pulseCoach(sel: string | null): void {
     const el = sel ? root.querySelector(sel) : null;
     if (el === coachPulsed) return;
@@ -4324,10 +4362,18 @@ export function createOriginalUi(
     const step = key ? COACH_STEPS[key] : undefined;
     if (step) {
       pulseCoach(step.pulse ?? null);
+      if (key && key !== lastVoiceCoach) {
+        lastVoiceCoach = key;
+        try { voice.cue(`coach:${key}`); } catch { /* garnish */ }
+      }
       return `Step ${step.n}/${COACH_TOTAL} · ${step.text}`;
     }
     // Past the steps: the loop is running. One closing line, then bow out.
     pulseCoach(null);
+    if (lastVoiceCoach !== "producing") {
+      lastVoiceCoach = "producing";
+      try { voice.cue("coach:producing"); } catch { /* garnish */ }
+    }
     if (!coachDoneTimer) {
       coachDoneTimer = window.setTimeout(() => { coachOn = false; }, 9000);
     }
@@ -4732,6 +4778,35 @@ export function createOriginalUi(
   // straight into a page, which is how the e2e specs and the headless suites
   // boot it.
   attachUiSound(root);
+  // VO-1: the subtitle sink. attach() drops anything the previous match was
+  // still saying, so a disposed game cannot paint into this one.
+  const VOICE_WHO: Record<string, string> = { narrator: "Narrator", rival: "Rival", player: "You" };
+  registerVoicePainter((s) => {
+    if (!voiceSkip.isConnected) return;
+    voiceSkip.classList.toggle("hidden", !s.narrationOn || s.skipped);
+  });
+  voice.attach({
+    show(line: VoiceLine) {
+      if (!voiceSub.isConnected) return;
+      voiceSub.classList.remove("hidden", "narrator", "rival", "player");
+      voiceSub.classList.add("show", line.speaker);
+      voiceLabel.textContent = VOICE_WHO[line.speaker] ?? "Voice";
+      voiceText.textContent = line.text;
+      const face = line.speaker === "rival" ? portraitTorvin
+        : line.speaker === "player" ? rivalWirePlayerPortrait
+        : "";
+      voiceFace.style.backgroundImage = face ? `url(${face})` : "";
+      voiceFace.classList.toggle("mark", !face);
+      voiceFace.textContent = face ? "" : "N";
+      voiceLineSkip.classList.toggle("hidden", line.speaker !== "narrator" || voice.narrationSkipped);
+    },
+    hide() {
+      if (!voiceSub.isConnected) return;
+      voiceSub.classList.add("hidden");
+      voiceSub.classList.remove("show");
+      voiceLineSkip.classList.add("hidden");
+    },
+  });
   renderSabotage();
   renderBank();
   renderBoard();

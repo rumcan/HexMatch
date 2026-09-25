@@ -276,6 +276,9 @@ import { GEM_ART } from "../game/gem-art";
 // one cue from here; the chrome's own clicks and hovers are handled once, by
 // the delegation `attachUiSound` installs. docs/SFX-01-ui-sound.md.
 import { sfx } from "../audio/sfx";
+// VO-1: spoken lines on coach steps (ui.ts) and on feed events below.
+// A missing MP3 is a subtitle; it must never throw into the match.
+import { voice } from "../game/voice";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
@@ -632,6 +635,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   root.innerHTML = "";
   root.classList.add("iso-game");
   let ui: OriginalUi;
+  /** VO-1: cue a scripted line. Never throws — a bad trigger is silence. */
+  const voiceCue = (trigger: string, once = false): void => {
+    try {
+      if (once) voice.cueOnce(trigger);
+      else voice.cue(trigger);
+    } catch { /* a voice line must not stop the match */ }
+  };
+  let voicedIncome = false;
+  let voicedTrain = false;
+  const notePlayerTrain = (): void => {
+    if (voicedTrain) return;
+    voicedTrain = true;
+    voiceCue("player:first-train");
+  };
 
   // ── state ──────────────────────────────────────────────────────────────
   // AI-03: the map is REGENERATED from the save's seed on a resume — never a
@@ -2374,6 +2391,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (endingShown || !winner) return;
     endingShown = true;
     winningSource = source;
+    // VO-1: the match is decided once. The portrait answers, then the rival.
+    if (winner.id === me.id) {
+      voiceCue("player:win");
+      voiceCue("rival:you-won");
+    } else {
+      voiceCue("player:lose");
+      voiceCue("rival:you-lost");
+    }
     // #164: the match is decided — whatever "match in progress" memo the
     // front door wrote for this seat is now a lie, and only the layer that
     // wrote it can drop it.
@@ -3005,6 +3030,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // rival's stars stay silent — the feed line is enough for those.
         if (p.human) sfx.play("star");
         ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${winTarget()}★`, p.name);
+        // VO-1: the rival pulling ahead is already a feed line. One taunt, rate-limited.
+        if (!p.human && stars > Math.floor(vpFor(score, me.id))) voiceCue("rival:ahead");
       } else if (stars < last) starFed.set(p.id, stars);
     }
     trucksDirty = true;   // RV-01: the network changed — replan the lorries
@@ -3274,6 +3301,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(depot
         ? "Platform built at the industry — tune its yield, then run rail to your plant's platform."
         : "Plant platform built — run rail to it from an industry platform.", "good");
+      voiceCue("coach:platform", true);
     }
     if (depot && newLoop && p === me && !isGuest()) openTuningSession(depot);
     return !!built;
@@ -3500,6 +3528,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human && res.built.length) {
       const end = res.built[res.built.length - 1];
       flashAt(end[0], end[1], "Rail laid", "good");
+      voiceCue("coach:rail", true);
     }
   }
 
@@ -3549,6 +3578,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rescoreNow();
     if (p.human) {
       toast(`${plan.line?.name ?? "Line"} assigned — the train is leaving the depot.`, "good");
+      notePlayerTrain();
     }
     return true;
   }
@@ -3576,7 +3606,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     spend(p, RAIL_COSTS.train);
     if (p.human) sfx.play("build");
     syncWorld();
-    if (p.human) toast("Train bought — it is waiting in the depot. Press Start to send it off.", "good");
+    if (p.human) {
+      toast("Train bought — it is waiting in the depot. Press Start to send it off.", "good");
+      notePlayerTrain();
+    }
     return true;
   }
 
@@ -4764,6 +4797,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
     p.freeDepots = price.freeLeft;
+    const firstDepot = p.human && !eco.harvesters.some((x) => x.owner === p.id);
     // L4 (#218): under the new loop every Depot is BORN at the default yield
     // and is then tuned. A level is never absent, so a mid-session reload or a
     // depot the player never got round to tuning still ticks (and still
@@ -4776,6 +4810,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
     if (p.human) sfx.play("build");      // SFX-01
+    // VO-1: the opening depot is the player's line; a later claim is the rival's.
+    if (firstDepot) voiceCue("player:first-depot");
+    else if (p.human && served.length && phase !== "setup-harvester") voiceCue("rival:industry-lost");
     syncWorld();
     rescoreNow();
     // Gold Mine warning: the moment the PLAYER stands a Depot beside a Gold
@@ -5321,7 +5358,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function announceVerdict(stake: MapBattleStake, verdict: ReturnType<typeof settleMapBattle>, playerWon: boolean | null): void {
     if (stake.kind === "fightoff") {
-      if (verdict === "cancelled") toast("You fought it off — their Gold stays spent either way.", "good");
+      if (verdict === "cancelled") {
+        toast("You fought it off — their Gold stays spent either way.", "good");
+        voiceCue("player:battle-won");
+        voiceCue("rival:battle-lost");
+      } else if (playerWon === false) {
+        voiceCue("player:battle-lost");
+        voiceCue("rival:battle-won");
+      }
       return;
     }
     const what = stake.kind === "town" ? "city" : "industry";
@@ -5337,6 +5381,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(mine ? `The ${what} is yours.` : `They take the ${what}.`, mine ? "good" : "bad");
     } else if (verdict === "held") {
       toast(mine ? `You held the ${what}.` : `They held the ${what}.`, mine ? "good" : "bad");
+    }
+    // VO-1: battle won/lost, already on the toast. Industry conquest is the
+    // "they took it / you took it" line the rival keeps for the feed.
+    if (playerWon === true) {
+      voiceCue("player:battle-won");
+      voiceCue("rival:battle-lost");
+    } else if (playerWon === false) {
+      voiceCue("player:battle-lost");
+      voiceCue("rival:battle-won");
+    }
+    if (verdict === "conquest" && stake.kind === "industry" && playerWon !== null) {
+      voiceCue(playerWon ? "rival:industry-lost" : "rival:industry-taken");
     }
   }
 
@@ -5760,6 +5816,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const def = INDUSTRY_BY_KEY[target.type];
         floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
         toast(`The Blockade landed on ${def?.name ?? "the industry"} — its depots stop ticking.`, "bad");
+        voiceCue("rival:blockade");
       }
     } else if (p.kind === "protest" && p.tile !== undefined) {
       const tx = p.tile % MAP_W, ty = (p.tile / MAP_W) | 0;
@@ -6300,6 +6357,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // depot holding that industry stops ticking", which is exactly what
       // `harvesterYield`'s `banditUntil` gate does to the income clock.
       toast(`Blockade set on ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "good");
+      voiceCue("rival:blockade");
       if (actor.id === players[0].id) {
         sfx.play("boom", { gain: 0.65 });   // SFX-01
         rivalSpeaks("retort", "bandit");
@@ -6600,6 +6658,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // for the integer credit and retain any sub-unit remainder per
             // depot (one map serves both seats: depot ids are unique).
             earn(seat, { [cargoes[0][0]]: whole } as Purse);
+            // VO-1: the narrator's walk continues past the coach — income, then
+            // rail and platform, once, and only while a first game is listening.
+            if (seat === me && !voicedIncome) {
+              voicedIncome = true;
+              voiceCue("coach:first-income", true);
+              voiceCue("coach:rail", true);
+              voiceCue("coach:platform", true);
+            }
           }
         }
       }
@@ -7174,6 +7240,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const def = INDUSTRY_BY_KEY[target.type];
     floats.add("⛓ BLOCKADED", target.tx, target.ty, { cls: "sabotage", now });
     toast(`The rival blockaded your ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "bad");
+    voiceCue("rival:blockade");
     rivalSpeaks("attack", "bandit");
   }
 
@@ -7402,6 +7469,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       spend(rival, out.spent);
       for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
       ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
+      voiceCue("rival:industry-taken");
       return true;
     };
     // #297: ONE Depot per turn on the new loop — each one is a tuning
@@ -7605,6 +7673,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // AI-03c: expansion is the thing the player keeps asking the feed
       // about — say exactly what appeared (depot + its road).
       ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
+      voiceCue("rival:industry-taken");
       return true;
     };
     for (let n = Math.max(1, skill().expandPerTurn); n > 0; n--) {
@@ -11419,9 +11488,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const sig = `${rail.rail.revision}:${rail.structures.map((s) => s.id).join(",")}`;
         if (sig !== autoTrainSig) {
           autoTrainSig = sig;
+          const hadTrain = rail.trains.some((t) => t.ownerId === me.i + 1);
           let moved = false;
           for (const p of [me, rival]) moved = autoTrains(rail, p.i + 1) || moved;
-          if (moved) { syncWorld(); rescoreNow(); }
+          if (moved) {
+            syncWorld();
+            rescoreNow();
+            if (!hadTrain && rail.trains.some((t) => t.ownerId === me.i + 1)) notePlayerTrain();
+          }
         }
       }
       // #302: trains and deliveries are sim too — a resumed game must not roll
@@ -12626,6 +12700,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   return () => {
     disposed = true;
+    try { voice.detach(); } catch { /* garnish */ }
     // #112/#115: a disposed game resolves nothing and leaves nothing armed —
     // the prompt timer dies (an old timer must never answer a newer prompt,
     // and a dead game must not resolve one at all), any open bounty chooser

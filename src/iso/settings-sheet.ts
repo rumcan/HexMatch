@@ -32,6 +32,8 @@ import {
   QUALITY_KEYS, QUALITY_LABEL, QUALITY_NOTE, PERFORMANCE_NOTE, type GraphicsSettings,
 } from "./graphics";
 import { registerSoundPainter, sfx } from "../audio/sfx";
+// VO-1: voice has its own mute and volume, and still bows to the Sound switch.
+import { registerVoicePainter, voice } from "../game/voice";
 
 /** The miniature row's copy, live: the full description, or the reason it is
  *  unreachable while performance mode stands (PERF-01). */
@@ -74,6 +76,13 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
         <div class="gfx-copy"><h3>Sound</h3><p>Brass, felt and paper — every click, coin and cascade (the top bar&rsquo;s 🔊 keeps the same time).</p></div>
         <button type="button" class="gfx-switch" role="switch" data-gfx="sound" data-sfx="click">ON</button>
       </div>
+      <div class="gfx-row">
+        <div class="gfx-copy"><h3>Voice</h3><p class="gfx-voice-note">Narrator, rival and your own lines. A missing recording still shows the subtitle.</p></div>
+        <div class="gfx-voice-controls">
+          <input type="range" class="gfx-voice-vol" min="0" max="1" step="0.05" value="0.85" data-gfx="voice-volume" aria-label="Voice volume" />
+          <button type="button" class="gfx-switch" role="switch" aria-label="Voice" data-gfx="voice" data-sfx="click">ON</button>
+        </div>
+      </div>
       <div class="confirm-row">
         <button type="button" class="big-btn" data-gfx-close data-sfx="close">Done</button>
       </div>
@@ -87,6 +96,9 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const miniNote = root.querySelector(".gfx-mini-note") as HTMLElement;
   const perfBtn = root.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
   const soundBtn = root.querySelector("[data-gfx=\"sound\"]") as HTMLButtonElement;
+  const voiceBtn = root.querySelector("[data-gfx=\"voice\"]") as HTMLButtonElement;
+  const voiceVol = root.querySelector("[data-gfx=\"voice-volume\"]") as HTMLInputElement;
+  const voiceNote = root.querySelector(".gfx-voice-note") as HTMLElement;
 
   for (const q of QUALITY_KEYS) {
     const b = document.createElement("button");
@@ -102,6 +114,8 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   miniBtn.onclick = () => { setGraphics({ miniature: !currentGraphics().miniature }); };
   perfBtn.onclick = () => { setGraphics({ performance: !currentGraphics().performance }); };
   soundBtn.onclick = () => { sfx.setEnabled(!sfx.isEnabled()); };
+  voiceBtn.onclick = () => { voice.setEnabled(!voice.enabled); };
+  voiceVol.oninput = () => { voice.setVolume(Number(voiceVol.value)); };
 
   const paint = (g: GraphicsSettings) => {
     note.textContent = QUALITY_NOTE[g.quality];
@@ -129,6 +143,17 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     soundBtn.textContent = enabled ? "ON" : "OFF";
     soundBtn.classList.toggle("on", enabled);
     soundBtn.setAttribute("aria-checked", String(enabled));
+    voiceNote.textContent = enabled
+      ? "Narrator, rival and your own lines. A missing recording still shows the subtitle."
+      : "Held silent while Sound is off. Subtitles still show.";
+  });
+  const unsubVoice = registerVoicePainter((s) => {
+    voiceBtn.textContent = s.enabled ? "ON" : "OFF";
+    voiceBtn.classList.toggle("on", s.enabled);
+    voiceBtn.setAttribute("aria-checked", String(s.enabled));
+    // Don't fight a thumb that is still on the slider.
+    if (document.activeElement !== voiceVol) voiceVol.value = String(s.volume);
+    voiceVol.setAttribute("aria-valuenow", String(Math.round(s.volume * 100) / 100));
   });
   paint(currentGraphics());
 
@@ -137,6 +162,7 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     closed = true;
     unsubGfx();
     unsubSound();
+    unsubVoice();
     document.removeEventListener("keydown", onKey, true);
     root.remove();
     resolveClosed();
