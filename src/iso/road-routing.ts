@@ -98,11 +98,11 @@ export const depotShoulders = (
  * the rival's pave pass) reads this, so the edge is one rule, not four.
  */
 export function plantShoulders(
-  track: Track, owner: number, tx: number, ty: number,
+  track: Track, owner: number, tx: number, ty: number, rot = 0,
 ): [number, number][] {
   const out: [number, number][] = [];
   const seen = new Set<number>();
-  for (const [fx, fy] of plantFootprintTiles(tx, ty)) {
+  for (const [fx, fy] of plantFootprintTiles(tx, ty, rot)) {
     for (const [x, y] of shoulders(track, owner, fx, fy)) {
       const i = tIdx(x, y);
       if (seen.has(i)) continue;

@@ -1924,8 +1924,8 @@ export const isTownTile = (g: Grid, tx: number, ty: number): boolean =>
  * houses — both are TOWN_OCC town tiles — which is what keeps every generated
  * town able to host a Factory after PP-10 ring roads surround its houses.
  */
-export function factoryTouchesTown(grid: Grid, tx: number, ty: number): boolean {
-  const [fw, fh] = FACTORY_FOOTPRINT;
+export function factoryTouchesTown(grid: Grid, tx: number, ty: number, rot = 0): boolean {
+  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -1956,8 +1956,8 @@ export interface FactoryPlacement {
  * (`placeFactory` in `game.ts`) and the AI's factory search use this, so the
  * AI cannot bypass town adjacency through a fallback placement.
  */
-export function canPlaceFactory(grid: Grid, tx: number, ty: number): FactoryPlacement {
-  const [fw, fh] = FACTORY_FOOTPRINT;
+export function canPlaceFactory(grid: Grid, tx: number, ty: number, rot = 0): FactoryPlacement {
+  const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
   for (let dy = 0; dy < fh; dy++) {
     for (let dx = 0; dx < fw; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -1972,7 +1972,7 @@ export function canPlaceFactory(grid: Grid, tx: number, ty: number): FactoryPlac
       }
     }
   }
-  if (!factoryTouchesTown(grid, tx, ty)) {
+  if (!factoryTouchesTown(grid, tx, ty, rot)) {
     return {
       ok: false,
       reason: "The Factory must be next to a town — at least one of its tiles must share an edge with a town tile.",
@@ -2007,24 +2007,31 @@ export function startingTownReservations(grid: Grid): [Town, Town] | null {
     const pad = Math.max(...FACTORY_FOOTPRINT) + 2;
     outer: for (let y = minY - pad; y <= maxY + pad; y++) {
       for (let x = minX - pad; x <= maxX + pad; x++) {
-        const fac = canPlaceFactory(grid, x, y);
-        if (!fac.ok) continue;
-        if (!factoryTouchesTown(grid, x, y)) continue;
-        // Must be touching THIS town, not just any town
-        // Check if any footprint tile touches this town's tiles
+        let okFactory = false;
         let touchesThis = false;
-        for (let dy = 0; dy < FACTORY_FOOTPRINT[1] && !touchesThis; dy++) {
-          for (let dx = 0; dx < FACTORY_FOOTPRINT[0] && !touchesThis; dx++) {
-            const fx = x+dx, fy = y+dy;
-            if (isTownTile(grid, fx, fy-1) || isTownTile(grid, fx, fy+1) || isTownTile(grid, fx-1, fy) || isTownTile(grid, fx+1, fy)) {
-              // Check if that neighbor belongs to this town
-              const nbs = [[fx, fy-1],[fx, fy+1],[fx-1, fy],[fx+1, fy]];
-              for (const [nx,ny] of nbs) {
-                if (town.houses.some(([hx,hy])=>hx===nx&&hy===ny) || town.roads.some(([rx,ry])=>rx===nx&&ry===ny)) touchesThis = true;
+        for (const rot of [0, 1]) {
+          const fac = canPlaceFactory(grid, x, y, rot);
+          if (!fac.ok) continue;
+          if (!factoryTouchesTown(grid, x, y, rot)) continue;
+          okFactory = true;
+          // Must be touching THIS town, not just any town
+          // Check if any footprint tile touches this town's tiles
+          const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], rot);
+          for (let dy = 0; dy < fh && !touchesThis; dy++) {
+            for (let dx = 0; dx < fw && !touchesThis; dx++) {
+              const fx = x+dx, fy = y+dy;
+              if (isTownTile(grid, fx, fy-1) || isTownTile(grid, fx, fy+1) || isTownTile(grid, fx-1, fy) || isTownTile(grid, fx+1, fy)) {
+                // Check if that neighbor belongs to this town
+                const nbs = [[fx, fy-1],[fx, fy+1],[fx-1, fy],[fx+1, fy]];
+                for (const [nx,ny] of nbs) {
+                  if (town.houses.some(([hx,hy])=>hx===nx&&hy===ny) || town.roads.some(([rx,ry])=>rx===nx&&ry===ny)) touchesThis = true;
+                }
               }
             }
           }
+          if (touchesThis) break;
         }
+        if (!okFactory) continue;
         if (!touchesThis) continue;
         hasFactory = true;
         // Look for depot nearby

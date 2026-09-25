@@ -98,7 +98,7 @@ import { loadVehicleLayers } from "./vehicle-art";
 import {
   FIELD_OCC, generateMap, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
   TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
-  tileInFootprint, townHouseAt, townObstacleTiles,
+  tileInFootprint, townHouseAt, townObstacleTiles, rotatedSpan,
   type Grid, type Industry, type Town,
 } from "./grid";
 import {
@@ -796,6 +796,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const rail: RailState = createRailState();
   /** RAIL-02: the heading the platform/depot tools place with — R turns it. */
   let railView: RailView = "se";
+  /** F3 (#274): quarter-turns the factory/plant ghost is rotated — R turns it. 0..3, legacy absent=0. */
+  let factoryView = 0;
   /**
    * The rotation the Depot tool places in (R turns it). `null` means "whatever
    * the site opens onto by itself" — the side away from the resource — so a
@@ -969,7 +971,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // (and every default / room / story boot) still reports the footprint as
     // a plant, so the other seat cannot pave it.
     if ((opts.newLoop === true || loopParam !== "old") && eco.factories.some((f) => tileInFootprint(
-      x, y, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1],
+      x, y, f.tx, f.ty, FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], f.rot ?? 0,
     ))) return "plant";
     if (townPlantReady) {
       if (townPlantTiles.has(tIdx(x, y))) return "plant";
@@ -2599,9 +2601,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SCENERY: hide the trees the player has since built over. Roads are not
     // listed — the draw list reads roadBits/dirtBits directly — so this is
     // only the free-standing structures: plant footprints and depots.
+    // F3: footprint uses rot.
     const blocked = new Set<number>();
     for (const f of eco.factories)
-      for (const [x, y] of plantFootprintTiles(f.tx, f.ty))
+      for (const [x, y] of plantFootprintTiles(f.tx, f.ty, f.rot ?? 0))
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) blocked.add(y * MAP_W + x);
     for (const h of eco.harvesters.filter((x) => !isRailDepot(x)))
       for (const [x, y] of depotTiles(h.tx, h.ty))
@@ -2621,8 +2624,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // footprint origin. The manifest footprint matches FACTORY_FOOTPRINT (both
     // derive from the art), so the anchor lands on the footprint's south
     // corner exactly like any other multi-tile building.
+    // F3: art swaps to _r when rotated.
     const factoryItems = eco.factories.map((f) => ({
-      sprite: FACTORY_SPRITE,
+      sprite: (f.rot ?? 0) & 1 ? `${FACTORY_SPRITE}_r` : FACTORY_SPRITE,
       tx: f.tx,
       ty: f.ty,
       ref: { kind: "factory", owner: f.owner },
@@ -2939,13 +2943,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return `${who} holds that town — win it in a battle to build there.`;
   }
 
-  function placeFactoryFor(p: PlayerState, tx: number, ty: number): boolean {
+  function placeFactoryFor(p: PlayerState, tx: number, ty: number, rot = 0): boolean {
     const blocked = townBlockedFor(p, tx, ty);
     if (blocked) {
       if (p.human) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
       return false;
     }
-    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track, rot });
     if (!plan.valid) {
       toast(plan.code === "not-near-town"
         ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
@@ -2961,7 +2965,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (isMp()) {
       // Factory footprints must not overlap live buildings (opening factories also check live buildings)
       for (const [fx, fy] of plan.footprint.map((f) => [f.tx, f.ty] as [number, number])) {
-        if (eco.factories.some((f) => fx >= f.tx && fx < f.tx + FACTORY_FOOTPRINT[0] && fy >= f.ty && fy < f.ty + FACTORY_FOOTPRINT[1])) {
+        if (eco.factories.some((f) => {
+          const [fw, fh] = rotatedSpan(FACTORY_FOOTPRINT[0], FACTORY_FOOTPRINT[1], f.rot ?? 0);
+          return fx >= f.tx && fx < f.tx + fw && fy >= f.ty && fy < f.ty + fh;
+        })) {
           toast("Can't build there — another Factory stands there.", "bad");
           return false;
         }
@@ -2978,9 +2985,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
     // PP-06: the starting Factory is plant #0 — same building, same record.
+    // F3: orientation stored on wire/save.
     eco.factories.push({
       owner: p.id, ownerId: p.i + 1, tx, ty,
-      id: 0, townId: adjacentTown(grid, tx, ty)?.id ?? null,
+      id: 0, townId: adjacentTown(grid, tx, ty, rot)?.id ?? null,
+      rot: rot & 3,
     });
     // SFX-01: a heavy crate set down and latched. The rival's own factory
     // appears in the same instant as the player's, so only the human's click
@@ -2990,7 +2999,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function placeFactory(tx: number, ty: number): boolean {
-    if (!placeFactoryFor(me, tx, ty)) return false;
+    if (!placeFactoryFor(me, tx, ty, factoryView)) return false;
     if (!isSolo() && !aiOpponent) {
       // MP-05: no AI rival to seat — the guest places its own opening Factory
       // through an intent, on its own click.
@@ -3023,9 +3032,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       newLoop,
     });
     if (spot) {
+      const rot = (spot as any)[2] ?? 0;
       eco.factories.push({
         owner: "ai", ownerId: rival.i + 1, tx: spot[0], ty: spot[1],
-        id: 0, townId: adjacentTown(grid, spot[0], spot[1])?.id ?? null,
+        id: 0, townId: adjacentTown(grid, spot[0], spot[1], rot)?.id ?? null,
+        rot,
       });
     }
     phase = "setup-harvester";
@@ -4562,13 +4573,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * BEFORE the site exists and charged exactly once, on the single success
    * path — a refused placement can never take resources.
    */
-  function placePlant(tx: number, ty: number, p: PlayerState): boolean {
+  function placePlant(tx: number, ty: number, p: PlayerState, rot = 0): boolean {
     const blocked = townBlockedFor(p, tx, ty);
     if (blocked) {
       if (p.human) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
       return false;
     }
-    const why = plantRefusal(grid, track, eco, tx, ty);
+    const why = plantRefusal(grid, track, eco, tx, ty, rot);
     if (why !== null) {
       if (p.human) {
         toast(PLANT_REFUSAL_TEXT[why], "bad");
@@ -4586,7 +4597,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!spend(p, PLANT_COST)) return false;            // charged exactly once
-    const plant = addPlant(grid, track, eco, p.id, p.i + 1, tx, ty);
+    const plant = addPlant(grid, track, eco, p.id, p.i + 1, tx, ty, rot);
     if (!plant) {                                        // unreachable; refund
       earn(p, PLANT_COST);
       return false;
@@ -7064,9 +7075,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       };
       // Nothing to save for (no goal left) is a plant, as ever; otherwise the
       // goal's own price has to survive the purchase.
+      // F3: spot now carries rot.
       if (!goal || covers(withPlant(goal.cost))) {
         const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
-        if (spot && placePlant(spot[0], spot[1], rival)) {
+        if (spot && placePlant(spot[0], spot[1], rival, spot[2] ?? 0)) {
           acted = true;
           // placePlant rescores immediately; if that was the winning star the
           // curtain is already up, and nothing may be added after the ledger.
@@ -7255,7 +7267,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       if (plantNow) {
         const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
-        if (spot && placePlant(spot[0], spot[1], rival)) {
+        if (spot && placePlant(spot[0], spot[1], rival, spot[2] ?? 0)) {
           acted = true;
           // AI-03c: the feed tells the player the rival JUST scored a ★ —
           // an empty feed used to hide every move it made.
@@ -8048,10 +8060,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       } else {
         const tx = int(payload.tx), ty = int(payload.ty);
+        const rot = int((payload as any).rot ?? (payload as any).view ?? 0) ?? 0;
         if (tx !== null && ty !== null) {
-          if (what === "factory") placeFactoryFor(p, tx, ty);
+          if (what === "factory") placeFactoryFor(p, tx, ty, rot);
           else if (what === "depot") placeHarvester(tx, ty, p);
-          else if (what === "plant") placePlant(tx, ty, p);
+          else if (what === "plant") placePlant(tx, ty, p, rot);
           else if (what === "demolish") doDemolish(tx, ty, p);
           else if (what === "protest_place") {
             // legacy
@@ -8290,9 +8303,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return depotView;
   };
 
+  /** F3 (#274): R rotates the factory/plant ghost a quarter-turn. */
+  const rotateFactoryView = () => {
+    factoryView = (factoryView + 1) & 3;
+    return factoryView;
+  };
+
   const factoryPlanForTool = (tx: number, ty: number): PlacementPlan => {
-    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
-    const why = plantRefusal(grid, track, eco, tx, ty);
+    const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track, rot: factoryView });
+    const why = plantRefusal(grid, track, eco, tx, ty, factoryView);
     if (why !== null && plan.valid) {
       plan.valid = false;
       plan.code = why;
@@ -8362,11 +8381,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const overlayPlanAt = (tx: number, ty: number): OverlayFrame => {
     const items: OverlayItem[] = [];
     let ghost: GhostSpec | null = null;
+    const factoryGhostSprite = (rot: number) => (rot & 1) ? `${FACTORY_SPRITE}_r` : FACTORY_SPRITE;
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
-      const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track });
+      const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track, rot: factoryView });
       pushPlan(items, plan);
-      ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
+      ghost = { sprite: factoryGhostSprite(factoryView), tx, ty, valid: plan.valid };
     } else if (tool === "harvester" || phase === "setup-harvester") {
       const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
       pushPlan(items, plan);
@@ -8413,9 +8433,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // AI-03c: the mid-game plant preview paints from the same folded plan
       // the test twin and the click share — no more green footprints over a
       // building the overlay never saw.
+      // F3: ghost art swaps to _r when rotated.
       const plan = factoryPlanForTool(tx, ty);
       pushPlan(items, plan);
-      ghost = { sprite: FACTORY_SPRITE, tx, ty, valid: plan.valid };
+      ghost = { sprite: factoryGhostSprite(factoryView), tx, ty, valid: plan.valid };
     } else if (tool === "rail") {
       // #298: a hover on a plant or a town building is red, same refusal the drag will hit.
       const why = railTileRefusal(grid, track, rail, me.i + 1, tx, ty);
@@ -9560,7 +9581,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (phase === "setup-factory") {
           // MP-05: a guest's opening click is an intent like any other — the
           // host places seat 1's Factory by the same town-adjacency rule.
-          if (isGuest()) net?.sendIntent("build", { do: "factory", tx: p.tx, ty: p.ty });
+          // F3: orientation on wire.
+          if (isGuest()) net?.sendIntent("build", { do: "factory", tx: p.tx, ty: p.ty, rot: factoryView });
           else placeFactory(p.tx, p.ty);
         } else if (phase === "setup-harvester") {
           // PP-05: the setup Depot is free because `me.freeDepots` is still 1 —
@@ -9675,11 +9697,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // RAIL-02: R turns the platform/depot heading a quarter turn — the same
     // four headings the art and the footprints are authored in, in the same
     // order (`rotateView` is the rail module's, not a second list here).
+    // F3 (#274): R also rotates factory/plant ghost (factoryView), never both at once.
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r") {
       // The Depot is placed in four rotations too, and R turns whichever tool
       // is armed: over a real site it steps through the sides that site can
       // actually open onto, so a turn never promises an impossible entrance.
       if (tool === "harvester" || phase === "setup-harvester") rotateDepotView();
+      else if (tool === "plant" || phase === "setup-factory") rotateFactoryView();
       else railView = rotateView(railView);
       paintOverlayNow();
     }
@@ -11606,6 +11630,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if ((RAIL_VIEWS as readonly string[]).includes(v)) railView = v as RailView;
       return railView;
     },
+    /** F3 (#274): quarter-turns the factory/plant ghost is rotated — R turns it. */
+    get factoryView() { return factoryView; },
+    setFactoryView: (v: number) => {
+      factoryView = (v | 0) & 3;
+      return factoryView;
+    },
+    rotateFactory: () => rotateFactoryView(),
     /** The rotation the Depot tool places in (R in the live game); null = the
      *  site's own default, the side away from the resource. */
     get depotView() { return depotView; },
