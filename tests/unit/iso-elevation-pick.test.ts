@@ -201,7 +201,19 @@ describe("E3 (#269) — object anchors are lifted by liftAt", () => {
     expect(anchorFlat - anchorRaised).toBeCloseTo(want, 9);
     expect(raised.elev).toBeCloseTo(want, 9);
     expect(raised.wx).toBe(flat.wx);           // X is never lifted
-    expect(raised.key).toBeCloseTo(flat.key - want / HH, 9); // depth key follows
+    expect(raised.key).toBe(flat.key); // depth still sorts by ground position
+  });
+
+  it("a vertex-anchored sprite lifts by its own tile, not the one south of it", () => {
+    const g = synthetic([
+      "0000",
+      "0200",
+      "0000",
+    ]);
+    const def = atlas.get("quarry_t73")!;
+    expect(def.anchor[1]).toBe(def.h);
+    const raised = place(atlas, { sprite: "quarry_t73", tx: 1, ty: 1 }, g)!;
+    expect(raised.elev).toBeCloseTo(liftAt(g, 1.5, 1.5), 9);
   });
 
   it("a moving vehicle's anchor follows the exact fractional surface", () => {

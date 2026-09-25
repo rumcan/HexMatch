@@ -166,10 +166,8 @@ export function place(atlas: Atlas, item: DrawItem, grid?: Grid | null): Placed 
     : (item.tx + fw - 1) + (item.ty + fh - 1) + (item.lift ?? 0);
   // E3 (#269): lift the sprite onto the terrain. The anchor pixel is lifted by
   // the surface height at the tile it stands on, so the whole sprite rides up
-  // the hill with its base — and the depth key drops by lift/HH, which sorts
-  // the sprite by its RAISED screen position (a raised thing reads as further
-  // back, exactly where it is drawn). Both are the identity when the map is
-  // flat, so the no-grid / option-off path is byte-for-byte what it was.
+  // the hill with its base. Identity when the map is flat, so the no-grid /
+  // option-off path is byte-for-byte what it was.
   let wy = wyFlat;
   let elev = 0;
   if (grid && elevationActive(grid)) {
@@ -180,12 +178,17 @@ export function place(atlas: Atlas, item: DrawItem, grid?: Grid | null): Placed 
     // the tile below — so it is snapped to the containing tile's CENTRE: a
     // building on a flat level-L footprint beside a lower tile must lift by L,
     // never by the shared corner's min (which would sink it into the hill).
+    // (Sampled from the footprint's own S tile, not by flooring the anchor:
+    // sprites anchored exactly ON the south vertex would floor to the tile
+    // outside the footprint.)
     const [gu, gv] = worldToGround(wx + def.anchor[0], wyFlat + def.anchor[1]);
-    const su = moving ? gu : Math.floor(gu) + 0.5;
-    const sv = moving ? gv : Math.floor(gv) + 0.5;
+    const su = moving ? gu : item.tx + fw - 0.5;
+    const sv = moving ? gv : item.ty + fh - 0.5;
     elev = surfaceHeight(grid, su, sv) * LEVEL_PX;
+    // The depth key is NOT changed: things standing on the terrain still
+    // occlude by ground position, and dropping a raised sprite's key let a
+    // lower object BEHIND it paint over it.
     wy = wyFlat - elev;
-    key -= elev / HH;
   }
   return { ...item, def, wx, wy, w, h: def.h, key, elev };
 }
