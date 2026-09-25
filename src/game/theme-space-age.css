@@ -509,3 +509,23 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .offer * { color: inherit; }
 .offer.theirs, .offer.rival, .offer[data-side="rival"] { border-left-color: var(--sa-red) !important; }
 .offer.mine, .offer[data-side="mine"] { border-left-color: var(--sa-aqua) !important; }
+
+/* Market offer: one row — who/time | give → want | action */
+.offer {
+  display: grid !important; grid-template-columns: 90px 1fr auto; align-items: center; gap: 10px;
+  padding: 8px 10px !important; margin: 0 0 6px !important;
+}
+.offer .offer-who { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.offer .offer-who b { font-family: var(--display); font-weight: 500; letter-spacing: .1em; text-transform: uppercase; font-size: 11px; }
+.offer .offer-t { color: var(--sa-bone-dim) !important; font-family: var(--serif); font-size: 11px; }
+.offer .offer-body { display: flex; align-items: center; gap: 8px; font-family: var(--serif); font-size: 15px; justify-content: center; }
+.offer .offer-body .cargo-ic { width: 18px; height: 18px; vertical-align: -3px; margin-left: 3px; }
+.offer .offer-body .arrow { color: var(--sa-bone-mute) !important; }
+.offer .offer-act { display: flex; gap: 6px; justify-content: flex-end; }
+.offer .mini {
+  background: var(--sa-lemon) !important; color: var(--sa-on-lemon) !important; border: 0 !important;
+  padding: 6px 14px; font-family: var(--display); font-weight: 500; letter-spacing: .1em; text-transform: uppercase; font-size: 11px;
+}
+.offer .mini.danger { background: transparent !important; color: var(--sa-red) !important; border: 1px solid var(--sa-red) !important; }
+.offer .mini:disabled { background: var(--sa-line) !important; color: var(--sa-bone-mute) !important; }
+.mine-head { color: var(--sa-bone-dim); font-family: var(--display); letter-spacing: .12em; font-size: 11px; }
