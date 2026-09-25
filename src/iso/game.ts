@@ -55,6 +55,7 @@ import {
 } from "../game/battle-mp";
 import type { BattleMove, BattleSeat } from "../game/battle";
 import { chooseBattleMove } from "./battle-ai";
+import { showBattleHowto, takeFirstBattleHint } from "./battle-howto";
 // B5 (#250): the map's battle layer — challenges, conquests, fight-offs and
 // the cooldowns that pace them (pure bookkeeping in battle-map.ts).
 import {
@@ -5573,12 +5574,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : { win: `You hold ${town}.`, lose: `They operate out of ${town} too now — its upgrades lock.`, draw };
   }
 
+  /**
+   * B7 (#252): every battle screen gets the "?" (How to Play) and — on the
+   * first battle this browser has ever shown — the one-time hint strip.
+   */
+  const battleOnboarding = () => ({
+    onHelp: () => { showBattleHowto(); },
+    firstHint: takeFirstBattleHint(),
+  });
+
   function openMapBattle(stake: MapBattleStake, seed: number, stakeText: string): void {
     mapStake = stake;
     const screen = startBattleScreen(seed, [
       { id: me.id, name: me.name, portrait: portraitYou, depots: mapDepotCargos(me.i + 1) },
       { id: rival.id, name: rival.name, portrait: portraitVex, depots: mapDepotCargos(2 - me.i) },
     ], {
+      ...battleOnboarding(),
       stake: stakeText,
       consequence: battleConsequence(stake),
       // B4 (#249): the rival fights its live skill's line — watchable.
@@ -6046,6 +6057,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       : o.industryId < 0 ? "a friendly"
         : industryName(o.industryId);
     battleScreen = openBattleScreen({
+      ...battleOnboarding(),
       battle: d.battle,
       contenders: players,
       seat: 0,
@@ -6284,6 +6296,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const players = duelContenders();
     const d = duelFromWire(e, [players[0], players[1]]);
     const screen = openBattleScreen({
+      ...battleOnboarding(),
       battle: d.battle,
       contenders: players,
       seat: 1,
@@ -10804,6 +10817,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
     menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    // B7 (#252): the battle page, one tap from the same menu
+    menuItem("How battles work", "turns, mana, abilities, stakes", () => { showBattleHowto(); });
     // MON-1 (#367): the Store — the same panel the front door raises, over
     // the game root, one instance at a time. An unreachable store paints a
     // sentence and closes like any other sheet; it never blocks the match.

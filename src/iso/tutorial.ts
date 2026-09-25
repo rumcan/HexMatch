@@ -298,6 +298,18 @@ export interface ShowTutorialOptions {
   search?: string;
   storage?: TutorialStorage | null;
   onClose?: (result: TutorialResult) => void;
+  /**
+   * B7 (#252): another reference card on the same projector — the battle
+   * How to Play (`battle-howto.ts`) passes its own cards, overlay id and
+   * last-button label, and hides "Never show this again" (a page opened on
+   * purpose has nothing to never show). Absent = the starting tour.
+   */
+  steps?: TutorialStep[];
+  overlayId?: string;
+  doneLabel?: string;
+  showNever?: boolean;
+  /** Where the overlay hangs (default: `root`). */
+  mount?: HTMLElement;
 }
 
 export function showTutorial(
@@ -311,7 +323,9 @@ export function showTutorial(
   // the help modal) renders nothing and hands on to the difficulty prompt.
   if (!opts.force && !shouldShowTutorial(search, storage)) return null;
 
-  const steps = buildTutorialSteps({ vpTarget: opts.vpTarget, freeTrack: opts.freeTrack, newLoop: opts.newLoop });
+  const steps = opts.steps && opts.steps.length
+    ? opts.steps
+    : buildTutorialSteps({ vpTarget: opts.vpTarget, freeTrack: opts.freeTrack, newLoop: opts.newLoop });
   let idx = 0;
 
   // The projector emits the classes the shipped CSS styles (`#iso-tutorial`
@@ -319,7 +333,7 @@ export function showTutorial(
   // paper, the blueprint figure — and carries the `data-step`/`data-act`
   // hooks the unit and e2e suites walk it by.
   const overlay = el("div", "");
-  overlay.id = "iso-tutorial";
+  overlay.id = opts.overlayId ?? "iso-tutorial";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
 
@@ -353,7 +367,8 @@ export function showTutorial(
   next.type = "button";
   next.dataset.act = "tut-next";
   nav.append(prev, next);
-  foot.append(never, spacer, nav);
+  if (opts.showNever === false) foot.append(spacer, nav);
+  else foot.append(never, spacer, nav);
 
   card.append(head, body, foot);
   overlay.appendChild(card);
@@ -429,7 +444,7 @@ export function showTutorial(
     prev.disabled = idx === 0;
     const last = idx === steps.length - 1;
     next.dataset.act = last ? "tut-done" : "tut-next";
-    next.textContent = last ? "Start Production →" : "Next →";
+    next.textContent = last ? (opts.doneLabel ?? "Start Production →") : "Next →";
   };
 
   let resolve!: (r: TutorialResult) => void;
@@ -456,7 +471,7 @@ export function showTutorial(
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close("dismissed"); });
 
   render();
-  root.appendChild(overlay);
+  (opts.mount ?? root).appendChild(overlay);
   sfx.play("open");
   return { el: overlay, promise, close, destroy };
 }

@@ -86,6 +86,18 @@ export interface BattleScreenOptions {
   /** B6: a LOCAL move landed on this engine (the host publishes on it). */
   onLocalMove?: (move: BattleMove) => void;
   onClose: (result: BattleScreenResult) => void;
+  /**
+   * B7 (#252): present = a "?" on the screen that opens the battle How to
+   * Play (the caller owns the page — `showBattleHowto` in battle-howto.ts).
+   */
+  onHelp?: () => void;
+  /**
+   * B7 (#252): the one-time first-battle hint's lines. The caller's gate
+   * (`takeFirstBattleHint`) decides it is the first battle; the screen only
+   * paints a dismissible strip that never blocks the board (a multiplayer
+   * turn clock may be running).
+   */
+  firstHint?: string[] | null;
 }
 
 export interface BattleScreenHandle {
@@ -276,6 +288,38 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
 
   const result = h("div", "battle-result hidden");
   card.appendChild(result);
+
+  // B7 (#252): the "?" (How to Play) and the first-battle hint — both opt-in.
+  if (opts.onHelp) {
+    const help = h("button", "battle-help", "?");
+    help.type = "button";
+    help.dataset.act = "battle-help";
+    help.title = "How battles work";
+    help.setAttribute("aria-label", "How battles work");
+    help.onclick = () => opts.onHelp?.();
+    mid.appendChild(help);
+  }
+  if (opts.firstHint && opts.firstHint.length) {
+    const hint = h("div", "battle-first-hint");
+    hint.setAttribute("role", "note");
+    const list = h("ul");
+    for (const line of opts.firstHint) list.appendChild(h("li", "", "")).textContent = line;
+    const row = h("div", "bfh-row");
+    if (opts.onHelp) {
+      const more = h("button", "bfh-more", "How battles work");
+      more.type = "button";
+      more.dataset.act = "battle-hint-more";
+      more.onclick = () => { hint.remove(); opts.onHelp?.(); };
+      row.appendChild(more);
+    }
+    const ok = h("button", "bfh-ok", "Got it");
+    ok.type = "button";
+    ok.dataset.act = "battle-hint-ok";
+    ok.onclick = () => hint.remove();
+    row.appendChild(ok);
+    hint.append(h("b", "bfh-title", "Your first battle"), list, row);
+    root.appendChild(hint);
+  }
 
   document.body.appendChild(root);
 
@@ -842,6 +886,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (destroyed || resultShown) return;
     resultShown = true;
     lockInput(true);
+    root.querySelector(".battle-first-hint")?.remove();   // B7: the verdict owns the screen
     const w = battle.state.winner;
     const verdict: BattleScreenResult["verdict"] =
       w === null ? "draw" : w === mySeat ? "win" : "lose";
@@ -937,5 +982,7 @@ export function startBattleScreen(
     onLocalMove: opts.onLocalMove,
     opponentDelayMs: opts.opponentDelayMs,
     onClose: opts.onClose ?? (() => {}),
+    onHelp: opts.onHelp,
+    firstHint: opts.firstHint,
   });
 }

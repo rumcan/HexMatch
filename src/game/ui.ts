@@ -59,6 +59,7 @@ import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 // this is the lesson, replayable from it at any time (and shown once at boot by
 // game.ts, which owns that gate).
 import { showTutorial, type TutorialHandle } from "../iso/tutorial";
+import { showBattleHowto } from "../iso/battle-howto";
 // PP-14: the praying angel that a cross match summons, and the choir that
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
 import angelUrl from "../assets/ui/angel.png";
@@ -4728,12 +4729,18 @@ export function createOriginalUi(
         </div>
         <div class="confirm-row">
           <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>
+          <button class="big-btn ghost" id="battleHowtoBtn" data-sfx="open">⚔ How battles work</button>
           <button class="big-btn" id="startBtn">Start Production</button>
         </div>
       </div>`;
     const shut = () => { sfx.play("close"); modalRoot.classList.add("hidden"); };
     (modalRoot.querySelector("#startBtn") as HTMLElement).onclick = shut;
     (modalRoot.querySelector(".modal-back") as HTMLElement).onclick = shut;
+    // B7 (#252): the battle How to Play sits beside the tour
+    (modalRoot.querySelector("#battleHowtoBtn") as HTMLElement).onclick = () => {
+      shut();
+      showBattleHowto();
+    };
     (modalRoot.querySelector("#tourBtn") as HTMLElement).onclick = () => {
       shut();
       if (tourView) return;
