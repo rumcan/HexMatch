@@ -60,6 +60,7 @@ import { showBattleHowto, takeFirstBattleHint } from "./battle-howto";
 // the cooldowns that pace them (pure bookkeeping in battle-map.ts).
 import {
   createChallengeState, canChallenge, canChallengeTown, markChallenge, markRivalChallenge,
+  contestedIndustries, contestedTowns, battleCooldownLeft, fmtBattleCooldown,
   rivalChallengeDue, settleMapBattle, unlockTownHold,
   pickRivalChallengeTarget, challengeRefusalText, isComeback, hasOpenPlant,
   cheapestSale, applySale, listSales,
@@ -2072,6 +2073,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   });
 
   minimap.onMarker = (marker) => {
+    // B7 (#252): a contested site's dot opens that site's card
+    const contest = /^contest:(ind|town):(\d+)$/.exec(marker.id);
+    if (contest) {
+      const id = Number(contest[2]);
+      if (contest[1] === "ind") { const ind = grid.industries[id]; if (ind) showIndustryCard(ind); }
+      else { const tw = grid.towns[id]; if (tw) showTownCard(tw); }
+      return;
+    }
     const now = performance.now();
     const source = {
       protests: protests.values(),
@@ -2865,20 +2874,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * owner. Runs inside `syncWorld`, so any build/demolish/snapshot that
    * changes who stands where updates the tags on the same beat.
    */
+  /**
+   * B7 (#252): the viewer's challenge clock as the contested tags print it
+   * ("1:20"), or "" while they may fight. Written by the frame loop (which
+   * owns the clock and re-syncs the tags when the text changes), read here —
+   * `syncLabels` also runs during boot, before the challenge state exists.
+   */
+  let contestClock = "";
+  /** B7: the contested-site set + clock the tags last printed (frame-loop key). */
+  let contestKey = "";
   const syncLabels = () => {
     const entries: LabelEntry[] = [];
+    // B7 (#252): a site someone has WON a battle over wears ⚔ (and, while the
+    // viewer's challenge clock runs, when they may fight again)
+    const contested = contestedIndustries(eco);
+    const contestedT = contestedTowns(eco);
+    const sword = (name: string) => `⚔ ${name}${contestClock ? ` · ${contestClock}` : ""}`;
     for (const ind of grid.industries) {
       const def = INDUSTRY_BY_KEY[ind.type];
+      const hot = contested.has(ind.id);
       entries.push({
         key: `ind-${ind.id}`,
-        name: def?.name ?? ind.type,
+        name: hot ? sword(def?.name ?? ind.type) : (def?.name ?? ind.type),
         tx: ind.tx + ind.w / 2,
         ty: ind.ty + ind.h / 2,
-        cls: "label-industry",
+        cls: hot ? "label-industry label-contested" : "label-industry",
       });
     }
     for (const t of grid.towns) {
-      entries.push({ key: `town-${t.id}`, name: "Town", tx: t.tx, ty: t.ty, cls: "label-town" });
+      const hot = contestedT.has(t.id);
+      entries.push({
+        key: `town-${t.id}`, name: hot ? sword("Town") : "Town", tx: t.tx, ty: t.ty,
+        cls: hot ? "label-town label-contested" : "label-town",
+      });
     }
     for (const f of eco.factories) {
       entries.push({
@@ -9702,6 +9730,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rights?.rights.length) {
       lines.push(`Rights: ${rights.rights.map((id) => seatName(id)).join(", ")}`);
     }
+    // B7 (#252): who holds it BY BATTLE (the Hold ★), and the viewer's clock
+    const won = contestedIndustries(eco).get(ind.id);
+    if (won) lines.push(`⚔ Last battle won by ${seatName(won)} (+${VICTORY.loop.hold}★ while held)`);
+    const wait = battleCooldownLeft(challengeState, now, me.id);
+    if (wait > 0) lines.push(`Your next challenge: ${fmtBattleCooldown(wait)}`);
     const sales = isComeback(eco, me.id) ? listSales(eco, me.id, pavedCountOf(me), me.townLevel) : [];
     showBattleCard(`industry:${ind.id}`, {
       title: def?.name ?? "Industry",
@@ -9744,6 +9777,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return mine ? "You" : "Unclaimed";
       })()}`,
       hold?.locked ? "Upgrades locked until won again." : "",
+      // B7 (#252): the battle holder (Hold ★) and the viewer's clock
+      hold?.holder ? `⚔ Last battle won by ${seatName(hold.holder)} (+${VICTORY.loop.hold}★ while held)` : "",
+      battleCooldownLeft(challengeState, now, me.id) > 0
+        ? `Your next challenge: ${fmtBattleCooldown(battleCooldownLeft(challengeState, now, me.id))}` : "",
     ].filter(Boolean);
     showBattleCard(`town:${t.id}`, {
       title: townName(t.id),
@@ -11601,7 +11638,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         players,
         now: t,
       });
-      minimap.setMarkers(sabotageEventsToMarkers(sabotageEvents, players, t));
+      // B7 (#252): contested sites ride the same plate — a dot in the
+      // standing winner's colour; a click opens the site's card. The tags'
+      // ⚔ text follows the viewer's challenge clock, re-synced only when the
+      // printed text would change (once a second at most).
+      const contestInd = contestedIndustries(eco);
+      const contestTown = contestedTowns(eco);
+      const cd = battleCooldownLeft(challengeState, t, me.id);
+      contestClock = cd > 0 ? fmtBattleCooldown(cd) : "";
+      const ck = `${[...contestInd].join(",")}|${[...contestTown].join(",")}|${contestClock}`;
+      if (ck !== contestKey) { contestKey = ck; syncLabels(); }
+      const colourOf = (id: string) => players.find((p) => p.id === id)?.colour ?? "#e0d2b0";
+      const contestMarkers: MinimapMarker[] = [
+        ...[...contestInd].flatMap(([id, who]) => {
+          const ind = grid.industries[id];
+          if (!ind) return [];
+          return [{
+            id: `contest:ind:${id}`, tx: ind.tx + Math.floor(ind.w / 2), ty: ind.ty + Math.floor(ind.h / 2),
+            color: colourOf(who), kind: "contest",
+            label: `⚔ ${INDUSTRY_BY_KEY[ind.type]?.name ?? "Industry"} — last battle won by ${seatName(who)}`,
+          }];
+        }),
+        ...[...contestTown].flatMap(([id, who]) => {
+          const tw = grid.towns[id];
+          if (!tw) return [];
+          return [{
+            id: `contest:town:${id}`, tx: tw.tx, ty: tw.ty, color: colourOf(who), kind: "contest",
+            label: `⚔ ${townName(id)} — last battle won by ${seatName(who)}`,
+          }];
+        }),
+      ];
+      minimap.setMarkers([...sabotageEventsToMarkers(sabotageEvents, players, t), ...contestMarkers]);
       sabotageWindow.update(t, sabotageEvents);
 
       // M1 (#254): last in the frame. With the camera still and the network

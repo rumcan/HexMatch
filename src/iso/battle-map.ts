@@ -226,6 +226,41 @@ void lockedIndustryIds;
 void isServiced;
 
 /** Arm the player cooldown and count the fight. Called when a battle OPENS. */
+// ── B7 (#252): legibility — what the map shows about battles ───────────────
+
+/**
+ * Industries someone has won a battle over: id → the standing winner (the
+ * `siteRights` streak holder, who must still have rights there). The same
+ * reading `victory.ts` pays Hold ★ from, so a ⚔ on the map is exactly a site
+ * paying (or able to pay) ★.
+ */
+export function contestedIndustries(eco: EconomyState): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const [id, rec] of eco.siteRights ?? new Map()) {
+    const who = rec.streak?.playerId;
+    if (who && rec.rights.includes(who)) out.set(id, who);
+  }
+  return out;
+}
+
+/** Towns someone has won a battle over: id → the standing holder. */
+export function contestedTowns(eco: EconomyState): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const [id, hold] of eco.townHolds ?? new Map()) if (hold.holder) out.set(id, hold.holder);
+  return out;
+}
+
+/** ms until `playerId` may call another fight (0 = ready now). */
+export function battleCooldownLeft(s: ChallengeState, now: number, playerId: string): number {
+  return Math.max(0, (s.playerReadyAt.get(playerId) ?? 0) - now);
+}
+
+/** "1:05" — the map's challenge-clock format (whole seconds, rounded up). */
+export function fmtBattleCooldown(ms: number): string {
+  const secs = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+}
+
 export function markChallenge(
   s: ChallengeState, now: number, playerId: string, _industryId: number, rules: BattleRules,
 ): void {
