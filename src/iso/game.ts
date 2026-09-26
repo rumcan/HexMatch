@@ -48,7 +48,12 @@ import dirtTex from "../../assets/roads/dirt.webp";
 // B2 (#247): the battle screen — a full-screen 1v1 over the map. The debug
 // console's `startBattle` opens one against a placeholder opponent; B5 wires
 // the map's challenge/sabotage doors into the same entry point.
-import { startBattleScreen, openBattleScreen, type BattleScreenHandle } from "../game/battle-screen";
+// BATTLE-1 (#468): the stakes card (`openStakesCard`) — what a duel is for,
+// before the duel.
+import {
+  startBattleScreen, openBattleScreen, openStakesCard,
+  type BattleScreenHandle, type StakesCardHandle, type StakesRow,
+} from "../game/battle-screen";
 // B6 (#251): host-authoritative MP duels — validation, clock, forfeit, wire.
 import {
   createDuel, applyPlayerMove, noteHumanMove, duelToWire, duelFromWire,
@@ -66,6 +71,8 @@ import {
   rivalChallengeDue, settleMapBattle, unlockTownHold,
   pickRivalChallengeTarget, challengeRefusalText, isComeback, hasOpenPlant,
   cheapestSale, applySale, listSales,
+  battleStakeFacts, siteIncome, stakeSiteTile,
+  type BattleStakeFacts,
   type ChallengeState, type PendingFightOff, type MapBattleStake, type SaleOption,
 } from "./battle-map";
 import { BATTLE_RULES } from "./config";
@@ -2361,6 +2368,35 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     flashLayer.frame(now);
     labels.frame();
     upgradeMarkers.frame();
+  }
+
+  /**
+   * BATTLE-1 (#468): the camera FLIES to a tile — an ease-out pan, a breath
+   * long, so a battle's aftermath lands the eye on the site it settled.
+   * `prefers-reduced-motion: reduce` skips the pan (the tile centres at once,
+   * the same end state); a pointer-down cancels it mid-flight, because the
+   * player's hand outranks the choreography.
+   */
+  let flyRaf = 0;
+  function flyCameraTo(tx: number, ty: number, ms = 750): void {
+    let reduced = false;
+    try { reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch { reduced = false; }
+    if (reduced) { commitCamera(centerOnTile(cam, tx, ty)); return; }
+    window.cancelAnimationFrame(flyRaf);
+    const fromX = cam.x, fromY = cam.y;
+    const target = centerOnTile(cam, tx, ty);
+    const t0 = performance.now();
+    const stop = () => window.cancelAnimationFrame(flyRaf);
+    window.addEventListener("pointerdown", stop, { once: true, capture: true });
+    const step = (t: number) => {
+      const k = Math.max(0, Math.min(1, (t - t0) / ms));
+      const e = 1 - Math.pow(1 - k, 3);
+      commitCamera({ ...cam, x: fromX + (target.x - fromX) * e, y: fromY + (target.y - fromY) * e });
+      if (k < 1) flyRaf = window.requestAnimationFrame(step);
+      else window.removeEventListener("pointerdown", stop, { capture: true });
+    };
+    flyRaf = window.requestAnimationFrame(step);
   }
 
   // M2 (#256): active protests on public roads
@@ -5775,6 +5811,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let mapStake: MapBattleStake | null = null;
   /** The action-card currently shown for a battle offer (so stale ones close). */
   let battleCardKey = "";
+  /**
+   * BATTLE-1 (#468): the stakes card over the map — the live numbers a duel
+   * is for, then Accept or Decline. Open for the player's own challenge
+   * (Accept pays the Gold and calls the fight) and for a rival's challenge
+   * (Accept defends; Decline forfeits, exactly as the offer card always did).
+   */
+  let stakesCard: StakesCardHandle | null = null;
 
   /** The seat's castable cargoes — its depots' harvests (B3's ability gate). */
   const mapDepotCargos = (ownerId: number): Cargo[] => {
@@ -5814,7 +5857,101 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui.showActionCard(info);
   }
 
+  function closeStakesCard(): void {
+    stakesCard?.destroy();
+    stakesCard = null;
+  }
+
+  /** The live facts behind a stake's stakes card (null for fight-offs). */
+  const stakeFactsNow = (stake: MapBattleStake): BattleStakeFacts | null =>
+    battleStakeFacts(eco, stake, {
+      nameOf: (id) => seatName(id),
+      tickMs: HARVEST_MS,
+      now: performance.now(),
+    });
+
+  /** One "income here" row value, honest about whose purse it reads. */
+  const incomeRow = (facts: BattleStakeFacts): string => {
+    if (facts.holderIncomePerMin <= 0) {
+      return facts.holder === "Unclaimed" ? "nothing yet — no one draws here" : `${facts.holder} draw${facts.holder === "You" ? "" : "s"} nothing here right now`;
+    }
+    const cargo = facts.holderIncomeCargo ? ` ${CARGO[facts.holderIncomeCargo].name}` : "";
+    return `${facts.holderIncomePerMin}/min${cargo} — ${facts.holder}`;
+  };
+
+  /**
+   * BATTLE-1 (#468): the stakes card before a duel. `role` picks the doors:
+   *   challenger — Accept pays the Gold and calls the fight (backing out
+   *                spends nothing, says so plainly);
+   *   defender   — Accept defends the site; Decline FORFEITS it, exactly as
+   *                the old offer card's Decline did (silence is a fold too).
+   * Nothing here changes a rule: the bill, the cooldown and the offer clock
+   * stay exactly where they were — the card only stands between the offer
+   * and the duel.
+   */
+  function openChallengeStakes(
+    stake: MapBattleStake,
+    role: "challenger" | "defender",
+    opts: { onAccept: () => void; onDecline?: () => void; until?: number | null },
+  ): void {
+    closeStakesCard();
+    if (stake.kind === "fightoff") return;   // a fight-off's offer card speaks
+    const facts = stakeFactsNow(stake);
+    if (!facts) return;
+    const gold = BATTLE_RULES.challengeGold;
+    const rows: StakesRow[] = [
+      { label: "Site", value: facts.site },
+      { label: "Held by", value: facts.holder },
+      {
+        label: "Hold ★",
+        value: `+${facts.holdStars}★ while held (cap ${facts.holdCap}★ a seat)`,
+      },
+      ...(facts.cityStarsPerTier > 0
+        ? [{ label: "City ★", value: `a closed plant gives up ${facts.cityStarsPerTier}★ a tier` }]
+        : []),
+      { label: "Income here", value: incomeRow(facts) },
+      {
+        label: role === "challenger" ? "Cost" : "They paid",
+        value: role === "challenger"
+          ? `${gold} Gold — charged when you accept`
+          : `${gold} Gold to call this fight`,
+      },
+      { label: "Difficulty", value: `${skill().label} — ${rival.name}'s play` },
+    ];
+    const declineNote = role === "challenger"
+      ? "Backing out now spends nothing — the site stays as it is."
+      : `Declining forfeits: ${seatName(stake.challengerId)} wins the fight and the site moves. Letting the clock run out forfeits too.`;
+    stakesCard = openStakesCard(ui.el, {
+      title: role === "challenger" ? `Challenge — ${facts.site}` : `${rival.name} challenges you`,
+      subtitle: role === "challenger"
+        ? `Call a duel for ${facts.site} — win and the map moves your way.`
+        : `They are fighting for ${facts.site}. Defend it, or give it up.`,
+      rows,
+      declineNote,
+      acceptLabel: role === "challenger" ? `Accept — pay ${gold} Gold` : "Accept — fight for it",
+      declineLabel: role === "challenger" ? "Not now" : "Decline — forfeit",
+      until: opts.until ?? null,
+      onAccept: () => {
+        stakesCard = null;
+        opts.onAccept();
+      },
+      onDecline: () => {
+        stakesCard = null;
+        opts.onDecline?.();
+      },
+      onClose: () => {
+        stakesCard = null;
+      },
+    });
+  }
+
   function announceVerdict(stake: MapBattleStake, verdict: ReturnType<typeof settleMapBattle>, playerWon: boolean | null): void {
+    // BATTLE-1 (#468): the fight's verdict rings. SFX-1's dedicated battle
+    // cues are not on main yet, so these are the shipped table's — "victory"
+    // and "defeat" are the two a verdict has always had. Re-check when #463
+    // lands.
+    if (playerWon === true) sfx.play("victory");
+    else if (playerWon === false) sfx.play("defeat");
     if (stake.kind === "fightoff") {
       if (verdict === "cancelled") {
         toast("You fought it off — their Gold stays spent either way.", "good");
@@ -5954,7 +6091,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function fightBusy(): boolean {
-    return !!(battleScreen || mapStake || pendingFightOff || pendingChallenge || mpOffer || duel);
+    return !!(battleScreen || mapStake || pendingFightOff || pendingChallenge || mpOffer || duel || stakesCard);
   }
 
   /**
@@ -6051,27 +6188,141 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const won = !result.over || result.winner === null ? null
           : s.kind === "fightoff" ? iWon
             : (s.challengerId === me.id ? iWon : !iWon);
+        // BATTLE-1 (#468): the ledger is read BEFORE the settle (so the ★ and
+        // the income the aftermath reports are the fight's own delta, not the
+        // whole match), and the aftermath card plays after it.
+        const before = aftermathBefore(s);
         const verdict = finishStake(s, won);
         if (verdict === "lands" && s.kind === "fightoff") landFightOff(s.pending, performance.now());
+        showBattleAftermath(s, verdict, won, before);
       },
     });
     battleScreen = screen;
+  }
+
+  /** The ★ and site income the fight starts from (the aftermath's delta base). */
+  function aftermathBefore(s: MapBattleStake) {
+    return {
+      stars: vpFor(score, me.id),
+      rivalStars: vpFor(score, rival.id),
+      myIncome: s.kind === "fightoff" ? null : siteIncomeFor(s, me.id),
+      rivalIncome: s.kind === "fightoff" ? null : siteIncomeFor(s, rival.id),
+    };
+  }
+
+  /** The per-minute income one seat draws at/through this stake's site. */
+  function siteIncomeFor(
+    s: MapBattleStake, who: string,
+  ): { perMin: number; cargo: string | null } {
+    if (s.kind === "industry") {
+      const inc = siteIncome(eco, { kind: "industry", industryId: s.industryId }, who, HARVEST_MS, performance.now());
+      return { perMin: inc.perMin, cargo: inc.cargo ? CARGO[inc.cargo].name : null };
+    }
+    if (s.kind === "town") {
+      return { perMin: siteIncome(eco, { kind: "town", townId: s.townId }, who, HARVEST_MS, performance.now()).perMin, cargo: null };
+    }
+    return { perMin: 0, cargo: null };
+  }
+
+  /**
+   * BATTLE-1 (#468) — the aftermath: the site duel settles and the map says
+   * so. The camera flies to the site (instant under reduced motion), a flag
+   * swap names who holds it now, the dock card reports the REAL deltas — the
+   * ★ and income/min the fight itself moved — and the Feed logs the line.
+   * A draw or a fight-off skips the choreography: nothing changed hands.
+   */
+  function showBattleAftermath(
+    s: MapBattleStake,
+    verdict: ReturnType<typeof settleMapBattle>,
+    won: boolean | null,
+    before: { stars: number; rivalStars: number; myIncome: { perMin: number; cargo: string | null } | null; rivalIncome: { perMin: number; cargo: string | null } | null },
+  ): void {
+    if (s.kind === "fightoff") return;
+    const playerWon = won === null ? null : (s.challengerId === me.id ? won : !won);
+    const site = s.kind === "industry" ? industryName(s.industryId) : townName(s.townId);
+    const tile = stakeSiteTile(eco, s);
+    const stars = Math.floor(vpFor(score, me.id)) - Math.floor(before.stars);
+    const rivalStars = Math.floor(vpFor(score, rival.id)) - Math.floor(before.rivalStars);
+    const myIncome = siteIncomeFor(s, me.id);
+    const rivalIncome = siteIncomeFor(s, rival.id);
+
+    // the camera and the flag, when the fight had a place and a winner
+    if (tile) flyCameraTo(tile.tx, tile.ty);
+    if (tile && playerWon !== null) {
+      const holder = s.kind === "industry"
+        ? contestedIndustries(eco).get(s.industryId)
+        : eco.townHolds?.get(s.townId)?.holder ?? null;
+      const holderName = holder ? seatName(holder) : seatName(null);
+      floats.add(`⚔ ${holderName} hold${holderName === "You" ? "" : "s"} ${site}`, tile.tx, tile.ty, {
+        cls: "flag-swap", life: 2600, now: performance.now(),
+      });
+    }
+
+    // the aftermath card — the real numbers, or nothing when nothing moved
+    const lines: string[] = [];
+    if (verdict === "draw" || playerWon === null) {
+      lines.push(`A draw — ${site} stands as it was.`);
+    } else {
+      lines.push(aftermathSiteLine(s, verdict, playerWon, site));
+    }
+    if (stars !== 0 || rivalStars !== 0) {
+      const mine = stars === 0 ? "no ★ change for you" : `you ${stars > 0 ? "+" : "−"}${Math.abs(stars)}★`;
+      const theirs = rivalStars === 0 ? "" : ` · ${rival.name} ${rivalStars > 0 ? "+" : "−"}${Math.abs(rivalStars)}★`;
+      lines.push(`${mine}${theirs}`);
+    }
+    if (before.myIncome && (before.myIncome.perMin !== myIncome.perMin || myIncome.perMin > 0)) {
+      const cargo = myIncome.cargo ? ` ${myIncome.cargo}` : "";
+      lines.push(`Your income here: ${myIncome.perMin}/min${cargo} (was ${before.myIncome.perMin}/min)`);
+    }
+    if (before.rivalIncome && before.rivalIncome.perMin !== rivalIncome.perMin) {
+      lines.push(`${rival.name}'s income here: ${rivalIncome.perMin}/min (was ${before.rivalIncome.perMin}/min)`);
+    }
+    showBattleCard(`aftermath:${Date.now()}`, {
+      title: `Aftermath — ${site}`,
+      lines,
+      actions: [{ label: "Close", primary: false, onClick: () => closeBattleCard() }],
+    });
+    const outcome = verdict === "draw" ? "a draw"
+      : playerWon
+        ? (verdict === "held" ? "you held it" : "you take it")
+        : (verdict === "held" ? `${rival.name} holds it` : `${rival.name} takes it`);
+    ui.feed(`Battle for the ${site}: ${outcome}`
+      + (stars !== 0 ? ` · you ${stars > 0 ? "+" : "−"}${Math.abs(stars)}★` : ""), me.name);
+  }
+
+  /** One line on the aftermath card: what the settle did to the site. */
+  function aftermathSiteLine(
+    s: MapBattleStake, verdict: string, playerWon: boolean, site: string,
+  ): string {
+    const what = s.kind === "town" ? "city" : "site";
+    if (verdict === "rights" || verdict === "shared") {
+      return playerWon ? `First win — you share the ${what} at ${site}.` : `They share the ${what} at ${site} now.`;
+    }
+    if (verdict === "closed") {
+      const mine = s.kind === "industry" ? "Depot" : "plant";
+      return playerWon ? `Their ${mine} at ${site} closes — it is yours alone.` : `Your ${mine} at ${site} closes.`;
+    }
+    if (verdict === "reopened") {
+      return playerWon ? `Your ${s.kind === "industry" ? "Depot" : "plant"} at ${site} reopens.` : `Their ${s.kind === "industry" ? "Depot" : "plant"} at ${site} reopens.`;
+    }
+    if (verdict === "conquest") {
+      return playerWon ? `${site} changes hands — now yours.` : `${site} changes hands — now theirs.`;
+    }
+    return playerWon ? `You held ${site}.` : `They held ${site}.`;
   }
 
   /**
    * #322: call a fight for an industry. The bill and the player cooldown arm
    * at the call. Decline is a forfeit — the challenger wins.
    */
-  function challengeIndustry(indId: number): boolean {
+  /**
+   * BATTLE-1 (#468): everything that happens AFTER the stakes card's Accept —
+   * the bill, the cooldown, the duel (or, between two people, the offer).
+   * The live check runs again: the card stood open for a breath, and the
+   * eligibility, the Gold and the cooldown must still hold at the call.
+   */
+  function callIndustryFight(indId: number): boolean {
     const now = performance.now();
-    if (isGuest()) {
-      if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
-      return net?.sendIntent("battle", { do: "challenge", industry: indId }) ?? false;
-    }
-    if (fightBusy()) {
-      toast("One fight at a time.", "bad");
-      return false;
-    }
     const chk = canChallenge(eco, challengeState, now, me.id, indId, BATTLE_RULES, me.purse.gold ?? 0);
     if (!chk.ok) {
       toast(challengeRefusalText(chk.reason, BATTLE_RULES.challengeGold), "bad");
@@ -6105,16 +6356,38 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  function challengeTown(townId: number): boolean {
+  function challengeIndustry(indId: number): boolean {
     const now = performance.now();
     if (isGuest()) {
       if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
-      return net?.sendIntent("battle", { do: "challenge", town: townId }) ?? false;
+      return net?.sendIntent("battle", { do: "challenge", industry: indId }) ?? false;
     }
     if (fightBusy()) {
       toast("One fight at a time.", "bad");
       return false;
     }
+    const chk = canChallenge(eco, challengeState, now, me.id, indId, BATTLE_RULES, me.purse.gold ?? 0);
+    if (!chk.ok) {
+      toast(challengeRefusalText(chk.reason, BATTLE_RULES.challengeGold), "bad");
+      return false;
+    }
+    // BATTLE-1 (#468): the stakes card stands between the click and the
+    // charge — the Gold is only spent when the duel is accepted.
+    openChallengeStakes(
+      {
+        kind: "industry", industryId: indId,
+        challengerId: me.id, holderId: chk.holder?.owner ?? null,
+        challengerHarvesterId: hid(chk.mine), holderHarvesterId: hid(chk.holder),
+      },
+      "challenger",
+      { onAccept: () => { callIndustryFight(indId); } },
+    );
+    return true;
+  }
+
+  /** The call, after the stakes card's Accept — see `callIndustryFight`. */
+  function callTownFight(townId: number): boolean {
+    const now = performance.now();
     const chk = canChallengeTown(eco, challengeState, now, me.id, townId, BATTLE_RULES, me.purse.gold ?? 0);
     if (!chk.ok) {
       toast(challengeRefusalText(chk.reason, BATTLE_RULES.challengeGold), "bad");
@@ -6141,6 +6414,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       { kind: "town", townId, challengerId: me.id, holderId },
       (rand(4294967296) >>> 0),
       townName(townId),
+    );
+    return true;
+  }
+
+  function challengeTown(townId: number): boolean {
+    const now = performance.now();
+    if (isGuest()) {
+      if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
+      return net?.sendIntent("battle", { do: "challenge", town: townId }) ?? false;
+    }
+    if (fightBusy()) {
+      toast("One fight at a time.", "bad");
+      return false;
+    }
+    const chk = canChallengeTown(eco, challengeState, now, me.id, townId, BATTLE_RULES, me.purse.gold ?? 0);
+    if (!chk.ok) {
+      toast(challengeRefusalText(chk.reason, BATTLE_RULES.challengeGold), "bad");
+      return false;
+    }
+    const holderId = eco.townHolds?.get(townId)?.holder
+      ?? eco.factories.find((f) => !f.closed && f.townId === townId && f.owner !== me.id)?.owner
+      ?? null;
+    openChallengeStakes(
+      { kind: "town", townId, challengerId: me.id, holderId },
+      "challenger",
+      { onAccept: () => { callTownFight(townId); } },
     );
     return true;
   }
@@ -6190,6 +6489,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     syncBattleCard();
     rivalSpeaks("attack", "bandit");
+    // BATTLE-1 (#468): the stakes card IS the answer — the site, the ★ and
+    // income at stake, and a Decline that says plainly it forfeits. The dock
+    // card underneath stays (its Fight reopens this card); the offer clock
+    // keeps running and silence still folds.
+    openDefenderStakes();
+  }
+
+  /** The defender's stakes card for the live `pendingChallenge`. */
+  function openDefenderStakes(): void {
+    const p = pendingChallenge;
+    if (!p) return;
+    const stake: MapBattleStake = p.kind === "town"
+      ? { kind: "town", townId: p.townId ?? 0, challengerId: p.challengerId, holderId: p.holderId }
+      : {
+        kind: "industry", industryId: p.industryId ?? 0,
+        challengerId: p.challengerId, holderId: p.holderId,
+        challengerHarvesterId: p.challengerHarvesterId, holderHarvesterId: p.holderHarvesterId,
+      };
+    openChallengeStakes(stake, "defender", {
+      until: p.offerUntil,
+      onAccept: () => { acceptChallenge(); },
+      onDecline: () => { declineChallenge(); },
+    });
   }
 
   /** Accept the rival's (or MP) challenge and fight it. */
@@ -6206,6 +6528,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const p = pendingChallenge;
     if (!p || battleScreen) return false;
     pendingChallenge = null;
+    closeStakesCard();
     closeBattleCard();
     if (p.kind === "town") {
       openMapBattle(
@@ -6243,6 +6566,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const p = pendingChallenge;
     if (!p) return;
     pendingChallenge = null;
+    closeStakesCard();
     closeBattleCard();
     if (p.kind === "town") {
       finishStake({ kind: "town", townId: p.townId ?? 0, challengerId: p.challengerId, holderId: p.holderId }, true);
@@ -6355,7 +6679,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         lines: [`${rival.name} challenges you for ${name}. Decline forfeits.`],
         until: p.offerUntil,
         actions: [
-          { label: "Fight", onClick: () => { acceptChallenge(); } },
+          // BATTLE-1 (#468): the fight starts from the stakes card — the
+          // numbers first, then the doors.
+          { label: "Stakes", onClick: () => { openDefenderStakes(); } },
           { label: "Decline", primary: false, onClick: () => { declineChallenge(); } },
         ],
       });
