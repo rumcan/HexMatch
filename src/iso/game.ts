@@ -10868,13 +10868,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let motionQuery: MediaQueryList | null = null;
   /**
-   * AMB-2 (#391): the same setting, for the bird wings. Reduced motion does
-   * not take the birds away — it takes the FLAPPING away: a bird holds the
-   * glide frame, exactly as the placement overlay holds its resting frame.
+   * #438: reduced motion hides birds rather than leaving frozen silhouettes.
+   * The overlay and clouds retain their own resting-frame policies.
    */
   let reducedMotion = false;
   const readMotion = () => {
     reducedMotion = !!motionQuery?.matches;
+    birds.reducedMotion = reducedMotion;
     return reducedMotion;
   };
   const syncOverlayMotion = () => {
@@ -12047,7 +12047,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // moving bird can never smear in a damage-patched structures frame), and
     // invisible to `renderer.pick`. The painter is a no-op until the fade has
     // run, which only happens at the closest zoom.
-    renderer.aboveStructuresPainter = (ctx, c) => { paintBirds(ctx, c, grid, birds); };
+    let lastBirdPaint: number | undefined;
+    renderer.aboveStructuresPainter = (ctx, c, timeMs) => {
+      // #438: update on EVERY bird paint, including direct overlay repaints.
+      // This clock is independent of sim/pause/battle. A hidden tab draws no
+      // birds; its first visible repaint advances with a capped dt, not a
+      // stale position or the entire time spent in the background.
+      const birdDt = lastBirdPaint === undefined ? 16 : timeMs - lastBirdPaint;
+      lastBirdPaint = timeMs;
+      tickBirds(birds, birdDt, {
+        grid,
+        zoom: c.zoom,
+        view: visibleTileRange(c, BIRD_VIEW_PAD),
+        performance: currentGraphics().performance,
+        reducedMotion,
+        suspended: document.hidden,
+        vehicles: world.vehicles,
+      });
+      paintBirds(ctx, c, grid, birds);
+    };
     // QoL: the placement overlay animates (a breathing outline, a marching
     // reach band, a ghost that floats). A player who asks the OS to reduce
     // motion gets the identical overlay frozen at its resting frame — the
@@ -12219,20 +12237,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       world.vehicles = carItems(cars)
         .concat(truckItems(trucks, atlasRef ?? undefined))
         .concat(trainItems(rail, atlasRef ?? undefined));
-      // AMB-2 (#391): the birds. Cosmetic, seeded from the map seed, and a
-      // no-op unless the camera is at the closest zoom — the fade parks the
-      // whole pool the moment it is not. The view is the tile rect the pool
-      // lives in (a bird that drifts out of it is re-seeded inside, which is
-      // what keeps a dozen birds near the player on a 144×144 map), and the
-      // vehicle list is what startles the ones on the ground.
-      tickBirds(birds, dt, {
-        grid,
-        zoom: cam.zoom,
-        view: visibleTileRange(cam, BIRD_VIEW_PAD),
-        performance: currentGraphics().performance,
-        reducedMotion,
-        vehicles: world.vehicles,
-      });
       const { items, ghost } = overlayFrame();
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
