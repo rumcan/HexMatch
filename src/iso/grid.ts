@@ -2462,6 +2462,31 @@ export const terrainAt = (g: Grid, tx: number, ty: number): number =>
 export const heightAt = (g: Grid, tx: number, ty: number): number =>
   inBounds(tx, ty) ? (g.height?.[idx(tx, ty)] ?? 0) : 0;
 
+/**
+ * #456 Level Ground — the map's one height MUTATION seam. Writes tile levels
+ * ([x, y, level] triples) into `Grid.height` and returns the tiles whose byte
+ * actually moved, in order — the exact list every height cache (the
+ * elevation lattice, the terrain-GL mesh, road/rail geometry, decals) must
+ * be invalidated for. Inert on a map with no height bytes (option off), and
+ * silent on out-of-map triples, so a wire payload can never grow a NaN.
+ */
+export function setHeightTiles(
+  g: Grid,
+  changes: readonly (readonly [number, number, number])[],
+): [number, number][] {
+  const out: [number, number][] = [];
+  if (!g.height) return out;
+  for (const [x, y, level] of changes) {
+    if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(level)) continue;
+    if (!inBounds(x, y) || level < 0 || level > 255) continue;
+    const i = idx(x, y);
+    if (g.height[i] === level) continue;
+    g.height[i] = level;
+    out.push([x, y]);
+  }
+  return out;
+}
+
 export const industryAt = (g: Grid, tx: number, ty: number): Industry | null => {
   if (!inBounds(tx, ty)) return null;
   const id = g.occupancy[idx(tx, ty)];
