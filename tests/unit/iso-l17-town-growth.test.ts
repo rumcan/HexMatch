@@ -1,4 +1,3 @@
-import { TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS } from "../../src/iso/config";
 // ══════════════════════════════════════════════════════════════════════════
 // L17 (#245) — towns grow visually: village → town → city.
 //
@@ -54,19 +53,16 @@ const centreOf = (items: ReturnType<typeof townBuildings>, t: Town) =>
   items.find((b) => b.tx === t.tx && b.ty === t.ty && footprintOf(b.sprite)[0] > 1);
 
 describe("L17 tier art — village (0)", () => {
-  it("draws no 1×1 buildings: low 2×2 homes and 1×1 parks, plus the town_center", () => {
+  it("draws only the small 1×1 homes, plus the town_center in the middle", () => {
     const items = townBuildings(town, footprintOf, { tier: 0 });
     const centre = centreOf(items, town);
     expect(centre?.sprite).toBe("town_center");
     for (const b of items) {
       const [fw, fh] = footprintOf(b.sprite);
       if (b.tx === town.tx && b.ty === town.ty) continue;   // the centre block
-      // Owner (2026-09-26): a 1×1 tile is a park/garden, never a building.
-      if (fw === 1 && fh === 1) {
-        expect(TOWN_PARK_VARIANTS as readonly string[], `${b.sprite} on one tile must be a park`).toContain(b.sprite);
-      } else {
-        expect(TOWN_VILLAGE_BLOCKS as readonly string[], `${b.sprite} is not a village home`).toContain(b.sprite);
-      }
+      expect([fw, fh], `${b.sprite} must be 1×1 in a village`).toEqual([1, 1]);
+      expect(TOWN_VILLAGE_VARIANTS as readonly string[], `${b.sprite} is not a village home`)
+        .toContain(b.sprite);
     }
   });
 

@@ -1415,23 +1415,6 @@ export function townTierLabel(tier: number): string {
  * tile only changes art when its town's tier changes — deterministic and
  * multiplayer-safe, exactly like the full list above.
  */
-/**
- * Owner (2026-09-26): a building on ONE tile cannot keep the door-height rule
- * (a whole house squeezed onto a tile is always too small or too tall), so
- * towns draw NO 1×1 buildings. A single free house tile becomes a garden or
- * a small park; whole blocks hold 2×2 (or larger) buildings. Entries whose
- * art is not in the manifest yet are filtered out by footprint at pick time.
- */
-export const TOWN_PARK_VARIANTS = [
-  "town_fountain_1x1", "park_garden_1x1", "park_pond_1x1", "park_playground_1x1",
-  "park_allotment_1x1",
-] as const;
-
-/** A village's whole-block homes (low, 2×2): the terrace with gardens. */
-export const TOWN_VILLAGE_BLOCKS = [
-  "town_townhouse_gardens_2", "village_homes_2x2_a", "village_homes_2x2_b", "village_homes_2x2_c",
-] as const;
-
 export const TOWN_VILLAGE_VARIANTS = [
   "town_cottage_arctic_1x1_1", "town_house_arctic_1x1_5", "town_small_house_1x1_1",
   "town_small_house_arctic_1x1_2", "town_small_flat_1x1_1", "town_small_flat_1x1_2",
