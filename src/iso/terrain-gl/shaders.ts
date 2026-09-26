@@ -238,9 +238,12 @@ void main() {
   float foam  = 0.0;
   if (dShore < 0.9) {
     // 4a. Painted depth bands from distance to shore: the whole look at 0.5×.
-    float depth = clamp(-dShore, 0.0, 8.0);
+    // Keep depth continuous instead of quantizing the open sea into a terminal
+    // band. These smooth ramps shade both colour and wave scale without a seam.
+    float depth = max(-dShore, 0.0);
+    float deepness = smoothstep(1.0, 9.0, depth);
     water = mix(SEA_SHALLOW, SEA_DEEP, smoothstep(0.0, 3.0, depth));
-    water = mix(water, SEA_ABYSS, smoothstep(3.0, 8.0, depth));
+    water = mix(water, SEA_ABYSS, smoothstep(3.0, 9.0, depth));
     water = mix(water, RIVER_TINT, riverness * 0.55);
     // very low-frequency tonal drift so the sea is a painting, not a fill
     water *= 0.94 + 0.12 * nLow.g;
@@ -252,8 +255,11 @@ void main() {
     //     is 0 when zoomed out → the branch vanishes and the sea is static.
     if (uWaterAnim > 0.0) {
       float t = uTime * (0.4 + 0.6 * uWaterAnim);
-      vec2 wuv = vTile * 0.45;
-      vec2 wdx = tdx * 0.45, wdy = tdy * 0.45;
+      // Broader, slower-looking swells offshore, blended gradually from the
+      // tighter coastal ripples. Both components still scroll at every depth.
+      float waveScale = mix(0.45, 0.68, deepness);
+      vec2 wuv = vTile * waveScale;
+      vec2 wdx = tdx * waveScale, wdy = tdy * waveScale;
       vec3 n1 = textureGrad(uWaterN, wuv + vec2(0.021, 0.013) * t, wdx, wdy).xyz;
       vec3 n2 = textureGrad(uWaterN, wuv * 1.37 + vec2(0.7, 0.2) - vec2(0.017, 0.024) * t, wdx * 1.37, wdy * 1.37).xyz;
       vec2 nxy = (n1.xy + n2.xy) * 2.0 - 2.0;
@@ -262,8 +268,12 @@ void main() {
       float diff = dot(nrm, LIGHT) - LIGHT.z;               // 0 for a flat surface
       vec3  H    = normalize(LIGHT + vec3(0.0, 0.0, 1.0));
       float spec = pow(max(dot(nrm, H), 0.0), 48.0);
-      water += diff * 0.35;
-      water += spec * 0.16 * smoothstep(0.0, 1.5, depth + 0.4);
+      water += diff * mix(0.35, 0.48, deepness);
+      water += spec * mix(0.16, 0.24, deepness) * smoothstep(0.0, 1.5, depth + 0.4);
+      // Moving, low-contrast light/dark variation makes the wave motion legible
+      // even in the dark offshore tint; strength fades in smoothly with depth.
+      float waveTone = (diff * 0.55 + spec * 0.8) * uWaterAnim;
+      water *= 1.0 + waveTone * mix(0.12, 0.24, deepness);
     }
 
     // 4c. Foam: a thin band hugging the waterline, broken up by the fine
