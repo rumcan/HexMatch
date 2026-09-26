@@ -1015,15 +1015,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   };
   /**
-   * ECON-1: the RIVAL's build budget, expressed as a resource purse.
+   * ECON-1: a seat's build budget, expressed as a RESOURCE purse — what its
+   * money would buy at the starting prices.
    *
-   * The AI planner (`ai.ts`) prices a plan in resources — it is the same cost
-   * model the player's placement uses — so the money layer hands it a purse
-   * derived from its bank at the STARTING prices (the same conversion
-   * `BUILD_COSTS_MONEY` is derived from). A plan it can see is a plan its
-   * money can plausibly pay for; the real charge is `chargeBuild`, which is
-   * clamped at $0, so the worst case is a rival that spends itself broke and
-   * has to sell before it builds again — never one that builds for free.
+   * It is what the HUD's own affordability questions ask ("can I afford the
+   * Depot under the pointer?") now that the answer is a money question.
+   *
+   * The RIVAL's planner is deliberately NOT given this purse: `ai.ts` plans
+   * against real stock, and handing it a rich synthetic one changed the shape
+   * of every search (the #412 smoke went from 29 s to over 3 minutes). The
+   * rival plans with its goods exactly as before and PAYS in money —
+   * `canPayBuild` gates it, `chargeBuild` (clamped at $0) charges it. See
+   * docs/economy-money.md §5.
    */
   const buildPurse = (p: PlayerState): Purse =>
     Object.fromEntries(CARGOES.map((c) => [c, Math.floor(p.money / BASE_PRICE[c])])) as Purse;
@@ -3434,7 +3437,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ranks paved-legal tiles first and probes the top of the ranking for a
     // real plan before the tile is committed.
     const spot = chooseRivalFactorySpot(grid, track, [tx, ty], {
-      purse: buildPurse(rival), free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
+      purse: rival.purse, free: rival.freeTrack, ownerId: rival.i + 1, owner: rival.id,
       // PP-16: the human's setup Depot is already on the board and already holds
       // its catchment — the rival must not be parked on that ground.
       opponentHarvesters: eco.harvesters.filter((d) => d.ownerId !== rival.i + 1),
@@ -7145,7 +7148,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // L5 (#219): the reserve works toward plans its own tree can actually buy.
       depotTier: rival.depotTier,
     });
-    const depot = priceDepot(buildPurse(rival), rival.freeDepots, { tier: rival.depotTier, newLoop }).cost;
+    const depot = priceDepot(rival.purse, rival.freeDepots, { tier: rival.depotTier, newLoop }).cost;
     if (!cands.length) return null;
     const shortfall = (c: (typeof cands)[number]): number => {
       let missing = 0;
@@ -7170,7 +7173,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  leave behind (see `rivalPlanReserve`). */
   const rivalPaveReserve = (): Purse | null => {
     const ranked = paveCandidates(eco, {
-      owner: rival.id, ownerId: rival.i + 1, purse: buildPurse(rival),
+      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
       maxTiles: PAVE_MILESTONE_TILES,
     });
     if (!ranked.length) return null;
@@ -7542,7 +7545,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function rivalPavePass(): boolean {
     const plan = planUpgrades(eco, {
-      owner: rival.id, ownerId: rival.i + 1, purse: buildPurse(rival),
+      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
       // AI-01: the batch cap is a skill lever (8 on normal, 4/12 on easy/hard).
       maxTiles: skill().paveTiles,
       keepOre: rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0,
@@ -7659,7 +7662,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const railState = railAvailable && skill().rail ? eco.rail ?? null : null;
     if (!railState) return { acted: false, laid: [], platform: false };
     const railMove = planRailMove(eco, railState, f, {
-      purse: buildPurse(rival), ownerId: rival.i + 1, useRail: true, scope: "line", now,
+      purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
     });
     if (!railMove || !canPayBuild(rival, railMove.cost)) return { acted: false, laid: [], platform: false };
     const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
@@ -7856,7 +7859,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // clock, so a hard rival visibly spreads.
     const depotBuild = (): boolean => {
       const out = aiBuildStep(eco, f, {
-        stock: rival.purse, purse: buildPurse(rival),
+        stock: rival.purse, purse: rival.purse,
         free: rival.freeTrack, freeDepots: rival.freeDepots, now,
         newLoop, depotTier: rival.depotTier, wantCargo: want,
       }, allocHarvesterId());
@@ -8054,7 +8057,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     //    hard rival visibly SPREAD — each pass re-plans against the purse the
     //    last build left behind, so it can never overdraw.
     const opts = () => ({
-      stock: rival.purse, purse: buildPurse(rival),
+      stock: rival.purse, purse: rival.purse,
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
       oreUrgency: urgency, newLoop,
       // L5 (#219): the tree gate — the planner may only plan a Depot whose
