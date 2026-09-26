@@ -55,6 +55,7 @@ uniform sampler2D uRock;
 uniform sampler2D uSand;
 uniform sampler2D uDetail;
 uniform sampler2D uWaterN;
+uniform float uGrid;      // 0..1 strength of the faint tile grid (0 = off)
 
 uniform vec2  uMapSize;        // (w, h) tiles
 uniform vec2  uSeedOff;        // seed-derived UV offset into uNoise
@@ -275,6 +276,14 @@ void main() {
   // -------------------------------------------------------------------------
   vec3 col = mix(land, water, waterM);
   col = mix(col, FOAM, foam * waterM * 0.85);
+  // Faint tile grid on land. vTile ignores height but the mesh carries it, so
+  // the lines drape over the ground and every level change reads as a bend.
+  if (uGrid > 0.0 && waterM < 0.5) {
+    vec2 gw = fwidth(vTile);
+    vec2 gd = abs(fract(vTile - 0.5) - 0.5) / max(gw, vec2(1e-4));
+    float gl = 1.0 - clamp(min(gd.x, gd.y), 0.0, 1.0);
+    col = mix(col, col * 0.72, gl * uGrid);
+  }
   fragColor = vec4(col, 1.0);
 }
 `;
