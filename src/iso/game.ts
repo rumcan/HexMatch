@@ -91,7 +91,7 @@ import {
 } from "./protest";
 import { loadGroundTextures } from "./ground";
 import {
-  createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
+  createCamera, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
   bootZoomFor, tapSlop, HH, HW, visibleTileRange,
   type Camera, type GestureState,
@@ -216,10 +216,10 @@ import { mulberry32 } from "../game/config";
 import {
   abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
   depotSessionOutcome, difficultyRulesFor, obstacleIntroLine, recordTuningCleared, retuneOwed,
-  rivalTuningGold, rivalTuningScore, rivalTuningYield, settleTuningYield,
+  rivalTuningScore, settleTuningYield,
   sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
-  tuningStarLabel, tuningStarScores, tuningStarsFor,
+   tuningStarLabel, tuningStarScores, tuningStarsFor, tuningYieldFor, tuningGoldFor,
   TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningOutcome, type TuningSession, type TuningStars,
 } from "./tuning";
 import {
@@ -2363,6 +2363,41 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     upgradeMarkers.frame();
   }
 
+  // #461 TUNE-1: camera easing back to Depot after a session, and payoff tracking.
+  let cameraAnim: { sx: number; sy: number; tx: number; ty: number; t0: number; dur: number } | null = null;
+  const recentTunePayoff = new Map<number, { until: number; deltaPct: number; yield: number }>();
+  const CAMERA_EASE_DUR = 700;
+
+  const easeOutCubic = (p: number): number => 1 - Math.pow(1 - p, 3);
+
+  function easeCameraToTile(tx: number, ty: number, now = performance.now()): void {
+    try {
+      const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduce) {
+        const [wx, wy] = tileToScreen(tx, ty);
+        commitCamera(centerOnWorld(cam, wx, wy));
+        return;
+      }
+      const [wx, wy] = tileToScreen(tx, ty);
+      const target = centerOnWorld(cam, wx, wy);
+      cameraAnim = { sx: cam.x, sy: cam.y, tx: target.x, ty: target.y, t0: now, dur: CAMERA_EASE_DUR };
+    } catch {}
+  }
+
+  function tickCameraAnim(now: number): void {
+    if (!cameraAnim) return;
+    const p = Math.min(1, (now - cameraAnim.t0) / cameraAnim.dur);
+    if (p >= 1) {
+      commitCamera({ ...cam, x: cameraAnim.tx, y: cameraAnim.ty });
+      cameraAnim = null;
+      return;
+    }
+    const e = easeOutCubic(p);
+    const nx = cameraAnim.sx + (cameraAnim.tx - cameraAnim.sx) * e;
+    const ny = cameraAnim.sy + (cameraAnim.ty - cameraAnim.sy) * e;
+    commitCamera({ ...cam, x: nx, y: ny });
+  }
+
   // M2 (#256): active protests on public roads
   const protests = new Map<number, Protest>();
 
@@ -4213,6 +4248,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * They are NOT a timer and NOT a purchase — nothing outside a session can
    * put one on a board, and they leave with the session that brought them.
    */
+  function cargoPerMinForDepot(depot: Harvester, yieldLevel: number): number {
+    try {
+      const now = performance.now();
+      const comp = componentsFor(depot.ownerId);
+      const locks = industryLocks(eco);
+      const res = harvesterYield(eco, comp, locks, depot, now);
+      let amount = Object.values(res.yields).reduce((a, b) => a + (b as number), 0);
+      if (amount <= 0) {
+        // Not yet serviced — estimate from catchment so target card is not 0.
+        const cat = industriesInCatchment(grid, depot);
+        amount = cat.reduce((a, ind) => {
+          const def = INDUSTRY_BY_KEY[ind.type];
+          return a + (ind.output ?? def?.output ?? 0) * TRANSPORT.dirt.throughput;
+        }, 0);
+      }
+      const d = distanceInfoFor(depot.id);
+      const seat = players.find((p) => p.id === depot.owner) ?? me;
+      const damF = damFactorsFor(seat, depot, res.connection?.factory);
+      const cityB = cityBonusFor(seat.id, res.connection?.factory) || (seat.townBonus ?? 0);
+      const factor = BASE_RATE * yieldLevel * d.factor * transportFactor(depot) * (1 + (damF.dam ?? 0)) * (1 + Math.max(0, cityB + (damF.damCity ?? 0)));
+      const perTick = amount * factor;
+      const perSec = perTick * (1000 / HARVEST_MS);
+      return perSec * 60;
+    } catch { return 0; }
+  }
+
   function openTuningSession(depot: Harvester, isRematch = false): void {
     const rules = difficultyRules();
     // L6 (#220): `matchEnabled` is the ONE flag that can keep this from
@@ -4232,13 +4293,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // grows ice a beat later.
     const obstacles = seedSessionObstacles(depot);
     sfx.play("open");
-    ui.openSessionBoard();
-    // L10 (#225): the intro names the obstacles in the game's own words — the
-    // player is told why the board is tougher before they spend a move on it.
-    const intro = obstacleIntroLine(skill().label, obstacles);
-    // Owner (2026-09): the session window's plate already says moves, score
-    // and yield; only a board with obstacles gets a line of its own.
-    if (intro) toast(intro, "info");
+    // #461 TUNE-1: target card BEFORE the session — current/possible cargo/min, last rating.
+    const curYield = depotYield(depot);
+    const cap = depotYieldCap(depot.level);
+    const possibleYield = Math.min(TUNING.maxYield, cap);
+    const targetInfo = {
+      targetScore: TUNING.targetScore,
+      maxYield: TUNING.maxYield,
+      currentYield: curYield,
+      currentCargoPerMin: cargoPerMinForDepot(depot, curYield),
+      possibleCargoPerMin: cargoPerMinForDepot(depot, possibleYield),
+      cargo,
+      lastStars: depot.lastStars,
+      isRetune: isRematch,
+      depotId: depot.id,
+    };
+    // If target card is skipped (localStorage), UI calls onStart immediately.
+    ui.showTuningTarget(targetInfo as any, () => {
+      ui.openSessionBoard();
+      const intro = obstacleIntroLine(skill().label, obstacles);
+      if (intro) toast(intro, "info");
+    });
+    // For the non-skipped path the intro toast waits for Start — show it after
+    // the board opens (inside the callback above). For skipped path the
+    // callback already ran and intro is shown. To avoid double toast, we only
+    // show here when skip is active (the callback already showed it). So we
+    // check localStorage synchronously.
+    try {
+      if (localStorage.getItem("hexmatch:tuning:skipTarget") === "1") {
+        // Already shown via callback — nothing more.
+      } else {
+        // Target card is up — intro will be shown after Start, not now.
+      }
+    } catch {}
     void isRematch; void rules;
   }
 
@@ -4635,9 +4722,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     const o = r.outcome!;
     const depot = eco.harvesters.find((h) => h.id === s.depotId);
+    // #461: cargo/min and delta for payoff display.
+    let prevPerMin: number | undefined;
+    let newPerMin: number | undefined;
+    let deltaPct: number | undefined;
+    try {
+      if (depot) {
+        prevPerMin = cargoPerMinForDepot(depot, o.from);
+        // For new, use the depot's yield after settle? But we have o.yield which is what will be set.
+        // Compute using same depot but with new yield — cargoPerMinForDepot reads depotYield, so pass yield directly via helper that takes yieldLevel.
+        newPerMin = cargoPerMinForDepot(depot, o.yield);
+        if (o.from > 0) deltaPct = ((o.yield - o.from) / o.from) * 100;
+      }
+    } catch {}
     return {
       ...base, platform: !!depot && isRailDepot(depot),
       from: o.from, to: o.yield, cap: o.cap, capped: o.capped, kept: o.kept, overGold: o.overshootGold,
+      prevCargoPerMin: prevPerMin,
+      newCargoPerMin: newPerMin,
+      deltaPct,
     };
   }
 
@@ -4804,6 +4907,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // — and what the snapshot (yield + tuneTier) and the savegame (harvesters)
       // carry.
       depot.yield = level;
+      // #461 TUNE-1: remember the star rating for retune display and payoff.
+      depot.lastStars = r.stars;
       // L5 (#219) — THE SESSION GATE: finishing a session that was actually
       // PLAYED opens the next rung of the depot tree for the seat that owns
       // the Depot. The seat, not "me": a depot session only opens for the
@@ -4846,6 +4951,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       );
       ui.feed(`Depot tuned: yield ×${level}${paid}${rung}`, me.name);
       guide?.emit({ kind: "game", name: "session-finished" });
+
+      // #461 TUNE-1: on-map payoff after every session — float, camera ease, coin burst on next delivery.
+      try {
+        const deltaPct = before > 0 ? ((level - before) / before) * 100 : 0;
+        const now = performance.now();
+        if (depot) {
+          // Remember for coin burst when next load lands.
+          recentTunePayoff.set(depot.id, { until: now + 30000, deltaPct, yield: level });
+          // Yield float over Depot — respects reduced motion via CSS.
+          const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+          if (!reduce && Math.abs(deltaPct) > 0.5) {
+            const sign = deltaPct > 0 ? "+" : "";
+            floats.add(`${sign}${Math.round(deltaPct)}%`, depot.tx, depot.ty, { cls: "delivery", now, life: 1600 });
+          } else if (!reduce) {
+            // Even without delta, show yield.
+            floats.add(`×${level}`, depot.tx, depot.ty, { cls: "delivery", now, life: 1400 });
+          }
+          // Camera eases back to Depot — respects reduced motion inside easeCameraToTile.
+          // Delay slightly so results pop-up Confirm has closed and map is visible.
+          setTimeout(() => easeCameraToTile(depot.tx, depot.ty, performance.now()), 120);
+          // SFX for payoff.
+          sfx.play("coin");
+        }
+      } catch {}
     } else if (note) {
       toast(note, "info");
     }
@@ -5043,6 +5172,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       retuneCost: costLabel(DEPOT_RETUNE_COST),
       busy: !!tuning,
       damLine: damC.dam > 0 ? `dam: ×${1 + damC.dam} — hydro dam nearby` : null,
+      lastStars: d.lastStars,
       onUpgrade: () => upgradeDepot(d.id),
       onRetune: () => retuneNow(d.id),
     });
@@ -5093,7 +5223,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       const tier = depotTier(h, comp);
-      h.yield = Math.min(depotYieldCap(h.level), rivalTuningYield(key, 0, rules, tier));
+      const score = rivalTuningScore(key, 0, rules, tier);
+      h.yield = Math.min(depotYieldCap(h.level), tuningYieldFor(score));
       tuned.add(h.id);
       // L14 (#229): the tier the session settled on, stamped exactly as a
       // played session stamps it (`settleSession` above). Without it the L6
@@ -5102,13 +5233,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // settled" means — so a Normal rival could never re-tune the Depot it
       // paved, which is precisely the one the player gets a key for.
       h.tuneTier = tier;
+      // #461 TUNE-1: remember rival's star rating too (saved/synced).
+      h.lastStars = tuningStarsFor(score);
       simulated = true;
       // L9 (#224): the simulated session pays the rival the same Gold a
       // played one pays the player, through the same score→Gold curve. This
       // is what keeps its raid table funded once combo Gold stops paying —
       // "Gold still reaches BOTH players at a steady rate without constant
       // matching" is one rule applied twice, not two balance numbers.
-      const coins = rivalTuningGold(key, 0, rules, tier);
+      const coins = tuningGoldFor(score);
       if (coins > 0) earn(rival, { gold: coins });
     }
     // L5 (#219): the rival passes the SAME session gate (#229 L14): a
@@ -5175,6 +5308,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!head) return false;
     head.h.yield = head.fresh;
     head.h.tuneTier = head.tier;
+    // #461: keep rival's stars too.
+    head.h.lastStars = tuningStarsFor(rivalTuningScore(key, 0, rules, head.tier));
     ui.feed(`Rival re-tunes a Depot: yield ×${head.fresh}`, rival.name);
     return true;
   }
@@ -11017,6 +11152,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       seenDeliveries.set(truck.depotId, truck.deliveries);
       if (truck.deliveries <= seen) continue;
       const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
+      // #461 TUNE-1: coin burst when next load lands after a tuning session.
+      const payoff = recentTunePayoff.get(truck.depotId);
+      if (payoff && t <= payoff.until) {
+        try {
+          const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+          if (!reduce) {
+            // Short coin burst at the factory.
+            const coins = ["💰", "🪙", "💰"];
+            for (let c = 0; c < coins.length; c++) {
+              const offX = (Math.random() - 0.5) * 0.6;
+              const offY = (Math.random() - 0.5) * 0.4;
+              floats.add(coins[c], truck.factory[0] + offX, truck.factory[1] + offY, { cls: "delivery", now: t + c * 80, life: 1100 });
+            }
+            sfx.play("coin");
+          }
+        } catch {}
+        // One burst per depot — clear after first delivery.
+        recentTunePayoff.delete(truck.depotId);
+      } else if (payoff && t > payoff.until) {
+        recentTunePayoff.delete(truck.depotId);
+      }
       if (truck.ownerId === mine) {
         // L1c (#234): under the new loop your lorries are ANIMATION — the
         // frame keeps driving them (they leave, arrive and turn around exactly
@@ -12237,6 +12393,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
       mini.paint();
+      // #461: camera ease back to Depot after tuning.
+      tickCameraAnim(t);
       floats.frame(t);
       // NAMES: re-anchor the name tags to the live camera (no-op while the
       // Names button has them hidden).

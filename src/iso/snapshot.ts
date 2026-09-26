@@ -152,6 +152,8 @@ export interface WireHarvester {
   tuneTier?: number;
   /** #322: a closed Depot is shaded and pays nothing. Optional — absent = open. */
   closed?: boolean;
+  /** #461 TUNE-1: the star rating of the Depot's last session (0–3). */
+  lastStars?: number;
 }
 
 export interface WirePlayer {
@@ -494,6 +496,8 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
       // Playtest (2026-09): a platform's Depot record says which platform and
       // industry it stands for (absent on every road Depot).
       ...(typeof h.platformId === "number" ? { platformId: h.platformId, railIndustryId: h.railIndustryId } : {}),
+      // #461 TUNE-1: star rating of last session, optional for backwards compat.
+      ...(typeof h.lastStars === "number" ? { lastStars: h.lastStars } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -601,6 +605,10 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
     if (h && h.tuneTier !== undefined
       && (typeof h.tuneTier !== "number" || !Number.isInteger(h.tuneTier) || h.tuneTier < 0)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot tune tier.");
+    }
+    if (h && h.lastStars !== undefined
+      && (typeof h.lastStars !== "number" || !Number.isInteger(h.lastStars) || h.lastStars < 0 || h.lastStars > 3)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot star rating.");
     }
   }
   // F3 (#274): factory rot is optional (legacy absent=0), but when present must be 0..3
