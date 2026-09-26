@@ -1309,16 +1309,14 @@ export const DEPOT_SPRITE = "truck_depot";
  * town centre (`town_center` cell); the bungalows pair and the two stadiums
  * are packed as `spare_*` cells instead — far too wide for a 1x1 tile.
  */
-export const TOWN_HOUSE_VARIANTS = [
-  "town_offices_1423", "town_office_1460", "town_flats_trop_1x1_4", "town_flats_trop_1x1_7",
+export const TOWN_HOUSE_VARIANTS = [ "town_office_1460",
   "town_fountain_1x1",
   "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_small_house_1x1_1", "town_townhouse_garden_2", "town_townhouse_gardens_2",
-  "town_flats_trop_2x1_6",
   "town_townhouse_3", "town_townhouse_garden_3", "town_bank", "town_cinema", "town_flats",
   "town_flats_2", "town_flats_4", "town_flats_grey", "town_hotel", "town_house_pool",
-  "town_shops_modern", "town_house_modern", "town_house_modern_2", "town_office_tower_modern",
+  "town_shops_modern", "town_office_tower_modern",
   "town_shops_offices", "town_shops_offices_2", "town_cottage_old_small_a",
-  "town_cottage_old_small", "town_cottage_old_small_2",
+  "town_cottage_old_small",
   "town_cottage_tall", "town_offices_tall", "town_flats_townhouse_tall",
 ] as const;
 
@@ -1428,8 +1426,25 @@ export const TOWN_WINTER_VARIANTS = [
   "town_small_house_arctic_1x1_2",
 ] as const;
 
+/**
+ * Owner (2026-09-26): a building on ONE tile cannot keep the door-height rule
+ * (a whole house squeezed onto a tile is always too small or too tall), so
+ * UPGRADED towns (tier 1+) draw NO 1×1 buildings (villages keep their small homes). A single free house tile becomes a garden or
+ * a small park; whole blocks hold 2×2 (or larger) buildings. Entries whose
+ * art is not in the manifest yet are filtered out by footprint at pick time.
+ */
+export const TOWN_PARK_VARIANTS = [
+  "town_fountain_1x1", "park_garden_1x1", "park_pond_1x1", "park_playground_1x1",
+  "park_allotment_1x1",
+] as const;
+
+/** A village's whole-block homes (low, 2×2): the terrace with gardens. */
+export const TOWN_VILLAGE_BLOCKS = [
+  "town_townhouse_gardens_2", "village_homes_2x2_a", "village_homes_2x2_b", "village_homes_2x2_c",
+] as const;
+
 export const TOWN_VILLAGE_VARIANTS = [ "town_small_house_1x1_1", "town_small_flat_1x1_1", "town_small_flat_1x1_2",
-  "town_cottage_old_small_a", "town_cottage_old_small", "town_cottage_old_small_2", "town_fountain_1x1",
+  "town_cottage_old_small_a", "town_cottage_old_small", "town_fountain_1x1",
 ] as const;
 
 /**

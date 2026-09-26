@@ -15,7 +15,7 @@ import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
-  TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS,
+  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
 } from "./config";
@@ -1509,20 +1509,22 @@ export function townBuildings(
     const [fw, fh] = footprintOf(v);
     return fw === 1 && fh === 1;
   });
-  // Nothing 1×1 authored at all (the sheet-art path has no footprints > 1):
-  // fall back to the whole list rather than drawing an empty town.
-  const tileArt: readonly string[] = full.length ? full : TOWN_HOUSE_VARIANTS;
-  // The village's small homes: the ticket's list, filtered to 1×1 like every
-  // other pick, so re-arting a cottage wide can never smuggle it into a
-  // single tile. A village never draws anything else.
-  const villageArt: readonly string[] =
-    TOWN_VILLAGE_VARIANTS.filter((v) => {
+  void full; void villageBlockPool;
+  // Owner (2026-09-26): a VILLAGE keeps its small 1×1 homes. From the first
+  // upgrade on there are NO 1×1 buildings: a single house tile is a park.
+  const villageHomes: readonly string[] = TOWN_VILLAGE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return fw === 1 && fh === 1 && buildingFootprint(v) !== null;
+  });
+  const houseArt: readonly string[] = village && villageHomes.length ? villageHomes : parkPool(footprintOf);
+  const tileArt: readonly string[] = parkPool(footprintOf);
+  // Whole blocks: 2×2-or-larger art only (a village places no block art).
+  const blockArt: readonly string[] = village
+    ? []
+    : TOWN_HOUSE_VARIANTS.filter((v) => {
       const [fw, fh] = footprintOf(v);
-      return fw === 1 && fh === 1;
+      return (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK;
     });
-  const houseArt: readonly string[] = village
-    ? (villageArt.length ? villageArt : tileArt)
-    : tileArt;
 
   const houses = new Set<number>();
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
@@ -1564,9 +1566,9 @@ export function townBuildings(
     // The BLOCK pick runs on the FULL list at every non-village tier — that is
     // where the 2×2 towers, banks and cinemas come from — while the village
     // picks inside its small-homes list (and never places block art at all).
-    const pick = pickTownVariant(ox, oy, village ? houseArt : TOWN_HOUSE_VARIANTS);
+    const pick = blockArt.length ? pickTownVariant(ox, oy, blockArt) : houseArt[0];
     const [fw, fh] = footprintOf(pick);
-    const wholeBlock = !village
+    const wholeBlock = blockArt.length > 0
       && (fw > 1 || fh > 1)
       && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
@@ -1586,9 +1588,21 @@ export function townBuildings(
   // the "no art on a tile that is not this town's" guarantee for free.
   if (tier >= 2 && opts.grid) {
     const rings = townGrownRings(tier);
-    for (const [x, y] of grownTownHouses(t, opts.grid, rings, opts.blocked)) {
+    const ring = grownTownHouses(t, opts.grid, rings, opts.blocked);
+    const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
+    const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return fw === 2 && fh === 2;
+    });
+    // Row-major, so the greedy 2×2 packing is deterministic.
+    for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
       const i = idx(x, y);
       if (used.has(i)) continue;
+      const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
+      if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
+        place(pickTownVariant(x, y, ring2), x, y);
+        continue;
+      }
       place(pickTownVariant(x, y, tileArt), x, y);
     }
   }
@@ -1623,7 +1637,9 @@ function townBuildingsShapes(
     const [fw, fh] = footprintOf(v);
     return fw === 1 && fh === 1;
   });
-  const tileArt: readonly string[] = full.length ? full : TOWN_HOUSE_VARIANTS;
+  void full;
+  // Owner (2026-09-26): NO 1×1 buildings - leftover single tiles are parks.
+  const tileArt: readonly string[] = parkPool(footprintOf);
 
   const houses = new Set<number>();
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
@@ -1717,7 +1733,10 @@ function townBuildingsShapes(
 
   // ── ordinary blocks: today's mix plus the block-sized terraces ──
   const blockPool: readonly string[] = [
-    ...TOWN_HOUSE_VARIANTS,
+    ...TOWN_HOUSE_VARIANTS.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK;
+    }),
     ...TOWN_SHAPE_VARIANTS.filter((v) => {
       const [fw, fh] = footprintOf(v);
       return (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK;
@@ -1740,9 +1759,21 @@ function townBuildingsShapes(
   // The grown ring, exactly as the legacy path lays it.
   if (tier >= 2 && opts.grid) {
     const rings = townGrownRings(tier);
-    for (const [x, y] of grownTownHouses(t, opts.grid, rings, opts.blocked)) {
+    const ring = grownTownHouses(t, opts.grid, rings, opts.blocked);
+    const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
+    const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return fw === 2 && fh === 2;
+    });
+    // Row-major, so the greedy 2×2 packing is deterministic.
+    for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
       const i = idx(x, y);
       if (used.has(i)) continue;
+      const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
+      if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
+        place(pickTownVariant(x, y, ring2), x, y);
+        continue;
+      }
       place(pickTownVariant(x, y, tileArt), x, y);
     }
   }
@@ -2651,3 +2682,19 @@ export function townForSeat(
   return pair[seat] ?? null;
 }
 
+/** Owner (2026-09-26): the 1×1 park/garden art that exists (by footprint). */
+function parkPool(footprintOf: (sprite: string) => [number, number]): string[] {
+  const ok = TOWN_PARK_VARIANTS.filter((v) => {
+    // the art must exist (the game's footprintOf answers [1,1] for an unknown name)
+    if (buildingFootprint(v) === null) return false;
+    try { const [fw, fh] = footprintOf(v); return fw === 1 && fh === 1; } catch { return false; }
+  });
+  return ok.length ? ok : ["town_fountain_1x1"];
+}
+
+/** A village's whole-block homes that exist as 2×2-or-smaller-than-a-block art. */
+function villageBlockPool(footprintOf: (sprite: string) => [number, number], block: number): string[] {
+  return TOWN_VILLAGE_BLOCKS.filter((v) => {
+    try { const [fw, fh] = footprintOf(v); return (fw > 1 || fh > 1) && fw <= block && fh <= block; } catch { return false; }
+  });
+}
