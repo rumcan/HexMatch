@@ -10,6 +10,7 @@ import {
 } from "../../src/iso/track";
 import { octPath as railOctPath } from "../../src/iso/rail";
 import { BRIDGE_COST } from "../../src/iso/bridges";
+import { moneyValueOf } from "../../src/iso/config";
 import { roadPath } from "../../src/iso/road-routing";
 import { routeTileLength } from "../../src/iso/slopes";
 
@@ -230,7 +231,7 @@ describe("D2 bridge plans and OFF compatibility", () => {
     for (const first of [true, false]) {
       const t = createTrack(false), pv = preview(flat(), t, "road", "road", [13, 12], first);
       expect(pv.tiles).toEqual(lPath(10, 10, 13, 12, first)); expect(pv.roadPlan).toBeUndefined();
-      expect(pv.why).toBeUndefined();
+      expect(pv.why ?? undefined).toBeUndefined();
       expect(pv.cost).toEqual(addCost({}, tileCost(t, "road", 10, 10, true), 6));
       const expected = createTrack(false);
       for (const [x, y] of pv.tiles) buildTile(expected, "road", x, y, 1);
@@ -251,7 +252,7 @@ import { IsoRenderer } from "../../src/iso/renderer";
 import { mulberry32, setRng } from "../../src/game/config";
 
 interface DragHook {
-  grid: Grid; track: Track; purse: Record<string, number>;
+  grid: Grid; track: Track; purse: Record<string, number>; money: number;
   finishSetup(): void; setTool(t: string): void;
   dragPreview(kind: TrackKind, ax: number, ay: number, bx: number, by: number, first?: boolean): DragPreview;
   activeRoadDrag: { ax: number; ay: number; bx: number; by: number; xFirst: boolean; preview: DragPreview } | null;
@@ -302,7 +303,7 @@ describe("D2 live pointer / R / overlay contract", () => {
     h.finishSetup(); h.setTool("dirt");
     h.grid.terrain.fill(GRASS); h.grid.occupancy.fill(-1); h.grid.builtAt = () => null;
     for (const layer of [h.track.dirt, h.track.road, h.track.owner, h.track.upgraded, h.track.tier!]) layer.fill(0);
-    h.track.revision++; Object.assign(h.purse, rich);
+    h.track.revision++; Object.assign(h.purse, rich); h.money = 1e9; // ECON-1: builds are paid in $
     return h;
   }
   function pointer(type: string, x: number, y: number, pointerType = "mouse", pointerId = 1) {
@@ -343,7 +344,7 @@ describe("D2 live pointer / R / overlay contract", () => {
   it("affordable-prefix preview, highlighted tail and actual purse debit agree", async () => {
     const h = await boot(); h.setTool("road");
     const budget = addCost({}, tileCost(h.track, "road", 10, 10, true), 5);
-    for (const key of Object.keys(h.purse)) h.purse[key] = budget[key as keyof Purse] ?? 0;
+    h.money = moneyValueOf(budget); // ECON-1: the drag is priced in $
     pointer("pointerdown", 10, 10); pointer("pointermove", 15, 12); pressR();
     const pv = h.activeRoadDrag!.preview;
     expect(pv.tiles).toEqual(octPath(10, 10, 15, 12, false).slice(0, 5));
@@ -351,7 +352,7 @@ describe("D2 live pointer / R / overlay contract", () => {
     expect(h.activeDragOverlay).toContainEqual({ sprite: "highlight_bad", tx: 15, ty: 12 });
     pointer("pointerup", 15, 12); assertLinks(h.track, pv);
     expect(hasTrack(h.track, "road", 15, 12)).toBe(false);
-    for (const key of Object.keys(budget)) expect(h.purse[key]).toBe(0);
+    expect(h.money).toBe(0);
   });
 
   it.each(["road", "street", "highway", "ramp"] as const)("the %s toolbar selection, debug preview and pointer price agree", async (tier) => {
@@ -362,20 +363,20 @@ describe("D2 live pointer / R / overlay contract", () => {
     // browser behavior is not under test in this canvas-stubbed harness.
     button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     const expected = h.dragPreview("road", 10, 10, 15, 12);
-    const before = { ...h.purse };
+    const before = h.money;
     pointer("pointerdown", 10, 10); pointer("pointermove", 15, 12);
     expect(h.activeRoadDrag!.preview).toEqual(expected);
     expect(expected.cost).toEqual(addCost({}, tierTileCost(h.track, tier, 10, 10), 6));
     pointer("pointerup", 15, 12); assertLinks(h.track, expected);
     for (const [x, y] of expected.tiles) expect(roadTierAt(h.track, x, y)).toBe(ROAD_TIER[tier]);
-    for (const [key, price] of Object.entries(expected.cost)) expect(h.purse[key]).toBe(before[key] - price!);
+    expect(h.money).toBe(before - moneyValueOf(expected.cost));
   });
 
   it("a prefix ending on the overpass keeps its crossing tier and quoted price on release", async () => {
     const h = await boot(); h.setTool("road");
     for (let y = 5; y <= 20; y++) { buildTile(h.track, "road", 12, y, 1); setRoadTier(h.track, 12, y, ROAD_TIER.highway); }
     const budget = addCost(addCost({}, tileCost(h.track, "road", 10, 10, true), 2), OVERPASS_COST);
-    for (const key of Object.keys(h.purse)) h.purse[key] = budget[key as keyof Purse] ?? 0;
+    h.money = moneyValueOf(budget); // ECON-1: the drag is priced in $
     pointer("pointerdown", 10, 10); pointer("pointermove", 16, 12);
     const pv = h.activeRoadDrag!.preview;
     expect(pv.tiles).toEqual([[10, 10], [11, 10], [12, 10]]);
@@ -383,7 +384,7 @@ describe("D2 live pointer / R / overlay contract", () => {
     pointer("pointerup", 16, 12);
     expect(roadTierAt(h.track, 12, 10)).toBe(OVERPASS_Y);
     expect(hasTrack(h.track, "road", 13, 10)).toBe(false);
-    for (const key of Object.keys(budget)) expect(h.purse[key]).toBe(0);
+    expect(h.money).toBe(0);
   });
 
   it("a diagonal Highway crossing puts the refusal text in the live cost hint", async () => {

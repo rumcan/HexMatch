@@ -163,7 +163,7 @@ import {
 } from "./placement";
 import type { GhostSpec } from "./overlay-art";
 import {
-  PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt, canAffordPlant,
+  PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt,
   chooseAiPlantSpot, plantRefusal, plantsOf, resolvePlantTarget,
 } from "./plants";
 import {
@@ -172,8 +172,17 @@ import {
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
+  BASE_PRICE, START_MONEY, moneyValueOf,
   type Cargo, type Portrait,
 } from "./config";
+// ECON-1 (#421): the market — prices, slippage, demand events and the money
+// formatter. Pure and seeded, so the host and the guest agree without a
+// message and a save restores into the same prices it left.
+import {
+  createMarket, marketToWire, marketFromWire, priceOf,
+  sell as sellOnMarket, eventsAt, trendPct, history as priceHistory,
+  rivalSellLot, sellable, money as moneyStr,
+} from "./market";
 import {
   DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
   depotTiles, rotateFacing, type DepotFacing,
@@ -268,7 +277,7 @@ import {
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
-  rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
+  rotateView, trainOccupies, trainBasedAt, railPanelRows, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
@@ -509,6 +518,13 @@ export interface PlayerState {
    * `1 + townBonus`, so one number scales a whole network.
    */
   townBonus: number;
+  /**
+   * ECON-1 (#421): MONEY ($) — what this seat BUILDS with. Resources stay the
+   * currency of city upgrades and the depot tree; every construction charge
+   * goes through `spendBuild` below, which debits this number. Saved and
+   * synced (the host owns it, like the rest of the economy).
+   */
+  money: number;
 }
 
 type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
@@ -941,14 +957,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // cargos) with no city upgrade — `depotTier`/`townLevel`/`townBonus` are the
   // data the tree gate, the clock's base rate and the wire/save all read.
   const players: PlayerState[] = [
-    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(startPurse), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0 },
+    { i: 0, id: "you", name: "You", colour: "#5aa8ff", purse: toBag(startPurse), human: true, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0, money: START_MONEY },
     // STORY-01: a contract renames and recolours the rival seat — the dossier
     // cards, the scoreboard and the ending ledger all read this name, so the
     // whole HUD introduces whoever the chapter cast.
     // #186: both seats open on the room's purse — the settings are the ROOM's
     // rules, so a Rich game is rich for the guest and for the AI alike, and the
     // two purses can never disagree about what the host chose.
-    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(startPurse), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0 },
+    { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(startPurse), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0, money: START_MONEY },
   ];
   const me = players[0], rival = players[1];
 
@@ -956,13 +972,133 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // server — never in unit tests (vitest also sets DEV) and never in a shipped
   // build. `?unlimited=0` turns it off to test the real economy in dev.
   const DEV_PURSE_FLOOR = 9999;
+  const DEV_MONEY_FLOOR = 999_999;
   const devUnlimited = import.meta.env.DEV && import.meta.env.MODE !== "test"
     && !(typeof location !== "undefined" && /[?&]unlimited=0\b/.test(location.search));
   const topUpDevPurse = () => {
     if (!devUnlimited) return;
     for (const c of CARGOES) if ((me.purse[c] ?? 0) < DEV_PURSE_FLOOR) me.purse[c] = DEV_PURSE_FLOOR;
+    // ECON-1: dev's unlimited seat is unlimited in MONEY too, or every build
+    // would still be gated behind a market the tester is not here to play.
+    if (me.money < DEV_MONEY_FLOOR) me.money = DEV_MONEY_FLOOR;
   };
   topUpDevPurse();
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ECON-1 (#421) — MONEY and the market, wired.
+  //
+  // `market` is the price model (src/iso/market.ts); `marketMs` is the clock it
+  // reads — milliseconds of PLAY, advanced by the frame loop on the host and
+  // mirrored on the guest, so both seats price the same minute. Every build
+  // charge in this file goes through `canPayBuild` / `spendBuild`, which price
+  // a resource bill in money (`moneyValueOf`, the table `BUILD_COSTS_MONEY` is
+  // derived from) and debit the seat's `money`. City upgrades and the depot
+  // rungs keep paying RESOURCES through the old `spend` / `canAfford` seam.
+  // ══════════════════════════════════════════════════════════════════════════
+  const market = createMarket(seed);
+  let marketMs = 0;
+  /** The frame clock the market was last advanced at (`0` = not started). */
+  let marketLast = 0;
+  /** Demand events already announced, so the Feed says each one once. */
+  const announcedEvents = new Set<string>();
+
+  /** What a resource bill costs in money ($). One conversion, everywhere. */
+  const moneyCostOf = (cost: Purse): number => moneyValueOf(cost);
+  /** Can this seat pay for a build that used to cost `cost` in resources? */
+  const canPayBuild = (p: PlayerState, cost: Purse): boolean =>
+    p.money >= moneyCostOf(cost);
+  /** Charge a BUILD. Never takes a seat below $0 — the refusal comes first. */
+  const spendBuild = (p: PlayerState, cost: Purse): boolean => {
+    const price = moneyCostOf(cost);
+    if (p.money < price) return false;
+    p.money -= price;
+    return true;
+  };
+  /**
+   * ECON-1: a seat's build budget, expressed as a RESOURCE purse — what its
+   * money would buy at the starting prices.
+   *
+   * It is what the HUD's own affordability questions ask ("can I afford the
+   * Depot under the pointer?") now that the answer is a money question.
+   *
+   * The RIVAL's planner is deliberately NOT given this purse: `ai.ts` plans
+   * against real stock, and handing it a rich synthetic one changed the shape
+   * of every search (the #412 smoke went from 29 s to over 3 minutes). The
+   * rival plans with its goods exactly as before and PAYS in money —
+   * `canPayBuild` gates it, `chargeBuild` (clamped at $0) charges it. See
+   * docs/economy-money.md §5.
+   */
+  const buildPurse = (p: PlayerState): Purse =>
+    Object.fromEntries(CARGOES.map((c) => [c, Math.floor(p.money / BASE_PRICE[c])])) as Purse;
+
+  /** Charge a build that has already happened. Clamped at $0, never refused. */
+  const chargeBuild = (p: PlayerState, cost: Purse): void => {
+    p.money = Math.max(0, p.money - moneyCostOf(cost));
+  };
+
+  /** A demolish refund, in money. */
+  const refundBuild = (p: PlayerState, cost: Purse, fraction = 1): void => {
+    p.money += Math.max(0, Math.floor(moneyCostOf(cost) * fraction));
+  };
+  /** The live price of one unit of `cargo` on this match's market. */
+  const unitPrice = (cargo: Cargo): number => priceOf(market, cargo, marketMs);
+
+  /**
+   * ECON-1: a seat sells goods. The market owns the price and the slippage;
+   * this owns the purse and the money. Returns what it fetched ($).
+   */
+  function sellCargo(p: PlayerState, cargo: Cargo, n: number): number {
+    if (!sellable(cargo)) return 0;
+    const units = Math.max(0, Math.min(Math.floor(n), Math.floor(p.purse[cargo] ?? 0)));
+    if (units <= 0) return 0;
+    const quote = sellOnMarket(market, cargo, units, marketMs);
+    p.purse[cargo] = (p.purse[cargo] ?? 0) - quote.units;
+    p.money += quote.revenue;
+    return quote.revenue;
+  }
+
+  /** The exchange's rows for the HUD — one per sellable good. */
+  const marketRows = () =>
+    CARGOES.filter(sellable).map((cargo) => ({
+      cargo,
+      price: priceOf(market, cargo, marketMs),
+      trend: trendPct(market, cargo, marketMs),
+      spark: priceHistory(market, cargo, marketMs, 24),
+      held: Math.floor(me.purse[cargo] ?? 0),
+    }));
+
+  /**
+   * ECON-1 (#421): the RIVAL trades. It sells a good when the market is paying
+   * above that good's recent average (`rivalSellLot`), never below the reserve
+   * it is keeping for its NEXT CITY UPGRADE — city upgrades still cost
+   * resources, so a rival that sold everything could never buy one — and never
+   * more than a lot at a time, so it pays slippage like the player does.
+   */
+  let lastRivalSell = 0;
+  const RIVAL_SELL_MS = 5_000;
+  function rivalMarketTick(now: number): void {
+    if (isGuest() || phase !== "play") return;
+    if (now - lastRivalSell < RIVAL_SELL_MS) return;
+    lastRivalSell = now;
+    const upgrade = TOWN_UPGRADES[Math.min(rival.townLevel, TOWN_UPGRADES.length - 1)];
+    const reserve = (upgrade?.cost ?? {}) as Purse;
+    for (const cargo of CARGOES) {
+      if (!sellable(cargo)) continue;
+      const held = Math.floor(rival.purse[cargo] ?? 0);
+      const lot = rivalSellLot(market, cargo, held, reserve[cargo] ?? 0, marketMs);
+      if (lot > 0) sellCargo(rival, cargo, lot);
+    }
+  }
+
+  /** Announce demand events in the Feed, once each, as they open. */
+  function marketEventTick(): void {
+    for (const ev of eventsAt(seed, marketMs)) {
+      if (announcedEvents.has(ev.id)) continue;
+      announcedEvents.add(ev.id);
+      ui.feed(`Market — ${ev.label}.`);
+      toast(ev.label, ev.mult > 1 ? "good" : "bad");
+    }
+  }
 
   // ── AI-01: how hard the rival plays ────────────────────────────────────────
   // One variable, read lively everywhere the rival's pacing shows up: the
@@ -1629,6 +1765,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return "relayed";
       }
       return bankFor(me, give, want) ? "done" : "refused";
+    },
+    /**
+     * ECON-1 (#421): sell goods for money. Host/solo only for now — a guest's
+     * sale would have to be relayed like a bank trade, and the host owns the
+     * market's slippage (see the follow-up note in docs/economy-money.md).
+     */
+    onSell: (cargo: Cargo, n: number | "all") => {
+      if (isGuest()) return "Selling is handled by the host in this room.";
+      if (!sellable(cargo)) return "Gold is the Black Market's money — it is not sold here.";
+      const held = Math.floor(me.purse[cargo] ?? 0);
+      if (held <= 0) return `No ${CARGO[cargo].name} to sell.`;
+      const units = n === "all" ? held : Math.min(held, Math.max(1, Math.floor(n)));
+      const got = sellCargo(me, cargo, units);
+      if (got <= 0) return "That sale fetched nothing.";
+      ui.feed(`Sold ${units} ${CARGO[cargo].name} for ${moneyStr(got)}.`);
+      if (isMp()) publishNet(performance.now(), true);
+      return got;
     },
     // TRADE (owner call, 2026-09): the Market tab's three doors.
     onOfferPost: (give, giveN, want, wantN) => tradeRequest("post", { give, giveN, want, wantN }),
@@ -3419,10 +3572,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canPay(p.purse, RAIL_COSTS.platform)) {
+    if (!canPayBuild(p, RAIL_COSTS.platform)) {
       if (p.human) {
-        toast(`Not enough materials — a platform costs ${railCostLabel(RAIL_COSTS.platform)}.`, "bad");
-        flashAt(tx, ty, `Platform costs ${railCostLabel(RAIL_COSTS.platform)}`);
+        toast(`Not enough money — a platform costs $${moneyCostOf(RAIL_COSTS.platform)}.`, "bad");
+        flashAt(tx, ty, `Platform costs $${moneyCostOf(RAIL_COSTS.platform)}`);
       }
       return false;
     }
@@ -3433,7 +3586,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, "Finish the tuning session first");
       return false;
     }
-    if (!spend(p, RAIL_COSTS.platform)) return false;
+    if (!spendBuild(p, RAIL_COSTS.platform)) return false;
     const built = placePlatform(rail, p.id, ownerId, tx, ty, view, anchor);
     layPlatformTrack(grid, track, rail, built);
     const depot = adoptPlatformDepot(built, p);
@@ -3496,14 +3649,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canPay(p.purse, RAIL_COSTS.depot)) {
+    if (!canPayBuild(p, RAIL_COSTS.depot)) {
       if (p.human) {
-        toast(`Not enough materials — a train depot costs ${railCostLabel(RAIL_COSTS.depot)}.`, "bad");
-        flashAt(tx, ty, `Train depot costs ${railCostLabel(RAIL_COSTS.depot)}`);
+        toast(`Not enough money — a train depot costs $${moneyCostOf(RAIL_COSTS.depot)}.`, "bad");
+        flashAt(tx, ty, `Train depot costs $${moneyCostOf(RAIL_COSTS.depot)}`);
       }
       return false;
     }
-    if (!spend(p, RAIL_COSTS.depot)) return false;
+    if (!spendBuild(p, RAIL_COSTS.depot)) return false;
     const built = placeDepot(rail, p.id, ownerId, tx, ty, view);
     if (p.human) sfx.play("build");
     syncWorld();
@@ -3593,14 +3746,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canPay(p.purse, DAM_COST)) {
+    if (!canPayBuild(p, DAM_COST)) {
       if (p.human) {
-        toast(`Not enough materials — a dam costs ${costLabel(DAM_COST)}.`, "bad");
-        flashAt(wx, wy, "Not enough materials");
+        toast(`Not enough money — a dam costs $${moneyCostOf(DAM_COST)}.`, "bad");
+        flashAt(wx, wy, "Not enough money");
       }
       return false;
     }
-    if (!spend(p, DAM_COST)) return false;
+    if (!spendBuild(p, DAM_COST)) return false;
     const dam: Dam = { id: nextDamId++, owner: p.id, ownerId, wx, wy, axis: river.axis, side };
     eco.dams.push(dam);
     if (p.human) sfx.play("build");
@@ -3633,7 +3786,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (gone < 0) return false;
     eco.dams.splice(gone, 1);
     const refund = resaleValue(DAM_COST);
-    if (Object.keys(refund).length) earn(p, refund);
+    // ECON-1 (#421): a demolish refunds MONEY — the build was paid in money.
+    if (Object.keys(refund).length) refundBuild(p, refund);
     if (p.human) sfx.play("demolish");
     syncWorld();
     rescoreNow();
@@ -3642,9 +3796,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function placeInterchange(tx: number, ty: number, p: PlayerState = me): boolean {
-    const plan = buildInterchange(grid, track, p.i + 1, tx, ty, p.purse);
+    const plan = buildInterchange(grid, track, p.i + 1, tx, ty, p.purse, p.money);
     if (plan.why) { if (p.human) toast(plan.why, "bad"); return false; }
-    spend(p, plan.cost); // same synchronous all-or-nothing affordability check
+    chargeBuild(p, plan.cost); // same synchronous all-or-nothing affordability check
     for (const [x, y] of plan.tiles) renderer?.invalidateTile(x, y);
     syncWorld(); rescoreNow();
     if (p.human) { sfx.play("build"); toast("Diamond interchange built.", "good"); }
@@ -3663,10 +3817,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(res.why === "ok" ? "Can't build rail there." : RAIL_REFUSAL_TEXT[res.why as never], "bad");
       return;
     }
-    if (Object.keys(res.cost).length && !spend(p, res.cost)) {
+    if (Object.keys(res.cost).length && !spendBuild(p, res.cost)) {
       // Unreachable in practice (the preview refused unaffordable tiles); the
       // guard is what keeps the invariant true regardless.
-      toast("Not enough materials.", "bad");
+      toast("Not enough money.", "bad");
     }
     if (p.human && res.built.length) sfx.play("place", { step: res.built.length });
     for (const [bx, by] of res.built) {
@@ -3717,15 +3871,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(plan.why ?? "That line cannot run.", "bad");
       return false;
     }
-    if (!canPay(p.purse, RAIL_COSTS.train)) {
+    if (!canPayBuild(p, RAIL_COSTS.train)) {
       // The train is bought with the line: undo the assignment rather than
       // leaving a line with no locomotive on it.
       if (plan.line) rail.lines.splice(rail.lines.indexOf(plan.line), 1);
       if (plan.train) rail.trains.splice(rail.trains.indexOf(plan.train), 1);
-      if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+      if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
       return false;
     }
-    spend(p, RAIL_COSTS.train);
+    spendBuild(p, RAIL_COSTS.train);
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();
@@ -3747,8 +3901,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast("Assign a line first — a train needs somewhere to run.", "bad");
       return false;
     }
-    if (!canPay(p.purse, RAIL_COSTS.train)) {
-      if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+    if (!canPayBuild(p, RAIL_COSTS.train)) {
+      if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
       return false;
     }
     const bought = buyTrain(rail, p.i + 1, depotId, lineId);
@@ -3756,7 +3910,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(bought.why ?? "That train cannot be bought.", "bad");
       return false;
     }
-    spend(p, RAIL_COSTS.train);
+    spendBuild(p, RAIL_COSTS.train);
     if (p.human) sfx.play("build");
     syncWorld();
     if (p.human) {
@@ -3811,7 +3965,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(sale.why ?? "That train cannot be sold.", "bad");
       return false;
     }
-    earn(p, sale.refund);
+    refundBuild(p, sale.refund);   // ECON-1 (#421): a train sells for money
     if (p.human) sfx.play("demolish");
     syncWorld();
     rescoreNow();
@@ -4728,7 +4882,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     // 2026-09: a retune is open any time, and costs half a Depot.
-    if (!spend(me, DEPOT_RETUNE_COST)) {
+    if (!spendBuild(me, DEPOT_RETUNE_COST)) {
       toast(`A retune costs ${costLabel(DEPOT_RETUNE_COST)}.`, "bad");
       return false;
     }
@@ -4748,7 +4902,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (tuning) { toast("Finish the tuning session first.", "bad"); return false; }
     const lvl = d.level ?? 1;
     if (lvl >= DEPOT_LEVELS.max) { toast("That Depot is already at the top level.", "info"); return false; }
-    if (!spend(me, DEPOT_UPGRADE_COST)) {
+    if (!spendBuild(me, DEPOT_UPGRADE_COST)) {
       toast(`A Depot upgrade costs ${costLabel(DEPOT_UPGRADE_COST)}.`, "bad");
       return false;
     }
@@ -4963,7 +5117,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // quote: what the click would buy, not what a rebuilt network would leave
     // it holding.
     const cargo = newLoop ? depotCargo(eco, h) : null;
-    const price = priceDepot(p.purse, p.freeDepots, { cargo, tier: p.depotTier, newLoop });
+    const price = priceDepot(buildPurse(p), p.freeDepots, { cargo, tier: p.depotTier, newLoop });
     if (price.locked && price.type) {
       const need = price.tier + 1;
       toast(
@@ -4979,7 +5133,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, `Needs ${costCompact(price.cost)}`);
       return false;
     }
-    if (!spend(p, price.cost)) return false;      // guard; `price.affordable` holds
+    if (!spendBuild(p, price.cost)) return false; // guard; `price.affordable` holds
     p.freeDepots = price.freeLeft;
     const firstDepot = p.human && !eco.harvesters.some((x) => x.owner === p.id);
     // L4 (#218): under the new loop every Depot is BORN at the default yield
@@ -5044,14 +5198,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canAffordPlant(p.purse)) {
+    if (!canPayBuild(p, PLANT_COST)) {
       if (p.human) {
-        toast(`Not enough materials — a processing plant costs ${plantCostLabel()}.`, "bad");
+        toast(`Not enough money — a processing plant costs $${moneyCostOf(PLANT_COST)}.`, "bad");
         flashAt(tx, ty, `Plant costs ${plantCostLabel()}`);
       }
       return false;
     }
-    if (!spend(p, PLANT_COST)) return false;            // charged exactly once
+    if (!spendBuild(p, PLANT_COST)) return false;            // charged exactly once
     const plant = addPlant(grid, track, eco, p.id, p.i + 1, tx, ty, rot);
     if (!plant) {                                        // unreachable; refund
       earn(p, PLANT_COST);
@@ -5096,10 +5250,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // are charged" are one number. `spend` itself is affordability-guarded,
     // so even a stale preview can never push a purse negative.
     p.freeTrack = Math.max(0, p.freeTrack - pv.free);
-    if (Object.keys(pv.cost).length && !spend(p, pv.cost)) {
+    if (Object.keys(pv.cost).length && !spendBuild(p, pv.cost)) {
       // Unreachable in practice (the preview refused unaffordable tiles);
       // the guard is what makes the invariant hold regardless.
-      toast("Not enough materials.", "bad");
+      toast("Not enough money.", "bad");
     }
     for (const [bx, by] of res.built) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -5162,7 +5316,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // #142: demolition returns floor(50%) of the build price, and the
       // platform's ★ goes with it (`rescoreNow` below revokes it).
       const refund = resaleValue(cost);
-      if (Object.keys(refund).length) earn(p, refund);
+      if (Object.keys(refund).length) refundBuild(p, refund);   // ECON-1: money back
+
       dropPlatformDepot(rs.id);
       if (p.human) sfx.play("demolish");
       // demolishStructure has already dropped any line that lost a platform —
@@ -7321,7 +7476,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * that Ore instead of paving with it.
    */
   const rivalPlantWanted = (): boolean => {
-    if (canAffordPlant(rival.purse)) return false;          // it is buying it this turn
+    if (canPayBuild(rival, PLANT_COST)) return false;          // it is buying it this turn
     if (!chooseAiPlantSpot(grid, track, eco, rival.id)) return false;   // nowhere legal
     return true;
   };
@@ -7368,8 +7523,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (Object.keys(c).length) { anyLow = true; cost = addCost(cost, c); }
         }
         if (!ok || !anyLow) continue;
-        if (!canAfford(rival.purse, addCost(cost, cost))) continue;
-        if (!spend(rival, cost)) continue;
+        if (!canPayBuild(rival, addCost(cost, cost))) continue;
+        if (!spendBuild(rival, cost)) continue;
         // ROADS-3 (#394): a Highway meets roads only through Ramps, so every
         // route tile where one of the rival's other roads branches off becomes
         // a RAMP (it links to the highway either side AND to the branch).
@@ -7401,7 +7556,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // (the player torn up the gravel under it). That ordering is what makes a
     // failed action cost nothing: `spend` is affordability-guarded, so either
     // every tile is paid for or the purse is untouched.
-    if (!spend(rival, plan.cost)) return false;
+    if (!spendBuild(rival, plan.cost)) return false;
     const out = executePaves(eco, plan, rival.i + 1);
     if (!out.built.length) {
       earn(rival, plan.cost);              // nothing was built: nothing is owed
@@ -7509,11 +7664,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const railMove = planRailMove(eco, railState, f, {
       purse: rival.purse, ownerId: rival.i + 1, useRail: true, scope: "line", now,
     });
-    if (!railMove || !canPay(rival.purse, railMove.cost)) return { acted: false, laid: [], platform: false };
+    if (!railMove || !canPayBuild(rival, railMove.cost)) return { acted: false, laid: [], platform: false };
     const res = executeRailMove(eco, railState, railMove, rival.id, rival.i + 1);
     if (!res) return { acted: false, laid: [], platform: false };
-    if (res.refund) earn(rival, res.refund);
-    else if (Object.keys(res.spent).length) spend(rival, res.spent);
+    if (res.refund) refundBuild(rival, res.refund);   // ECON-1: money back
+    else if (Object.keys(res.spent).length) chargeBuild(rival, res.spent);
     if (railMove.kind === "platform") {
       const s = railState.structures[railState.structures.length - 1];
       if (s && s.ownerId === rival.i + 1) adoptPlatformDepot(s, rival);
@@ -7586,7 +7741,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function rivalDamStep(): boolean {
     if (!DAMS_ENABLED || !riversOn || !newLoop) return false;
-    if (!canPay(rival.purse, DAM_COST)) return false;
+    if (!canPayBuild(rival, DAM_COST)) return false;
     const owner = rival.i + 1;
     const sites = damSitesFor(grid);
     if (!sites.length) return false;
@@ -7672,7 +7827,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the rival buys one exactly as the shipped turn does — under the SAME
     // guard, restated in the new loop's terms: a plant may not eat the purse
     // the next Depot's price needs. `treeGoal` is that purse.
-    if (canAffordPlant(rival.purse)) {
+    if (canPayBuild(rival, PLANT_COST)) {
       const covers = (want: Purse): boolean =>
         (Object.entries(want) as [Cargo, number][]).every(
           ([k, v]) => ((rival.purse[k] ?? 0) as number) >= v);
@@ -7711,7 +7866,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!out) return false;
       rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
       rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
-      spend(rival, out.spent);
+      chargeBuild(rival, out.spent);
       for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
       ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
       voiceCue("rival:industry-taken");
@@ -7859,7 +8014,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // paving, the Ore in hand covers its paves — Plant Ore is just also
     // eligible, so one spare Ore and a full purse is a plant.
     let plantNow = false;
-    if (canAffordPlant(rival.purse)) {
+    if (canPayBuild(rival, PLANT_COST)) {
       const target = rivalReserve(f, now);
       const covers = (want: Purse): boolean =>
         (Object.entries(want) as [Cargo, number][]).every(
@@ -7914,7 +8069,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!out) return false;
       rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
       rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
-      spend(rival, out.spent);
+      chargeBuild(rival, out.spent);
       for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
       // AI-03c: expansion is the thing the player keeps asking the feed
       // about — say exactly what appeared (depot + its road).
@@ -7965,7 +8120,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (retry) {
       rival.freeTrack = Math.max(0, rival.freeTrack - retry.free);
       rival.freeDepots = Math.max(0, rival.freeDepots - retry.freeDepots);
-      spend(rival, retry.spent);
+      chargeBuild(rival, retry.spent);
       for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
       // L4 (#218): the retry path raises a Depot too — tune it like any other.
       applyRivalTuning();
@@ -8012,6 +8167,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the same record the allowances do — a guest (or a resync) must price the
     // same next Depot and show the same city as the host.
     depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
+    // ECON-1 (#421): money is host-authoritative like the rest of the economy.
+    money: p.money, marketMs, market: marketToWire(market),
   }));
 
   /**
@@ -8341,6 +8498,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (typeof dt === "number" && Number.isFinite(dt)) p.depotTier = Math.max(0, Math.floor(dt));
     if (typeof tl === "number" && Number.isFinite(tl)) p.townLevel = Math.max(0, Math.floor(tl));
     if (typeof tb === "number" && Number.isFinite(tb)) p.townBonus = Math.max(0, tb);
+    // ECON-1 (#421): the seat's money, and (once, off the host's record) the
+    // market clock and its slippage — the guest prices the same minute.
+    const mv = (wire as { money?: number }).money;
+    if (typeof mv === "number" && Number.isFinite(mv)) p.money = Math.max(0, mv);
+    const mm = (wire as { marketMs?: number }).marketMs;
+    if (typeof mm === "number" && Number.isFinite(mm)) marketMs = Math.max(0, mm);
+    const mw = (wire as { market?: { seed: number } }).market;
+    if (mw) {
+      const next = marketFromWire(mw as never, seed);
+      market.impact = next.impact; market.impactAt = next.impactAt;
+    }
   }
 
   /** GUEST: apply a full state (join or resync). Validated first — a version or
@@ -8567,14 +8735,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             payload.xFirst !== false, undefined, p.freeTrack,
             structureTiles(eco.factories, eco.harvesters, p.i + 1, factoryFp), newLoop,
             // R2 (#266): a deck is never shared, so the rail layer rides along.
-            { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tier);
+            { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tier, p.money);
           if (pv.tiles.length === 0) toast(pv.why ? roadDragRefusalText(pv.why) : "Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind, tier);
         }
       } else if (what === "interchange") {
         const tx = int(payload.tx), ty = int(payload.ty);
         if (tx !== null && ty !== null) {
-          const plan = planInterchange(grid, track, p.i + 1, tx, ty, p.purse);
+          const plan = planInterchange(grid, track, p.i + 1, tx, ty, p.purse, p.money);
           if (plan.why) echoed.push(plan.why); else placeInterchange(tx, ty, p);
         }
       } else if (what === "dam" && DAMS_ENABLED) {
@@ -8591,8 +8759,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const why = "why" in river ? river.why
             : damRefusal(grid, eco.dams, p.i + 1, tx, ty, damSideAtSite(tx, ty, side));
           if (why !== "ok") echoed.push(DAM_REFUSAL_TEXT[why]);
-          else if (!canPay(p.purse, DAM_COST))
-            echoed.push(`Not enough materials — a dam costs ${costLabel(DAM_COST)}.`);
+          else if (!canPayBuild(p, DAM_COST))
+            echoed.push(`Not enough money — a dam costs $${moneyCostOf(DAM_COST)}.`);
           else placeDam(tx, ty, p, side);
         }
       } else if (!railAvailable && (what === "rail" || what === "platform" || what === "raildepot" || what === "railact")) {
@@ -9099,7 +9267,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         tx, ty, valid: ok,
       };
     } else if (tool === "interchange") {
-      const plan = planInterchange(grid, track, me.i + 1, tx, ty, me.purse);
+      const plan = planInterchange(grid, track, me.i + 1, tx, ty, me.purse, me.money);
       for (const [x, y] of plan.tiles.length ? plan.tiles : [[tx, ty, 0]])
         items.push({ sprite: plan.why ? "highlight_bad" : "highlight", tx: x, ty: y });
     } else if (tool === "dam") {
@@ -9320,7 +9488,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         `${vpTxt} · ${owed}`,
       );
     } else if (tool === "interchange" && hover) {
-      const plan = planInterchange(grid, track, me.i + 1, hover.tx, hover.ty, me.purse);
+      const plan = planInterchange(grid, track, me.i + 1, hover.tx, hover.ty, me.purse, me.money);
       costInfo = hintLine(plan.why ? `<i>${plan.why}</i>` : "Diamond interchange · ready",
         `1 overpass + 4 ramps + new road · ${costMarkup(plan.cost)}`);
     } else if (tool === "plant" && hover) {
@@ -9350,7 +9518,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const cargo = newLoop && hover
         ? depotCargo(eco, { id: -1, owner: me.id, ownerId: me.i + 1, tx: hover.tx, ty: hover.ty })
         : null;
-      const price = priceDepot(me.purse, me.freeDepots, { cargo, tier: me.depotTier, newLoop });
+      const price = priceDepot(buildPurse(me), me.freeDepots, { cargo, tier: me.depotTier, newLoop });
       const label = price.type ? price.type.name : "Depot";
       if (price.locked && price.type) {
         costInfo = hintLine(`<i>${label} — rung ${price.tier + 1} locked · ${rungLabel(price.unlocked)}</i>`);
@@ -9586,7 +9754,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         .filter((t) => DEPOT_RUNG_GATE && t.tier > me.depotTier)
         .sort((a, b) => a.tier - b.tier)[0] ?? null;
       const nextPrice = nextType
-        ? priceDepot(me.purse, me.freeDepots, { cargo: nextType.cargo, tier: me.depotTier, newLoop })
+        ? priceDepot(buildPurse(me), me.freeDepots, { cargo: nextType.cargo, tier: me.depotTier, newLoop })
         : null;
       const obj = objectiveLine({
         phase,
@@ -9654,6 +9822,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         vpTip: vpTooltip(p),
       })),
       purse: me.purse,
+      // ECON-1 (#421): money and the exchange. The rows are derived every
+      // paint from the pure price model — no cached prices to go stale, and
+      // the same numbers a sale is charged at.
+      money: me.money,
+      market: marketRows(),
+      marketEvent: eventsAt(seed, marketMs).map((e) => e.label).join(" · ") || null,
       // L16 (#231): the storage cap the resource bar prints its "amount / cap"
       // readout against — derived from the seat's city level, so the bar and
       // the clock can never disagree. Undefined when no cap applies: the
@@ -9846,7 +10020,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
       // R2 (#266): the drag sees the railway, because a deck is never shared —
       // a road may not span water the railway already bridges.
-      { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, kind === "road" ? roadTier : "road");
+      { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, kind === "road" ? roadTier : "road", me.money);
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
       net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst,
@@ -10039,7 +10213,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const previewRoadGesture = (): DragPreview | null => drag ? previewDrag(
     grid, track, tool as TrackKind, me.purse, drag.ax, drag.ay, drag.bx, drag.by, drag.xFirst,
     undefined, me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
-    { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tool === "road" ? roadTier : "road",
+    { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tool === "road" ? roadTier : "road", me.money,
   ) : null;
 
   canvases.overlay.addEventListener("pointerdown", (e) => {
@@ -10850,6 +11024,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // the L1e rule for the allowances, applied to the two numbers the
         // depot tree and the income clock read.
         depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
+        // ECON-1 (#421): the bank balance rides the save with the purse.
+        money: p.money,
       })),
       // live AI clocks START FRESH on load — a few seconds of drift is not
       // worth serialising a timer list for (the games feel identical).
@@ -10948,6 +11124,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (typeof dt === "number" && Number.isFinite(dt)) players[i].depotTier = Math.max(0, Math.floor(dt));
       if (typeof tl === "number" && Number.isFinite(tl)) players[i].townLevel = Math.max(0, Math.floor(tl));
       if (typeof tb === "number" && Number.isFinite(tb)) players[i].townBonus = Math.max(0, tb);
+      // ECON-1 (#421): a pre-money save has no field — the seat keeps its
+      // opening balance rather than restoring as bankrupt.
+      const mv = (d.players[i] as { money?: number }).money;
+      if (typeof mv === "number" && Number.isFinite(mv)) players[i].money = Math.max(0, mv);
     }
     conquest = (d as { conquest?: boolean }).conquest === true || conquest;
     // 2026-09: per-city tiers (older saves migrate lazily from the seat's).
@@ -11788,7 +11968,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         lastRivalMove = t; lastRivalTrade = t; lastConquestCheck = t;
       }
       const sim = reveal.live;
+      // ECON-1 (#421): the MARKET CLOCK. Prices are a function of the map seed
+      // and the milliseconds of PLAY, so it only advances while the sim runs
+      // (a paused game, the loading screen and a battle freeze the market with
+      // everything else) and the host's number rides the wire to the guest.
+      if (sim) {
+        if (marketLast > 0) marketMs += Math.max(0, Math.min(1_000, t - marketLast));
+        marketLast = t;
+        if (!isGuest()) marketEventTick();
+      } else marketLast = t;
       if (sim) economyTick(t);
+      // ECON-1 (#421): the rival works the market on its own clock.
+      if (sim) rivalMarketTick(t);
       // L8 (#222): the optional quests — pay what is done, keep 2–3 on the
       // panel. Runs beside the clock it pays against, and before the paint
       // that reads the view it derives.
@@ -12194,6 +12385,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get rivalSkill() { return skill(); },
     setRivalSkill: (key: SkillKey) => setRivalSkill(key, false),
     get purse() { return me.purse; },
+    /** ECON-1 (#421): the local seat's money — settable so a test can fund builds. */
+    get money() { return me.money; },
+    set money(v: number) { me.money = Math.max(0, v); },
     /**
      * L11 (#226): the bank's click path, exposed so a test can aim the LOCAL
      * seat at a locked rung without going through a select that refuses to
@@ -12209,6 +12403,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * the only thing a test fixture needs to seed, so they hang here.
      */
     get purses() { return players.map((p) => p.purse); },
+    /** ECON-1 (#421): every seat's money, and a setter so a test can fund a seat. */
+    get moneys() { return players.map((p) => p.money); },
+    setSeatMoney: (i: number, v: number) => { const p = players[i]; if (p) p.money = Math.max(0, v); },
     /**
      * #186: the seats, as the game holds them — id, name, whether a person is
      * on it, its purse and its ★. The two-seat purse check ("host and guest
@@ -12224,8 +12421,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // already carry, exposed so a test can read them on BOTH seats (the
         // rival's cap pressure is the L16 acceptance's third line).
         depotTier: p.depotTier, townLevel: p.townLevel, townBonus: p.townBonus,
+        // ECON-1 (#421): money, so a test can read both seats' banks.
+        money: p.money,
         storageCap: storageCapFor(p.townLevel),
       }));
+    },
+    /**
+     * ECON-1 (#421): the market, for tests and the console — the live price of
+     * a good, the clock it is priced at, and a sale on the local seat.
+     */
+    market: {
+      get ms() { return marketMs; },
+      price: (cargo: Cargo) => unitPrice(cargo),
+      advance: (ms: number) => { marketMs = Math.max(0, marketMs + ms); },
+      sell: (cargo: Cargo, n: number) => sellCargo(me, cargo, n),
     },
     /** #186: the rules this match booted with, and whether a machine holds the
      *  opponent seat. Both are boot facts — a test reads them to prove the
@@ -12873,7 +13082,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // `ok` stays a SITE-legality answer (the corridor picker filters on it
       // during setup, when the allowance covers the Depot); affordability is
       // reported alongside, never folded into it.
-      const price = priceDepot(me.purse, me.freeDepots, { cargo, tier: me.depotTier, newLoop });
+      const price = priceDepot(buildPurse(me), me.freeDepots, { cargo, tier: me.depotTier, newLoop });
       return {
         build: { ok: why === null, why },
         harvester: {
@@ -12963,7 +13172,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
         structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
-        { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, kind === "road" ? roadTier : "road");
+        { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, kind === "road" ? roadTier : "road", me.money);
     },
     /**
      * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`

@@ -72,6 +72,7 @@ interface SaveHook {
   harvesters: Harvester[];
   vp: { you: number; ai: number };
   purse: Record<string, number>;
+  money: number;
   finishSetup: () => void;
   placePlatform: (tx: number, ty: number, view?: string, who?: "you" | "ai") => boolean;
   railDrag: (ax: number, ay: number, bx: number, by: number) => { tiles: [number, number][] } | null;
@@ -137,6 +138,7 @@ async function reload(opts: { newLoop?: boolean } = { newLoop: true }): Promise<
  */
 function buildRailway(h: SaveHook): { tx: number; ty: number; diag: [number, number] } {
   for (const k of Object.keys(h.purse)) h.purse[k] = 500;
+  h.money = 1_000_000; // ECON-1 (#421): builds are paid in money
   h.finishSetup();
   const site = findPlatformSite({
     grid: h.grid, state: h.railState, plants: h.factories, ownerId: 1, want: "industry",

@@ -984,6 +984,79 @@ export const BUILD_COSTS: Readonly<Record<
   dam: { wood: 12, stone: 12, ore: 18, oil: 6 },
 };
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// ECON-1 (#421) — MONEY.
+//
+// Resources are what you UPGRADE CITIES with; MONEY ($) is what you BUILD
+// with. The bridge between the two tables is `BASE_PRICE`: the market's
+// starting price for one unit of a good (see src/iso/market.ts, and
+// docs/economy-money.md for the balance pass behind these numbers).
+//
+// Why prices live here and not in market.ts: config.ts is the lowest import
+// layer, so both the market model and the derived cost table below can read
+// them without an import cycle.
+//
+// The numbers are the relative scarcity the old resource costs already
+// implied — grain/wood/stone are the cheap bulk goods, ore is the mid good
+// every paved road wants, oil is the dear one, and gold is the Black
+// Market's currency (never sold on the exchange — see `SELLABLE` in
+// market.ts and the decision note in docs/economy-money.md).
+// ══════════════════════════════════════════════════════════════════════════
+export const BASE_PRICE: Readonly<Record<Cargo, number>> = {
+  grain: 6, wood: 5, stone: 5, ore: 8, oil: 12, gold: 40,
+};
+
+/** What a bag of goods is worth at the STARTING market prices ($, rounded). */
+export const moneyValueOf = (cost: Partial<Record<Cargo, number>>): number => {
+  let total = 0;
+  for (const [k, v] of Object.entries(cost) as [Cargo, number][]) {
+    total += BASE_PRICE[k] * (v ?? 0);
+  }
+  return Math.round(total);
+};
+
+/**
+ * ECON-1: the ONE money price table. Every build in the game is priced here,
+ * derived from `BUILD_COSTS` (the resource table that city upgrades and the
+ * depot rungs still read) × `BASE_PRICE`, so early-game pacing stays close to
+ * what it was before money existed: a seat that could afford a Road then can
+ * afford it now after one modest sale.
+ *
+ * Dirt Road stays FREE. Two per-tile extras that are NOT rows of
+ * `BUILD_COSTS` are priced here too — the paved tiers (`street`, `highway`,
+ * `ramp` from ROAD_TIERS) and the `overpass` deck (`OVERPASS_COST` in
+ * track.ts) — so the rail's hover card, the refusal reason and the rival all
+ * read one number per build key.
+ *
+ * This table is DERIVED, never hand-typed: change a resource price or a base
+ * price and the money price follows. `tests/unit/iso-market.test.ts` pins that
+ * every build key in `BUILD_COSTS` has a row here.
+ */
+export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
+  dirt: 0,
+  road: moneyValueOf(BUILD_COSTS.road),
+  upgrade: moneyValueOf(BUILD_COSTS.upgrade),
+  depot: moneyValueOf(BUILD_COSTS.depot),
+  plant: moneyValueOf(BUILD_COSTS.plant),
+  rail: moneyValueOf(BUILD_COSTS.rail),
+  platform: moneyValueOf(BUILD_COSTS.platform),
+  trainDepot: moneyValueOf(BUILD_COSTS.trainDepot),
+  train: moneyValueOf(BUILD_COSTS.train),
+  bridge: moneyValueOf(BUILD_COSTS.bridge),
+  railBridge: moneyValueOf(BUILD_COSTS.railBridge),
+  // Dams are off (DAMS_ENABLED === false) but the row stays consistent so the
+  // price is right the day they come back.
+  dam: moneyValueOf(BUILD_COSTS.dam),
+  street: moneyValueOf({ wood: 2, stone: 2, ore: 4 }),
+  highway: moneyValueOf({ wood: 4, stone: 10, ore: 24 }),
+  ramp: moneyValueOf({ wood: 3, stone: 6, ore: 10 }),
+  overpass: moneyValueOf({ wood: 6, stone: 12, ore: 8 }),
+};
+
+/** What a seat starts with ($). Buys the opening Depot and a few paved tiles. */
+export const START_MONEY = 300;
+
 // ── VP-01: the victory table ──────────────────────────────────────────────
 /**
  * Victory Points come from exactly TWO sources, and both of them are things a

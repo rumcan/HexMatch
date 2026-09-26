@@ -106,6 +106,8 @@ export interface SaveGamePayload {
   players: {
     purse: Record<string, number>; freeTrack: number; freeDepots: number;
     depotTier?: number; townLevel?: number; townBonus?: number;
+    /** ECON-1 (#421): the seat's money. Absent in a pre-money save. */
+    money?: number;
   }[];
   clearedFields?: number[];
   /** 2026-09: conquest mode — no ★ line, play until a player is bankrupt. */

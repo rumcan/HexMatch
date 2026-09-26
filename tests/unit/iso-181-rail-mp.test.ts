@@ -1,3 +1,4 @@
+import { moneyValueOf } from "../../src/iso/config";
 // @vitest-environment jsdom
 // ══════════════════════════════════════════════════════════════════════════
 // #181 — the railway in a hosted match: authority, and the guest's read of it.
@@ -75,6 +76,8 @@ interface RailHook {
   harvesters: Harvester[];
   purse: Record<string, number>;
   purses: Record<string, number>[];
+  moneys: number[]; money: number;
+  setSeatMoney(i: number, v: number): void;
   vp: { you: number; ai: number };
   placeFactory: (tx: number, ty: number) => boolean;
   placeDepot: (tx: number, ty: number) => boolean;
@@ -333,6 +336,8 @@ async function seatBoth(host: RailHook, guest: RailHook): Promise<void> {
   for (const bag of [host.purses[0], host.purses[1], guest.purse]) {
     bag.wood = RICH; bag.stone = RICH; bag.ore = RICH; bag.oil = RICH;
   }
+  // ECON-1 (#421): builds are paid in money - fund every seat the same way.
+  host.setSeatMoney(0, RICH_MONEY); host.setSeatMoney(1, RICH_MONEY); guest.money = RICH_MONEY;
   guest.demolish(0, 0);   // the host's forced publish carries the purses
   pump();
 }
@@ -340,6 +345,7 @@ async function seatBoth(host: RailHook, guest: RailHook): Promise<void> {
 /** What `seatBoth` hands every seat — enough rail (3 Stone a tile) for the
  *  nearest legal two-stop line plus its platforms, with room to spare. */
 const RICH = 200;
+const RICH_MONEY = 1_000_000;
 const rich = { wood: RICH, stone: RICH, ore: RICH, oil: RICH } as const;
 
 describe("#181 the guest's rail actions are the host's", () => {
@@ -382,8 +388,8 @@ describe("#181 the guest's rail actions are the host's", () => {
     const mine = guest.rail.structures.filter((s) => s.kind === "platform");
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ tx: site!.tx, ty: site!.ty, view: site!.view });
-    expect(host.purses[1].ore).toBe(RICH - (RAIL_COSTS.platform.ore ?? 0));
-    expect(host.purses[0].ore).toBe(RICH);
+    expect(host.moneys[1]).toBe(RICH_MONEY - moneyValueOf(RAIL_COSTS.platform));
+    expect(host.moneys[0]).toBe(RICH_MONEY);
   });
 
   it("lays the guest's drag on the HOST's board only, priced by the host's preview", async () => {
@@ -402,7 +408,7 @@ describe("#181 the guest's rail actions are the host's", () => {
     pump();
     expect(host.rail.structures).toHaveLength(2);
 
-    const stones = host.purses[1].stone;
+    const cash = host.moneys[1];
     const tilesBefore = guest.rail.tiles;
     const wireBefore = guestEnd.sent.length;
     const pv = guest.railDrag(line!.drag[0], line!.drag[1], line!.drag[2], line!.drag[3]);
@@ -421,11 +427,11 @@ describe("#181 the guest's rail actions are the host's", () => {
     pump();
     // The host laid it for the guest's seat, at the preview's price…
     expect(ownerRailTilesOf(host.railState, 2).length).toBeGreaterThan(tilesBefore);
-    expect(host.purses[1].stone).toBe(stones - (pv!.cost.stone ?? 0));
+    expect(host.moneys[1]).toBe(cash - moneyValueOf(pv!.cost));
     // …and the guest renders exactly the host's tiles as its own.
     expect(guest.rail.tiles).toBe(ownerRailTilesOf(host.railState, 2).length);
     // The host's own seat paid nothing and owns nothing.
-    expect(host.purses[0].stone).toBe(RICH);
+    expect(host.moneys[0]).toBe(RICH_MONEY);
     expect(ownerRailTilesOf(host.railState, 1).length).toBe(0);
   });
 
@@ -438,7 +444,7 @@ describe("#181 the guest's rail actions are the host's", () => {
     guest.placePlatform(site.tx, site.ty, site.view);
     pump();
     expect(host.rail.structures).toHaveLength(1);
-    const before = host.purses[1].wood;
+    const before = host.moneys[1];
     const wireBefore = guestEnd.sent.length;
     guest.demolish(site.tx, site.ty);
     expect(guestEnd.sent.slice(wireBefore)).toHaveLength(1);
@@ -447,7 +453,7 @@ describe("#181 the guest's rail actions are the host's", () => {
     pump();
     expect(host.rail.structures).toHaveLength(0);
     expect(guest.rail.structures).toHaveLength(0);
-    expect(host.purses[1].wood).toBeGreaterThan(before);   // the 50% refund
+    expect(host.moneys[1]).toBeGreaterThan(before);   // the 50% refund, in money
   });
 });
 
