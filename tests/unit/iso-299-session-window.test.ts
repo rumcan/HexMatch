@@ -193,6 +193,14 @@ describe("#299 the session window on the new loop", () => {
     // The lot one row under the industry is where the L4 file places its Depot.
     expect(h.placeDepot(site!.hx, site!.hy - 1)).toBe(true);
     await settle();
+    // #461: a target card may be up before the session — start it if so.
+    const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+    if (tc && !tc.classList.contains("hidden")) {
+      const startBtn = tc.querySelector(".tc-start") as HTMLButtonElement;
+      expect(startBtn, "target card Start exists").toBeTruthy();
+      startBtn.click();
+      await settle();
+    }
     // The session opened (L4's rule) — and with it, the WINDOW: plant panel,
     // plate and board are all inside it, over the map.
     expect(h.tuning, "the tuning session is live").toBeTruthy();

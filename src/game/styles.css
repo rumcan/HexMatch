@@ -1275,6 +1275,83 @@ html, body, #root {
   .sr-star, .sr-row-gold { transition: none; }
 }
 
+
+/* #461 TUNE-1 — target card and live yield meter */
+.target-card {
+  position: absolute; inset: 0; z-index: 4;
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px;
+  background: rgba(1, 4, 5, 0.7);
+  animation: sr-in .18s ease-out both;
+}
+.target-card.hidden { display: none !important; }
+.tc-card {
+  display: flex; flex-direction: column; gap: 8px;
+  width: min(380px, 100%); max-height: 100%; overflow: auto;
+  padding: 20px 22px 16px;
+  text-align: left;
+  background: #101618;
+  border: 1px solid var(--brass);
+}
+.tc-kicker {
+  font-family: var(--serif); font-size: 11px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--txt-dim);
+}
+.tc-head {
+  margin: 0; font-family: var(--display); font-size: 20px; letter-spacing: 1px;
+  color: var(--gold2);
+}
+.tc-rows { display: grid; gap: 4px; margin: 4px 0; }
+.tc-row {
+  font-family: var(--mono); font-size: 12px; line-height: 1.35;
+  color: var(--txt-dim);
+}
+.tc-row.tc-target { color: var(--txt); font-weight: 600; }
+.tc-actions { display: flex; gap: 10px; margin-top: 8px; }
+.tc-start {
+  padding: 8px 20px;
+  font-family: var(--display); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: #0c1213; background: var(--gold2);
+  border: 1px solid var(--gold-d); cursor: pointer;
+}
+.tc-start:hover { filter: brightness(1.08); }
+.tc-skip {
+  padding: 8px 16px;
+  font-family: var(--serif); font-size: 11px; letter-spacing: .8px; text-transform: uppercase;
+  color: var(--txt-mute); background: rgba(255,255,255,.04);
+  border: 1px solid var(--line); cursor: pointer;
+}
+.tc-skip:hover { color: var(--txt); border-color: var(--brass-lo); }
+.tc-opt {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  font-family: var(--mono); font-size: 11px; color: var(--txt-mute); cursor: pointer;
+}
+.tp-meter {
+  display: flex; align-items: center; gap: 6px;
+  flex: 1 1 120px; min-width: 80px;
+}
+.tp-meter-bar {
+  flex: 1 1 auto; height: 8px; min-width: 60px;
+  background: rgba(0,0,0,.35); border: 1px solid var(--line);
+  overflow: hidden;
+}
+.tp-meter-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--brass), var(--gold2));
+  transition: width .3s ease-out;
+}
+.tp-meter-label {
+  font-family: var(--mono); font-size: 10px; color: var(--txt-dim);
+  white-space: nowrap; min-width: 3ch;
+}
+@media (prefers-reduced-motion: reduce) {
+  .target-card { animation: none; }
+  .tp-meter-fill { transition: none; }
+}
+
+/* the rail's plant card: the plate's idle half between sessions — the one
+   line saying how to open a session, the difficulty's re-match key and the
+   city key. It is only built on the new loop. */
 /* the rail's plant card: the plate's idle half between sessions — the one
    line saying how to open a session, the difficulty's re-match key and the
    city key. It is only built on the new loop. */
