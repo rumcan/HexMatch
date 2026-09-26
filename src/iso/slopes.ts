@@ -273,12 +273,14 @@ export function climbTiles(grid: Grid, route: readonly TilePair[]): number {
 
 /** D1 keeps the historic one-tile origin allowance. With diagonals enabled,
  * each subsequent step contributes its geometric length (including a two-tile
- * overpass jump). OFF keeps the exact legacy count, including rail callers. */
+ * overpass jump). #420: axis overpass jumps always count their full span;
+ * flag-OFF diagonal/rail steps retain their previous distance contract. */
 export function routeTileLength(route: readonly TilePair[], diagonalRoads = false): number {
-  if (!diagonalRoads || route.length === 0) return route.length;
+  if (route.length === 0) return 0;
   let length = 1;
   for (let i = 1; i < route.length; i++) {
-    length += Math.hypot(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]);
+    const dx = route[i][0] - route[i - 1][0], dy = route[i][1] - route[i - 1][1];
+    length += diagonalRoads ? Math.hypot(dx, dy) : dx === 0 || dy === 0 ? Math.abs(dx) + Math.abs(dy) : 1;
   }
   return length;
 }

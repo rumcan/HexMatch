@@ -63,7 +63,7 @@ export function roadPath(
     // ROADS-3 (#394): straight over an overpass (no turn onto the highway).
     if (track.tier) {
       for (const d of DIRS) {
-        const j = overpassJump(track, x, y, d);
+        const j = overpassJump(track, x, y, d, owner);
         if (!j) continue;
         const ji = tIdx(j[0], j[1]);
         if (parent.has(ji) || !trackOpenTo(track, owner, j[0], j[1])) continue;
@@ -149,7 +149,7 @@ function diagonalRoadPath(
     }
     for (const [nx, ny] of roadDiagNeighbours(track, x, y, kind)) visit(nx, ny, Math.SQRT2);
     for (const d of DIRS) {
-      const jump = overpassJump(track, x, y, d);
+      const jump = overpassJump(track, x, y, d, owner);
       if (jump) visit(jump[0], jump[1], 2);
     }
   }

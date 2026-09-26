@@ -327,7 +327,7 @@ export function buildComponents(track: Track, owner: number): Components {
       // tiles either side are one component, the highway below is not.
       if (track.tier) {
         for (const d of DIRS) {
-          const j = overpassJump(track, x, y, d);
+          const j = overpassJump(track, x, y, d, owner);
           if (!j) continue;
           const ji = tIdx(j[0], j[1]);
           if (comp[ji] !== -1 || !usable(ji)) continue;
