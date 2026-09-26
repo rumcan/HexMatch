@@ -2,7 +2,7 @@
 // ROADS (vector) — pure ground-plane geometry.
 //
 // This module knows nothing about canvases, textures, caches or the camera.
-// It turns a tile's 4-bit connection mask into paths in the LOGICAL GROUND
+// It turns a tile's axis mask and resolved diagonal legs into paths in the LOGICAL GROUND
 // PLANE, where every tile is a unit square: tile (tx,ty) owns
 // [tx,tx+1] × [ty,ty+1]. The renderer projects with the game's one transform,
 //
@@ -21,7 +21,7 @@
 //
 // THE PORT CONTRACT. Two adjacent tiles must compute the SAME point for the
 // edge they share, exactly, or their arms leave a hairline at the tile
-// boundary. Ports are defined at edge midpoints, and each direction's port is
+// boundary. Axis ports are edge midpoints; diagonal ports are corners. Each port is
 // algebraically identical to the neighbour's opposite port:
 //
 //     (tx,ty) NE = (tx+0.5, ty)      == (tx,ty-1) SW = (tx+0.5, ty-1+1)
@@ -29,7 +29,7 @@
 //
 // `sharedPortsAgree` in the unit tests pins this down for every direction.
 // ══════════════════════════════════════════════════════════════════════════
-import { NE, SE, SW, NW, DIRS, DIR, OPPOSITE, type Dir } from "./track";
+import { NE, SE, SW, NW, DIRS, DIR, OPPOSITE, DIAGONAL_DIRS, type Dir } from "./track";
 
 /** A point in the ground plane, in tile units. */
 export type GroundPoint = readonly [number, number];
@@ -39,15 +39,15 @@ export const ROAD_DIRS = DIRS;
 
 /**
  * Port offsets from a tile's origin, in tile units. The midpoint of the edge
- * the direction leads through — NOT a diamond corner. Connecting corners is
- * the classic mistake here: it produces roads that meet at the points where
- * four tiles touch instead of across the edges they actually share.
+ * the direction leads through for axis arms; the shared corner for explicit
+ * diagonals. Never infer a corner link from two merely occupied neighbours.
  */
 export const PORT_OFFSET: Record<number, GroundPoint> = {
   [NE]: [0.5, 0],
   [SE]: [1, 0.5],
   [SW]: [0.5, 1],
   [NW]: [0, 0.5],
+  ...Object.fromEntries(DIAGONAL_DIRS.map((d) => [d, [0.5 + DIR[d][0] / 2, 0.5 + DIR[d][1] / 2]])),
 };
 
 /** The centre of tile (tx,ty) in the ground plane. */
@@ -55,11 +55,11 @@ export const tileCentre = (tx: number, ty: number): GroundPoint =>
   [tx + 0.5, ty + 0.5];
 
 /** The point where tile (tx,ty)'s road crosses its `dir` edge. */
-export const portPoint = (tx: number, ty: number, dir: Dir): GroundPoint =>
+export const portPoint = (tx: number, ty: number, dir: number): GroundPoint =>
   [tx + PORT_OFFSET[dir][0], ty + PORT_OFFSET[dir][1]];
 
 /** The neighbour tile in `dir`. */
-export const neighbourOf = (tx: number, ty: number, dir: Dir): [number, number] =>
+export const neighbourOf = (tx: number, ty: number, dir: number): [number, number] =>
   [tx + DIR[dir][0], ty + DIR[dir][1]];
 
 /** The connection bits of a track byte — the low nibble. */
@@ -73,6 +73,13 @@ export function dirsOf(mask: number): Dir[] {
   const out: Dir[] = [];
   for (const d of ROAD_DIRS) if (mask & d) out.push(d);
   return out;
+}
+
+/** D3: axis nibble plus RESOLVED logical diagonal directions. A raw tile's
+ * stored 32/64 bits are not enough: incoming legs live on western neighbours.
+ * Keep them separate from the PRESENT byte, as railRuns does for rail. */
+export function roadDirections(mask: number, diagonal = 0): number[] {
+  return [...dirsOf(mask), ...DIAGONAL_DIRS.filter((d) => (diagonal & d) !== 0)];
 }
 
 /**
@@ -102,19 +109,19 @@ export interface RoadFigure {
  * that keeps them on the road. A sweeping corner cut inside the centre would
  * be prettier and would put traffic on the grass.
  */
-export function roadFigures(tx: number, ty: number, mask: number): RoadFigure[] {
+export function roadFigures(tx: number, ty: number, mask: number, diagonal = 0): RoadFigure[] {
   const centre = tileCentre(tx, ty);
-  const dirs = dirsOf(mask);
+  const dirs = roadDirections(mask, diagonal);
   if (dirs.length === 0) return [{ points: [centre] }];
 
   const out: RoadFigure[] = [];
-  const left = new Set<Dir>(dirs);
+  const left = new Set<number>(dirs);
   while (left.size) {
     const a = [...left][0];
     left.delete(a);
     // Prefer the straight-through partner, so a crossroads reads as two roads
     // crossing instead of four arms abutting.
-    const opp = OPPOSITE[a] as Dir;
+    const opp = OPPOSITE[a];
     const b = left.has(opp) ? opp : [...left][0];
     if (b === undefined) {
       out.push({ points: [centre, portPoint(tx, ty, a)] });
@@ -145,7 +152,7 @@ export type RoadMaterial = "dirt" | "paved";
  * would open a window onto the grass along the join.
  */
 export interface RoadTransition {
-  dir: Dir;
+  dir: number;
   from: GroundPoint;
   to: GroundPoint;
 }
@@ -169,6 +176,8 @@ export interface RoadTile {
   deck?: boolean;
   material: RoadMaterial;
   mask: number;
+  /** Resolved logical directions, never a raw stored road byte. */
+  diagonal?: number;
   figures: RoadFigure[];
   transitions: RoadTransition[];
   /**
@@ -203,19 +212,20 @@ export function roadTile(
    * always got.
    */
   town = false,
+  diagonal = 0,
 ): RoadTile {
   const mask = maskOf(cell);
-  const figures = roadFigures(tx, ty, mask);
+  const figures = roadFigures(tx, ty, mask, diagonal);
   const transitions: RoadTransition[] = [];
   if (material === "dirt") {
     const centre = tileCentre(tx, ty);
-    for (const dir of dirsOf(mask)) {
+    for (const dir of roadDirections(mask, diagonal)) {
       const [nx, ny] = neighbourOf(tx, ty, dir);
       if (!pavedAt(nx, ny)) continue;
       const port = portPoint(tx, ty, dir);
-      // Inward along the arm, toward the centre. The arm is half a tile long,
+      // Inward along the arm, toward the centre. Axis arms are 0.5 long, diagonal arms √0.5,
       // so the blend cannot reach the junction at the default width.
-      const t = TRANSITION_BLEND / 0.5;
+      const t = TRANSITION_BLEND / Math.hypot(port[0] - centre[0], port[1] - centre[1]);
       transitions.push({
         dir,
         from: port,
@@ -223,7 +233,7 @@ export function roadTile(
       });
     }
   }
-  return { tx, ty, material, mask, figures, transitions, sidewalk: town && material === "paved" };
+  return { tx, ty, material, mask, ...(diagonal ? { diagonal } : {}), figures, transitions, sidewalk: town && material === "paved" };
 }
 
 // ── centre-lines for paint ──────────────────────────────────────────────────
@@ -238,8 +248,8 @@ export function roadTile(
  * one connection or none carries no paint at all: there is no through-route
  * to mark.
  */
-export function paintFigures(tx: number, ty: number, mask: number): RoadFigure[] {
-  const dirs = dirsOf(mask);
+export function paintFigures(tx: number, ty: number, mask: number, diagonal = 0): RoadFigure[] {
+  const dirs = roadDirections(mask, diagonal);
   if (dirs.length < 2) return [];
   const centre = tileCentre(tx, ty);
   const junction = dirs.length >= 3;
@@ -248,7 +258,7 @@ export function paintFigures(tx: number, ty: number, mask: number): RoadFigure[]
   const out: RoadFigure[] = [];
   const toward = (port: GroundPoint, by: number): GroundPoint => {
     if (by === 0) return centre;
-    const t = by / 0.5;                     // the arm is half a tile long
+    const t = by / Math.hypot(port[0] - centre[0], port[1] - centre[1]);
     return [centre[0] + (port[0] - centre[0]) * t, centre[1] + (port[1] - centre[1]) * t];
   };
 
@@ -291,6 +301,17 @@ export const ROAD_WIDTH: Record<RoadMaterial, number> = {
   paved: 0.78,
 };
 
+/** Single width contract for bounds, sidewalks and every raster pass. */
+export const roadWidth = (tile: RoadTile): number =>
+  tile.material !== "paved" ? ROAD_WIDTH[tile.material]
+    : tile.deck ? ROAD_WIDTH.paved
+      : (tile.tier === 2 || tile.tier === 4 || tile.tier === 5) ? ROAD_WIDTH.paved * 1.6
+        : tile.tier === 3 ? ROAD_WIDTH.paved * 1.2
+          : tile.tier === 1 ? ROAD_WIDTH.paved * 0.8 : ROAD_WIDTH.paved;
+
+export const sidewalkOffset = (tile: RoadTile): number =>
+  roadWidth(tile) / 2 + SHOULDER_WIDTH + SIDEWALK_WIDTH / 2;
+
 /**
  * Extra width of the soft shoulder drawn under the core, per side, in tile
  * units.
@@ -311,11 +332,11 @@ export const SHOULDER_WIDTH = 0.03;
 export function figureBounds(tile: RoadTile): {
   u0: number; v0: number; u1: number; v1: number;
 } {
-  const road = ROAD_WIDTH[tile.material] / 2 + SHOULDER_WIDTH;
+  const road = roadWidth(tile) / 2 + SHOULDER_WIDTH;
   // A town street's sidewalk reaches further out than its shoulder does, and
   // the bounds are what tells a cache which tiles to look at, so the wider of
   // the two is the honest number.
-  const pad = tile.sidewalk ? Math.max(road, SIDEWALK_OFFSET + SIDEWALK_WIDTH / 2) : road;
+  const pad = tile.sidewalk ? Math.max(road, sidewalkOffset(tile) + SIDEWALK_WIDTH / 2) : road;
   let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
   for (const f of tile.figures) {
     for (const [u, v] of f.points) {
@@ -556,7 +577,8 @@ function arcFigure(centre: GroundPoint, sx: number, sy: number): RoadFigure {
  * centre-lines: ports are where the neighbour's ribbon continues this one, and
  * the centre-lines are where the junction's own asphalt will cover it.
  */
-export function sidewalkPaths(tx: number, ty: number, mask: number): RoadFigure[] {
+export function sidewalkPaths(tx: number, ty: number, mask: number, diagonal = 0, offset = SIDEWALK_OFFSET): RoadFigure[] {
+  if (diagonal || offset !== SIDEWALK_OFFSET) return angledSidewalks(tx, ty, mask, diagonal, offset);
   const centre = tileCentre(tx, ty);
   const out: RoadFigure[] = [];
   for (const d of dirsOf(mask)) {
@@ -580,6 +602,62 @@ export function sidewalkPaths(tx: number, ty: number, mask: number): RoadFigure[
   return out;
 }
 
+/** Directions sorted around the centre, shared by ribbons and corner lamps. */
+function angularArms(mask: number, diagonal: number) {
+  return roadDirections(mask, diagonal).map((d) => {
+    const [dx, dy] = DIR[d], length = Math.hypot(dx, dy);
+    return { d, u: dx / length, v: dy / length, length: length / 2, angle: Math.atan2(dy, dx) };
+  }).sort((a, b) => a.angle - b.angle);
+}
+
+function angledSidewalks(tx: number, ty: number, mask: number, diagonal: number, offset: number): RoadFigure[] {
+  const c = tileCentre(tx, ty), arms = angularArms(mask, diagonal), out: RoadFigure[] = [];
+  for (const arm of arms) {
+    const port = portPoint(tx, ty, arm.d);
+    for (const side of [-1, 1]) {
+      const du = -arm.v * side * offset, dv = arm.u * side * offset;
+      out.push({ points: [[c[0] + du, c[1] + dv], [port[0] + du, port[1] + dv]] });
+    }
+  }
+  // Outside a bend (or the cap of a dead end), join the tangent ribbons by
+  // an arc. Inside junctions the other arms' opaque cores trim the ribbons,
+  // just as in the original four-direction sidewalk pass.
+  for (let i = 0; i < arms.length; i++) {
+    const a = arms[i].angle, b = arms[(i + 1) % arms.length].angle + (i === arms.length - 1 ? 2 * Math.PI : 0);
+    if (b - a <= Math.PI + 1e-9) continue;
+    const start = a + Math.PI / 2, end = b - Math.PI / 2;
+    const steps = Math.ceil((end - start) / (Math.PI / 2) * SIDEWALK_ARC_SEGMENTS);
+    const points: GroundPoint[] = [];
+    for (let k = 0; k <= steps; k++) {
+      const angle = start + (end - start) * k / steps;
+      points.push([c[0] + offset * Math.cos(angle), c[1] + offset * Math.sin(angle)]);
+    }
+    out.push({ points });
+  }
+  return out;
+}
+
+function angledLampSpots(tx: number, ty: number, mask: number, diagonal: number, offset: number): GroundPoint[] {
+  const c = tileCentre(tx, ty), arms = angularArms(mask, diagonal), out: GroundPoint[] = [];
+  if (!arms.length || (arms.length === 2 && OPPOSITE[arms[0].d] === arms[1].d)) return out;
+  for (let i = 0; i < arms.length; i++) {
+    const a = arms[i], b = arms[(i + 1) % arms.length];
+    const gap = b.angle - a.angle + (i === arms.length - 1 ? 2 * Math.PI : 0);
+    if (gap <= 1e-9) continue;
+    // Bends light their OUTSIDE arc only. At a junction the lamp sits on the
+    // intersection of the two flank ribbons, never at an arbitrary radius
+    // inside the asphalt. Acute mouths may have no room for furniture.
+    if (arms.length === 2 && gap <= Math.PI) continue;
+    const radius = gap >= Math.PI ? offset : offset / Math.sin(gap / 2);
+    if (gap < Math.PI && offset / Math.tan(gap / 2) > Math.min(a.length, b.length)) continue;
+    const angle = a.angle + gap / 2;
+    out.push([c[0] + radius * Math.cos(angle), c[1] + radius * Math.sin(angle)]);
+  }
+  if (out.length <= 2) return out;
+  const phase = (tx + ty) & 1;
+  return out.filter((_, i) => (i & 1) === phase).slice(0, 2);
+}
+
 /**
  * The transverse joints along one ribbon: the dark concrete-slab dividers.
  *
@@ -599,6 +677,19 @@ export function sidewalkJoints(path: RoadFigure): RoadFigure[] {
   if (pts.length < 2) return out;
   const half = (SIDEWALK_WIDTH - SIDEWALK_JOINT_INSET * 2) / 2;
 
+  if (pts.length === 2 && Math.abs(pts[1][0] - pts[0][0]) > 1e-9 && Math.abs(pts[1][1] - pts[0][1]) > 1e-9) {
+    const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1], len = Math.hypot(dx, dy);
+    const sign = dx < 0 ? -1 : 1, ux = dx / len * sign, uy = dy / len * sign;
+    const a = pts[0][0] * ux + pts[0][1] * uy, b = pts[1][0] * ux + pts[1][1] * uy;
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    const first = Math.ceil((lo + SIDEWALK_JOINT_MARGIN - SIDEWALK_JOINT_PHASE) / SIDEWALK_JOINT_SPACING)
+      * SIDEWALK_JOINT_SPACING + SIDEWALK_JOINT_PHASE;
+    for (let t = first; t < hi - SIDEWALK_JOINT_MARGIN; t += SIDEWALK_JOINT_SPACING) {
+      const x = pts[0][0] + (t - a) * ux, y = pts[0][1] + (t - a) * uy;
+      out.push({ points: [[x - uy * half, y + ux * half], [x + uy * half, y - ux * half]] });
+    }
+    return out;
+  }
   if (pts.length === 2) {
     const axis = Math.abs(pts[1][0] - pts[0][0]) > 1e-9 ? 0 : 1;
     const across = 1 - axis;
@@ -662,7 +753,8 @@ export function sidewalkJoints(path: RoadFigure): RoadFigure[] {
  * centre-line, or from the tile centre for an arc), so a lamp can never end up
  * standing in the carriageway or on the grass.
  */
-export function streetLampSpots(tx: number, ty: number, mask: number): GroundPoint[] {
+export function streetLampSpots(tx: number, ty: number, mask: number, diagonal = 0, offset = SIDEWALK_OFFSET): GroundPoint[] {
+  if (diagonal || offset !== SIDEWALK_OFFSET) return angledLampSpots(tx, ty, mask, diagonal, offset);
   const dirs = dirsOf(mask);
   const centre = tileCentre(tx, ty);
   const out: GroundPoint[] = [];
@@ -679,9 +771,9 @@ export function streetLampSpots(tx: number, ty: number, mask: number): GroundPoi
   // so the two on one diagonal are lit and the diagonal alternates with the
   // tile's parity — a street of crossroads then alternates rather than
   // stamping the same fixture over and over.
-  const diagonal = ((tx + ty) & 1) === 0 ? -1 : 1;   // the sx·sy of the lit pair
+  const litDiagonal = ((tx + ty) & 1) === 0 ? -1 : 1;   // the sx·sy of the lit pair
   for (const [sx, sy] of outerCornerQuadrants(mask)) {
-    if (dirs.length === 4 && sx * sy !== diagonal) continue;
+    if (dirs.length === 4 && sx * sy !== litDiagonal) continue;
     // A bend's corner is an ARC, and the lamp stands at 45° round it.
     const on = dirs.length === 2 && (mask & OPPOSITE[dirs[0]]) === 0 ? 1 / Math.SQRT2 : 1;
     out.push([
@@ -737,4 +829,52 @@ export function townGroundQuad(
   const u0 = tx - over(tx - 1, ty), u1 = tx + 1 + over(tx + 1, ty);
   const v0 = ty - over(tx, ty - 1), v1 = ty + 1 + over(tx, ty + 1);
   return [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+}
+
+/** Join exact shared endpoints into continuous runs in O(points + figures).
+ * Stops at branches, visits every edge once, and handles closed loops. Only
+ * invoked when baking a chunk: no geometry or graph traversal on cache hits. */
+export function continuousRoadFigures(figures: readonly RoadFigure[]): RoadFigure[] {
+  const edges = figures.filter((f) => f.points.length > 1);
+  const nodes = new Map<string, number[]>();
+  const key = (p: GroundPoint) => `${p[0]},${p[1]}`;
+  const ends = edges.map((f, i) => {
+    const pair = [key(f.points[0]), key(f.points[f.points.length - 1])];
+    for (const k of pair) { const list = nodes.get(k) ?? []; list.push(i); nodes.set(k, list); }
+    return pair;
+  });
+  const seen = new Set<number>(), out = figures.filter((f) => f.points.length === 1);
+  const walk = (first: number, start: string) => {
+    const points: GroundPoint[] = [];
+    let edge = first, at = start;
+    while (!seen.has(edge)) {
+      seen.add(edge);
+      const forward = ends[edge][0] === at;
+      const leg = forward ? edges[edge].points : [...edges[edge].points].reverse();
+      points.push(...(points.length ? leg.slice(1) : leg));
+      at = ends[edge][forward ? 1 : 0];
+      const neighbours = nodes.get(at)!;
+      if (neighbours.length !== 2) break;
+      const next = neighbours.find((e) => !seen.has(e));
+      if (next === undefined) break;
+      edge = next;
+    }
+    out.push({ points });
+  };
+  for (const [k, es] of nodes) if (es.length !== 2) for (const e of es) if (!seen.has(e)) walk(e, k);
+  for (let e = 0; e < edges.length; e++) if (!seen.has(e)) walk(e, ends[e][0]);
+  return out;
+}
+
+/** #420 item 3: solid dividers are runs, not one stroke per highway tile.
+ * Overpass highway lanes participate; crossing decks and ramps do not. */
+export function highwayDividerFigures(tiles: readonly RoadTile[]): RoadFigure[] {
+  const figures: RoadFigure[] = [];
+  for (const t of tiles) {
+    if (t.deck || t.material !== "paved" || ![2, 4, 5].includes(t.tier ?? 0)) continue;
+    const dirs = roadDirections(t.mask, t.diagonal);
+    if (dirs.length === 1) figures.push({ points: [tileCentre(t.tx, t.ty), portPoint(t.tx, t.ty, dirs[0])] });
+    else figures.push(...paintFigures(t.tx, t.ty, t.mask, t.diagonal));
+  }
+  return continuousRoadFigures(figures);
 }
