@@ -29,37 +29,7 @@
 //
 // `sharedPortsAgree` in the unit tests pins this down for every direction.
 // ══════════════════════════════════════════════════════════════════════════
-// TYPE-ONLY import from track.ts, deliberately.
-//
-// A value import here is a circular one: `track.ts` imports CHUNK/chunksX from
-// `renderer.ts`, `renderer.ts` reaches this module through `road-renderer.ts`,
-// and the cycle closes. Under ESM the cycle resolves by evaluating this module
-// first, so every top-level use of an imported binding — `ROAD_DIRS = DIRS`,
-// the computed keys in `PORT_OFFSET` — reads it inside its temporal dead zone
-// and throws `Cannot access 'DIRS' before initialization`. That does not fail
-// gracefully: the whole module graph fails to load, so the app never boots and
-// everything hanging off it (the UI sound layer included) is simply absent.
-//
-// A type import is erased, so it creates no runtime edge. The four direction
-// values are re-declared below instead, and pinned against track.ts by
-// `tests/unit/iso-road-geometry.test.ts` so they cannot drift.
-import type { Dir } from "./track";
-
-/**
- * The direction bits, re-declared. These MUST equal track.ts's NE/SE/SW/NW —
- * the unit tests assert it tile for tile.
- */
-const NE = 1, SE = 2, SW = 4, NW = 8;
-const DIRS: readonly Dir[] = [NE, SE, SW, NW];
-const DIR: Record<number, [number, number]> = {
-  [NE]: [0, -1],
-  [SE]: [1, 0],
-  [SW]: [0, 1],
-  [NW]: [-1, 0],
-};
-const OPPOSITE: Record<number, number> = {
-  [NE]: SW, [SE]: NW, [SW]: NE, [NW]: SE,
-};
+import { NE, SE, SW, NW, DIRS, DIR, OPPOSITE, type Dir } from "./track";
 
 /** A point in the ground plane, in tile units. */
 export type GroundPoint = readonly [number, number];
