@@ -42,7 +42,7 @@ export const CLOUD_VARIANTS = 4;
 /** The veil's alpha at the furthest zoom (the ticket wants about 0.25–0.45). */
 export const CLOUD_ALPHA_MAX = 0.36;
 /** The ground shadows stay a whisper — barely-there darkening. */
-export const CLOUD_SHADOW_ALPHA = 0.32;
+export const CLOUD_SHADOW_ALPHA = 0.16;
 /** Wind speed in world pixels per second: slow drift, ~10 min to cross. */
 export const CLOUD_WIND_MIN = 2;
 export const CLOUD_WIND_MAX = 4;
@@ -323,6 +323,8 @@ export function paintCloudLayer(
   timeMs: number,
   scratch: Float32Array,
   shadow: boolean,
+  /** Paint at this alpha instead (the renderer's flat shadow buffer uses 1). */
+  alphaOverride?: number,
 ): number {
   if (!sprites || !(fade > 0)) return 0;
   const set = shadow ? sprites.shadows : sprites.clouds;
@@ -330,7 +332,7 @@ export function paintCloudLayer(
   writeCloudPositions(field, timeMs, scratch);
   const z = cam.zoom;
   const aspect = CLOUD_SPRITE_H / CLOUD_SPRITE_W;
-  const alpha = fade * (shadow ? CLOUD_SHADOW_ALPHA : CLOUD_ALPHA_MAX);
+  const alpha = alphaOverride ?? fade * (shadow ? CLOUD_SHADOW_ALPHA : CLOUD_ALPHA_MAX);
   const n = field.clouds.length;
   let blits = 0;
   ctx.globalAlpha = alpha;

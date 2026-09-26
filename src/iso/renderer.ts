@@ -66,7 +66,7 @@ import {
   type GhostSpec, type OverlayStats,
 } from "./overlay-art";
 import {
-  CLOUD_COUNT, cloudAlphaForZoom, cloudShadowAlphaForZoom, createCloudField, makeCloudSprites, paintCloudLayer,
+  CLOUD_COUNT, CLOUD_SHADOW_ALPHA, cloudAlphaForZoom, cloudShadowAlphaForZoom, createCloudField, makeCloudSprites, paintCloudLayer,
   type CloudField, type CloudSprites,
 } from "./clouds";
 
@@ -1003,10 +1003,46 @@ export class IsoRenderer {
     if (!this.cloudsOn) { this.cloudShadowBlits = 0; return; }
     const fade = cloudShadowAlphaForZoom(this.cam.zoom);
     if (!(fade > 0)) { this.cloudShadowBlits = 0; return; }
+    const t = this.cloudMotion ? timeMs : 0;
+    // Owner: ONE flat transparency - overlapping shadows must not add up.
+    // Paint every shadow opaque into a scratch buffer, then lay the buffer
+    // on the ground once at the shadow alpha. Falls back to direct blits
+    // where no 2D scratch canvas exists (the node test harness).
+    const buf = this.shadowBuffer();
+    if (!buf) {
+      this.cloudShadowBlits = paintCloudLayer(
+        this.ctxO, this.cam, this.cloudField, this.cloudSprites(), fade, t, this.cloudScratch, true,
+      );
+      return;
+    }
+    buf.ctx.clearRect(0, 0, buf.w, buf.h);
     this.cloudShadowBlits = paintCloudLayer(
-      this.ctxT, this.cam, this.cloudField, this.cloudSprites(),
-      fade, this.cloudMotion ? timeMs : 0, this.cloudScratch, true,
+      buf.ctx, this.cam, this.cloudField, this.cloudSprites(), fade, t, this.cloudScratch, true, 1,
     );
+    if (this.cloudShadowBlits === 0) return;
+    this.ctxO.globalAlpha = fade * CLOUD_SHADOW_ALPHA;
+    this.ctxO.drawImage(buf.canvas as unknown as CanvasImageSource, 0, 0);
+    this.ctxO.globalAlpha = 1;
+  }
+
+  private shadowBuf: { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; w: number; h: number } | null = null;
+  private shadowBufFailed = false;
+  /** The terrain-sized scratch the shadows are flattened in (null = none available). */
+  private shadowBuffer(): { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: CanvasRenderingContext2D; w: number; h: number } | null {
+    if (this.shadowBufFailed) return null;
+    const target = (this.ctxO as { canvas?: { width: number; height: number } }).canvas;
+    const w = target?.width ?? 0, h = target?.height ?? 0;
+    if (!(w > 0 && h > 0)) return null;
+    if (this.shadowBuf && this.shadowBuf.w === w && this.shadowBuf.h === h) return this.shadowBuf;
+    try {
+      let canvas: HTMLCanvasElement | OffscreenCanvas;
+      if (typeof OffscreenCanvas !== "undefined") canvas = new OffscreenCanvas(w, h);
+      else { canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h; }
+      const ctx = (canvas as HTMLCanvasElement).getContext("2d") as CanvasRenderingContext2D | null;
+      if (!ctx) { this.shadowBufFailed = true; return null; }
+      this.shadowBuf = { canvas, ctx, w, h };
+      return this.shadowBuf;
+    } catch { this.shadowBufFailed = true; return null; }
   }
 
   private cloudSprites(): CloudSprites | null {
@@ -1303,9 +1339,8 @@ export class IsoRenderer {
   drawTerrain(timeMs = 0, rebuildIsland = true) {
     if (this.externalGround) {
       this.ctxT.clearRect(0, 0, this.cam.vw, this.cam.vh);
-      // AMB-1 (#390): the WebGL2 ground owns the pixels underneath — the
-      // faint cloud shadows still ride this cleared canvas, over the GL.
-      this.paintCloudShadows(timeMs);
+      // (cloud shadows moved to the overlay pass: they fall on roads and
+      // towns too, not under them)
       return;
     }
     // PERF-01 new policy: performance mode keeps textured ground and animated
@@ -1392,8 +1427,6 @@ export class IsoRenderer {
     }
     // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, timeMs);
-    // 5. AMB-1 (#390): the faint cloud shadows, over ground and surf alike.
-    this.paintCloudShadows(timeMs);
     if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
@@ -1562,6 +1595,9 @@ export class IsoRenderer {
     // AMB-1 (#390): the clouds go down FIRST — above the structures, below
     // every preview glow, debug mark and protest crowd, so building feedback
     // always stays crisp while the sky drifts behind it.
+    // Owner: shadows fall over EVERYTHING on the ground - roads, towns and
+    // buildings - so they are painted here, above the structures, first.
+    this.paintCloudShadows(timeMs);
     this.paintClouds(timeMs);
     // AMB-1 / AMB-2: the shared above-the-structures pass (see the field's
     // documentation) — birds, clouds, and whatever else is ambient, over the
