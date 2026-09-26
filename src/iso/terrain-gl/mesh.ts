@@ -160,7 +160,7 @@ export function writeVertexRows(
 
 const LIGHT = normalize3(-0.42, -0.5, 0.76); // toward the light: screen upper-left
 /** Height gradient exaggeration: 8 px per level is geometrically shallow. */
-const SLOPE_GAIN = 3.0;
+const SLOPE_GAIN = 4.5;
 
 function normalize3(x: number, y: number, z: number): [number, number, number] {
   const l = Math.hypot(x, y, z);
