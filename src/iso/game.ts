@@ -20,6 +20,10 @@
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.
 // ══════════════════════════════════════════════════════════════════════════
+import { routeIncome, routeUpgradeGain } from "./economy";
+import { TIER_THROUGHPUT } from "./config";
+import { TRUCK_SPEED, TRUCK_ROAD_MULT, DEPOT_LOAD_MS, truckRateMultOf } from "./vehicles";
+import { uphillSpeed } from "./slopes";
 import { resolveMapOptions, type MapOptions } from "./map-options";
 import { mountTerrainGl, terrainGlWanted, type TerrainGl } from "./terrain-gl-adapter";
 import manifestJson from "../../assets/iso-atlas/manifest.json";
@@ -670,6 +674,21 @@ export function setupDepotToast(newLoop: boolean): string {
   return newLoop
     ? "Now connect it to your Factory with a Dirt Road — a connected Depot ticks its cargo in on the clock."
     : "Now connect it to your Factory with a Dirt Road or a paved Road — then match the tokened gems in the Processing Plant.";
+}
+
+/** #462: sustained lorry round trips, including loading, diagonal length,
+ * tier pace and uphill time in both directions. Uses tickTrucks' constants. */
+export function routeTripsPerMinute(truck: Truck | undefined, stopped = false): number {
+  if (!truck || stopped || truck.route.length < 2) return 0;
+  let ms = DEPOT_LOAD_MS;
+  for (let k = 0; k < truck.route.length - 1; k++) {
+    const a = truck.route[k], b = truck.route[k + 1];
+    const climb = truck.segClimb?.[k] ?? 0;
+    const pace = truck.segMult?.[k] ?? (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+    ms += Math.hypot(b[0] - a[0], b[1] - a[1]) / (TRUCK_SPEED * truckRateMultOf(truck) * pace)
+      * (1 / uphillSpeed(climb) + 1 / uphillSpeed(-climb));
+  }
+  return 60_000 / ms;
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
@@ -1668,6 +1687,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // armed drag and its ghost with the tool, so no door can leave a preview
     // painted that no pointerup will ever commit (and `costInfo`, derived
     // from `tool`/`preview` below, follows them away on the next frame).
+    onNetworkView: () => toggleNetworkView(),
     onTool: (t) => {
       if (t === "select") { cancelPlacement(); return; }
       // ROADS-2 (#393): Street / Highway are the Road tool at another tier.
@@ -2429,6 +2449,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
   let atlasRef: Atlas | null = null;
+  let networkView = false;
+  let selectedRouteId: number | null = null;
+  const toggleNetworkView = () => {
+    networkView = !networkView;
+    root.querySelector('[data-act="network-view"]')?.setAttribute("aria-pressed", String(networkView));
+    return networkView;
+  };
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
   let drag: { ax: number; ay: number; bx: number; by: number; xFirst: boolean } | null = null;
   let preview: DragPreview | null = null;
@@ -9313,6 +9340,54 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!comp) { comp = buildAllComponents(track, ownerId); componentCache.byOwner.set(ownerId, comp); }
     return comp;
   };
+  // Network topology is cached until a build; live rates refresh once a second.
+  const routeStatsCache = new Map<number, { key: string; tiles: [number, number][]; colors: string[]; cargo: number; money: number; trips: number; slow: string }>();
+  const routeStatsFor = (h: Harvester, now: number) => {
+    const key = `${netVersion}:${Math.floor(now / 1000)}`;
+    const cached = routeStatsCache.get(h.id);
+    if (cached?.key === key) return cached;
+    const comp = componentsFor(h.ownerId);
+    const tiles = cached?.key.split(":")[0] === String(netVersion)
+      ? cached.tiles : roadRouteForHarvester(eco, h, comp) ?? [];
+    const res = harvesterYield(eco, comp, industryLocks(eco), h, now);
+    const seat = h.owner === me.id ? me : rival;
+    const dam = damFactorsFor(seat, h, res.connection.factory);
+    const stopped = protestedDepot(h, now, comp);
+    const factor = stopped ? 0 : BASE_RATE * depotYield(h) * distanceInfoFor(h.id).factor
+      * transportFactor(h) * (1 + dam.dam) * (1 + (hasCities(seat)
+        ? cityBonusFor(seat.id, res.connection.factory) : Math.max(0, seat.townBonus)) + dam.damCity);
+    const income = routeIncome(res.yields, factor, HARVEST_MS, unitPrice);
+    const truck = trucks.trucks.find(t => t.depotId === h.id);
+    const names = ["Road", "Street", "Highway", "Ramp", "Overpass", "Overpass"];
+    const palette = ["#4fb3bf", "#eee6d4", "#f2d64b", "#f08a24", "#f08a24", "#f08a24"];
+    let slow = "No route", lowest = Infinity;
+    const colors = tiles.map(([x, y]) => {
+      const i = tIdx(x, y), paved = !!track.road[i], tier = (track.tier?.[i] ?? 0) & 7;
+      const speed = paved ? TIER_THROUGHPUT[tier] ?? 1 : 0;
+      if ((track.road[i] || track.dirt[i]) && speed < lowest) { lowest = speed; slow = `${paved ? names[tier] : "Dirt"} at ${x}, ${y}`; }
+      return paved ? palette[tier] ?? palette[0] : "#a88b68";
+    });
+    const result = { key, tiles, colors, cargo: income.cargoPerMinute, money: income.moneyPerMinute,
+      trips: routeTripsPerMinute(truck, stopped), slow };
+    routeStatsCache.set(h.id, result);
+    return result;
+  };
+  let routeFrameKey = "";
+  const updateRouteLines = (now: number) => {
+    if (!renderer) return;
+    const ref = hover?.ref as { kind?: string; id?: number } | undefined;
+    const id = ref?.kind === "harvester" ? ref.id : selectedRouteId;
+    const key = `${networkView}:${id}:${netVersion}:${Math.floor(now / 1000)}`;
+    if (key === routeFrameKey) return;
+    routeFrameKey = key;
+    renderer.routeLines = eco.harvesters.filter(h => !h.closed && !isRailDepot(h) &&
+      (networkView ? h.owner === me.id : h.id === id)).map(h => {
+      const r = routeStatsFor(h, now);
+      return { tiles: r.tiles, colors: networkView ? r.colors : undefined,
+        label: `Depot ${h.id} · ${r.cargo.toFixed(1)} cargo/min` };
+    });
+  };
+  let upgradeReadoutCache = { key: "", text: "" };
   /** Header ★ tooltips by player id, rebuilt only when the network or total moves. */
   const vpTipCache = new Map<string, { key: string; tip: string }>();
   const routeOverlayFor = (h: Harvester): OverlayItem[] => {
@@ -9654,6 +9729,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
 
+    if (tool === "road" && hover && ["street", "road", "highway"].includes(roadTier)) {
+      const key = `${netVersion}:${hover.tx},${hover.ty}:${roadTier}:${Math.floor(now / 1000)}:${me.money}`;
+      if (upgradeReadoutCache.key !== key) {
+        const pv = previewDrag(grid, track, "road", buildPurse(me), hover.tx, hover.ty, hover.tx, hover.ty,
+          true, undefined, me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
+          { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true,
+            railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, roadTier, me.money);
+        const text = pv.tiles.length ? eco.harvesters.filter(h => h.owner === me.id && !isRailDepot(h)
+          && routeStatsFor(h, now).tiles.some(([x, y]) => x === hover!.tx && y === hover!.ty))
+          .map(h => {
+            const gain = routeUpgradeGain(eco, h, now, pv, roadTier, (state, connection) => {
+            const dam = damFactorsFor(me, h, connection.factory);
+            return distanceFactorForPath(depotPathLength(state, h)) * (1 + dam.dam)
+              * (1 + (hasCities(me) ? cityBonusFor(me.id, connection.factory) : Math.max(0, me.townBonus)) + dam.damCity);
+            });
+            return `${gain >= 0 ? "+" : ""}${gain.toFixed(1)}% cargo/min on Depot ${h.id}`;
+          }).join("<br>") : "";
+        upgradeReadoutCache = { key, text };
+      }
+      if (upgradeReadoutCache.text) costInfo += `<br>${upgradeReadoutCache.text}`;
+    }
     // PP-03: while a Factory or a Depot is being placed, an INVALID hover
     // answers with its readable reason (distinct red appearance is painted on
     // the overlay). A valid hover falls through to the normal inspector so a
@@ -9677,7 +9773,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       info = `<b>${label}</b> can't go here — <i>${plan.why ?? "not buildable"}</i>.`;
       infoTone = "bad";
     } else {
-      const ref = hover?.ref as { kind?: string; id?: number } | null;
+      const ref = (hover?.ref ?? (selectedRouteId !== null ? { kind: "harvester", id: selectedRouteId } : null)) as { kind?: string; id?: number } | null;
       if (ref && ref.kind === "harvester") {
         const h = eco.harvesters.find((x) => x.id === ref.id);
         if (h) {
@@ -9747,6 +9843,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               tickMs: HARVEST_MS,
             });
             info += `<br>${readout.yieldLine}<br>${readout.rateLine}`;
+            const route = routeStatsFor(h, now);
+            info += `<br>${route.cargo.toFixed(1)} cargo/min · $${route.money.toFixed(1)}/min at current prices (before storage caps; not automatic sales)`;
+            info += `<br>Slowest: ${route.slow} · ${route.trips.toFixed(1)} lorry trips/min`;
             if (readout.damLine) info += `<br>${readout.damLine}`;
             if (readout.decayLine) info += `<br>${readout.decayLine}`;
             // L16 (#231): the storage cap's read on this Depot. A connected
@@ -10406,6 +10505,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the placement decision that follows — the frame loop repaints the
     // overlay on the next tick anyway.
     try {
+      updateRouteLines(performance.now());
       const { items, ghost } = overlayFrame();
       renderer.drawOverlay(items, performance.now(), ghost);
     } catch { /* best-effort; the frame loop repaints next tick */ }
@@ -10658,6 +10758,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         paintOverlayNow();
       }
       if (p) {
+        if (tool === "select") {
+          const ref = p.ref as { kind?: string; id?: number } | undefined;
+          selectedRouteId = ref?.kind === "harvester" ? ref.id ?? null : null;
+        }
         if (phase === "setup-factory") {
           // MP-05: a guest's opening click is an intent like any other — the
           // host places seat 1's Factory by the same town-adjacency rule.
@@ -10772,6 +10876,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   const onKeydown = (e: KeyboardEvent) => {
+    if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "n") {
+      toggleNetworkView(); e.preventDefault();
+    }
     // Tool hotkeys. `q` is the pointer (select) — the keyboard twin of the
     // right-click cancel, and #187 routes both through `cancelPlacement` so
     // the hint and the placement ghost go down with the tool — whatever tool
@@ -12233,6 +12340,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         reducedMotion,
         vehicles: world.vehicles,
       });
+      updateRouteLines(performance.now());
       const { items, ghost } = overlayFrame();
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
