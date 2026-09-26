@@ -102,6 +102,12 @@ export interface Harvester {
    */
   platformId?: number;
   railIndustryId?: number;
+  /**
+   * #461 TUNE-1: the star rating the Depot's last tuning session earned
+   * (0–3). Stored per Depot, saved and synced, so a retune can show the
+   * last rating as a beat goal. Absent = never tuned.
+   */
+  lastStars?: number;
 }
 
 /** True for the Depot record a rail platform stands for. */

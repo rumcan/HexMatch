@@ -142,6 +142,8 @@ export interface DepotCardInfo {
    * The card prints it on its own line, beside the yield the clock pays.
    */
   damLine?: string | null;
+  /** #461 TUNE-1: last star rating for retune display. */
+  lastStars?: number;
   onUpgrade: () => boolean;
   onRetune: () => boolean;
 }
@@ -485,6 +487,19 @@ export interface UiTuningSession {
   busy?: boolean;
 }
 
+/** #461 TUNE-1: target card before a session — short target + current/possible cargo/min. */
+export interface UiTuningTarget {
+  targetScore?: number;
+  maxYield?: number;
+  currentYield?: number;
+  currentCargoPerMin?: number;
+  possibleCargoPerMin?: number;
+  cargo?: Cargo | null;
+  lastStars?: number;
+  isRetune?: boolean;
+  depotId?: number;
+}
+
 /**
  * #300 — what an ENDED tuning session is worth, as the results pop-up paints
  * it. The game freezes this record when the session ends and its Confirm
@@ -528,6 +543,10 @@ export interface UiTuningResult {
   /** Moves left when it ended, and the budget — the "moves to spare" line. */
   movesLeft: number;
   moves: number;
+  /** #461 TUNE-1: new cargo/min after tuning, and delta vs before. */
+  newCargoPerMin?: number;
+  prevCargoPerMin?: number;
+  deltaPct?: number;
 }
 
 export interface UiHooks {
@@ -714,6 +733,8 @@ export interface OriginalUi {
    * the player was just asked to play, and a board behind a folded panel is a
    * board nobody finds.
    */
+  /** #461 TUNE-1: show the target card before a session — current/possible cargo/min, last rating. */
+  showTuningTarget: (info: UiTuningTarget, onStart: () => void) => void;
   openSessionBoard: () => void;
   /**
    * L17 (#245): bring the BANK into view — the map door to it is the town's
@@ -1269,7 +1290,14 @@ export function createOriginalUi(
     }
     hooks.onTuningEnd?.(true);
   };
-  tpRow.append(tpScore, tpYield, tpFinish, tpAbandon);
+  // #461 TUNE-1: live yield meter that climbs as you clear.
+  const tpMeter = h("div", "tp-meter");
+  const tpMeterBar = h("div", "tp-meter-bar");
+  const tpMeterFill = h("div", "tp-meter-fill");
+  const tpMeterLabel = h("span", "tp-meter-label", "");
+  tpMeterBar.appendChild(tpMeterFill);
+  tpMeter.append(tpMeterBar, tpMeterLabel);
+  tpRow.append(tpScore, tpYield, tpMeter, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
   const tpIdleText = h("span", "tp-idle-text");
   // L6 (#220): the re-match key, beside the line that explains it. Built once
@@ -1435,7 +1463,14 @@ export function createOriginalUi(
   const srGoldRow = h("div", "sr-row sr-row-gold");
   const srGold = h("b", "sr-num sr-gold");
   srGoldRow.append(h("span", "sr-k", "Gold"), srGold);
-  srRows.append(srScoreRow, srYieldRow, srGoldRow);
+  // #461: cargo/min and delta.
+  const srCargoRow = h("div", "sr-row sr-row-cargo");
+  const srCargo = h("b", "sr-num sr-cargo");
+  srCargoRow.append(h("span", "sr-k", "Output"), srCargo);
+  const srDeltaRow = h("div", "sr-row sr-row-delta");
+  const srDelta = h("b", "sr-num sr-delta");
+  srDeltaRow.append(h("span", "sr-k", ""), srDelta);
+  srRows.append(srScoreRow, srYieldRow, srCargoRow, srDeltaRow, srGoldRow);
   const srNote = h("div", "sr-note");
   // What a screen reader hears when the card takes focus: the FINAL numbers,
   // not a count-up read digit by digit.
@@ -1447,6 +1482,36 @@ export function createOriginalUi(
   srConfirm.onclick = () => hooks.onTuningConfirm?.();
   srCard.append(srKicker, srHead, srMoves, srStars, srVerdict, srRows, srNote, srConfirm, srSummary);
   srPanel.appendChild(srCard);
+
+  // #461 TUNE-1: target card shown BEFORE a session — "Clear 60 gems for ×2.5 yield"
+  // with current/possible cargo/min, skippable and remembers skip.
+  const tcPanel = h("div", "target-card hidden");
+  tcPanel.id = "iso-target-card";
+  tcPanel.setAttribute("role", "dialog");
+  tcPanel.setAttribute("aria-modal", "true");
+  tcPanel.setAttribute("aria-label", "Tuning target");
+  const tcCard = h("div", "tc-card");
+  const tcKicker = h("div", "tc-kicker", "Tuning target");
+  const tcHead = h("h2", "tc-head", "Clear 60 gems for ×2.5 yield");
+  const tcRows = h("div", "tc-rows");
+  const tcTarget = h("div", "tc-row tc-target");
+  const tcCurrent = h("div", "tc-row tc-current");
+  const tcPossible = h("div", "tc-row tc-possible");
+  const tcLast = h("div", "tc-row tc-last hidden");
+  tcRows.append(tcTarget, tcCurrent, tcPossible, tcLast);
+  const tcActions = h("div", "tc-actions");
+  const tcStart = h("button", "tc-start", "Start tuning");
+  tcStart.type = "button";
+  const tcSkip = h("button", "tc-skip", "Skip");
+  tcSkip.type = "button";
+  tcActions.append(tcStart, tcSkip);
+  const tcOpt = h("label", "tc-opt");
+  const tcCheck = h("input", "tc-skip-check") as HTMLInputElement;
+  tcCheck.type = "checkbox";
+  tcOpt.append(tcCheck, document.createTextNode(" Don't show again"));
+  tcCard.append(tcKicker, tcHead, tcRows, tcActions, tcOpt);
+  tcPanel.appendChild(tcCard);
+
   /** #300: whether the card is up, and which result it is counting (its id). */
   let srShown = false;
   let srShownId = -1;
@@ -1460,6 +1525,107 @@ export function createOriginalUi(
   srCard.addEventListener("click", (e) => {
     if (e.target !== srConfirm) finishTuningCount();
   });
+
+  // #461 TUNE-1: target card state and skip memory.
+  const TARGET_SKIP_KEY = "hexmatch:tuning:skipTarget";
+  let tcShown = false;
+  let tcPendingStart: (() => void) | null = null;
+
+  const readTargetSkip = (): boolean => {
+    try { return localStorage.getItem(TARGET_SKIP_KEY) === "1"; } catch { return false; }
+  };
+  const writeTargetSkip = (v: boolean): void => {
+    try {
+      if (v) localStorage.setItem(TARGET_SKIP_KEY, "1");
+      else localStorage.removeItem(TARGET_SKIP_KEY);
+    } catch {}
+  };
+
+  function hideTargetCard(): void {
+    tcShown = false;
+    tcPendingStart = null;
+    tcPanel.classList.add("hidden");
+    // Restore the board and plate — the session is now the main screen.
+    boardWrap.classList.remove("hidden");
+    tuningPlate.classList.remove("hidden");
+  }
+
+  function showTargetCardInternal(info: UiTuningTarget, onStart: () => void): void {
+    // Respect reduced motion? No, target card is static, always shown.
+    const skip = readTargetSkip();
+    if (skip) { onStart(); return; }
+    tcPendingStart = onStart;
+    tcShown = true;
+    // Fill copy.
+    const tgt = info.targetScore ?? TUNING.targetScore;
+    const maxY = info.maxYield ?? TUNING.maxYield;
+    tcHead.textContent = `Clear ${tgt} gems for ×${Number(maxY.toFixed(2)).toString()} yield`;
+    tcTarget.textContent = `Target: ${tgt} gems → ×${Number(maxY.toFixed(2)).toString()} max`;
+    const curY = info.currentYield ?? TUNING.minYield;
+    const curRate = info.currentCargoPerMin;
+    const possRate = info.possibleCargoPerMin;
+    const cargoIcon = info.cargo ? (CARGO[info.cargo]?.icon ?? "") : "";
+    const cargoName = info.cargo ? (CARGO[info.cargo]?.name ?? info.cargo) : "cargo";
+    if (curRate !== undefined) {
+      tcCurrent.textContent = `Now: ×${curY.toFixed(2).replace(/0$/, "")} → ${curRate.toFixed(1)}/min ${cargoIcon} ${cargoName}`;
+    } else {
+      tcCurrent.textContent = `Now: ×${curY.toFixed(2).replace(/0$/, "")} ${cargoIcon} ${cargoName}`;
+    }
+    if (possRate !== undefined) {
+      tcPossible.textContent = `Possible: ×${maxY.toFixed(2).replace(/0$/, "")} → ${possRate.toFixed(1)}/min ${cargoIcon} ${cargoName}`;
+    } else {
+      tcPossible.textContent = `Possible: ×${maxY.toFixed(2).replace(/0$/, "")}`;
+    }
+    if (info.lastStars !== undefined && info.lastStars > 0) {
+      const filled = "★".repeat(info.lastStars);
+      const empty = "☆".repeat(3 - info.lastStars);
+      tcLast.textContent = `Last: ${filled}${empty}${info.isRetune ? " — beat it!" : ""}`;
+      tcLast.classList.remove("hidden");
+    } else {
+      tcLast.classList.add("hidden");
+    }
+    tcCheck.checked = false;
+    tcPanel.classList.remove("hidden");
+    // Ensure session window is up with target card visible, board hidden behind.
+    if (sessionWin) {
+      sessionWin.classList.remove("hidden");
+      qp.classList.remove("hidden");
+      // #461: the plant panel moves into the window for the target card too —
+      // same as a live session, so the plate's host is qp (the test pins index 1).
+      // Keep board and plate hidden until Start.
+      try {
+        if (tuningPlate.parentElement !== qp) {
+          qp.insertBefore(tuningPlate, qp.querySelector(".upbar") ?? null);
+        }
+      } catch {}
+      plantCard?.classList.add("hidden");
+      boardWrap.classList.add("hidden");
+      tuningPlate.classList.add("hidden");
+      qp.inert = false;
+      root.dataset.session = "1";
+      mapHost.inert = true;
+      left.inert = true;
+      rightAside.inert = true;
+      mobileNav.inert = true;
+      tcStart.focus({ preventScroll: true });
+    }
+  }
+
+  tcStart.onclick = () => {
+    if (tcCheck.checked) writeTargetSkip(true);
+    const start = tcPendingStart;
+    hideTargetCard();
+    if (start) start();
+    else if (sessionWin) setSessionWindow(true);
+  };
+  tcSkip.onclick = () => {
+    // Skip remembers per spec.
+    writeTargetSkip(true);
+    const start = tcPendingStart;
+    hideTargetCard();
+    if (start) start();
+    else if (sessionWin) setSessionWindow(true);
+  };
   /**
    * #299 — the session window. The plant panel (`qp`) is built the same way
    * on both loops; what changes is its HOST. On the new loop it is born
@@ -1494,6 +1660,8 @@ export function createOriginalUi(
     frame.appendChild(qp);
     // #300: the results card rides in the same frame, over the plant panel.
     frame.appendChild(srPanel);
+    // #461 TUNE-1: target card rides in the same frame, BEFORE the session.
+    frame.appendChild(tcPanel);
     win.append(back, frame);
     sessionWin = win;
     sessionFrame = frame;
@@ -3982,6 +4150,14 @@ export function createOriginalUi(
     mobileNav.inert = open;
     // #300: the results card lives and dies with its session's window.
     if (!open) hideTuningResult();
+    // #461: target card lives and dies with the window too.
+    if (!open) {
+      tcShown = false;
+      tcPendingStart = null;
+      tcPanel.classList.add("hidden");
+      boardWrap.classList.remove("hidden");
+      tuningPlate.classList.remove("hidden");
+    }
     if (!open) sfx.play("close");
     if (open) sessionFrame!.focus({ preventScroll: true });
     // The board re-fits to its new box: measured in the open window (the
@@ -4064,6 +4240,23 @@ export function createOriginalUi(
       notes.push("Nothing cleared — the upgrade is refunded and the city is unchanged.");
     } else {
       notes.push("Every connected Depot ticks faster from here.");
+    }
+    // #461: cargo/min and delta vs before.
+    if (depot && r.newCargoPerMin !== undefined) {
+      const icon = r.cargo ? (CARGO[r.cargo]?.icon ?? "") : "";
+      srCargo.textContent = `${r.newCargoPerMin.toFixed(1)}/min ${icon}`;
+      srCargoRow.classList.remove("hidden");
+    } else {
+      srCargoRow.classList.add("hidden");
+    }
+    if (depot && r.deltaPct !== undefined && Math.abs(r.deltaPct) > 0.1) {
+      const sign = r.deltaPct > 0 ? "▲" : "▼";
+      srDelta.textContent = `${sign} ${Math.abs(r.deltaPct).toFixed(0)}% vs before`;
+      srDeltaRow.classList.remove("hidden");
+      srDelta.classList.toggle("good", r.deltaPct > 0);
+      srDelta.classList.toggle("bad", r.deltaPct < 0);
+    } else {
+      srDeltaRow.classList.add("hidden");
     }
     srNote.textContent = notes.join(" ");
     srNote.classList.toggle("hidden", notes.length === 0);
@@ -4255,6 +4448,14 @@ export function createOriginalUi(
     tpYield.innerHTML = town
       ? `Base rate <b>+${Math.round(t.yield * 100)}%</b>`
       : `Yield <b>×${fmtYield(t.yield)}</b>`;
+    // #461 TUNE-1: live yield meter climbs as you clear (maps score→yield).
+    // Progress is score/targetScore (0…1) capped, but yield keeps climbing past.
+    const tgtScore = TUNING.targetScore || 60;
+    const prog = Math.min(1, Math.max(0, t.score / tgtScore));
+    tpMeterFill.style.width = `${Math.round(prog * 100)}%`;
+    tpMeterLabel.textContent = `${t.score}/${tgtScore}`;
+    tpMeter.title = `Score ${t.score} of ${tgtScore} for max yield — yield ×${fmtYield(t.yield)}`;
+    tpMeter.classList.toggle("full", prog >= 1);
     // #301: Finish is enabled when moves are 0 — it is the ONLY highlighted
     // action then. It is disabled only while the board is animating.
     const busy = !!t.busy;
@@ -4622,6 +4823,10 @@ export function createOriginalUi(
   }
   function showDepotCard(o: DepotCardInfo): void {
     const full = o.yieldNow >= o.cap;
+    const lastLine = o.lastStars !== undefined && o.lastStars > 0
+      ? `Last: ${"★".repeat(o.lastStars)}${"☆".repeat(3 - o.lastStars)} — beat it!`
+      : o.lastStars === 0 ? "Last: no stars — retune for more!"
+      : null;
     showActionCard({
       title: o.title,
       lines: [
@@ -4629,6 +4834,7 @@ export function createOriginalUi(
         // R3 (#270): the dam's bonus, when it reaches this Depot — the same
         // gate the hover inspector's `damLine` prints, so the two cards agree.
         ...(o.damLine ? [o.damLine] : []),
+        ...(lastLine ? [lastLine] : []),
       ],
       actions: [
         {
@@ -5133,10 +5339,16 @@ export function createOriginalUi(
     popup,
     isQuarryOpen: () => !qp.classList.contains("hidden"),
     isTradeOpen: () => !bankPane.classList.contains("hidden"),
+    showTuningTarget: (info: UiTuningTarget, onStart: () => void) => {
+      if (!sessionMode) { onStart(); return; }
+      showTargetCardInternal(info, onStart);
+    },
     openSessionBoard: () => {
       // #299: the session comes UP as its own window over the map. The phone
       // no longer needs the trade sheet — the window is full-bleed there —
       // and the rail needs no unfolding: the board is no longer in it.
+      // #461: if target card is up, keep it — start will open the board.
+      if (tcShown) return;
       if (sessionMode) { setSessionWindow(true); return; }
       setTab("plant");
       if (isPhoneViewport()) setMobileView("trade");

@@ -177,6 +177,12 @@ async function depotSession(): Promise<ResultHook> {
   expect(site, "a Depot site on seed 1337").toBeTruthy();
   expect(h.placeDepot(site!.hx, site!.hy - 1)).toBe(true);
   await settle();
+  // #461: target card may be up — start it.
+  const tc = document.querySelector("#iso-target-card") as HTMLElement | null;
+  if (tc && !tc.classList.contains("hidden")) {
+    (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+    await settle();
+  }
   expect(h.tuning?.kind, "the Depot's session is live").toBe("depot");
   return h;
 }
@@ -236,7 +242,14 @@ function industryPlatform(h: ResultHook): boolean {
             }
           }
           if (!clear) continue;
-          if (h.placePlatform(tx, ty, view) && h.tuning) return true;
+          if (h.placePlatform(tx, ty, view) && h.tuning) {
+            // #461: target card may be up — start it so tuning is live.
+            const tc = document.querySelector("#iso-target-card") as HTMLElement | null;
+            if (tc && !tc.classList.contains("hidden")) {
+              (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+            }
+            return true;
+          }
         }
       }
     }
@@ -413,6 +426,7 @@ describe("#300 the results pop-up a tuning session ends on", () => {
     const h = await boot();
     h.finishSetup();
     for (const c of ["wood", "stone", "ore", "oil", "grain"]) h.purse[c] = 999;
+    (h as any).money = 99999;
     expect(industryPlatform(h), "an industry platform on seed 1337").toBe(true);
     const depotId = h.tuning!.depotId;
     expect(h.eco.harvesters.find((x) => x.id === depotId)!.platformId, "the session is the platform's").toBeDefined();
