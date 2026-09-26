@@ -445,6 +445,14 @@ export function roadTilesIn(
         const tile = roadTile(tx, ty, road, "paved", paved, town || tier === 1);
         if (tier) tile.tier = tier;
         out.push(tile);
+        // ROADS-3 (#394): an overpass carries a road deck ACROSS the highway.
+        if (tier === 4 || tier === 5) {
+          // highway along x (SE/NW) → the deck runs along y (NE/SW), and v.v.
+          const crossMask = 0x10 | (tier === 4 ? 1 | 4 : 2 | 8);
+          const deck = roadTile(tx, ty, crossMask, "paved", paved, false);
+          deck.deck = true;
+          out.push(deck);
+        }
       }
       else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
     }
@@ -775,9 +783,11 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
 /** ROADS-2 (#393): a tile's carriageway width — Street narrower, Highway wider. */
 const widthOf = (t: RoadTile): number =>
   t.material !== "paved" ? ROAD_WIDTH[t.material]
-    : t.tier === 2 ? ROAD_WIDTH.paved * 1.6
-      : t.tier === 1 ? ROAD_WIDTH.paved * 0.8
-        : ROAD_WIDTH.paved;
+    : t.deck ? ROAD_WIDTH.paved
+      : (t.tier === 2 || t.tier === 4 || t.tier === 5) ? ROAD_WIDTH.paved * 1.6
+        : t.tier === 3 ? ROAD_WIDTH.paved * 1.2
+          : t.tier === 1 ? ROAD_WIDTH.paved * 0.8
+            : ROAD_WIDTH.paved;
 
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
@@ -943,6 +953,26 @@ export function paintRoadTiles(
     }
   }
   ctx.setLineDash([]);
+
+  // 4b. ROADS-3 (#394) Overpass decks: a shadow on the highway, the deck,
+  //     then railings — over the highway's markings.
+  for (const t of tiles) {
+    if (!t.deck) continue;
+    ctx.save();
+    ctx.lineCap = "butt";
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = ROAD_WIDTH.paved * 1.35;
+    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#8f9498";
+    ctx.lineWidth = ROAD_WIDTH.paved * 1.15;
+    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
+    ctx.strokeStyle = fills.paved;
+    ctx.lineWidth = ROAD_WIDTH.paved;
+    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
+    ctx.restore();
+  }
 
   // 5. #159 Street lamps, on top of everything else on the ground: see
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.

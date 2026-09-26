@@ -1521,7 +1521,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (t === "select") { cancelPlacement(); return; }
       // ROADS-2 (#393): Street / Highway are the Road tool at another tier.
       const key = t as string;
-      if (key === "street" || key === "highway" || key === "road") {
+      if (key === "street" || key === "highway" || key === "road" || key === "ramp") {
         roadTier = key;
         armTool("road");
         return;
@@ -7343,11 +7343,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (!ok || !anyLow) continue;
         if (!canAfford(rival.purse, addCost(cost, cost))) continue;
         if (!spend(rival, cost)) continue;
+        // ROADS-3 (#394): a Highway meets roads only through Ramps, so every
+        // route tile where one of the rival's other roads branches off becomes
+        // a RAMP (it links to the highway either side AND to the branch).
+        const onRoute = new Set(route.map(([x, y]) => y * MAP_W + x));
         for (const [x, y] of route) {
-          if (tierTileCost(track, "highway", x, y) && Object.keys(tierTileCost(track, "highway", x, y)).length) {
-            setRoadTier(track, x, y, ROAD_TIER.highway);
-            renderer?.invalidateTile(x, y);
-          }
+          if (!Object.keys(tierTileCost(track, "highway", x, y)).length) continue;
+          const branch = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H || onRoute.has(ny * MAP_W + nx)) return false;
+            return hasTrack(track, "road", nx, ny) || hasTrack(track, "dirt", nx, ny);
+          });
+          setRoadTier(track, x, y, branch ? ROAD_TIER.ramp : ROAD_TIER.highway);
+          renderer?.invalidateTile(x, y);
         }
         ui.feed(`Rival builds a ${route.length}-tile Highway`, rival.name);
         syncWorld();

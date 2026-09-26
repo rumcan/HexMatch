@@ -174,7 +174,7 @@ type TabName = "market" | "bank" | "black" | "plant" | "feed" | "quests";
 export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
   // ROADS-2 (#393): the paved tiers — the game arms "road" at that tier.
-  | "street" | "highway"
+  | "street" | "highway" | "ramp"
   // RAIL-04 (#178): the railway's tools. `rail` drags track, `platform` and
   // `raildepot` place one structure in the current heading (R turns it), and
   // `railway` holds the panel: the lines, the trains and the buy/recall/sell
@@ -2086,6 +2086,9 @@ export function createOriginalUi(
     { key: "street", label: "Street", sub: `${costMarkup(ROAD_TIERS.street.cost)} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
     { key: "highway", label: "Highway", sub: `${costMarkup(ROAD_TIERS.highway.cost)} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
+    // ROADS-3 (#394): the only way on or off a Highway; a Road or Street
+    // dragged ACROSS a Highway builds an overpass by itself.
+    { key: "ramp", label: "Ramp", sub: `${costMarkup(ROAD_TIERS.ramp.cost)} · ${ROAD_TIERS.ramp.blurb}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down. L5 (#219): on the new loop the price is the
     // industry's own mix, so the line says "from …" rather than quoting the

@@ -26,7 +26,7 @@ import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, type Cargo } fr
 import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, heightAt as tileHeight, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 import {
-  BRIDGE_COST, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
+  BRIDGE_COST, HIGHWAY_BRIDGE_SPAN, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
 // E4 (#268): the slope rules — the step the drag walked and the flanks it joins.
 import { roadJoinSlopeRefusal, roadStepRefusal } from "./slopes";
@@ -114,10 +114,67 @@ export const createTrack = (): Track => ({
 });
 
 // ── ROADS-2 (#393): road tiers ──────────────────────────────────────────────
-export const ROAD_TIER = { road: 0, street: 1, highway: 2 } as const;
+export const ROAD_TIER = { road: 0, street: 1, highway: 2, ramp: 3 } as const;
 export type RoadTierKey = keyof typeof ROAD_TIER;
-export type RoadTier = (typeof ROAD_TIER)[RoadTierKey];
-export const ROAD_TIER_KEYS: readonly RoadTierKey[] = ["road", "street", "highway"];
+/** ROADS-3 (#394): an OVERPASS tile - a Highway running along one axis with a
+ *  Road/Street crossing OVER it on the other. 4 = highway along x (SE/NW),
+ *  5 = highway along y (NE/SW). Stored in the same tier byte. */
+export const OVERPASS_X = 4, OVERPASS_Y = 5;
+export type RoadTier = (typeof ROAD_TIER)[RoadTierKey] | typeof OVERPASS_X | typeof OVERPASS_Y;
+export const ROAD_TIER_KEYS: readonly RoadTierKey[] = ["road", "street", "highway", "ramp"];
+
+/** ROADS-3 (#394): a paved tile's link class - Highway, Ramp, Overpass (with
+ *  its highway axis) or Normal (Road, Street, and all gravel). */
+type LinkClass = "H" | "R" | "OX" | "OY" | "N";
+function linkClass(t: Track, x: number, y: number): LinkClass {
+  const i = tIdx(x, y);
+  if ((t.road[i] & PRESENT) === 0) return "N";
+  switch (t.tier?.[i] ?? 0) {
+    case 2: return "H";
+    case 3: return "R";
+    case OVERPASS_X: return "OX";
+    case OVERPASS_Y: return "OY";
+    default: return "N";
+  }
+}
+const axisOfDir = (d: number): "x" | "y" => (DIR[d][0] !== 0 ? "x" : "y");
+/**
+ * ROADS-3 (#394): may a tile of class `a` link to its neighbour of class `b`
+ * across direction `d`? Highways meet the network only through Ramps; an
+ * Overpass links along its highway axis to highway-class tiles and not at all
+ * across it (the crossing road passes OVER - see `overpassJump`).
+ */
+function classesLink(a: LinkClass, b: LinkClass, d: number): boolean {
+  const ax = axisOfDir(d);
+  if (a === "OX" || a === "OY") {
+    if ((a === "OX" ? "x" : "y") !== ax) return false;
+    return b === "H" || b === "R" || b === a;
+  }
+  if (b === "OX" || b === "OY") return classesLink(b, a, d);
+  if (a === "H" && b === "N") return false;
+  if (a === "N" && b === "H") return false;
+  return true;
+}
+/**
+ * ROADS-3 (#394): the tile a road jumps to when it crosses an overpass from
+ * (x,y) in direction `d`: the overpass must carry its highway ACROSS `d`, and
+ * the tile beyond must be ordinary road. Null otherwise. Used by the economy's
+ * component flood and by `roadPath`, so the crossing is straight-through only
+ * - nothing turns onto the highway at an overpass.
+ */
+export function overpassJump(t: Track, x: number, y: number, d: number): [number, number] | null {
+  const [dx, dy] = DIR[d];
+  const ox = x + dx, oy = y + dy, bx = x + 2 * dx, by = y + 2 * dy;
+  if (!inMapT(ox, oy) || !inMapT(bx, by)) return null;
+  const oc = linkClass(t, ox, oy);
+  if (oc !== "OX" && oc !== "OY") return null;
+  if ((oc === "OX" ? "x" : "y") === axisOfDir(d)) return null;
+  if (!mergedPresent(t, bx, by)) return null;
+  const here = linkClass(t, x, y), there = linkClass(t, bx, by);
+  if (here !== "N" && here !== "R") return null;
+  if (there !== "N" && there !== "R") return null;
+  return [bx, by];
+}
 
 /** The paved tier at a tile (Road when the track predates tiers). */
 export const roadTierAt = (t: Track, tx: number, ty: number): RoadTier =>
@@ -131,6 +188,9 @@ export function setRoadTier(t: Track, tx: number, ty: number, tier: RoadTier): v
   if ((t.road[i] & PRESENT) === 0 || t.tier[i] === tier) return;
   t.tier[i] = tier;
   dirtyTiles.mark(i);
+  // ROADS-3 (#394): links depend on the tier (highway access rules), so the
+  // tile and its neighbours re-autotile on both layers.
+  autotileAroundBoth(t, "road", tx, ty);
   t.revision++;
 }
 
@@ -647,9 +707,15 @@ export function recomputeMask(t: Track, kind: TrackKind, tx: number, ty: number)
   const i = tIdx(tx, ty);
   if ((layer[i] & PRESENT) === 0) { layer[i] = 0; return 0; }
   let bits = 0;
+  const me = linkClass(t, tx, ty);
   for (const d of DIRS) {
     const [dx, dy] = DIR[d];
-    if (mergedPresent(t, tx + dx, ty + dy)) bits |= d;
+    if (!mergedPresent(t, tx + dx, ty + dy)) continue;
+    // ROADS-3 (#394): highway access rules (Road/Street/gravel never join a
+    // Highway directly - only through a Ramp; an Overpass links along its
+    // highway only). Maps without tiers are all class "N": unchanged.
+    if (!classesLink(me, linkClass(t, tx + dx, ty + dy), d)) continue;
+    bits |= d;
   }
   layer[i] = PRESENT | bits;
   return bits;
@@ -840,8 +906,9 @@ export const freeAllowanceCovers = (kind: TrackKind, newLoop = false): boolean =
  * `BUILD_COSTS.dirt` keeps its old-loop price and the old loop reads it.
  */
 /** ROADS-2 (#393): a tier's rank — Street < Road < Highway. */
-export const TIER_RANK: Record<RoadTierKey, number> = { street: 0, road: 1, highway: 2 };
-const RANK_OF_STORED = [1, 0, 2];                     // stored tier 0 Road, 1 Street, 2 Highway
+export const TIER_RANK: Record<RoadTierKey, number> = { street: 0, road: 1, highway: 2, ramp: 1 };
+// stored tier 0 Road, 1 Street, 2 Highway, 3 Ramp, 4/5 Overpass (highway)
+const RANK_OF_STORED = [1, 0, 2, 1, 2, 2];
 /** Per-cargo difference `a − b`, floored at zero (an upgrade pays the gap). */
 const costGap = (a: Purse, b: Purse): Purse => {
   const out: Purse = {};
@@ -859,12 +926,50 @@ const costGap = (a: Purse, b: Purse): Purse => {
 export function tierTileCost(t: Track, tier: RoadTierKey, tx: number, ty: number): Purse {
   const want = ROAD_TIERS[tier].cost;
   if (hasTrack(t, "road", tx, ty)) {
-    const cur = RANK_OF_STORED[roadTierAt(t, tx, ty)];
+    const stored = roadTierAt(t, tx, ty);
+    // ROADS-3 (#394): a Ramp converts a Road/Street (pays the gap), never a
+    // Highway or an overpass (free: the drag passes over it unchanged).
+    if (tier === "ramp") {
+      if (stored === 3 || stored === 2 || stored === OVERPASS_X || stored === OVERPASS_Y) return {};
+      return costGap(want, ROAD_TIERS[stored === 1 ? "street" : "road"].cost);
+    }
+    const cur = RANK_OF_STORED[stored];
     if (cur >= TIER_RANK[tier]) return {};
     const curKey = ROAD_TIER_KEYS.find((k) => TIER_RANK[k] === cur) ?? "road";
     return costGap(want, ROAD_TIERS[curKey].cost);
   }
   return { ...want };
+}
+
+/** ROADS-3 (#394): does (x,y) have track beside it that is not part of `path`? */
+function sideBranch(t: Track, path: [number, number][], x: number, y: number): boolean {
+  const on = new Set(path.map(([px, py]) => tIdx(px, py)));
+  for (const d of DIRS) {
+    const nx = x + DIR[d][0], ny = y + DIR[d][1];
+    if (!inMapT(nx, ny) || on.has(tIdx(nx, ny))) continue;
+    if (hasTrack(t, "road", nx, ny) || hasTrack(t, "dirt", nx, ny)) return true;
+  }
+  return false;
+}
+
+/** ROADS-3 (#394): what an overpass costs (one crossing tile). */
+export const OVERPASS_COST: Purse = { wood: 6, stone: 12, ore: 8 };
+const tileAlreadyOverpass = (t: Track, x: number, y: number) => {
+  const v = t.tier?.[tIdx(x, y)] ?? 0;
+  return v === OVERPASS_X || v === OVERPASS_Y;
+};
+/** A Highway tile (or overpass) being crossed at right angles to its axis. */
+function overpassCrossing(t: Track, x: number, y: number, dragAxis: "x" | "y" | undefined): boolean {
+  if (!dragAxis || !hasTrack(t, "road", x, y)) return false;
+  const v = t.tier?.[tIdx(x, y)] ?? 0;
+  if (v === OVERPASS_X) return dragAxis === "y";
+  if (v === OVERPASS_Y) return dragAxis === "x";
+  if (v !== 2) return false;
+  const bits = t.road[tIdx(x, y)] & 0b1111;
+  const alongX = (bits & (SE | NW)) !== 0, alongY = (bits & (NE | SW)) !== 0;
+  if (alongX && !alongY) return dragAxis === "y";
+  if (alongY && !alongX) return dragAxis === "x";
+  return false;
 }
 
 export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number, newLoop = false): Purse {
@@ -1010,6 +1115,8 @@ export function previewDrag(
     grid, path,
     (x, y) => inMapT(x, y) && (mergedPresent(t, x, y) || planned.has(tIdx(x, y))),
     (x, y) => inMapT(x, y) && (bridges.railAt?.(x, y) ?? false),
+    // ROADS-3 (#394): a Highway bridge may span wider water.
+    tiered && roadTier === "highway" ? HIGHWAY_BRIDGE_SPAN : undefined,
   );
   // The obstacle run the drag dies on — the building (or the water) it ran
   // into, not the free tiles beyond it. Painted red by the overlay.
@@ -1080,7 +1187,12 @@ export function previewDrag(
       && tileHeight(grid, x, y) !== tileHeight(grid, path[i - 1][0], path[i - 1][1])) {
       noteObstacle(i); break;
     }
-    const c = tiered ? tierTileCost(t, roadTier, x, y) : tileCost(t, kind, x, y, newLoop);
+    // ROADS-3 (#394): a Road/Street crossing a Highway at right angles builds
+    // an OVERPASS here (straight through, no junction) at OVERPASS_COST.
+    const crossing = kind === "road" && (roadTier === "road" || roadTier === "street")
+      && overpassCrossing(t, x, y, passAxis(path, i));
+    const c = crossing ? (tileAlreadyOverpass(t, x, y) ? {} : { ...OVERPASS_COST })
+      : tiered ? tierTileCost(t, roadTier, x, y) : tileCost(t, kind, x, y, newLoop);
     const paves = kind === "road" && hasTrack(t, "dirt", x, y);
     // VP-01: Free tiles are charged nothing; the allowance covers them first.
     // A tile that costs nothing (dragging over your own track) consumes no
@@ -1139,13 +1251,37 @@ export function commitDrag(
     const r = buildTile(t, kind, x, y, owner);
     if (r) for (const c of r.chunks) chunks.add(c);
   }
+  // ROADS-3 (#394): a Road/Street drag that crosses a Highway at right angles
+  // turns that tile into an OVERPASS (the highway keeps its axis).
+  if (kind === "road" && (roadTier === "road" || roadTier === "street")) {
+    for (let k = 0; k < preview.tiles.length; k++) {
+      const [x, y] = preview.tiles[k];
+      const ax = passAxis(preview.tiles, k);
+      if (!overpassCrossing(t, x, y, ax)) continue;
+      setRoadTier(t, x, y, ax === "x" ? OVERPASS_Y : OVERPASS_X);
+      chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
+    }
+  }
   // ROADS-2 (#393): stamp the tier on every paved tile of the drag whose rank
   // is below it (never downgrade). Plain Road drags leave tiers untouched.
   if (kind === "road" && roadTier !== "road") {
     const want = ROAD_TIER[roadTier];
     for (const [x, y] of preview.tiles) {
       if (!hasTrack(t, "road", x, y)) continue;
-      if (RANK_OF_STORED[roadTierAt(t, x, y)] >= TIER_RANK[roadTier]) continue;
+      const stored = roadTierAt(t, x, y);
+      if (roadTier === "ramp") {
+        // a Ramp converts Road/Street only
+        if (stored === 0 || stored === 1) { setRoadTier(t, x, y, want); chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0)); }
+        continue;
+      }
+      if (RANK_OF_STORED[stored] >= TIER_RANK[roadTier]) continue;
+      // ROADS-3 (#394): a Highway laid THROUGH a junction keeps the side road
+      // attached — that tile becomes a Ramp (Highway meets roads only there).
+      if (roadTier === "highway" && sideBranch(t, preview.tiles, x, y)) {
+        setRoadTier(t, x, y, ROAD_TIER.ramp);
+        chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
+        continue;
+      }
       setRoadTier(t, x, y, want);
       chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
     }

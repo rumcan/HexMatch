@@ -193,8 +193,10 @@ export const TRANSITION_BLEND = 0.2;
 export interface RoadTile {
   tx: number;
   ty: number;
-  /** ROADS-2 (#393): paved tier (absent/0 Road, 1 Street, 2 Highway). */
+  /** ROADS-2 (#393): paved tier (absent/0 Road, 1 Street, 2 Highway, 3 Ramp, 4/5 Overpass). */
   tier?: number;
+  /** ROADS-3 (#394): the road deck an overpass carries across its highway. */
+  deck?: boolean;
   material: RoadMaterial;
   mask: number;
   figures: RoadFigure[];

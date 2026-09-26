@@ -35,7 +35,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
-  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
+  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump,
   plantFootprintTiles, type Track, type TrackKind,
 } from "./track";
 // RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
@@ -316,6 +316,18 @@ export function buildComponents(track: Track, owner: number): Components {
         if (!usable(ni)) continue;
         comp[ni] = id;
         stack.push(ni);
+      }
+      // ROADS-3 (#394): a road carries on straight OVER an overpass — the
+      // tiles either side are one component, the highway below is not.
+      if (track.tier) {
+        for (const d of DIRS) {
+          const j = overpassJump(track, x, y, d);
+          if (!j) continue;
+          const ji = tIdx(j[0], j[1]);
+          if (comp[ji] !== -1 || !usable(ji)) continue;
+          comp[ji] = id;
+          stack.push(ji);
+        }
       }
     }
   }
