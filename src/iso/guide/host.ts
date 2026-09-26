@@ -45,6 +45,9 @@ export interface GuideHostHooks {
    *  the section for the next boot). */
   live: boolean;
   onOutcome?: (outcome: GuideOutcome) => void;
+  /** Is the game already past this step (the Factory stands, a Depot is
+   *  built, income flows)? Such a step is skipped on arrival. */
+  already?: (sectionId: string, stepId: string) => boolean;
 }
 
 export interface GuideHost {
@@ -90,7 +93,11 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
     try { voice.setNarration(true); } catch { /* garnish */ }
     if (!step.voice) return;
     // The caption strip already shows the words: no second subtitle bubble.
-    try { voice.say(step.voice, { subtitle: false }); } catch { /* a missing clip is silent */ }
+    // force: the player opened the tutorial, so it speaks even after the
+    // automatic coach narration was skipped this session.
+    // A new step cuts the last one off - never a backlog of stale lines.
+    try { voice.stop(); } catch { /* garnish */ }
+    try { voice.say(step.voice, { subtitle: false, force: true }); } catch { /* a missing clip is silent */ }
   }
 
   function applyAssist(view: GuideView): void {
@@ -103,13 +110,24 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
     setTimeout(() => { try { hooks.assist(assist); } catch { /* garnish */ } }, 0);
   }
 
+  let assistedKey = "\u0000";
   function paint(): void {
     if (disposed) return;
-    const view = controller.view();
+    let view = controller.view();
+    // A step the game is already past is skipped on arrival (bounded).
+    for (let guard = 0; guard < 12 && view.running && view.step && view.sectionId
+      && hooks.already?.(view.sectionId, view.step.id); guard++) {
+      controller.next();
+      view = controller.view();
+    }
+    try { hooks.root.classList.toggle("guide-on", view.running === true); } catch { /* garnish */ }
     if (view.running) {
       speak(view);
-      applyAssist(view);
-    }
+      // Once per step: a repaint (any emitted event) must not re-click the
+      // tool or re-open the tab - that loops and fights the player.
+      const key = `${view.sectionId}:${view.step?.id}:${view.stepNumber}`;
+      if (key !== assistedKey) { assistedKey = key; applyAssist(view); }
+    } else assistedKey = "\u0000";
     renderer.paint(view);
     if (view.outcome && view.outcome !== lastOutcome) {
       lastOutcome = view.outcome;

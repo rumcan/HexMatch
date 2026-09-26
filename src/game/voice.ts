@@ -77,7 +77,7 @@ export interface VoiceDirector {
   cueOnce(trigger: string): VoiceLine | null;
   /** Play a line by id. `subtitle: false` plays it without the subtitle
    *  bubble - for a caller that already shows the words (the guide). */
-  say(id: string, opts?: { subtitle?: boolean }): VoiceLine | null;
+  say(id: string, opts?: { subtitle?: boolean; force?: boolean }): VoiceLine | null;
   setNarration(on: boolean): void;
   readonly narrationOn: boolean;
   skipNarration(): void;
@@ -347,8 +347,11 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
 
   /** Lines queued without a subtitle (their caller shows the words itself). */
   const unsubtitled = new WeakSet<VoiceLine>();
+  /** Narrator lines the player ASKED for (the Tutorial): they play even
+   *  after "Skip narration", which only silences the automatic coach. */
+  const forced = new WeakSet<VoiceLine>();
   function accept(line: VoiceLine, markOnce: boolean, advance = true): VoiceLine | null {
-    if (line.speaker === "narrator" && (!narrationOn || skipped)) return null;
+    if (line.speaker === "narrator" && !forced.has(line) && (!narrationOn || skipped)) return null;
     if (line.speaker === "rival") {
       const t = now();
       if (t - lastRivalAt < gap) {
@@ -449,8 +452,10 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
     say(id, opts) {
       const found = lines.find((l) => l.id === id) ?? null;
       // A private copy, so the no-subtitle mark never leaks onto a cue of the same line.
-      const line = found && opts?.subtitle === false ? { ...found } : found;
+      const own = opts?.subtitle === false || opts?.force === true;
+      const line = found && own ? { ...found } : found;
       if (line && opts?.subtitle === false) unsubtitled.add(line);
+      if (line && opts?.force === true) forced.add(line);
       // By id: do not burn the trigger's round-robin slot.
       return line ? accept(line, false, false) : null;
     },
