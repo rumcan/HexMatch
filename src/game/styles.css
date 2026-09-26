@@ -4653,6 +4653,80 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .ending-spark { opacity: .6; transform: rotate(calc(var(--i) * 30deg)) translateY(-38px); }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════
+   END-1 (#472) — match summary: charts + highlights, Space Age palette
+   ═══════════════════════════════════════════════════════════════════ */
+.ending-summary {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line, #343b3f);
+  background: #1a1f22;
+}
+.ending-summary .ending-section-title { color: var(--sa-lemon, #f2d64b); }
+.ending-summary-charts { margin-top: 8px; }
+.ending-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+@media (max-width: 760px) {
+  .ending-charts-grid { grid-template-columns: 1fr; }
+}
+.ending-chart-box {
+  border: 1px solid var(--line, #343b3f);
+  background: #121517;
+  padding: 6px;
+}
+.ending-chart-label {
+  font: 600 9px/1 var(--sans, sans-serif);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--sa-bone-dim, #b9b3a6);
+  margin-bottom: 4px;
+}
+.ending-chart { display: block; width: 100%; }
+.ending-chart-legend {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 8px;
+  font: 400 10px/1 var(--sans, sans-serif);
+  color: var(--sa-bone-dim, #b9b3a6);
+}
+.ending-legend-dot {
+  width: 8px; height: 8px; display: inline-block; flex: 0 0 8px;
+}
+.ending-summary-highlights { margin-top: 14px; }
+.ending-highlights { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.ending-highlight-row {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 6px 8px;
+  border-left: 2px solid var(--sa-orange, #f08a24);
+  background: #1f2427;
+}
+.ending-highlight-icon { color: #724416; font: 700 12px/1 var(--display); min-width: 18px; text-align: center; }
+.ending-highlight-copy { display: flex; flex-direction: column; min-width: 0; }
+.ending-highlight-copy b {
+  color: var(--sa-bone, #eee6d4);
+  font: 600 11px/1.2 var(--sans, sans-serif);
+  letter-spacing: .6px; text-transform: uppercase;
+}
+.ending-highlight-copy small {
+  color: var(--sa-bone-dim, #b9b3a6);
+  font: 400 11px/1.35 var(--mono, monospace);
+  word-break: break-word;
+}
+.ending-button.ending-rematch,
+.ending-button.ending-same-map,
+.ending-button.ending-next-contract,
+.ending-button.ending-main-menu {
+  /* keep Space Age flat look, but distinct from the old restart */
+}
+.ending-button.ending-rematch { border-color: var(--sa-orange, #f08a24); }
+.ending-button.ending-same-map { border-color: var(--sa-line, #343b3f); }
+.ending-button.ending-next-contract { background: var(--sa-lemon, #f2d64b); color: var(--sa-on-lemon, #2b2604); border-color: var(--sa-lemon, #f2d64b); }
+.ending-button.ending-main-menu { border-color: var(--sa-bone-dim, #b9b3a6); }
+
 /* ═══════════════════════════════════════════════════════════════════
    STORY-01 — the campaign: cutscene stage, the office voice on the wire,
    and the contract menu on the start screen.
