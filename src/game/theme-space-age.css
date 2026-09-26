@@ -779,3 +779,12 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
     #1f2427 !important;
 }
 .start-screen.menu > .menu-foot { display: none; }
+/* owner: stripes over the landscape, plain left panel running the full height */
+.start-screen.menu > .menu-card { background: #1f2427 !important; height: 100dvh; max-height: none !important; margin: 0 !important; }
+.start-screen.menu {
+  background-image:
+    linear-gradient(115deg, transparent 0 58%, rgba(240,138,36,.45) 58% 64%, transparent 64%),
+    linear-gradient(115deg, transparent 0 68%, rgba(79,179,191,.45) 68% 71%, transparent 71%),
+    url("../assets/poster/menu-bg.webp") !important;
+  background-size: cover !important;
+}
