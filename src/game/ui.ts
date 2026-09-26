@@ -266,6 +266,7 @@ export interface UiState {
   market?: UiMarketRow[];
   /** ECON-1 (#421): the demand event running right now, for the Market tab. */
   marketEvent?: string | null;
+  contracts?: any;
   /**
    * L16 (#231): the per-resource storage cap the local seat plays under, or
    * undefined when no cap applies (the shipped loop, and dev mode's unlimited
@@ -556,6 +557,7 @@ export interface UiHooks {
   onZoom?: (dir: 1 | -1) => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
+  onContractClaim?: (id: string) => void;
   /**
    * L11 (#226), restored by L17 (#245): the bank exchange. The GAME owns it —
    * the tier gate against the seat's own rungs, the guest relay (`"relayed"`:
@@ -2048,7 +2050,7 @@ export function createOriginalUi(
   // ── mobile bottom nav ─────────────────────────────────────────────────────
   const mobileNav = h("nav", "mnav");
   const views: [string, string, string][] = [
-    ["map", "🗺", "Map"], ["build", "🏗", "Build"], ["trade", "⇄", "Economy"],
+    ["map", "🗺", "Map"], ["build", "🏗", "Build"], ["trade", "⇄", "Economy"], ["contracts", "📋", "Contracts"],
   ];
   for (const [v, ic, label] of views) {
     const b = h("button", "mnav-btn" + (v === "map" ? " active" : ""));
@@ -2058,6 +2060,309 @@ export function createOriginalUi(
     mobileNav.appendChild(b);
   }
   root.appendChild(mobileNav);
+
+  // ── bottom sheets (phone) ────────────────────────────────────────────────
+  // Each sheet slides up from bottom, covers ~70% of screen, dismissible by drag-down or backdrop tap
+  function createBottomSheet(id: string, title: string, content: HTMLElement) {
+    const sheet = h("div", "bottom-sheet hidden", "");
+    sheet.id = id;
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-modal", "true");
+    sheet.setAttribute("aria-label", title);
+
+    const handle = h("div", "sheet-handle");
+    handle.setAttribute("aria-hidden", "true");
+    sheet.appendChild(handle);
+
+    const header = h("div", "sheet-header");
+    const headerTitle = h("h2", "sheet-title", title);
+    const closeBtn = h("button", "sheet-close", "✕");
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", `Close ${title}`);
+    closeBtn.onclick = () => closeBottomSheet(id);
+    header.append(headerTitle, closeBtn);
+    sheet.appendChild(header);
+
+    const body = h("div", "sheet-body");
+    body.appendChild(content);
+    sheet.appendChild(body);
+
+    // Drag to dismiss
+    let dragStartY = 0;
+    let isDragging = false;
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse") return;
+      dragStartY = e.clientY;
+      isDragging = true;
+      sheet.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!isDragging) return;
+      const delta = e.clientY - dragStartY;
+      if (delta > 0) {
+        sheet.style.transform = `translateY(${delta}px)`;
+        if (delta > 100) sheet.classList.add("dismissing");
+      }
+    });
+    handle.addEventListener("pointerup", (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      const delta = e.clientY - dragStartY;
+      sheet.style.transform = "";
+      sheet.classList.remove("dismissing");
+      if (delta > 100) closeBottomSheet(id);
+    });
+    handle.addEventListener("pointercancel", () => {
+      isDragging = false;
+      sheet.style.transform = "";
+      sheet.classList.remove("dismissing");
+    });
+
+    // Backdrop tap to dismiss
+    const backdrop = h("div", "sheet-backdrop hidden");
+    backdrop.onclick = () => closeBottomSheet(id);
+    sheet.appendChild(backdrop);
+
+    root.appendChild(sheet);
+    return sheet;
+  }
+
+  const openSheets = new Set<string>();
+  function openBottomSheet(id: string, state?: UiState) {
+    const sheet = document.getElementById(id);
+    if (!sheet) return;
+    openSheets.add(id);
+    sheet.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      sheet.classList.add("open");
+      sheet.querySelector(".sheet-backdrop")?.classList.remove("hidden");
+    });
+    // Close other sheets
+    openSheets.forEach(otherId => {
+      if (otherId !== id) closeBottomSheet(otherId);
+    });
+    // Update nav button
+    const navBtn = mobileNav.querySelector(`[data-view="${id.replace("sheet-", "")}"]`);
+    navBtn?.classList.add("active");
+    // Lock body scroll
+    document.body.style.overflow = "hidden";
+    
+    // Populate sheet content
+    if (id === "sheet-build") {
+      populateBuildSheet();
+    } else if (id === "sheet-trade") {
+      populateEconomySheet();
+    } else if (id === "sheet-contracts" && state) {
+      populateContractsSheet(state);
+    }
+  }
+
+  function closeBottomSheet(id: string) {
+    const sheet = document.getElementById(id);
+    if (!sheet) return;
+    openSheets.delete(id);
+    sheet.classList.remove("open");
+    sheet.querySelector(".sheet-backdrop")?.classList.add("hidden");
+    sheet.addEventListener("transitionend", () => {
+      if (!sheet.classList.contains("open")) sheet.classList.add("hidden");
+    }, { once: true });
+    const navBtn = mobileNav.querySelector(`[data-view="${id.replace("sheet-", "")}"]`);
+    navBtn?.classList.remove("active");
+    if (openSheets.size === 0) document.body.style.overflow = "";
+  }
+
+  // Build sheet content
+  const buildSheetContent = h("div", "build-sheet");
+  buildSheetContent.appendChild(h("div", "sheet-section-title", "Build Tools"));
+  const buildListClone = h("div", "build-list");
+  // Will be populated when sheet opens
+  createBottomSheet("sheet-build", "Build", buildSheetContent);
+
+  // Economy sheet content
+  const economySheetContent = h("div", "economy-sheet");
+  economySheetContent.appendChild(h("div", "sheet-section-title", "Economy"));
+  const economyTabs = h("div", "sheet-tabs");
+  ["bank", "market", "black", "feed", "quests"].forEach(tab => {
+    const btn = h("button", "sheet-tab" + (tab === "bank" ? " active" : ""), tab.charAt(0).toUpperCase() + tab.slice(1));
+    btn.dataset.tab = tab;
+    btn.onclick = () => {
+      economyTabs.querySelectorAll(".sheet-tab").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      // Switch panes
+      economyPanes.forEach((pane, key) => {
+        pane.classList.toggle("hidden", key !== tab);
+      });
+    };
+    economyTabs.appendChild(btn);
+  });
+  economySheetContent.appendChild(economyTabs);
+  const economyPanes = new Map<string, HTMLElement>();
+  ["bank", "market", "black", "feed", "quests"].forEach(tab => {
+    const pane = h("div", "sheet-pane" + (tab !== "bank" ? " hidden" : ""));
+    pane.dataset.pane = tab;
+    pane.textContent = `${tab.charAt(0).toUpperCase() + tab.slice(1)} pane content`; // Placeholder
+    economyPanes.set(tab, pane);
+    economySheetContent.appendChild(pane);
+  });
+  createBottomSheet("sheet-trade", "Economy", economySheetContent);
+
+  // Contracts sheet content
+  const contractsSheetContent = h("div", "contracts-sheet");
+  contractsSheetContent.appendChild(h("div", "sheet-section-title", "Contracts"));
+  const contractsList = h("div", "contracts-list");
+  contractsSheetContent.appendChild(contractsList);
+  createBottomSheet("sheet-contracts", "Contracts", contractsSheetContent);
+
+  // Populate build sheet with current tool buttons (mirrors desktop build list)
+  function populateBuildSheet() {
+    // Clear and rebuild the build list clone
+    buildListClone.innerHTML = "";
+    
+    // Clone tool groups structure from desktop build list
+    for (const [gid] of groupEls) {
+      const grp = TOOL_GROUPS.find((x) => x.id === gid)!;
+      const wrap = h("div", "tool-group");
+      wrap.dataset.group = grp.id;
+      const btn = h("button", "build-btn group-btn bg-group-" + grp.id) as HTMLButtonElement;
+      btn.dataset.group = grp.id;
+      btn.setAttribute("aria-haspopup", "true");
+      btn.setAttribute("aria-expanded", "false");
+      btn.innerHTML = `<span class="bb-ico">${toolIconSvg(grp.icon)}</span><div class="bb-mid"><b>${grp.label}</b><small>${grp.sub}</small></div><span class="group-caret" aria-hidden="true">›</span>`;
+      wireToolCard(btn);
+      btn.onclick = () => {
+        const isOpen = wrap.classList.toggle("open");
+        btn.setAttribute("aria-expanded", String(isOpen));
+        // Close other groups
+        buildListClone.querySelectorAll(".tool-group").forEach(other => {
+          if (other !== wrap) {
+            other.classList.remove("open");
+            other.querySelector(".group-btn")?.setAttribute("aria-expanded", "false");
+          }
+        });
+      };
+      const fly = h("div", "tool-flyout");
+      fly.dataset.flyout = grp.id;
+      const head = h("div", "tool-flyout-head");
+      head.textContent = grp.label;
+      fly.appendChild(head);
+      
+      // Add tools from this group
+      for (const t of visibleTools) {
+        if (!grp.keys.includes(t.key)) continue;
+        const b = h("button", "build-btn bg-" + t.key);
+        b.dataset.tool = t.key;
+        b.innerHTML = `<span class="bb-ico">${toolIconSvg(t.key)}</span><div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
+        wireToolCard(b);
+        b.onclick = () => {
+          hooks.onTool(t.key);
+          // Close all groups
+          buildListClone.querySelectorAll(".tool-group").forEach(g => g.classList.remove("open"));
+          buildListClone.querySelectorAll(".group-btn").forEach(gb => gb.setAttribute("aria-expanded", "false"));
+        };
+        fly.appendChild(b);
+      }
+      
+      // Add city upgrade after plant in roads group
+      if (gid === "roads") {
+        const cityBtn = h("button", "build-btn bg-city");
+        cityBtn.dataset.act = "city-upgrade";
+        cityBtn.innerHTML = `<span class="bb-ico">${toolIconSvg("city")}</span><div class="bb-mid"><b>Upgrade city</b><small></small></div>`;
+        wireToolCard(cityBtn);
+        cityBtn.onclick = () => hooks.onTownUpgrade?.();
+        fly.appendChild(cityBtn);
+      }
+      
+      wrap.append(btn, fly);
+      buildListClone.appendChild(wrap);
+    }
+    
+    // Add standalone tools (not in groups)
+    for (const t of visibleTools) {
+      if (groupOf(t.key)) continue; // Already in a group
+      const b = h("button", "build-btn bg-" + t.key);
+      b.dataset.tool = t.key;
+      b.innerHTML = `<span class="bb-ico">${toolIconSvg(t.key)}</span><div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
+      wireToolCard(b);
+      b.onclick = () => hooks.onTool(t.key);
+      buildListClone.appendChild(b);
+    }
+    
+    // Ensure Rail Ways sits under Road Ways
+    const r = buildListClone.querySelector('[data-group="roads"]');
+    const l = buildListClone.querySelector('[data-group="rails"]');
+    if (r && l) r.after(l);
+  }
+
+  // Populate economy sheet panes with actual content
+  function populateEconomySheet() {
+    // Bank pane
+    const bankPane = economyPanes.get("bank");
+    if (bankPane) {
+      bankPane.innerHTML = "";
+      const bankUI = h("div", "bank-ui");
+      // Bank UI will be rendered by paint() - we just need a placeholder
+      bankPane.appendChild(bankUI);
+    }
+    
+    // Market pane
+    const marketPane = economyPanes.get("market");
+    if (marketPane) {
+      marketPane.innerHTML = "";
+      const marketUI = h("div", "market-ui");
+      marketPane.appendChild(marketUI);
+    }
+    
+    // Black market pane
+    const blackPane = economyPanes.get("black");
+    if (blackPane) {
+      blackPane.innerHTML = "";
+      const blackUI = h("div", "black-ui");
+      blackPane.appendChild(blackUI);
+    }
+    
+    // Feed pane
+    const feedPane = economyPanes.get("feed");
+    if (feedPane) {
+      feedPane.innerHTML = "";
+      const feedUI = h("div", "feed-ui");
+      feedPane.appendChild(feedUI);
+    }
+    
+    // Quests pane
+    const questsPane = economyPanes.get("quests");
+    if (questsPane) {
+      questsPane.innerHTML = "";
+      const questsUI = h("div", "quests-ui");
+      questsPane.appendChild(questsUI);
+    }
+  }
+
+  // Populate contracts sheet with actual contracts
+  function populateContractsSheet(state: UiState) {
+    contractsList.innerHTML = "";
+    const contracts = state.contracts ?? [];
+    if (!contracts.length) {
+      contractsList.appendChild(h("p", "sheet-placeholder", "No contracts available."));
+      return;
+    }
+    for (const c of contracts) {
+      const card = h("div", "contract-card");
+      card.innerHTML = `
+        <div class="contract-header">
+          <b>${c.title}</b>
+          <span class="contract-vp">${c.vp}★</span>
+        </div>
+        <div class="contract-desc">${c.desc}</div>
+        <div class="contract-progress">${c.progress ?? ""}</div>
+        ${c.claimable ? `<button class="contract-claim" data-contract="${c.id}">Claim ${c.vp}★</button>` : ""}
+      `;
+      const claimBtn = card.querySelector(".contract-claim");
+      if (claimBtn) {
+        claimBtn.addEventListener("click", () => hooks.onContractClaim?.(c.id));
+      }
+      contractsList.appendChild(card);
+    }
+  }
 
   // ── gem / HUD DOM state ──────────────────────────────────────────────────
   const gemEls = new Map<number, HTMLElement>();
@@ -2549,8 +2854,9 @@ export function createOriginalUi(
     if (t === "plant") responsiveZoom();
   }
 
-  function setMobileView(v: string) {
+  function setMobileView(v: string, state?: UiState) {
     if (root.dataset.view !== v) sfx.play("tab");
+    const previousView = root.dataset.view;
     root.dataset.view = v;
     mobileNav.querySelectorAll(".mnav-btn").forEach((b: Element) => {
       (b as HTMLElement).classList.toggle("active", (b as HTMLElement).dataset.view === v);
@@ -2559,6 +2865,22 @@ export function createOriginalUi(
     // gives the board its measurement pass (and tucks the top bar), leaving
     // it hands the bar back to the map and the build sheet.
     responsiveZoom();
+    
+    // Open corresponding bottom sheet on phone
+    if (isPhoneViewport()) {
+      if (v === "build") {
+        openBottomSheet("sheet-build", state);
+      } else if (v === "trade") {
+        openBottomSheet("sheet-trade", state);
+      } else if (v === "contracts") {
+        openBottomSheet("sheet-contracts", state);
+      }
+    }
+    
+    // Close sheets when navigating away from sheet views
+    if (previousView === "build" && v !== "build") closeBottomSheet("sheet-build");
+    if (previousView === "trade" && v !== "trade") closeBottomSheet("sheet-trade");
+    if (previousView === "contracts" && v !== "contracts") closeBottomSheet("sheet-contracts");
   }
 
   // ── board interactions ────────────────────────────────────────────────────
