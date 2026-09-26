@@ -41,8 +41,11 @@ export interface SaveGamePayload {
   savedAt: number;
   seed: number;
   /** MAP-1 (#412): the map features this save was generated with. Absent in
-   *  saves made before MAP-1 (those maps were all-OFF). */
-  map?: { rivers: boolean; elevation: boolean; shapes: boolean; rings?: boolean };
+   *  saves made before MAP-1 (those maps were all-OFF). `diag` (#440) is
+   *  optional for the same reason one layer down: a save written before the
+   *  45° road rule carries no key, and `readMapOptions` reads a missing key as
+   *  OFF — so it resumes axis-only, exactly as it was played. */
+  map?: { rivers: boolean; elevation: boolean; shapes: boolean; rings?: boolean; diag?: boolean };
   skillKey: string;
   phase: string;
   winnerId: string | null;

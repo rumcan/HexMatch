@@ -613,6 +613,13 @@ export interface IsoGameOptions {
    */
   shapes?: boolean;
   /**
+   * #440: force the 45° road rule. Absent, it is read from `?diag=0|1` and is
+   * otherwise ON for a new game — see `map-options.ts` for the whole chain
+   * (a resumed save keeps its own value; in a room the host's record wins, so
+   * this is a solo/debug lever like `rivers`).
+   */
+  diag?: boolean;
+  /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
    * carries — and is otherwise OFF in every mode. The new loop is
@@ -852,9 +859,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // carrying its own seed, as always.
   const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
   // MAP-1 (#412): rivers + dams, elevation and shapes are ON for new games;
-  // see map-options.ts for who decides (save, room, story, URL, default).
+  // #440 puts 45° roads on the same list. See map-options.ts for who decides
+  // (save, room, story, URL, default). `diag` is deliberately absent from
+  // `mapParamsInUrl` above: it re-terrains nothing, so a `?diag=0` boot keeps
+  // the save in front of it instead of throwing the map away to honour it.
   const mapOptions: MapOptions = resolveMapOptions({
-    explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes, rings: (opts as { rings?: boolean }).rings },
+    explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes, rings: (opts as { rings?: boolean }).rings, diag: opts.diag },
     search: searchNow,
     save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
     room: isMp() ? settings : null,
@@ -905,7 +915,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     stampFields();
   };
   stampFields();
-  const track: Track = createTrack();
+  // #440: the road rule the whole game builds under — the drag, the routing,
+  // the rival and the renderers all read THIS flag, so a save, a room and a
+  // `?diag=0` boot can never leave two parts of one game disagreeing.
+  const track: Track = createTrack(mapOptions.diag);
   // RAIL-04 (#178): the railway's own world. #142 is explicit that rail is a
   // SECOND, owner-scoped graph — it never reuses the road tiers, their bytes or
   // their names — so this is a separate state object beside `track`, created
@@ -2267,6 +2280,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     roadBits: drawBits(track, "road"),
     dirtBits: drawBits(track, "dirt"),
     roadTiers: track.tier,
+    // #440: the painter draws the road rule the simulation builds under.
+    diagonalRoads: track.diagonalRoads,
     extra: [],
     trees: scenery.trees,
     forests: scenery.forests,

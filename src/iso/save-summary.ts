@@ -25,6 +25,7 @@ import {
   type SaveGamePayload,
 } from "./savegame-runtime";
 import { createTrack } from "./track";
+import { readMapOptions } from "./map-options";
 import { createScoreState, rescore, vpFor, type LoopScoring } from "./victory";
 import { VICTORY } from "./config";
 import { generateMap } from "./grid";
@@ -117,7 +118,12 @@ function loopScoringFor(
  */
 function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
   try {
-    const track = createTrack();
+    // #440: the throwaway track builds under the SAVE's road rule, not the
+    // menu's. Connectivity reads the diagonal links only when the flag says
+    // they count, so a summary scored under the wrong rule could count a
+    // network the resumed game then refuses to route over. A save with no
+    // `map.diag` predates the rule and stays axis-only.
+    const track = createTrack(readMapOptions(d.map)?.diag ?? false);
     trackRestored(track, d.track);
     // `grid` is only consulted by catchment/connection code. The shipped
     // loop's table never asks (paves and plants are track/list facts), so it

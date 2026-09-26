@@ -120,7 +120,8 @@ export interface RailLayer {
 
 /** The world view a rail paint needs: the layer, plus the roads it crosses. */
 export interface RailWorld {
-  /** Same local DEV flag as RoadWorld; never persisted. */
+  /** #440: the same 45° road rule `RoadWorld` carries — a rail crossing reads
+   *  the road diagonals through it. Never persisted on its own. */
   diagonalRoads?: boolean;
   roadTiers?: Uint8Array;
   rail?: RailLayer;
@@ -661,7 +662,7 @@ export function railTilesIn(
   const roadView: Track = {
     road: world.roadBits ?? EMPTY_ROADS, dirt: world.dirtBits ?? EMPTY_ROADS,
     owner: EMPTY_ROADS, upgraded: EMPTY_ROADS, revision: 0, tier: world.roadTiers,
-    diagonalRoads: import.meta.env.DEV && (world.diagonalRoads ?? DIAGONAL_ROADS),
+    diagonalRoads: world.diagonalRoads ?? DIAGONAL_ROADS,
   };
   const out: RailTile[] = [];
   for (let ty = ty0; ty <= ty1; ty++) {
