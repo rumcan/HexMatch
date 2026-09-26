@@ -41,12 +41,9 @@ import { registerSoundPainter } from "./sfx";
  * shown on the chip and in Settings. The terms URL is repeated in
  * `docs/RADIO.md`.
  *
- * SomaFM's current terms forbid embedding in a game
- * (https://somafm.com/contact/tos.html — "Embedding the Content in any
- * website, application, or platform" needs prior written permission; their
- * direct-link pages say the URLs are not for video games). Secret Agent is
- * kept anyway because the ticket says this one stream stays. No other SomaFM
- * channel is added: the same terms cover every channel.
+ * SomaFM is NOT on the dial: its terms forbid embedding in a game without
+ * prior written permission (every channel). The default station is our own
+ * generated lofi playlist (HexMatch Lofi), shipped under assets/music/lofi.
  *
  * Player-facing strings (name, genre, credit, licence) must not contain "//"
  * or "(#" — the settings sheet is scanned for developer comments.
@@ -63,18 +60,38 @@ export interface RadioStation {
   termsUrl: string;
   /** Attribution line for the chip tooltip and the settings sheet. No URL. */
   credit: string;
+  /** A local playlist instead of a stream: the tracks play in turn and loop.
+   *  `url` is then the first track. */
+  playlist?: readonly string[];
 }
+
+/** Where shipped music lives (copied into the build beside index.html). */
+function musicUrl(file: string): string {
+  let base = "/";
+  try { base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/"; } catch { /* node */ }
+  return `${base.endsWith("/") ? base : base + "/"}assets/music/lofi/${file}.mp3`;
+}
+const LOFI_TRACKS: readonly string[] = Object.freeze([
+  musicUrl("lofi-01-main-street"),
+  musicUrl("lofi-02-rail-yard"),
+  musicUrl("lofi-03-harbour"),
+  musicUrl("lofi-04-night-shift"),
+  musicUrl("lofi-05-drive-in"),
+  musicUrl("lofi-06-sunday-plant"),
+]);
 
 export const RADIO_STATIONS: readonly RadioStation[] = Object.freeze([
   Object.freeze({
-    id: "secret-agent",
-    name: "SomaFM Secret Agent",
-    // Kept by #432. Terms (embedding restricted): https://somafm.com/contact/tos.html
-    url: "https://ice1.somafm.com/secretagent-128-mp3",
-    genre: "1960s spy and lounge",
-    licence: "SomaFM listener-supported stream",
-    termsUrl: "https://somafm.com/contact/tos.html",
-    credit: "Listener-supported radio from SomaFM. Credit SomaFM.",
+    id: "hexmatch-lofi",
+    name: "HexMatch Lofi",
+    // Owner (2026-09-26): SomaFM's terms forbid embedding in games, so it
+    // is gone; the default is our own lofi, generated for the game.
+    url: LOFI_TRACKS[0],
+    playlist: LOFI_TRACKS,
+    genre: "Lofi beats",
+    licence: "Original music, made for HexMatch",
+    termsUrl: "",
+    credit: "Original lofi made for HexMatch Industries.",
   }),
   Object.freeze({
     id: "radionos-lounge",
@@ -123,7 +140,7 @@ export const RADIO_STATIONS: readonly RadioStation[] = Object.freeze([
   }),
 ]);
 
-/** The shipped default: SomaFM Secret Agent. An empty URL is still "Radio offline". */
+/** The shipped default: HexMatch Lofi (first track). An empty URL is still "Radio offline". */
 export const RADIO_STREAM_URL = RADIO_STATIONS[0].url;
 
 /** What the pill says when there is no now-playing metadata and no station list. */
@@ -685,8 +702,15 @@ export function createRadio(deps: RadioDeps = {}): Radio {
   function currentStation(): RadioStation | null {
     return stationMode ? stationById(stations, currentId) : null;
   }
+  /** The track each playlist station is on (it survives a station change). */
+  const trackAt = new Map<string, number>();
   function streamUrl(): string {
-    return currentStation()?.url ?? fixedUrl;
+    const st = currentStation();
+    if (st?.playlist?.length) {
+      if (!trackAt.has(st.id)) trackAt.set(st.id, Math.floor(Math.random() * st.playlist.length));
+      return st.playlist[trackAt.get(st.id)! % st.playlist.length];
+    }
+    return st?.url ?? fixedUrl;
   }
   function streamName(): string {
     return currentStation()?.name ?? fixedName;
@@ -699,6 +723,15 @@ export function createRadio(deps: RadioDeps = {}): Radio {
    */
   function wire(audio: RadioAudio): RadioAudio {
     try { audio.preload = "none"; } catch { /* a stub */ }
+    // A playlist station moves to its next track when one ends (and loops).
+    try {
+      audio.addEventListener("ended", () => {
+        const st = currentStation();
+        if (disposed || !st?.playlist?.length) return;
+        trackAt.set(st.id, ((trackAt.get(st.id) ?? 0) + 1) % st.playlist.length);
+        openStream();
+      });
+    } catch { /* a stub without events */ }
     return audio;
   }
 
