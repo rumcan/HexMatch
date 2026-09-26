@@ -875,3 +875,16 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   .start-screen.menu .mc .menu-btn.primary { order: -1; flex: 1 1 100% !important; width: 100% !important; }
   .start-screen.menu .mc > .menu-card { padding: 12px 16px 16px !important; }
 }
+/* main menu (owner): the two Hextalls back to back, ladder in the panel */
+.mc-hero.mc-duo { background: #0c0e0f; overflow: hidden; }
+.mc-hero.mc-duo::before { display: none; }
+.mc-hero.mc-duo img { position: absolute; inset: 0; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; left: 0 !important; object-fit: cover; object-position: 45% top; animation: none; }
+.start-screen.menu > .mc { grid-template-columns: minmax(150px, 15%) minmax(300px, 40%) 1fr; }
+.mc .menu-leaderboard { margin-top: 2vh !important; }
+.mc .menu-leaderboard-title { font: 400 clamp(34px, 3.6vw, 56px)/.95 "Anton", sans-serif !important; text-transform: uppercase; margin: 4px 0 10px; }
+.start-screen.menu .mc .menu-actions { flex-wrap: wrap !important; justify-content: flex-start; }
+.start-screen.menu .mc .menu-btn.primary { order: -1; flex: 1 1 100% !important; }
+.mc .menu-leaderboard, .mc .menu-leaderboard * { text-align: left !important; }
+.mc .menu-leaderboard-title { font-size: clamp(30px, 3vw, 46px) !important; }
+.mc .menu-ladder-link { background: var(--acc) !important; color: #fff !important; border: 0 !important; }
+.mc .menu-ladder-link * { color: #fff !important; }
