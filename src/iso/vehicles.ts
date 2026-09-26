@@ -294,7 +294,11 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
           if (truck.t > 0 && cur && blocked.has(tIdx(cur[0], cur[1]))) break;
         }
       }
-      const v = speed(k, truck.reverse);
+      // Progress is a fraction of this segment, not a tile count: diagonal
+      // legs take sqrt(2), overpass jumps two tile-times. Legacy axes stay 1.
+      const a = truck.route[k], b = truck.route[k + 1];
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const v = speed(k, truck.reverse) / length;
       if (!truck.reverse) {
         const need = (1 - truck.t) / v;
         if (ms < need) { truck.t += ms * v; ms = 0; continue; }

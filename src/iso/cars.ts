@@ -25,7 +25,7 @@
 import { MAP_W } from "../game/config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, inMapT, tIdx,
-  type Track,
+  roadDiagNeighbours, overpassJump, type Track,
 } from "./track";
 import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
@@ -136,6 +136,8 @@ function buildNeighbours(track: Track, tiles: number[]): Map<number, number[]> {
       if (!(maskAt(ni) & OPPOSITE[d])) continue;
       open.push(ni);
     }
+    for (const [nx, ny] of roadDiagNeighbours(track, x, y)) open.push(tIdx(nx, ny));
+    for (const d of DIRS) { const jump = overpassJump(track, x, y, d); if (jump) open.push(tIdx(...jump)); }
     out.set(i, open);
   }
   return out;
@@ -169,33 +171,43 @@ function isRouteValid(route: [number, number][], neighbours: Map<number, number[
   return true;
 }
 
-// ── BFS shortest path ───────────────────────────────────────────────────
-function bfs(start: number, target: number, neighbours: Map<number, number[]>): number[] | null {
+// ── Weighted shortest path ───────────────────────────────────────────────────
+function shortestTrip(start: number, target: number, neighbours: Map<number, number[]>): number[] | null {
   if (start === target) return [start];
-  const queue: number[] = [start];
-  const prev = new Map<number, number>();
-  const seen = new Set<number>([start]);
-  prev.set(start, -1);
-  for (let head = 0; head < queue.length; head++) {
-    const cur = queue[head]!;
-    const open = neighbours.get(cur) ?? [];
-    for (const nb of open) {
-      if (seen.has(nb)) continue;
-      seen.add(nb);
-      prev.set(nb, cur);
-      if (nb === target) {
-        // reconstruct
-        const path: number[] = [];
-        let at: number | undefined = nb;
-        while (at !== undefined && at !== -1) {
-          path.push(at);
-          at = prev.get(at);
-          if (at === -1) break;
-        }
-        path.reverse();
-        return path;
+  const distance = new Map<number, number>([[start, 0]]), prev = new Map<number, number>([[start, -1]]);
+  // Stable heap, O(E log V). Searches happen on new trips, never per frame.
+  type Entry = { i: number; cost: number; order: number };
+  const heap: Entry[] = []; let order = 0;
+  const less = (a: Entry, b: Entry) => a.cost < b.cost || (a.cost === b.cost && a.order < b.order);
+  const push = (i: number, cost: number) => {
+    const e = { i, cost, order: order++ }; let n = heap.length; heap.push(e);
+    while (n > 0) { const p = (n - 1) >> 1; if (!less(e, heap[p])) break; heap[n] = heap[p]; n = p; }
+    heap[n] = e;
+  };
+  const pop = () => {
+    const first = heap[0], last = heap.pop()!; let n = 0;
+    if (heap.length) {
+      while (2 * n + 1 < heap.length) {
+        let c = 2 * n + 1; if (c + 1 < heap.length && less(heap[c + 1], heap[c])) c++;
+        if (!less(heap[c], last)) break; heap[n] = heap[c]; n = c;
       }
-      queue.push(nb);
+      heap[n] = last;
+    }
+    return first;
+  };
+  push(start, 0);
+  while (heap.length) {
+    const { i: cur, cost } = pop();
+    if (distance.get(cur) !== cost) continue;
+    if (cur === target) {
+      const path: number[] = [];
+      for (let at = cur; at !== -1; at = prev.get(at)!) path.push(at);
+      return path.reverse();
+    }
+    for (const nb of neighbours.get(cur) ?? []) {
+      const next = cost + Math.hypot(nb % MAP_W - cur % MAP_W, Math.floor(nb / MAP_W) - Math.floor(cur / MAP_W));
+      if (next >= (distance.get(nb) ?? Infinity)) continue;
+      distance.set(nb, next); prev.set(nb, cur); push(nb, next);
     }
   }
   return null;
@@ -203,6 +215,11 @@ function bfs(start: number, target: number, neighbours: Map<number, number[]>): 
 
 const idxToXY = (i: number): [number, number] => [i % MAP_W, (i / MAP_W) | 0] as [number, number];
 const xyToIdx = (xy: [number, number]): number => tIdx(xy[0], xy[1]);
+
+/** A cosmetic car may traverse any owner's road, but only real graph edges. */
+export function carRoute(track: Track, from: [number, number], to: [number, number]): [number, number][] | null {
+  return shortestTrip(xyToIdx(from), xyToIdx(to), getNeighbours(track))?.map(idxToXY) ?? null;
+}
 
 // ── town access nodes ───────────────────────────────────────────────────
 type TownNodes = Map<number, number[]>; // townId -> tile indices
@@ -282,7 +299,7 @@ function findTrip(
       let guard = 0;
       while (b === a && guard < 10) { b = pick(nodes); guard++; }
       if (a === b) continue;
-      const path = bfs(a, b, neighbours);
+      const path = shortestTrip(a, b, neighbours);
       if (!path) continue;
       if (path.length < 2 || path.length > MAX_ROUTE_TILES) continue;
       const key = tripKey(a, b);
@@ -317,7 +334,7 @@ function findTrip(
       if (fromNodes.length === 0 || toNodes.length === 0) continue;
       const a = pick(fromNodes);
       const b = pick(toNodes);
-      const path = bfs(a, b, neighbours);
+      const path = shortestTrip(a, b, neighbours);
       if (!path) continue;
       if (path.length < 2 || path.length > MAX_ROUTE_TILES) continue;
       const key = tripKey(a, b);
@@ -667,9 +684,11 @@ export function tickCars(
             car.arriveMs = ARRIVE_PAUSE_MS;
             break;
           }
-          const need = (1 - car.t) / CAR_SPEED;
+          const a = car.route[car.leg], b = car.route[car.leg + 1];
+          const speed = CAR_SPEED / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1);
+          const need = (1 - car.t) / speed;
           if (remaining < need) {
-            car.t += remaining * CAR_SPEED;
+            car.t += remaining * speed;
             remaining = 0;
             break;
           }
