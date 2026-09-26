@@ -383,6 +383,8 @@ export interface Snapshot {
   owner: string;
   /** VP-01: base64 Uint8Array(MAP_W*MAP_H) — per-tile pave provenance. */
   upgraded: string;
+  /** ROADS-2 (#393): base64 road tiers; absent = all Road. */
+  tier?: string;
   harvesters: WireHarvester[];
   factories: Factory[];
   players: WirePlayer[];
@@ -468,6 +470,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     road: bytesToBase64(src.track.road),
     owner: bytesToBase64(src.track.owner),
     upgraded: bytesToBase64(src.track.upgraded),
+    ...(src.track.tier && src.track.tier.some((v) => v !== 0) ? { tier: bytesToBase64(src.track.tier) } : {}),
     // L4 (#218): the yield level rides with the depot it belongs to. A level of
     // `undefined` (the old loop) is left OFF the record rather than sent as a
     // value, so an old-loop snapshot is byte-for-byte what it was.
@@ -756,6 +759,7 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
   // VP-01: the pave provenance rides with it, or a guest would render the
   // rival's tarmac as gravel and score their own paves as zero.
   track.upgraded.set(base64ToBytes(o.upgraded));
+  if (typeof o.tier === "string") track.tier!.set(base64ToBytes(o.tier));
   track.revision++;
   return {
     seed: o.seed >>> 0,
