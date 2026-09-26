@@ -277,8 +277,20 @@ export function climbTiles(grid: Grid, route: readonly TilePair[]): number {
  * the lorry all keep reading one measure (and an option-off map is exactly the
  * tile count it always was).
  */
-export const routeDistance = (grid: Grid, route: readonly TilePair[]): number =>
-  route.length + climbTiles(grid, route);
+/** D1 keeps the historic one-tile origin allowance. With diagonals enabled,
+ * each subsequent step contributes its geometric length (including a two-tile
+ * overpass jump). OFF keeps the exact legacy count, including rail callers. */
+export function routeTileLength(route: readonly TilePair[], diagonalRoads = false): number {
+  if (!diagonalRoads || route.length === 0) return route.length;
+  let length = 1;
+  for (let i = 1; i < route.length; i++) {
+    length += Math.hypot(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]);
+  }
+  return length;
+}
+
+export const routeDistance = (grid: Grid, route: readonly TilePair[], diagonalRoads = false): number =>
+  routeTileLength(route, diagonalRoads) + climbTiles(grid, route);
 
 // ── vehicles ──────────────────────────────────────────────────────────────
 /**
