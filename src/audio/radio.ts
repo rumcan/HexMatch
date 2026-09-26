@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════════════════
-// MUSIC-1 (#377) — the mini radio in the corner.
+// MUSIC-1 (#377) — the mini radio in the corner. RADIO-2 (#432) adds the dial.
 //
-// One `<audio>` element, one station URL, one small pill in the very top-right
+// One `<audio>` element, a list of stations, one small pill in the very top-right
 // of the HUD. The owner supplies the stream (RADIO_STREAM_URL; was EMPTY until
 // they do), so the module is written for the SHIPPED state — an empty or dead
 // URL reads "Radio offline" and never throws, never blocks, never delays the
@@ -29,17 +29,111 @@
 // save (iso/savegame-runtime.ts). Guests and hosts each control their own.
 // ══════════════════════════════════════════════════════════════════════════
 
-/**
- * The station: SomaFM "Secret Agent" (1960s spy / lounge — fits the era).
- * An empty or dead URL is still the "Radio offline" state, never a crash.
- */
-export const RADIO_STREAM_URL = "https://ice1.somafm.com/secretagent-128-mp3";
+import { isAudioEnabled } from "./engine";
+import { registerSoundPainter } from "./sfx";
 
-/** What the pill says when there is no now-playing metadata to say. */
-export const RADIO_STATION_NAME = "SomaFM Secret Agent";
+/**
+ * RADIO-2 (#432) — the station list.
+ *
+ * Each entry is a public HTTPS stream the player's own browser opens. We do
+ * not download, cache or rebroadcast audio. A station is listed only when its
+ * published terms allow that playback inside a free web game, with the credit
+ * shown on the chip and in Settings. The terms URL is repeated in
+ * `docs/RADIO.md`.
+ *
+ * SomaFM's current terms forbid embedding in a game
+ * (https://somafm.com/contact/tos.html — "Embedding the Content in any
+ * website, application, or platform" needs prior written permission; their
+ * direct-link pages say the URLs are not for video games). Secret Agent is
+ * kept anyway because the ticket says this one stream stays. No other SomaFM
+ * channel is added: the same terms cover every channel.
+ *
+ * Player-facing strings (name, genre, credit, licence) must not contain "//"
+ * or "(#" — the settings sheet is scanned for developer comments.
+ */
+export interface RadioStation {
+  id: string;
+  name: string;
+  /** Direct stream. HTTPS so a secure page is not blocked as mixed content. */
+  url: string;
+  genre: string;
+  /** Short licence name, shown beside the credit. */
+  licence: string;
+  /** Terms or licence page. Not painted as raw text (it contains "//"). */
+  termsUrl: string;
+  /** Attribution line for the chip tooltip and the settings sheet. No URL. */
+  credit: string;
+}
+
+export const RADIO_STATIONS: readonly RadioStation[] = Object.freeze([
+  Object.freeze({
+    id: "secret-agent",
+    name: "SomaFM Secret Agent",
+    // Kept by #432. Terms (embedding restricted): https://somafm.com/contact/tos.html
+    url: "https://ice1.somafm.com/secretagent-128-mp3",
+    genre: "1960s spy and lounge",
+    licence: "SomaFM listener-supported stream",
+    termsUrl: "https://somafm.com/contact/tos.html",
+    credit: "Listener-supported radio from SomaFM. Credit SomaFM.",
+  }),
+  Object.freeze({
+    id: "radionos-lounge",
+    name: "RadioNOS Lounge",
+    // Station policy (CC, public domain, or artist-authorized only):
+    // https://radionos.com/site/sobre/  Stream published on the channel page.
+    url: "https://nos.radio.br:443/stream/13/;",
+    genre: "1950s-60s lounge, bossa and easy listening",
+    licence: "CC, public domain, or artist-authorized",
+    termsUrl: "https://radionos.com/site/sobre/",
+    credit: "RadioNOS. Creative Commons, public-domain and artist-authorized music. Credit RadioNOS.",
+  }),
+  Object.freeze({
+    id: "radionos-jazz",
+    name: "RadioNOS Jazz",
+    // Same RadioNOS policy: https://radionos.com/site/sobre/
+    // Channel stream: https://radionos.com/site/jazz-channel/
+    url: "https://nos.radio.br:443/stream/3/;",
+    genre: "Jazz",
+    licence: "CC, public domain, or artist-authorized",
+    termsUrl: "https://radionos.com/site/sobre/",
+    credit: "RadioNOS. Creative Commons, public-domain and artist-authorized music. Credit RadioNOS.",
+  }),
+  Object.freeze({
+    id: "mdk-space",
+    name: "MDK Space Radio",
+    // Their own catalogue, CC BY 3.0: https://creativecommons.org/licenses/by/3.0/
+    // Direct stream published at https://radio.mdkband.com/ (MP3 link).
+    url: "https://radio.mdkband.com/stream.mp3",
+    genre: "Space-age experimental",
+    licence: "CC BY 3.0",
+    termsUrl: "https://creativecommons.org/licenses/by/3.0/",
+    credit: "Music by MDK. Creative Commons Attribution. Credit MDK.",
+  }),
+  Object.freeze({
+    id: "dogmazic",
+    name: "Radio Dogmazic",
+    // Operator: play the music in a podcast or at a party, it is legal.
+    // Licence table: https://www.dogmazic.net/licences.php
+    // Direct stream published at https://radio.dogmazic.net/
+    url: "https://radio.dogmazic.net:8001/stream.mp3",
+    genre: "Free-licence mix",
+    licence: "Free licences, credit the artist",
+    termsUrl: "https://www.dogmazic.net/licences.php",
+    credit: "Free-licence music from Dogmazic. Credit the artist.",
+  }),
+]);
+
+/** The shipped default: SomaFM Secret Agent. An empty URL is still "Radio offline". */
+export const RADIO_STREAM_URL = RADIO_STATIONS[0].url;
+
+/** What the pill says when there is no now-playing metadata and no station list. */
+export const RADIO_STATION_NAME = RADIO_STATIONS[0].name;
 
 /** Where the on/off, show/hide and volume choices live. Beside `hexmatch:voice`. */
 export const RADIO_STORAGE_KEY = "hexmatch:radio";
+
+/** The chosen station id. Separate from RADIO_STORAGE_KEY so the three-field settings object stays as it was. */
+export const RADIO_STATION_KEY = "hexmatch:radio-station";
 
 /** The radio's own volume, 0..1. Quieter than the SFX bus by design. */
 export const DEFAULT_RADIO_VOLUME = 0.5;
@@ -105,7 +199,12 @@ export type RadioEvent =
   /** A voice line started: fade to 30%. */
   | "duckStart"
   /** The voice line ended: fade back. */
-  | "duckEnd";
+  | "duckEnd"
+  /**
+   * The player changed station (or failed over) while audio was wanted.
+   * Loading again — never a way to start from idle. That would be autoplay.
+   */
+  | "tune";
 
 export interface RadioMachine {
   status: RadioStatus;
@@ -221,6 +320,14 @@ function step(s: RadioMachine, event: RadioEvent, url: string): RadioMachine {
 
     case "duckEnd":
       return { ...s, ducked: false };
+
+    case "tune":
+      // A station change is a new load only when the player already asked for
+      // audio. Idle (never tapped) stays idle — next/prev must not autoplay.
+      if (!s.enabled || !s.want || s.hidden || !hasStream(url)) return s;
+      if (s.status !== "playing" && s.status !== "loading" && s.status !== "paused" && s.status !== "offline") return s;
+      if (s.status === "loading") return s;
+      return { ...s, status: "loading", resume: false };
   }
 }
 
@@ -316,6 +423,78 @@ export function writeRadioSettings(storage: Memory | null, settings: RadioSettin
   } catch { /* private mode */ }
 }
 
+/**
+ * The saved station. A missing key, an unknown id, no storage, or a storage
+ * that throws (private mode, a locked-down iframe) all land on the first
+ * station — a radio preference is never worth a thrown error at boot.
+ */
+export function readStationId(
+  storage: Memory | null,
+  stations: readonly Pick<RadioStation, "id">[] = RADIO_STATIONS,
+): string {
+  const fallback = stations[0]?.id ?? "";
+  if (!storage) return fallback;
+  try {
+    const raw = storage.getItem(RADIO_STATION_KEY);
+    if (!raw) return fallback;
+    const id = raw.trim();
+    return stations.some((s) => s.id === id) ? id : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Remember the choice. A throwing `setItem` is swallowed — the in-memory pick still stands. */
+export function writeStationId(storage: Memory | null, id: string): void {
+  if (!storage) return;
+  try { storage.setItem(RADIO_STATION_KEY, id); } catch { /* private mode, quota, a test double */ }
+}
+
+/** The station with this id, or the first one when the id is unknown. */
+export function stationById(stations: readonly RadioStation[], id: string): RadioStation | null {
+  if (stations.length === 0) return null;
+  return stations.find((s) => s.id === id) ?? stations[0];
+}
+
+/** Next (`dir` 1) or previous (`dir` -1), wrapping. Null only for an empty list. */
+export function stepStation(stations: readonly RadioStation[], id: string, dir: 1 | -1): RadioStation | null {
+  if (stations.length === 0) return null;
+  const i = stations.findIndex((s) => s.id === id);
+  const from = i < 0 ? 0 : i;
+  const n = stations.length;
+  const step = dir < 0 ? -1 : 1;
+  return stations[(from + step + n) % n];
+}
+
+/**
+ * The station to open after `currentId` failed. Walks forward, skipping ids
+ * already tried this pass. Null when there is nowhere new to go (one station,
+ * or every station has failed) — the caller then uses the ordinary offline
+ * backoff instead of spinning the list forever.
+ */
+export function failoverStation(
+  stations: readonly RadioStation[],
+  currentId: string,
+  failedIds: readonly string[],
+): RadioStation | null {
+  if (stations.length <= 1) return null;
+  const failed = new Set(failedIds);
+  failed.add(currentId);
+  if (failed.size >= stations.length && stations.every((s) => failed.has(s.id))) return null;
+  const start = stations.findIndex((s) => s.id === currentId);
+  const from = start < 0 ? 0 : start;
+  for (let k = 1; k <= stations.length; k++) {
+    const s = stations[(from + k) % stations.length];
+    if (!failed.has(s.id)) return s;
+  }
+  return null;
+}
+
+/** Tooltip / settings line. No URL — those live on the licence link and in docs. */
+export function stationLine(s: Pick<RadioStation, "name" | "genre" | "credit">): string {
+  return `${s.name}. ${s.genre}. ${s.credit}`;
+}
+
 // ── the adapter ────────────────────────────────────────────────────────────
 
 /**
@@ -347,9 +526,15 @@ export interface RadioDocument {
 }
 
 export interface RadioDeps {
-  /** The stream. Defaults to RADIO_STREAM_URL (empty today). */
+  /**
+   * A single stream, the MUSIC-1 path. When this is set, the station list is
+   * not used — existing callers (and the unit tests) keep one URL and the
+   * same-stream backoff. Omit it to play `stations` (the shipped list).
+   */
   url?: string;
   station?: string;
+  /** The dial. Ignored when `url` is set. Defaults to RADIO_STATIONS. */
+  stations?: readonly RadioStation[];
   /** The element. Tests pass a fake; production builds one lazily on first play. */
   audio?: RadioAudio | null;
   /** How to build that element. Return null where there is no Audio at all. */
@@ -361,6 +546,10 @@ export interface RadioDeps {
   fadeMs?: number;
   loadTimeoutMs?: number;
   reducedMotion?: () => boolean;
+  /** False while the master Sound switch (or `?sound=0`) is off. Default: always on. */
+  soundGate?: () => boolean;
+  /** Failover toast. Never called before a user gesture, because nothing fails before one. */
+  onNotice?: (message: string) => void;
 }
 
 export interface Radio {
@@ -370,6 +559,14 @@ export interface Radio {
   readonly settings: RadioSettings;
   /** What the pill calls the station. */
   readonly station: string;
+  /** The dial, empty when this player was built with a single `url`. */
+  readonly stations: readonly RadioStation[];
+  readonly stationId: string;
+  readonly genre: string;
+  readonly licence: string;
+  readonly credit: string;
+  /** Licence page. Empty in single-url mode. Not for painting as text. */
+  readonly termsUrl: string;
   /** The now-playing title, when something can supply one. */
   readonly nowPlaying: string | null;
   /** ▶ — a user tap. The one and only door to `play()`. */
@@ -377,9 +574,20 @@ export interface Radio {
   /** ⏸ — stop asking for audio (the stream may stay buffered). */
   pause(): void;
   toggle(): void;
+  /** Wrap the dial. No-op with fewer than two stations. Does not start playback. */
+  next(): void;
+  prev(): void;
+  /** Remember a station. Opens it only if audio was already wanted. */
+  setStation(id: string): void;
   setEnabled(on: boolean): void;
   setShow(on: boolean): void;
   setVolume(v: number): void;
+  /** Master Sound / mute. Default is "on". A false gate forces the element to 0. */
+  setSoundGate(fn: () => boolean): void;
+  /** Push the gated volume onto the element (the Sound switch calls this). */
+  applyMix(): void;
+  /** Failover line. Replaces any previous hook. */
+  setNotice(fn: ((message: string) => void) | null): void;
   /** Feed a title in (a metadata source would call this); null = the station name. */
   setNowPlaying(title: string | null): void;
   /** A voice line started (`true`) or ended (`false`): duck and restore. */
@@ -434,8 +642,13 @@ function defaultMakeAudio(): RadioAudio | null {
 }
 
 export function createRadio(deps: RadioDeps = {}): Radio {
-  const url = deps.url === undefined ? RADIO_STREAM_URL : deps.url;
-  const station = deps.station ?? RADIO_STATION_NAME;
+  // An explicit `url` (including "") is the single-stream player the MUSIC-1
+  // tests drive. Omit it and the dial is `stations` (the shipped list).
+  const singleUrl = deps.url !== undefined;
+  const stations: readonly RadioStation[] = singleUrl ? [] : (deps.stations ?? RADIO_STATIONS);
+  const stationMode = stations.length > 0;
+  const fixedUrl = singleUrl ? deps.url! : RADIO_STREAM_URL;
+  const fixedName = deps.station ?? RADIO_STATION_NAME;
   const storage = deps.storage === undefined ? liveStore() : deps.storage;
   const doc = deps.doc === undefined ? liveDocument() : deps.doc;
   const timers = deps.timers ?? realTimers;
@@ -447,6 +660,11 @@ export function createRadio(deps: RadioDeps = {}): Radio {
   let settings = readRadioSettings(storage);
   let machine = radioInit(settings.enabled);
   let nowPlaying: string | null = null;
+  let currentId = stationMode ? readStationId(storage, stations) : "";
+  let soundGate = deps.soundGate ?? (() => true);
+  let notice: ((message: string) => void) | null = deps.onNotice ?? null;
+  /** Stations that already failed this pass. Cleared on a real play, a retry, or a success. */
+  const failedThisPass = new Set<string>();
   let el: RadioAudio | null = null;
   /** The src we ourselves assigned — `audio.src` resolves to an absolute URL. */
   let loadedUrl: string | null = null;
@@ -454,22 +672,33 @@ export function createRadio(deps: RadioDeps = {}): Radio {
   let loadTimer: number | null = null;
   let fadeTimer: number | null = null;
   let disposed = false;
+  /** True while we ourselves clear `src`, so that empty-src error is not a failure. */
+  let suppressError = false;
+  /** Bumped on every open. A failure for an older open is ignored. */
+  let openGen = 0;
+  /** The open whose failure we have already counted, so error+rejection is one skip. */
+  let consumedGen = -1;
   let onVisibility: (() => void) | null = null;
   const painters = new Set<(s: RadioSettings, m: RadioMachine) => void>();
+  const armed: Array<{ type: string; fn: () => void }> = [];
+
+  function currentStation(): RadioStation | null {
+    return stationMode ? stationById(stations, currentId) : null;
+  }
+  function streamUrl(): string {
+    return currentStation()?.url ?? fixedUrl;
+  }
+  function streamName(): string {
+    return currentStation()?.name ?? fixedName;
+  }
 
   /**
-   * The two rules the ticket pins (preload none, no CORS tricks) plus the three
-   * events that move the machine. A stubbed element with no events simply never
-   * reports back — the load timeout is then what closes the spinner.
+   * preload none, no CORS tricks. The playing/error listeners are armed per
+   * open (they close over that open's generation) so a dead station cannot
+   * be reported twice, and a late event cannot skip the station we just tuned.
    */
   function wire(audio: RadioAudio): RadioAudio {
-    try {
-      audio.preload = "none";
-      audio.addEventListener("playing", () => dispatch("loaded"));
-      audio.addEventListener("error", () => dispatch("error"));
-      // A live stream that "ends" is a stream that died: same door as an error.
-      audio.addEventListener("ended", () => dispatch("error"));
-    } catch { /* a stub with no events */ }
+    try { audio.preload = "none"; } catch { /* a stub */ }
     return audio;
   }
 
@@ -499,8 +728,15 @@ export function createRadio(deps: RadioDeps = {}): Radio {
    * `fadeMs` in ten steps; every other change (the slider) is immediate, and
    * a reduced-motion preference snaps the duck too.
    */
+  /** The set volume, ducked, and forced to 0 while the master Sound switch is off. */
+  function targetVolume(): number {
+    const base = effectiveRadioVolume(settings.volume, machine.ducked);
+    try { if (!soundGate()) return 0; } catch { /* a broken gate must not throw */ }
+    return base;
+  }
+
   function applyVolume(animate: boolean): void {
-    const target = effectiveRadioVolume(settings.volume, machine.ducked);
+    const target = targetVolume();
     cancelFade();
     if (!el) return;
     if (!animate || fadeMs <= 0 || reduced()) { setElementVolume(target); return; }
@@ -525,7 +761,7 @@ export function createRadio(deps: RadioDeps = {}): Radio {
 
   /** Only retry while the switch is on, the player wants it, and the tab shows it. */
   function canRetry(): boolean {
-    return !disposed && machine.enabled && machine.want && !machine.hidden && hasStream(url);
+    return !disposed && machine.enabled && machine.want && !machine.hidden && hasStream(streamUrl());
   }
 
   function armRetry(): void {
@@ -537,30 +773,134 @@ export function createRadio(deps: RadioDeps = {}): Radio {
     });
   }
 
-  function armLoadTimeout(): void {
+  function armLoadTimeout(gen: number): void {
     cancelLoadTimer();
     if (loadTimeoutMs <= 0) return;
     loadTimer = timers.after(loadTimeoutMs, () => {
       loadTimer = null;
       // A stream that neither plays nor errors: treat it as dead.
-      if (machine.status === "loading") dispatch("error");
+      if (machine.status === "loading") onStreamFailed(gen);
     });
+  }
+
+  /** Listeners for THIS open only. An older open's event no-ops on the generation check. */
+  function armLoadListeners(audio: RadioAudio, gen: number): void {
+    if (audio.removeEventListener) {
+      for (const a of armed) {
+        try { audio.removeEventListener(a.type, a.fn); } catch { /* garnish */ }
+      }
+    }
+    armed.length = 0;
+    const onErr = (): void => { if (!suppressError) onStreamFailed(gen); };
+    const onPlay = (): void => { if (gen === openGen) dispatch("loaded"); };
+    for (const [type, fn] of [["error", onErr], ["ended", onErr], ["playing", onPlay]] as const) {
+      try { audio.addEventListener(type, fn); armed.push({ type, fn }); } catch { /* a stub with no events */ }
+    }
+  }
+
+  function tell(message: string): void {
+    try { notice?.(message); } catch { /* a bad toast is not a crash */ }
+  }
+
+  /**
+   * A dead stream. With a dial, skip to the next station that has not failed
+   * this pass and keep the spinner up. With one URL (or a dial that has all
+   * failed), the ordinary offline + backoff path.
+   */
+  function onStreamFailed(gen: number): void {
+    if (suppressError || disposed || gen !== openGen || gen === consumedGen) return;
+    consumedGen = gen;
+    if (stationMode && machine.enabled && machine.want && !machine.hidden) {
+      failedThisPass.add(currentId);
+      const next = failoverStation(stations, currentId, [...failedThisPass]);
+      if (next) {
+        const from = streamName();
+        currentId = next.id;
+        writeStationId(storage, next.id);
+        nowPlaying = null;
+        loadedUrl = null;
+        tell(`${from} is not answering. Tuning ${next.name}.`);
+        if (machine.status === "loading") {
+          openStream();
+          paint();
+        } else {
+          dispatch("tune");
+        }
+        return;
+      }
+    }
+    dispatch("error");
   }
 
   /** Open the stream. Never throws: a missing element or a refused play is `error`. */
   function openStream(): void {
+    openGen += 1;
+    const gen = openGen;
     const audio = ensureElement();
     if (!audio) { dispatch("error"); return; }
-    if (loadedUrl !== url) {
-      try { audio.src = url; loadedUrl = url; } catch { dispatch("error"); return; }
+    const target = streamUrl();
+    if (loadedUrl !== target) {
+      suppressError = true;
+      try { audio.src = target; loadedUrl = target; }
+      catch { suppressError = false; onStreamFailed(gen); return; }
+      suppressError = false;
     }
+    armLoadListeners(audio, gen);
     applyVolume(false);
     let started: unknown;
-    try { started = audio.play(); } catch { dispatch("error"); return; }
+    try { started = audio.play(); } catch (err) { onPlayRefused(gen, err); return; }
     if (started && typeof (started as Promise<void>).catch === "function") {
-      (started as Promise<void>).catch(() => dispatch("error"));
+      (started as Promise<void>).catch((err) => onPlayRefused(gen, err));
     }
-    armLoadTimeout();
+    armLoadTimeout(gen);
+  }
+
+  /**
+   * A NotAllowedError is the browser asking for a gesture, not a dead station.
+   * Skipping the dial on it would burn every station after the first error.
+   * Anything else (a thrown play, a network rejection) is a failed stream.
+   */
+  function onPlayRefused(gen: number, err: unknown): void {
+    const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name) : "";
+    if (name === "NotAllowedError") {
+      if (gen !== openGen || disposed) return;
+      consumedGen = gen;
+      tell("Tap play to keep listening.");
+      dispatch("pause");
+      return;
+    }
+    onStreamFailed(gen);
+  }
+
+  /** Drop a stale source without counting it as a failure. */
+  function dropSrc(): void {
+    suppressError = true;
+    cancelLoadTimer();
+    try { el?.pause(); } catch { /* garnish */ }
+    try { if (el) el.src = ""; } catch { /* garnish */ }
+    try { el?.load(); } catch { /* garnish */ }
+    suppressError = false;
+    loadedUrl = null;
+  }
+
+  /** Point the dial at `id`. Opens the new stream only if audio is already wanted. */
+  function retune(id: string): void {
+    if (!stationMode) return;
+    const next = stations.find((s) => s.id === id);
+    if (!next || next.id === currentId) return;
+    currentId = next.id;
+    writeStationId(storage, next.id);
+    nowPlaying = null;
+    loadedUrl = null;
+    failedThisPass.clear();
+    cancelRetry();
+    if (machine.want && (machine.status === "playing" || machine.status === "loading" || machine.status === "offline")) {
+      if (machine.status === "loading") openStream();
+      else dispatch("tune");
+    } else {
+      dropSrc();
+    }
+    paint();
   }
 
   function pauseElement(): void {
@@ -574,9 +914,11 @@ export function createRadio(deps: RadioDeps = {}): Radio {
     cancelLoadTimer();
     cancelFade();
     if (!el) return;
+    suppressError = true;
     try { el.pause(); } catch { /* garnish */ }
     try { el.src = ""; } catch { /* garnish */ }
     try { el.load(); } catch { /* garnish */ }
+    suppressError = false;
     loadedUrl = null;
   }
 
@@ -595,10 +937,13 @@ export function createRadio(deps: RadioDeps = {}): Radio {
 
   function dispatch(event: RadioEvent): void {
     if (disposed) return;
+    // A tap, or the backoff, is a fresh pass down the dial.
+    if (event === "play" || event === "retry") failedThisPass.clear();
     const prev = machine;
-    const next = radioReduce(prev, event, url);
+    const next = radioReduce(prev, event, streamUrl());
     if (next === prev) return;
     machine = next;
+    if (next.status === "playing") failedThisPass.clear();
     try { sync(prev, next); } catch { /* the show must go on */ }
     paint();
   }
@@ -623,13 +968,28 @@ export function createRadio(deps: RadioDeps = {}): Radio {
   return {
     get machine() { return machine; },
     get settings() { return settings; },
-    get station() { return station; },
+    get station() { return streamName(); },
+    get stations() { return stations; },
+    get stationId() { return currentStation()?.id ?? ""; },
+    get genre() { return currentStation()?.genre ?? ""; },
+    get licence() { return currentStation()?.licence ?? ""; },
+    get credit() { return currentStation()?.credit ?? ""; },
+    get termsUrl() { return currentStation()?.termsUrl ?? ""; },
     get nowPlaying() { return nowPlaying; },
     play() { dispatch("play"); },
     pause() { dispatch("pause"); },
     toggle() {
       dispatch(machine.status === "playing" || machine.status === "loading" ? "pause" : "play");
     },
+    next() {
+      const n = stepStation(stations, currentId, 1);
+      if (n) retune(n.id);
+    },
+    prev() {
+      const n = stepStation(stations, currentId, -1);
+      if (n) retune(n.id);
+    },
+    setStation(id) { retune(id); },
     setEnabled(on) {
       settings = { ...settings, enabled: !!on };
       writeRadioSettings(storage, settings);
@@ -647,6 +1007,9 @@ export function createRadio(deps: RadioDeps = {}): Radio {
       applyVolume(false);
       paint();
     },
+    setSoundGate(fn) { soundGate = fn; applyVolume(false); },
+    applyMix() { applyVolume(false); },
+    setNotice(fn) { notice = fn; },
     setNowPlaying(title) {
       const next = title && title.trim() ? title.trim() : null;
       if (next === nowPlaying) return;
@@ -665,6 +1028,7 @@ export function createRadio(deps: RadioDeps = {}): Radio {
       cancelLoadTimer();
       cancelFade();
       painters.clear();
+      notice = null;
       if (doc && onVisibility) {
         try { doc.removeEventListener("visibilitychange", onVisibility); } catch { /* garnish */ }
         onVisibility = null;
@@ -678,8 +1042,15 @@ export function createRadio(deps: RadioDeps = {}): Radio {
  * The one player every door shares (the settings sheet, the pill, the game's
  * probe). It is created at import but touches nothing until it is asked to:
  * no element until the first play, no storage until the first read.
+ * The master Sound switch (and `?sound=0`) gates its volume to 0.
  */
-export const radio: Radio = createRadio();
+export const radio: Radio = createRadio({
+  soundGate: () => { try { return isAudioEnabled(); } catch { return true; } },
+});
+
+try {
+  registerSoundPainter(() => { try { radio.applyMix(); } catch { /* garnish */ } });
+} catch { /* a host with no sound registry still plays at the radio's own volume */ }
 
 // ── the widget ─────────────────────────────────────────────────────────────
 
@@ -758,7 +1129,31 @@ export function mountRadioWidget(host: HTMLElement, r: Radio = radio): RadioWidg
   slider.setAttribute("aria-label", "Radio volume");
   sliderWrap.appendChild(slider);
 
-  pill.append(playBtn, now, volBtn, sliderWrap);
+  // RADIO-2: ‹ › on the chip. Hidden on a phone (the one-round-key contract);
+  // the settings sheet's station list is the picker there.
+  const prevBtn = document.createElement("button");
+  const nextBtn = document.createElement("button");
+  if (r.stations.length > 1) {
+    for (const [btn, dir, label, mark] of [
+      [prevBtn, "prev", "Previous station", "‹"],
+      [nextBtn, "next", "Next station", "›"],
+    ] as const) {
+      btn.type = "button";
+      btn.className = `radio-step radio-${dir}`;
+      btn.setAttribute("aria-label", label);
+      const glyphStep = document.createElement("span");
+      glyphStep.setAttribute("aria-hidden", "true");
+      glyphStep.textContent = mark;
+      btn.appendChild(glyphStep);
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        try { dir === "prev" ? r.prev() : r.next(); } catch { /* garnish */ }
+      };
+    }
+    pill.append(prevBtn, playBtn, now, nextBtn, volBtn, sliderWrap);
+  } else {
+    pill.append(playBtn, now, volBtn, sliderWrap);
+  }
   host.appendChild(pill);
 
   // ── interactions ──
@@ -819,8 +1214,19 @@ export function mountRadioWidget(host: HTMLElement, r: Radio = radio): RadioWidg
       playBtn.title = label;
 
       if (now.textContent !== text) now.textContent = text;
-      now.title = text;
-      pill.title = `${r.station} — ${text}`;
+      const credit = r.credit
+        ? stationLine({ name: r.station, genre: r.genre, credit: r.credit })
+        : r.station;
+      now.title = r.credit ? `${text}. ${r.credit}` : text;
+      pill.title = credit;
+      pill.setAttribute("aria-label", `${r.station} player`);
+      if (r.stationId) pill.dataset.station = r.stationId;
+
+      for (const step of [prevBtn, nextBtn]) {
+        if (!step.isConnected) continue;
+        step.disabled = !s.enabled;
+        step.setAttribute("aria-disabled", String(!s.enabled));
+      }
 
       volBtn.disabled = !s.enabled;
       volBtn.setAttribute("aria-disabled", String(!s.enabled));

@@ -467,7 +467,16 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .king-av { border: 0 !important; box-shadow: none !important; width: 30px !important; height: 30px !important; }
 .king-vp { color: var(--sa-lemon) !important; font-family: var(--sans); }
 .radio-pill { border-radius: 0 !important; background: var(--sa-panel-2) !important; border: 0 !important; box-shadow: none !important; }
-.radio-play, .radio-vol { border-radius: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }
+.radio-play, .radio-vol, .radio-step { border-radius: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }
+.radio-step { color: var(--sa-aqua) !important; }
+.radio-step:hover { color: var(--sa-orange-hi) !important; }
+.gfx-radio-station {
+  font-family: var(--mono); font-size: 11px; max-width: 190px; height: 28px; padding: 0 6px;
+  background: var(--sa-ink); color: var(--sa-bone); border: 1px solid var(--sa-line-hi); border-radius: 0;
+}
+.gfx-radio-terms { color: var(--sa-aqua); font-size: 11px; font-family: var(--mono); text-decoration: none; }
+.gfx-radio-terms:hover { color: var(--sa-orange-hi); }
+.gfx-radio-credit { color: var(--sa-bone-dim); }
 @media (max-width: 760px) {
   .topbar .kingdoms .king-mid .king-name, .topbar .king-bar { display: none !important; }
   .topbar .vp-badge { font-size: 0 !important; background: transparent !important; padding: 0 6px !important; }

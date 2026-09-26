@@ -5876,7 +5876,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .radio-pill[data-show="0"] { display: none; }
 /* Radio OFF: the pill stays (its switch says so) but reads as inert. */
 .radio-pill[data-enabled="0"] { opacity: .45; filter: grayscale(.5); }
-.radio-play, .radio-vol {
+.radio-play, .radio-vol, .radio-step {
   flex: 0 0 auto; display: grid; place-items: center;
   width: 24px; height: 24px; padding: 0;
   border: 1px solid var(--brass-lo); border-radius: 50%;
@@ -5884,9 +5884,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   color: var(--gold2); font-size: 9px; line-height: 1; cursor: pointer;
   transition: color .15s, border-color .15s, box-shadow .15s;
 }
+.radio-step { width: 20px; font-size: 14px; font-family: var(--sans); color: var(--patina); border-radius: 0; }
+.radio-step:hover { color: var(--brass-hi); border-color: var(--brass); }
+.radio-step:disabled { cursor: default; color: var(--txt-dim); }
 .radio-play { font-size: 10px; }
 .radio-play:hover, .radio-vol:hover { color: var(--brass-hi); border-color: var(--brass); }
-.radio-play:focus-visible, .radio-vol:focus-visible, .radio-vol-range:focus-visible {
+.radio-play:focus-visible, .radio-vol:focus-visible, .radio-step:focus-visible, .radio-vol-range:focus-visible {
   outline: 2px solid var(--brass); outline-offset: 1px;
 }
 .radio-play[aria-pressed="true"] {
@@ -5895,7 +5898,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .radio-pill[data-state="offline"] .radio-play { color: var(--txt-dim); }
 .radio-now {
-  flex: 1 1 auto; min-width: 0; max-width: 168px;
+  flex: 1 1 auto; min-width: 0; max-width: 128px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--gold2); letter-spacing: .4px;
 }
@@ -5937,7 +5940,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .ui-root[data-phone="1"]:not([data-view="map"]) .radio-dock { display: none; }
   /* One round key: the row (text, volume) folds away… */
   .radio-pill { gap: 0; padding: 0; border: 0; background: none; box-shadow: none; }
-  .radio-pill .radio-now, .radio-pill .radio-vol, .radio-pill .radio-slider { display: none; }
+  .radio-pill .radio-now, .radio-pill .radio-vol, .radio-pill .radio-slider, .radio-pill .radio-step { display: none; }
   /* …and the text comes back on a long press (radio.ts sets data-peek). */
   .radio-pill[data-peek="1"] .radio-now {
     display: block; position: absolute; top: calc(100% + 6px); right: 0;
@@ -5953,7 +5956,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .radio-spin { width: 15px; height: 15px; border-width: 2px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .radio-pill, .radio-play, .radio-vol { transition: none; }
+  .radio-pill, .radio-play, .radio-vol, .radio-step { transition: none; }
   /* A still ring is still a "something is happening" mark. */
   .radio-spin { animation: none; opacity: .55; }
 }
