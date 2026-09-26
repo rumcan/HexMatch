@@ -1,0 +1,5 @@
+Generating image... (00:00:00 elapsed)
+Generating image... (00:00:10 elapsed)
+Downloading generated image... (00:00:13 elapsed)
+Writing image metadata... (00:00:16 elapsed)
+{"generationId":"ea38ddf0-a349-43ee-8d3f-db7eae273c86","filePath":"tools/art-src/terrain/detail-raw.png","model":"gemini-3.1-flash-image-preview","credits":{"used":120,"remaining":114921}}

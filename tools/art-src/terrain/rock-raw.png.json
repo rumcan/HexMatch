@@ -1,0 +1,5 @@
+Generating image... (00:00:00 elapsed)
+Generating image... (00:00:10 elapsed)
+Downloading generated image... (00:00:15 elapsed)
+Writing image metadata... (00:00:18 elapsed)
+{"generationId":"f9653ab9-d2b8-48be-85f4-bebb977dd267","filePath":"tools/art-src/terrain/rock-raw.png","model":"gemini-3.1-flash-image-preview","credits":{"used":120,"remaining":115491}}
