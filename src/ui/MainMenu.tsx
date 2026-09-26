@@ -16,11 +16,15 @@ import { useEffect, useRef, useState } from "react";
 //   two doors, so the front menu and a live match can never disagree about
 //   which controls exist. Texture detail, miniature view, sound; everything
 //   writes through its store and is remembered.
-// · HOW TO PLAY raises the TUT-01 tour itself (`force: true` — a player who
-//   asked "never show this again" at boot still gets to read the rules when
-//   they ask for them by name), over a host inside the menu.
+// · TUTORIAL raises the TUT-03 Tutorial MENU (`guide/menu.ts`) over a host
+//   inside the menu: every section listed with a ✓ once it is done, each one
+//   clickable. There is no game to run one in yet, so a pick QUEUES it and the
+//   next boot opens on that section — the same door, the same list, whether
+//   the player is standing on the front plate or in a match.
 // ══════════════════════════════════════════════════════════════════════════
-import { showTutorial, type TutorialHandle } from "../iso/tutorial";
+import { showTutorialMenu, type TutorialMenuHandle } from "../iso/guide/menu";
+import { loadProgress, resetProgress } from "../iso/guide/progress";
+import { queueGuideSection } from "../iso/guide/menu";
 import { showSettingsSheet, type SettingsSheetHandle } from "../iso/settings-sheet";
 // MON-1 (#367): the RUN Bits store — the same projector the in-game ☰ menu
 // raises, so the door and a live match never quote a different price.
@@ -64,7 +68,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   const [settings, setSettings] = useState(false);
   const [howTo, setHowTo] = useState(false);
   const howToRef = useRef<HTMLDivElement>(null);
-  const tourRef = useRef<TutorialHandle | null>(null);
+  const menuRef = useRef<TutorialMenuHandle | null>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<SettingsSheetHandle | null>(null);
   // MON-1 (#367): the Store door. Same projector contract as the two above —
@@ -74,20 +78,25 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
   const storeRef = useRef<HTMLDivElement>(null);
   const storeHandleRef = useRef<StorePanelHandle | null>(null);
 
-  // The tour is a DOM projector beside this component, exactly as it is
-  // beside game.ts: React owns the host div and the "is it standing" state,
-  // the projector owns its own listeners and tears them down on close.
+  // The Tutorial menu is a DOM projector beside this component, exactly as it
+  // is beside game.ts: React owns the host div and the "is it standing" state,
+  // the projector owns its own listeners and tears them down on close. No game
+  // is live here, so `live: false` and a pick queues the section for the boot.
   useEffect(() => {
     if (!howTo || !howToRef.current) return;
-    const handle = showTutorial(howToRef.current, {
-      force: true,
-      vpTarget: RIVAL_SKILLS[resolveSkillKey()].winTarget,
-      freeTrack: FREE_SETUP_TRACK,
+    const handle = showTutorialMenu(howToRef.current, {
+      ctx: {
+        vpTarget: RIVAL_SKILLS[resolveSkillKey()].winTarget,
+        freeTrack: FREE_SETUP_TRACK,
+      },
+      progress: loadProgress(),
+      live: false,
+      onRun: (id) => { queueGuideSection(id); return true; },
+      onReset: () => { resetProgress(); },
     });
-    tourRef.current = handle;
-    if (!handle) { setHowTo(false); return; }
-    void handle.promise.then(() => { tourRef.current = null; setHowTo(false); });
-    return () => { handle.destroy(); tourRef.current = null; };
+    menuRef.current = handle;
+    void handle.promise.then(() => { menuRef.current = null; setHowTo(false); });
+    return () => { handle.destroy(); menuRef.current = null; };
   }, [howTo]);
 
   // Settings is the same DOM projector mounted the same way: React owns the
@@ -186,7 +195,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             Settings<span className="mb-tag">graphics · miniature · performance · clouds · sound</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setHowTo(true)}>
-            How to Play<span className="mb-tag">eight cards, one loop</span>
+            Tutorial<span className="mb-tag">ten sections · replay any of them</span>
           </button>
           {/* MON-1 (#367): the Store door — unlockables bought with RUN Bits. */}
           {import.meta.env.DEV ? (

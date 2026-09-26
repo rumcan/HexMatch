@@ -5396,13 +5396,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
    is gone. Delete this rule to bring it back. */
 #iso-rival-quip { display: none !important; }
 
-/* run.world feedback (2026-09): the first-game coach — the objective line
-   becomes the one instruction, and the control it needs pulses. */
-.objective.coach {
-  font-size: 14px; padding: 10px 18px; white-space: normal; max-width: min(92vw, 620px);
-  border-left-width: 4px; box-shadow: none;
-}
-
 /* VO-1: the spoken subtitle. Same speech plate as the rival wire, but that
    wire is display:none and a .toast would pollute the toast lane — so this
    caption sits above the resource bar, where a line can be read and skipped. */
@@ -5460,16 +5453,9 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .gfx-row:has(.gfx-voice-controls) .gfx-copy { min-width: 0; flex: 1; }
 .gfx-voice-controls { display: flex; align-items: center; gap: 8px; flex: none; }
 .gfx-voice-vol { width: 92px; accent-color: var(--brass, #d59964); cursor: pointer; }
-.coach-pulse { animation: coach-pulse 1.4s ease-in-out infinite; position: relative; }
-@keyframes coach-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 176, 46, .0); }
-  50% { box-shadow: 0 0 0 4px rgba(255, 176, 46, .75); }
-}
-@media (prefers-reduced-motion: reduce) { .coach-pulse { animation: none; outline: 2px solid rgb(var(--c-orange) / 0.8); } }
-
 /* ── mobile pass (2026-09) ─────────────────────────────────────────────── */
-/* The objective / coach line lives on the MAP. Over the Build or Economy
-   sheet it covered the sheet header and the Bank's Exchange button. */
+/* The objective line lives on the MAP. Over the Build or Economy sheet it
+   covered the sheet header and the Bank's Exchange button. */
 .ui-root[data-phone="1"]:not([data-view="map"]) .objective { display: none; }
 @media (max-width: 760px), (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
   /* The zoom / recenter buttons covered the resource bar's last chip. */

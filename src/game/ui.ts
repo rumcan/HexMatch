@@ -59,7 +59,6 @@ import { RIVAL_SKILLS, SKILL_KEYS, type SkillKey } from "../iso/skill";
 // TUT-01: the stepped starting tour. The ❔ help modal is the reference card;
 // this is the lesson, replayable from it at any time (and shown once at boot by
 // game.ts, which owns that gate).
-import { showTutorial, type TutorialHandle } from "../iso/tutorial";
 import { showBattleHowto } from "../iso/battle-howto";
 // PP-14: the praying angel that a cross match summons, and the choir that
 // sings with it. Both are one-shot fx answers to `onFx("cross", …)`.
@@ -575,6 +574,12 @@ export interface UiHooks {
    * "done" (applied here), "relayed" (a guest's request — the host's delta
    * confirms it) or the refusal in words.
    */
+  /**
+   * TUT-03 (#422): open the Tutorial menu — the list of sections, each one
+   * replayable now. The game owns the guide (src/iso/guide), this is only the
+   * door the ❔ help card and the ☰ menu press.
+   */
+  onTutorial?: () => void;
   onOfferPost?: (give: Cargo, giveN: number, want: Cargo, wantN: number) => string;
   onOfferAccept?: (id: number) => string;
   onOfferCancel?: (id: number) => string;
@@ -671,8 +676,6 @@ export interface OriginalUi {
   setReach: (reach: Partial<Record<Cargo, number>>) => void;
   setCombo: (count: number, need: number) => void;
   paint: (state: UiState) => void;
-  /** run.world feedback: coach the first game one step at a time. */
-  setCoach: (on: boolean) => void;
   /** 2026-09: the Depot card (level, yield vs cap, Upgrade, Retune). */
   showDepotCard: (o: DepotCardInfo) => void;
   /** #322: generic bottom-centre action card — one at a time. */
@@ -732,6 +735,10 @@ export interface OriginalUi {
    *  The ☰ menu's "How to Play" row routes through here so one modal serves
    *  both keys (and `window.__iso` can open it from the console). */
   showHelp: () => void;
+  /** TUT-03 (#422): open a drawer bay (the guide's target may live in it). */
+  setTab: (t: string) => void;
+  /** TUT-03 (#422): switch a phone's sheet (Map / Build / Economy). */
+  setMobileView: (v: string) => void;
   /**
    * C2 (#257): one line for the chat panel — mine, the other seat's, or a
    * notice the room itself produced (an opponent dropping and coming back).
@@ -4572,60 +4579,13 @@ export function createOriginalUi(
     });
   }
 
-  // ── run.world feedback (2026-09): the first-game coach ──────────────────
-  // One instruction at a time, on the objective line, with the control it
-  // needs pulsing; it advances when the player DOES the step (the objective
-  // key moves on), and bows out once the first Depot is earning.
-  const COACH_STEPS: Record<string, { n: number; text: string; pulse?: string }> = {
-    "setup-factory": { n: 1, text: "Tap the map next to a town to place your Factory." },
-    "setup-harvester": { n: 2, text: "Now tap beside an industry (farm, forest, mine…) to place a Depot." },
-    "tuning-depot": { n: 3, text: "Match 3 gems! Your score sets how much this Depot produces." },
-    "need-depot": { n: 2, text: "Tap Depot, then tap beside an industry to place it.", pulse: '[data-tool="harvester"]' },
-    "need-road": { n: 4, text: "Pick Dirt Road and drag from your Depot to your Factory.", pulse: '[data-tool="dirt"]' },
-  };
-  const COACH_TOTAL = 4;
-  let coachOn = false;
-  let coachDoneTimer = 0;
-  let coachPulsed: Element | null = null;
-  /** Last coach key we handed to the narrator, so paint() does not re-cue every frame. */
-  let lastVoiceCoach: string | null = null;
-  function setCoach(on: boolean): void {
-    coachOn = on;
-    if (on) {
-      try { voice.setNarration(true); } catch { /* garnish */ }
-    }
-    if (!on) pulseCoach(null);
-  }
-  function pulseCoach(sel: string | null): void {
-    const el = sel ? root.querySelector(sel) : null;
-    if (el === coachPulsed) return;
-    coachPulsed?.classList.remove("coach-pulse");
-    el?.classList.add("coach-pulse");
-    coachPulsed = el;
-  }
-  /** The coach's line for this objective, or null when not coaching. */
-  function coachStep(key: string | null): string | null {
-    if (!coachOn) return null;
-    const step = key ? COACH_STEPS[key] : undefined;
-    if (step) {
-      pulseCoach(step.pulse ?? null);
-      if (key && key !== lastVoiceCoach) {
-        lastVoiceCoach = key;
-        try { voice.cue(`coach:${key}`); } catch { /* garnish */ }
-      }
-      return `Step ${step.n}/${COACH_TOTAL} · ${step.text}`;
-    }
-    // Past the steps: the loop is running. One closing line, then bow out.
-    pulseCoach(null);
-    if (lastVoiceCoach !== "producing") {
-      lastVoiceCoach = "producing";
-      try { voice.cue("coach:producing"); } catch { /* garnish */ }
-    }
-    if (!coachDoneTimer) {
-      coachDoneTimer = window.setTimeout(() => { coachOn = false; }, 9000);
-    }
-    return "You're producing! Earn ★ from Depots, fully paved routes and city upgrades. Tap ❔ any time for help.";
-  }
+  // ── TUT-03 (#422): the coach is gone ──────────────────────────────────
+  // The first-game coach used to write its instruction on the objective line
+  // (top) while the placement hint pill (bottom) said the same thing again.
+  // Both are replaced by the guide: ONE caption strip, pointing at the real
+  // control, voiced by the narrator, and waiting for the player to use it.
+  // The objective line itself is untouched (L8 #222) — it is the game's own
+  // "what next", not a lesson, and it no longer competes with one.
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
@@ -4643,7 +4603,6 @@ export function createOriginalUi(
     rivalFaceOverride = state.rivalFace ?? null;
     // TUT-01: remember the live free-tile allowance so a tour replayed from ❔
     // quotes the game being played, not the shipped constant.
-    hudFreeTrack = state.freeTrack;
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
     }
@@ -4725,9 +4684,10 @@ export function createOriginalUi(
       // Objective hides when a real banner is up — the protest countdown or the
       // disconnect sheet is more urgent than the loop reminder.
       const show = !!obj && !state.banner;
-      const coached = coachStep(objKey);
-      objectiveEl.textContent = coached ?? obj ?? "";
-      objectiveEl.classList.toggle("coach", coached !== null);
+      // TUT-03 (#422): the coach that used to overwrite this line is gone.
+      // The guide speaks in its own strip; the objective line is the game's
+      // own "what next" again, and says it once.
+      objectiveEl.textContent = obj ?? "";
       if (objKey) objectiveEl.dataset.key = objKey;
       objectiveEl.classList.toggle("hidden", !show);
       // Banner height var must count the objective when banner itself is hidden,
@@ -4960,16 +4920,6 @@ export function createOriginalUi(
    * the shipped line, which is what it reads before the first paint.
    */
   let hudVpTarget: number = VICTORY.target;
-  /**
-   * TUT-01: the same idea for the tour's second number — the free dirt tiles
-   * the setup allowance is paying for. The tour reads both from here when the
-   * ❔ replays it mid-game, so its copy quotes the game the player is IN rather
-   * than a constant that may have moved.
-   */
-  let hudFreeTrack = 0;
-  /** The replayed tour, while it is open — held so ❔ cannot stack a second. */
-  let tourView: TutorialHandle | null = null;
-
   function helpModal() {
     const TOUCH_CONTROLS = coarsePointer()
       ? `<p><h3>Playing by touch</h3><p><b>One finger</b> pans the map and drags roads tile by tile; <b>a tap</b> places a building or lays a single road tile; <b>two fingers</b> pinch-zoom. The <b>+ / − / 🎯</b> keys at the map's right edge zoom and recentre. The chip at the lower-left names the tool in your hand and <b>puts it down</b> on a tap, and a tap with <b>Select</b> reads the tile under your finger in the inspector. The bottom bar switches <b>Map / Build / Economy</b>.</p>`
@@ -4988,7 +4938,7 @@ export function createOriginalUi(
           <div class="help-col"><h3>Gold & Defence</h3><p><b>Gold</b> 🪙 is from gold-mine access or combos. It buys <b>Black Market</b> sabotage and <b>Challenges</b> (12 Gold) — never construction. Click an industry with Select to Challenge once a cargo is a monopoly (or every town is taken). First win shares the site; a second consecutive win closes the loser's Depot. Decline is a forfeit. <b>Blockade</b> ⛓ stops an industry's depots for 45s, <b>Protest</b> ✊ shuts a public road for 2:00 (every truck through it stops, including yours). <b>Security Forces</b> (ordinary materials) turn both away. <b>Feed</b> logs every event.</p></div>
         </div>
         <div class="confirm-row">
-          <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Replay the tour</button>
+          <button class="big-btn ghost" id="tourBtn" data-sfx="open">▶ Tutorial</button>
           <button class="big-btn ghost" id="battleHowtoBtn" data-sfx="open">⚔ How battles work</button>
           <button class="big-btn" id="startBtn">Start Production</button>
         </div>
@@ -5001,16 +4951,13 @@ export function createOriginalUi(
       shut();
       showBattleHowto();
     };
+    // TUT-03 (#422): the card tour is gone. The ❔ door now opens the Tutorial
+    // MENU — the list of sections, each one replayable in the game you are
+    // standing in. The tour's numbers (★ line, free tiles) are the guide's to
+    // read, and it reads them from the live boot.
     (modalRoot.querySelector("#tourBtn") as HTMLElement).onclick = () => {
       shut();
-      if (tourView) return;
-      tourView = showTutorial(root, {
-        force: true,
-        vpTarget: hudVpTarget,
-        freeTrack: hudFreeTrack,
-        newLoop: newLoopChrome,
-        onClose: () => { tourView = null; },
-      });
+      hooks.onTutorial?.();
     };
   }
 
@@ -5097,7 +5044,6 @@ export function createOriginalUi(
     setReach,
     setCombo,
     paint,
-    setCoach,
     showDepotCard,
     showActionCard,
     closeActionCard,
@@ -5132,6 +5078,16 @@ export function createOriginalUi(
     showModal,
     hideModal,
     showHelp: () => helpModal(),
+    // TUT-03 (#422): the guide's two doors into the chrome — open a drawer
+    // bay, or switch a phone's sheet, so a step's target is on screen before
+    // the spotlight looks for it. Both are the same calls the player's own
+    // clicks make, so an assisted step can never drift from a real one.
+    // TUT-03: the guide OPENS a bay; it never toggles an open drawer shut.
+    setTab: (t) => {
+      if (railRightCollapsed && !isPhoneViewport()) { railRightCollapsed = false; paintRails(); }
+      setTab(t as TabName);
+    },
+    setMobileView: (v) => { setMobileView(v); },
     /**
      * C2 (#257): one line into the panel. Mine, the other seat's and the
      * room's notices all come through this one door, and the door is closed in

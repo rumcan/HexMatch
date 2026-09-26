@@ -75,7 +75,9 @@ export interface VoiceDirector {
   cue(trigger: string): VoiceLine | null;
   /** Queue the trigger's line once. A repeat is a no-op. */
   cueOnce(trigger: string): VoiceLine | null;
-  say(id: string): VoiceLine | null;
+  /** Play a line by id. `subtitle: false` plays it without the subtitle
+   *  bubble - for a caller that already shows the words (the guide). */
+  say(id: string, opts?: { subtitle?: boolean }): VoiceLine | null;
   setNarration(on: boolean): void;
   readonly narrationOn: boolean;
   skipNarration(): void;
@@ -343,6 +345,8 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
     cursor.set(trigger, (cursor.get(trigger) ?? 0) + 1);
   }
 
+  /** Lines queued without a subtitle (their caller shows the words itself). */
+  const unsubtitled = new WeakSet<VoiceLine>();
   function accept(line: VoiceLine, markOnce: boolean, advance = true): VoiceLine | null {
     if (line.speaker === "narrator" && (!narrationOn || skipped)) return null;
     if (line.speaker === "rival") {
@@ -379,7 +383,7 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
         const line = queue.shift()!;
         if (token !== epoch) break;
         setPlaying(line);
-        try { sink?.show(line); } catch { /* a detached bubble is not a crash */ }
+        try { if (!unsubtitled.has(line)) sink?.show(line); } catch { /* a detached bubble is not a crash */ }
         if (token !== epoch) break;
 
         let playback: VoicePlayback | null = null;
@@ -442,8 +446,11 @@ export function createVoice(deps: VoiceDeps = {}): VoiceDirector {
       const line = take(trigger);
       return line ? accept(line, true) : null;
     },
-    say(id) {
-      const line = lines.find((l) => l.id === id) ?? null;
+    say(id, opts) {
+      const found = lines.find((l) => l.id === id) ?? null;
+      // A private copy, so the no-subtitle mark never leaks onto a cue of the same line.
+      const line = found && opts?.subtitle === false ? { ...found } : found;
+      if (line && opts?.subtitle === false) unsubtitled.add(line);
       // By id: do not burn the trigger's round-robin slot.
       return line ? accept(line, false, false) : null;
     },

@@ -20,7 +20,6 @@ import { bootBudget } from "./boot";
 
 const BASE = "/";
 const SAVE_KEY = "hexmatch:save";
-const TOUR = "#iso-tutorial";
 
 /** The boot, from a clean shelf: the front door, then Play vs AI. */
 async function bootFresh(page: import("@playwright/test").Page, search: string) {
@@ -165,32 +164,3 @@ test("?loop=old still opens the retired loop, board and all", async ({ page }) =
   await expect(page.locator("#iso-session")).toHaveCount(0);
 });
 
-test("the tour a first-time player meets teaches the tuning session", async ({ page }) => {
-  // A genuinely fresh shelf: no remembered difficulty (this boot stops at the
-  // tour, which is what stands first in the onboarding chain), and the tour
-  // therefore opens by itself.
-  await bootFresh(page, "?seed=79");
-  const tour = page.locator(TOUR);
-  await expect(tour).toBeVisible({ timeout: bootBudget() });
-  await expect(tour).toHaveAttribute("data-step", "loop");
-
-  // The sentence #237's ticket names: the tour used to promise that every
-  // delivery stamps a cargo token. On this loop a Depot is TUNED, and the
-  // clock pays.
-  await expect(tour).toContainText(/tuning session/i);
-  await expect(tour).not.toContainText(/stamps a cargo token/i);
-
-  // …the roads card says the gravel is free and does NOT count down an
-  // allowance that buys nothing here (L2's `freeAllowanceCovers` is false).
-  await tour.locator('[data-step="roads"]').click();
-  await expect(tour).toHaveAttribute("data-step", "roads");
-  await expect(tour.locator(".tut-points")).toContainText(/is free, tile after tile/i);
-  await expect(tour.locator(".tut-points")).not.toContainText(/pays for the first \d+ of them/i);
-
-  // …and the ★ ledger is the loop's own three rows, ending on the loop's line.
-  await tour.locator('[data-step="victory"]').click();
-  await expect(tour).toHaveAttribute("data-step", "victory");
-  await expect(tour.locator(".tut-ledger-row")).toHaveCount(5);
-  await expect(tour.locator(".tut-ledger-total")).toContainText("12★");
-  await expect(tour.locator(".tut-ledger-total")).not.toContainText("10★");
-});
