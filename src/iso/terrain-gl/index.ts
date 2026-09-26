@@ -96,7 +96,7 @@ const PLACEHOLDER: Record<TextureSlot, [number, number, number]> = {
 
 const UNIFORMS = [
   "uCam", "uZoom", "uView", "uField", "uCodes", "uNoise", "uGrass", "uMeadow", "uDirt", "uRock",
-  "uSand", "uDetail", "uWaterN", "uMapSize", "uSeedOff", "uDetailAmt", "uWaterAnim", "uTime",
+  "uSand", "uDetail", "uWaterN", "uMapSize", "uSeedOff", "uDetailAmt", "uWaterAnim", "uTime", "uGrid",
   "uTilesPerRepeat", "uLumA",
 ] as const;
 
@@ -153,6 +153,8 @@ class TerrainRendererImpl implements TerrainRenderer {
 
   private readonly quality: "high" | "low";
   private readonly tilesPerRepeat: number;
+  /** Strength of the faint tile grid (0 = off). `?grid=0` turns it off. */
+  gridStrength = (() => { try { const g = new URLSearchParams(location.search).get("grid"); return g === null ? 0.5 : Math.max(0, Math.min(1, Number(g) || 0)); } catch { return 0.5; } })();
   private readonly noiseAtlas: RawTexture;
 
   // texture sources kept for context restore
@@ -511,6 +513,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.uniform1f(st.u.uDetailAmt, detailAmt);
     gl.uniform1f(st.u.uWaterAnim, waterAnim);
     gl.uniform1f(st.u.uTime, (timeMs % 3_600_000) / 1000);
+    gl.uniform1f(st.u.uGrid, this.gridStrength);
     gl.bindVertexArray(st.vao);
     gl.drawElements(gl.TRIANGLES, this.indices.length, gl.UNSIGNED_INT, 0);
     gl.bindVertexArray(null);
