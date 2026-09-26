@@ -116,7 +116,7 @@ import {
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER, type RoadTierKey,
-  tierTileCost, setRoadTier, ROAD_TIER, addCost,
+  highwayRouteTiers, planInterchange, buildInterchange, tierTileCost, setRoadTier, ROAD_TIER, ROAD_TIER_KEYS, addCost, roadDragRefusalText,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -267,7 +267,7 @@ import {
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, canPay, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
-  railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
+  RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
 } from "./rail";
 import { loadRailwaySprites } from "./rail-art";
@@ -460,7 +460,7 @@ export { VP_TARGET, FREE_SETUP_DEPOTS };
  * and Q does the same from the keyboard.
  */
 export type Tool =
-  | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
+  | "select" | "dirt" | "road" | "interchange" | "harvester" | "plant" | "demolish"
   // RAIL-04 (#178): the railway's four verbs. `rail` is a drag (tiles),
   // `platform` and `raildepot` are one-click placements in the current
   // heading, and `railway` is the panel — lines, trains and their actions.
@@ -2162,7 +2162,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
   let atlasRef: Atlas | null = null;
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
-  let drag: { ax: number; ay: number } | null = null;
+  let drag: { ax: number; ay: number; bx: number; by: number; xFirst: boolean } | null = null;
   let preview: DragPreview | null = null;
 
   // ── helpers ────────────────────────────────────────────────────────────
@@ -3392,7 +3392,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // so building one never switches the other seat's Depot off.
     const why = platformRefusal(
       grid, rail.structures, railPlants(), ownerId, tx, ty, view, undefined,
-      lockedIndustryIdsFor(eco, p.id),
+      lockedIndustryIdsFor(eco, p.id), rail.rail,
     );
     if (why !== "ok") {
       if (p.human) {
@@ -3624,6 +3624,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  function placeInterchange(tx: number, ty: number, p: PlayerState = me): boolean {
+    const plan = buildInterchange(grid, track, p.i + 1, tx, ty, p.purse);
+    if (plan.why) { if (p.human) toast(plan.why, "bad"); return false; }
+    spend(p, plan.cost); // same synchronous all-or-nothing affordability check
+    for (const [x, y] of plan.tiles) renderer?.invalidateTile(x, y);
+    syncWorld(); rescoreNow();
+    if (p.human) { sfx.play("build"); toast("Diamond interchange built.", "good"); }
+    return true;
+  }
+
   /**
    * RAIL-04 (#178): commit a rail drag. The tiles and the price come from
    * `railPreview` — the same function the overlay painted from — so what the
@@ -3631,7 +3641,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * the shared vocabulary when the pointer outran its own legality.
    */
   function commitRailDrag(p: PlayerState, pv: DragPreview & { why?: string | null }) {
-    const res = buildRail(grid, track, rail, p.i + 1, pv.tiles);
+    const res = buildRail(grid, track, rail, p.i + 1, pv.tiles, true);
     if (!Object.keys(res.cost).length && !res.built.length) {
       if (p.human) toast(res.why === "ok" ? "Can't build rail there." : RAIL_REFUSAL_TEXT[res.why as never], "bad");
       return;
@@ -3666,7 +3676,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ax: number, ay: number, bx: number, by: number, xFirst: boolean,
   ): (DragPreview & { why?: string | null }) | null => {
     if (phase !== "play") return null;
-    const pv = railPreview(grid, track, rail, me.i + 1, me.purse, ax, ay, bx, by, xFirst);
+    const pv = railPreview(grid, track, rail, me.i + 1, me.purse, ax, ay, bx, by, xFirst, true);
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
       net?.sendIntent("build", { do: "rail", ax, ay, bx, by, xFirst });
@@ -7330,13 +7340,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const f of mine) {
         const route = depotRouteTiles(eco, h, f);
         if (!route || route.length < HIGHWAY_MIN_ROUTE) continue;
+        const tiers = highwayRouteTiers(track, route);
         let ok = true, anyLow = false;
         let cost: Purse = {};
         for (let k = 0; k < route.length && ok; k++) {
           const [x, y] = route[k];
           if (!hasTrack(track, "road", x, y)) { ok = false; break; }
           if (k > 0 && heightAt(grid, x, y) !== heightAt(grid, route[k - 1][0], route[k - 1][1])) { ok = false; break; }
-          const c = tierTileCost(track, "highway", x, y);
+          const c = tierTileCost(track, tiers[k] === ROAD_TIER.ramp ? "ramp" : "highway", x, y);
           if (Object.keys(c).length) { anyLow = true; cost = addCost(cost, c); }
         }
         if (!ok || !anyLow) continue;
@@ -7345,15 +7356,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // ROADS-3 (#394): a Highway meets roads only through Ramps, so every
         // route tile where one of the rival's other roads branches off becomes
         // a RAMP (it links to the highway either side AND to the branch).
-        const onRoute = new Set(route.map(([x, y]) => y * MAP_W + x));
-        for (const [x, y] of route) {
-          if (!Object.keys(tierTileCost(track, "highway", x, y)).length) continue;
-          const branch = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
-            const nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H || onRoute.has(ny * MAP_W + nx)) return false;
-            return hasTrack(track, "road", nx, ny) || hasTrack(track, "dirt", nx, ny);
-          });
-          setRoadTier(track, x, y, branch ? ROAD_TIER.ramp : ROAD_TIER.highway);
+        for (const [k, [x, y]] of route.entries()) {
+          const tier = tiers[k];
+          if (!Object.keys(tierTileCost(track, tier === ROAD_TIER.ramp ? "ramp" : "highway", x, y)).length) continue;
+          setRoadTier(track, x, y, tier);
           renderer?.invalidateTile(x, y);
         }
         ui.feed(`Rival builds a ${route.length}-tile Highway`, rival.name);
@@ -8538,13 +8544,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const bx = int(payload.bx), by = int(payload.by);
         if (ax !== null && ay !== null && bx !== null && by !== null) {
           const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
+          const tier: RoadTierKey = kind === "road"
+            && ROAD_TIER_KEYS.includes(payload.roadTier as RoadTierKey) ? payload.roadTier as RoadTierKey : "road";
           const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
             payload.xFirst !== false, undefined, p.freeTrack,
             structureTiles(eco.factories, eco.harvesters, p.i + 1, factoryFp), newLoop,
             // R2 (#266): a deck is never shared, so the rail layer rides along.
-            { railAt: (x, y) => hasRail(rail.rail, x, y) });
-          if (pv.tiles.length === 0) toast("Can't build there.", "bad");
-          else commitTrackDrag(p, pv, kind);
+            { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tier);
+          if (pv.tiles.length === 0) toast(pv.why ? roadDragRefusalText(pv.why) : "Can't build there.", "bad");
+          else commitTrackDrag(p, pv, kind, tier);
+        }
+      } else if (what === "interchange") {
+        const tx = int(payload.tx), ty = int(payload.ty);
+        if (tx !== null && ty !== null) {
+          const plan = planInterchange(grid, track, p.i + 1, tx, ty, p.purse);
+          if (plan.why) echoed.push(plan.why); else placeInterchange(tx, ty, p);
         }
       } else if (what === "dam" && DAMS_ENABLED) {
         // R3 (#270): a guest's dam build. The host runs the SAME site rule,
@@ -8582,7 +8596,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const bx = int(payload.bx), by = int(payload.by);
           if (ax !== null && ay !== null && bx !== null && by !== null) {
             const pv = railPreview(grid, track, rail, p.i + 1, p.purse, ax, ay, bx, by,
-              payload.xFirst !== false);
+              payload.xFirst !== false, true);
             if (pv.tiles.length === 0) {
               echoed.push(pv.why && pv.why !== "ok" ? RAIL_REFUSAL_TEXT[pv.why] : "Can't build rail there.");
             } else commitRailDrag(p, pv);
@@ -8597,7 +8611,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             ? payload.view as RailView : "se";
           if (tx !== null && ty !== null) {
             const why = what === "platform"
-              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view, undefined, lockedIndustryIdsFor(eco, p.id))
+              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view, undefined, lockedIndustryIdsFor(eco, p.id), rail.rail)
               : depotRefusal(grid, rail, p.i + 1, tx, ty, view);
             if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
             else if (what === "platform") placeRailPlatform(tx, ty, p, view);
@@ -9038,7 +9052,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // the SAME refusal function the click runs, so the two cannot disagree.
       const kind: "platform" | "depot" = tool === "platform" ? "platform" : "depot";
       const why = kind === "platform"
-        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id))
+        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id), rail.rail)
         : depotRefusal(grid, rail, me.i + 1, tx, ty, railView);
       const ok = why === "ok";
       const [fw, fh] = footprintFor(kind, railView);
@@ -9067,6 +9081,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         sprite: `${kind === "platform" ? "platform" : "train-depot"}_${railView}`,
         tx, ty, valid: ok,
       };
+    } else if (tool === "interchange") {
+      const plan = planInterchange(grid, track, me.i + 1, tx, ty, me.purse);
+      for (const [x, y] of plan.tiles.length ? plan.tiles : [[tx, ty, 0]])
+        items.push({ sprite: plan.why ? "highlight_bad" : "highlight", tx: x, ty: y });
     } else if (tool === "dam") {
       // R3 (#270): the ghost is the footprint the click would build — the
       // river tile and the bank the held side leans onto (folds to the
@@ -9126,6 +9144,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // #298: the tiles the drag ran into and refused — painted red, not built.
       for (const [x, y] of preview.blocked ?? []) {
         items.push({ sprite: "highlight_bad", tx: x, ty: y });
+      }
+      if (track.diagonalRoads && tool !== "rail") {
+        for (const [x, y] of preview.unaffordable) items.push({ sprite: "highlight_bad", tx: x, ty: y });
       }
       // VP-01: a paved drag over your own gravel is the only road action that
       // scores, so the preview rings the tiles it actually upgrades. Read from
@@ -9277,9 +9298,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ? costMarkup(preview.cost)
         : (preview.free > 0 ? `${preview.free} free` : "free");
       costInfo = hintLine(
-        `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated ? ` · <i>blocked</i>` : ""),
+        `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated
+          ? ` · <i>${preview.why && tool !== "rail" ? roadDragRefusalText(preview.why) : "blocked"}</i>` : ""),
         `${vpTxt} · ${owed}`,
       );
+    } else if (tool === "interchange" && hover) {
+      const plan = planInterchange(grid, track, me.i + 1, hover.tx, hover.ty, me.purse);
+      costInfo = hintLine(plan.why ? `<i>${plan.why}</i>` : "Diamond interchange · ready",
+        `1 overpass + 4 ramps + new road · ${costMarkup(plan.cost)}`);
     } else if (tool === "plant" && hover) {
       // PP-06: the refusal reason is PREVIEWED from the same rule the click
       // enforces, so a click is never a surprise — and this hint is the only
@@ -9803,10 +9829,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
       // R2 (#266): the drag sees the railway, because a deck is never shared —
       // a road may not span water the railway already bridges.
-      { railAt: (x, y) => hasRail(rail.rail, x, y) }, kind === "road" ? roadTier : "road");
+      { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, kind === "road" ? roadTier : "road");
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
-      net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst });
+      net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst,
+        roadTier: kind === "road" ? roadTier : "road",
+      });
       return pv;
     }
     commitTrackDrag(me, pv, kind, roadTier);
@@ -9990,6 +10018,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let dragLive = false;
 
+  /** D2: one preview seam for pointer motion and R (including tier/bridge costs). */
+  const previewRoadGesture = (): DragPreview | null => drag ? previewDrag(
+    grid, track, tool as TrackKind, me.purse, drag.ax, drag.ay, drag.bx, drag.by, drag.xFirst,
+    undefined, me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
+    { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tool === "road" ? roadTier : "road",
+  ) : null;
+
   canvases.overlay.addEventListener("pointerdown", (e) => {
     if (typeof canvases.overlay.setPointerCapture === "function") {
       canvases.overlay.setPointerCapture(e.pointerId);
@@ -10029,7 +10064,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         || canBuildOn(grid, tool as TrackKind, p.tx, p.ty)
         || ownFloor(p.tx, p.ty);
       if (canStart) {
-        drag = { ax: p.tx, ay: p.ty };
+        drag = { ax: p.tx, ay: p.ty, bx: p.tx, by: p.ty, xFirst: true };
         dragLive = false;
         return;
       }
@@ -10160,28 +10195,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const railKey = `rail:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${rail.rail.revision}:${purseKeyEarly}`;
           if (!preview || railKey !== previewKey) {
             preview = railPreview(grid, track, rail, me.i + 1, me.purse,
-              drag.ax, drag.ay, p.tx, p.ty, true);
+              drag.ax, drag.ay, p.tx, p.ty, true, true);
             previewKey = railKey;
             changed = true;
           }
           if (changed) paintOverlayNow();
           return;
         }
+        drag.bx = p.tx; drag.by = p.ty;
         const kind = tool as TrackKind;   // build-track tools are dirt | road
         // A drag re-plans only when something it depends on moved: the end
         // tile, the network (netVersion), the purse or the free allowance.
         // Sub-tile pointer motion reuses the plan it already has.
         const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
-        const key = `${kind}:${roadTier}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
+        const key = `${kind}:${roadTier}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${drag.xFirst}:${netVersion}:${me.freeTrack}:${purseKey}`;
         if (!preview || key !== previewKey) {
           // Roads anywhere (main): no network adjacency requirement, so the
           // preview is allowed to start anywhere and grow without a seed.
           // L2: the drag prices with the loop's cost model (dirt free under newLoop).
-          preview = previewDrag(grid, track, kind, me.purse,
-            drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
-            // R2 (#266): see `requestTrackBuild` — never a deck over rail.
-            { railAt: (x, y) => hasRail(rail.rail, x, y) }, kind === "road" ? roadTier : "road");
+          preview = previewRoadGesture();
           previewKey = key;
           changed = true;
         }
@@ -10266,7 +10298,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // W9: the allowance buys Dirt only, so a paved Road drag with no ore
         // previews nothing at all.
         const isRoad = tool === "road";
-        if (isRoad && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
+        if (track.diagonalRoads && preview.why) {
+          toast(roadDragRefusalText(preview.why), "bad");
+          flashAt(drag.ax, drag.ay, "Can't build here");
+        } else if (isRoad && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
           toast(me.freeTrack > 0
             ? "A paved Road costs ore — free setup tiles only cover Dirt Roads."
             : "A paved Road needs ore — connect an ore mine first.", "bad");
@@ -10281,7 +10316,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // MP-05: the endpoints the intent carries are the preview's own, so the
         // host reproduces the exact plan the guest just saw.
         const end = preview.tiles[preview.tiles.length - 1];
-        requestTrackBuild(tool as TrackKind, drag.ax, drag.ay, end[0], end[1], true);
+        // Keep R's bend order and the original outgoing-step context. Ending
+        // the request at the affordable prefix can turn an overpass crossing
+        // into a free endpoint, or make a valid bridge lose its far bank.
+        requestTrackBuild(tool as TrackKind, drag.ax, drag.ay,
+          track.diagonalRoads ? drag.bx : end[0], track.diagonalRoads ? drag.by : end[1], drag.xFirst);
       }
       drag = null; preview = null; downAt = null;
       g = pointerUp(g, e.pointerId);
@@ -10344,6 +10383,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               net?.sendIntent("build", { do: tool === "platform" ? "platform" : "raildepot", tx: p.tx, ty: p.ty, view: railView });
             } else if (tool === "platform") placeRailPlatform(p.tx, p.ty, me);
             else placeRailDepot(p.tx, p.ty, me);
+          } else if (tool === "interchange") {
+            if (isGuest()) net?.sendIntent("build", { do: "interchange", tx: p.tx, ty: p.ty });
+            else placeInterchange(p.tx, p.ty);
           } else if (tool === "dam") {
             // R3 (#270): the hydro dam, on a guest an intent like every other
             // build — the host runs the same `damRefusal` against the guest's
@@ -10432,6 +10474,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // R3 (#270): and the dam's bank side (damSide) — the river's axis fixes
     // the footprint, the side is the choice.
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r") {
+      if (track.diagonalRoads && drag && (tool === "road" || tool === "dirt")) {
+        e.preventDefault();
+        if (!e.repeat) {
+          drag.xFirst = !drag.xFirst;
+          preview = dragLive ? previewRoadGesture() : null;
+          previewKey = "";
+          paintOverlayNow();
+        }
+        return;
+      }
       // The Depot is placed in four rotations too, and R turns whichever tool
       // is armed: over a real site it steps through the sides that site can
       // actually open onto, so a turn never promises an impossible entrance.
@@ -12816,6 +12868,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // MP-05: the same seam the pointer path uses — commits on solo/host,
       // sends an intent on a guest.
       requestTrackBuild(kind, ax, ay, bx, by, xFirst),
+    /** D2: inspect the gesture and the actual overlay items (no second preview). */
+    get activeRoadDrag() { return drag && tool !== "rail" ? { ...drag, preview } : null; },
+    get activeDragOverlay() { return preview ? overlayFrame().items : []; },
     /**
      * W1/PP-15: the read-only half of `dragBuild` — the preview the pointer
      * drag WOULD compute, with nothing committed. The e2e corridor spec needs
@@ -12831,7 +12886,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
         structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
-        { railAt: (x, y) => hasRail(rail.rail, x, y) });
+        { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, kind === "road" ? roadTier : "road");
     },
     /**
      * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`

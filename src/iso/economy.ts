@@ -35,7 +35,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
-  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump,
+  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump, roadDiagNeighbours,
   plantFootprintTiles, type Track, type TrackKind,
 } from "./track";
 // RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
@@ -43,7 +43,7 @@ import {
 // module only asks them the same question it asks the road tar.
 import { railOpenTo, railPath, railServesIndustry, railServicedIndustries, stopTile, type RailState } from "./rail";
 // E4 (#268): the climb term the L3 factor counts as extra distance.
-import { routeDistance } from "./slopes";
+import { routeTileLength, routeDistance } from "./slopes";
 // R3 (#270): the dam's record type only — the bonus arithmetic the clock
 // applies lives in `dams.ts`, and a type import keeps this leaf the way the
 // bridge rules already keep it.
@@ -317,11 +317,17 @@ export function buildComponents(track: Track, owner: number): Components {
         comp[ni] = id;
         stack.push(ni);
       }
+      for (const [nx, ny] of roadDiagNeighbours(track, x, y)) {
+        const ni = tIdx(nx, ny);
+        if (comp[ni] !== -1 || !usable(ni)) continue;
+        comp[ni] = id;
+        stack.push(ni);
+      }
       // ROADS-3 (#394): a road carries on straight OVER an overpass — the
       // tiles either side are one component, the highway below is not.
       if (track.tier) {
         for (const d of DIRS) {
-          const j = overpassJump(track, x, y, d);
+          const j = overpassJump(track, x, y, d, owner);
           if (!j) continue;
           const ji = tIdx(j[0], j[1]);
           if (comp[ji] !== -1 || !usable(ji)) continue;
@@ -529,8 +535,10 @@ export function resolveConnection(
     const route = roadPath(state.track, h.ownerId,
       depotShoulders(state.track, h.ownerId, h),
       new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid)).map(([x, y]) => tIdx(x, y))));
-    if (!route || route.length >= shortest) continue;
-    shortest = route.length;
+    if (!route) continue;
+    const length = routeTileLength(route, !!state.track.diagonalRoads);
+    if (length >= shortest) continue;
+    shortest = length;
     best = {
       kind: "dirt", multiplier: TRANSPORT.dirt.throughput, factory: f,
     };
@@ -551,8 +559,9 @@ export function resolveConnection(
  * the multi-plant edge case, where the lorry serves `resolveConnection`'s
  * tier-preferred plant and this measures the NEAREST one (the spec's rule:
  * "path length in tiles from depot to the nearest owned factory/plant").
- * One BFS with every owned plant's shoulders as goals, so "nearest" is one
- * flood, not one per plant.
+ * One multi-source search with every owned plant's shoulders as goals, so
+ * "nearest" is one flood, not one per plant. D1 uses weighted steps (sqrt(2)
+ * diagonals) when the local diagonalRoads flag is enabled.
  *
  * E4 (#268): the number is the route's TILE COUNT PLUS ITS CLIMB — the extra
  * distance `slopes.ts` charges for every level the route climbs or drops
@@ -588,7 +597,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
   }
   if (goals.size === 0) return null;
   const route = roadPath(state.track, h.ownerId, from, goals);
-  return route ? routeDistance(state.grid, route) : null;
+  return route ? routeDistance(state.grid, route, !!state.track.diagonalRoads) : null;
 }
 
 /**

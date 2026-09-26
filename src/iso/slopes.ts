@@ -271,14 +271,28 @@ export function climbTiles(grid: Grid, route: readonly TilePair[]): number {
   return sum * SLOPES.climbTiles;
 }
 
+/** D1 keeps the historic one-tile origin allowance. With diagonals enabled,
+ * each subsequent step contributes its geometric length (including a two-tile
+ * overpass jump). #420: axis overpass jumps always count their full span;
+ * flag-OFF diagonal/rail steps retain their previous distance contract. */
+export function routeTileLength(route: readonly TilePair[], diagonalRoads = false): number {
+  if (route.length === 0) return 0;
+  let length = 1;
+  for (let i = 1; i < route.length; i++) {
+    const dx = route[i][0] - route[i - 1][0], dy = route[i][1] - route[i - 1][1];
+    length += diagonalRoads ? Math.hypot(dx, dy) : dx === 0 || dy === 0 ? Math.abs(dx) + Math.abs(dy) : 1;
+  }
+  return length;
+}
+
 /**
  * The route as the L3 clock measures it: its tile count plus `climbTiles`. The
  * one number `depotPathLength` returns, so the inspector, the banded factor and
  * the lorry all keep reading one measure (and an option-off map is exactly the
  * tile count it always was).
  */
-export const routeDistance = (grid: Grid, route: readonly TilePair[]): number =>
-  route.length + climbTiles(grid, route);
+export const routeDistance = (grid: Grid, route: readonly TilePair[], diagonalRoads = false): number =>
+  routeTileLength(route, diagonalRoads) + climbTiles(grid, route);
 
 // ── vehicles ──────────────────────────────────────────────────────────────
 /**

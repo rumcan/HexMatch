@@ -63,6 +63,7 @@ import {
   type Grid, type Industry,
 } from "./grid";
 import {
+  PRESENT, ROAD_DE, ROAD_DS, DIAGONAL_DIRS, roadDiagonalRefusal, roadClassesConnect, buildRoadDiagonal, overpassJump,
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
   mergedPresent,
@@ -152,6 +153,12 @@ export function stepCost(
   grid: Grid, track: Track, kind: TrackKind, tx: number, ty: number, owner: number = 0,
   from?: readonly [number, number],
 ): number {
+  if (track.diagonalRoads && from) {
+    const diagonal = Math.abs(tx - from[0]) === 1 && Math.abs(ty - from[1]) === 1;
+    if (diagonal && roadDiagonalRefusal(grid, track, ...from, tx, ty)) return IMPASSABLE;
+    if (Math.max(Math.abs(tx - from[0]), Math.abs(ty - from[1])) === 1
+      && !roadClassesConnect(track, ...from, tx, ty)) return IMPASSABLE;
+  }
   // R2 (#266): a river tile in a straight, ≤2-tile, land-ended run may be
   // BRIDGED. The A* is per tile and cannot see the drag's shape, so this is
   // the local necessary condition (`bridgeAxesAt`); the shape itself is
@@ -227,6 +234,11 @@ export function findPath(
   adjacentTo = false, owner: number = 0,
 ): Path | null {
   if (!inMapT(ax, ay) || !inMapT(bx, by)) return null;
+  const estimate = (x: number, y: number) => {
+    const dx = Math.abs(x - bx), dy = Math.abs(y - by);
+    return track.diagonalRoads ? (Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy)) * COST_OWNED
+      : heuristic(x, y, bx, by);
+  };
   const start = tIdx(ax, ay);
   const goal = tIdx(bx, by);
 
@@ -237,7 +249,7 @@ export function findPath(
   // ordered (lowest f, ties by lowest tile index) reproduces the exact pop
   // order of that scan, so paths are byte-identical, in O(V log V).
   const open = new OpenHeap();
-  const fScore = new Map<number, number>([[start, heuristic(ax, ay, bx, by)]]);
+  const fScore = new Map<number, number>([[start, estimate(ax, ay)]]);
   open.push(start, fScore.get(start)!);
   const closed = new Set<number>();
 
@@ -273,19 +285,20 @@ export function findPath(
     }
     closed.add(cur);
     const cx = cur % MAP_W, cy = (cur / MAP_W) | 0;
-    for (const d of DIRS) {
-      const nx = cx + DIR[d][0], ny = cy + DIR[d][1];
+    for (const d of track.diagonalRoads ? [...DIRS, ...DIAGONAL_DIRS] : DIRS) {
+      const jump = track.diagonalRoads && d < 16 ? overpassJump(track, cx, cy, d, owner) : null;
+      const [nx, ny] = jump ?? [cx + DIR[d][0], cy + DIR[d][1]];
       if (!inMapT(nx, ny)) continue;
       const ni = tIdx(nx, ny);
       if (closed.has(ni)) continue;
       // the goal itself may be unbuildable when we only need to reach beside it
       const c = stepCost(grid, track, kind, nx, ny, owner, [cx, cy]);
       if (!isFinite(c) && !(ni === goal && adjacentTo)) continue;
-      const tentative = (gScore.get(cur) ?? Infinity) + (isFinite(c) ? c : 0);
+      const tentative = (gScore.get(cur) ?? Infinity) + (isFinite(c) ? c : 0) * Math.hypot(nx - cx, ny - cy);
       if (tentative >= (gScore.get(ni) ?? Infinity)) continue;
       cameFrom.set(ni, cur);
       gScore.set(ni, tentative);
-      const nf = tentative + heuristic(nx, ny, bx, by);
+      const nf = tentative + estimate(nx, ny);
       fScore.set(ni, nf);
       open.push(ni, nf);
     }
@@ -679,6 +692,7 @@ export function planFeasibility(
     (x, y) => railAt(state, x, y),
   );
   const bridgeTiles = bridge.deckTiles;          // TILE indices — see `BridgePlan`
+  const projected = track.diagonalRoads ? { ...track, road: track.road.slice(), dirt: track.dirt.slice() } : null;
   let executable = true;
   for (let n = 0; n < path.tiles.length; n++) {
     const [x, y] = path.tiles[n];
@@ -688,6 +702,26 @@ export function planFeasibility(
     // would be.
     if (!canBuildOn(grid, kind, x, y, undefined, undefined, track, path.tiles[n - 1]) && !bridgeTiles.has(i)) {
       executable = false; continue;
+    }
+    if (projected) {
+      // Private projected bytes; buildTile's dirty journal is avoided here.
+      (kind === "road" ? projected.road : projected.dirt)[i] |= PRESENT;
+      const prev = path.tiles[n - 1];
+      if (ownerId !== 0 && (hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y)) && !trackOpenTo(track, ownerId, x, y)) executable = false;
+      if (prev && Math.max(Math.abs(prev[0] - x), Math.abs(prev[1] - y)) > 1) {
+        const d = DIRS.find((d) => prev[0] + DIR[d][0] * 2 === x && prev[1] + DIR[d][1] * 2 === y);
+        const jump = d === undefined ? null : overpassJump(track, ...prev, d, ownerId);
+        if (!jump || jump[0] !== x || jump[1] !== y) executable = false;
+      }
+      if (prev && Math.max(Math.abs(prev[0] - x), Math.abs(prev[1] - y)) === 1
+        && !roadClassesConnect(projected, ...prev, x, y)) executable = false;
+      if (prev && Math.abs(prev[0] - x) === 1 && Math.abs(prev[1] - y) === 1) {
+        if (roadDiagonalRefusal(grid, projected, ...prev, x, y)) executable = false;
+        const [lx, ly] = prev[0] < x ? prev : [x, y];
+        const bit = (x - prev[0]) * (y - prev[1]) < 0 ? ROAD_DE : ROAD_DS;
+        const layer = projected.road[tIdx(lx, ly)] & PRESENT ? projected.road : projected.dirt;
+        layer[tIdx(lx, ly)] |= bit;
+      }
     }
     if (hasTrack(track, kind, x, y)) continue;      // already ours: nothing to lay
     fresh.push([x, y]);
@@ -1604,6 +1638,9 @@ export function executeCandidate(
   nextHarvesterId: number, free: number = 0, freeDepots: number = 0,
   newLoop = false,
 ): BuildOutcome {
+  if (state.track.diagonalRoads && !planFeasibility(state, c.kind, c.path, c.hx, c.hy, ownerId, c.facing).executable) {
+    return { built: [], harvester: null, kind: c.kind, spent: {}, free: 0, freeDepots: 0 };
+  }
   const built: [number, number][] = [];
   let spent: Purse = {};
   // W9: a rail build consumes no setup allowance, so `free` in the outcome is
@@ -1645,6 +1682,19 @@ export function executeCandidate(
     }
     buildTile(state.track, c.kind, x, y, ownerId);
     built.push([x, y]);
+  }
+  if (state.track.diagonalRoads) {
+    const changed = new Set(built.map(([x, y]) => tIdx(x, y)));
+    for (let n = 1; n < c.path.tiles.length; n++) {
+      const a = c.path.tiles[n - 1], b = c.path.tiles[n];
+      if (Math.abs(a[0] - b[0]) !== 1 || Math.abs(a[1] - b[1]) !== 1) continue;
+      if (!buildRoadDiagonal(state.grid, state.track, ...a, ...b, ownerId)) continue;
+      // Joining old pavement is a real geometry/network change too. Report
+      // both endpoints for cache invalidation, without charging another tile.
+      for (const tile of [a, b]) if (!changed.has(tIdx(...tile))) {
+        built.push(tile); changed.add(tIdx(...tile));
+      }
+    }
   }
   let harvester: Harvester | null = null;
   const h: Harvester = { id: nextHarvesterId, owner, ownerId, tx: c.hx, ty: c.hy, facing: c.facing };
@@ -2512,7 +2562,7 @@ function platformSpotsAround(
       for (let tx = bx - 3 - (w - 1); tx <= bx + bw + 2; tx++) {
         const chosen = resolveAnchor(grid, factories, ownerId, tx, ty, view, anchor);
         if (!chosen) continue;
-        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen, locked) !== "ok") continue;
+        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen, locked, rail.rail) !== "ok") continue;
         out.push({ tx, ty, view, anchor: chosen });
         if (out.length >= limit) return out;
       }
@@ -2787,7 +2837,7 @@ export function executeRailMove(
     }
     case "platform": {
       const factories = state.factories;
-      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor, lockedIndustryIdsFor(state, owner)) !== "ok") {
+      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor, lockedIndustryIdsFor(state, owner), rail.rail) !== "ok") {
         return null;
       }
       const s = placePlatform(rail, owner, ownerId, move.tx, move.ty, move.view, move.anchor);

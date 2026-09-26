@@ -1,7 +1,7 @@
 import { MAP_W } from "../game/config";
 import {
   DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles, overpassJump,
-  type Track, type TrackKind,
+  roadDiagNeighbours, hasTrack, type Track, type TrackKind,
 } from "./track";
 import { DEFAULT_FACING, depotEntranceTiles, type DepotFacing } from "./depot";
 
@@ -27,6 +27,7 @@ export function roadPath(
   kind?: TrackKind,
 ): [number, number][] | null {
   if (goals.size === 0 || from.length === 0) return null;
+  if (track.diagonalRoads) return diagonalRoadPath(track, owner, from, goals, kind);
   const bitsOf = (x: number, y: number): number =>
     kind !== undefined ? bitsAt(track, kind, x, y)
       : (bitsAt(track, "dirt", x, y) || bitsAt(track, "road", x, y));
@@ -62,13 +63,94 @@ export function roadPath(
     // ROADS-3 (#394): straight over an overpass (no turn onto the highway).
     if (track.tier) {
       for (const d of DIRS) {
-        const j = overpassJump(track, x, y, d);
+        const j = overpassJump(track, x, y, d, owner);
         if (!j) continue;
         const ji = tIdx(j[0], j[1]);
         if (parent.has(ji) || !trackOpenTo(track, owner, j[0], j[1])) continue;
         parent.set(ji, cur);
         queue.push(ji);
       }
+    }
+  }
+  return null;
+}
+
+/** D1: deterministic Dijkstra, because sqrt(2) links invalidate BFS's
+ * fewest-edges = shortest-distance assumption. Legacy flag-OFF BFS stays
+ * untouched (including its tie breaks and overpass behaviour). */
+function diagonalRoadPath(
+  track: Track, owner: number, from: [number, number][], goals: Set<number>, kind?: TrackKind,
+): [number, number][] | null {
+  const bitsOf = (x: number, y: number) => kind ? bitsAt(track, kind, x, y)
+    : bitsAt(track, "dirt", x, y) | bitsAt(track, "road", x, y);
+  const usable = (x: number, y: number) => trackOpenTo(track, owner, x, y)
+    && (!kind || hasTrack(track, kind, x, y));
+  const parent = new Map<number, number>();
+  const distance = new Map<number, number>();
+  // Stable binary min-heap: O(E log V), no repeated map-wide sorts/scans.
+  type Entry = { i: number; cost: number; order: number };
+  const heap: Entry[] = [];
+  let order = 0;
+  const less = (a: Entry, b: Entry) => a.cost < b.cost || (a.cost === b.cost && a.order < b.order);
+  const push = (i: number, cost: number) => {
+    const e = { i, cost, order: order++ };
+    let n = heap.length;
+    heap.push(e);
+    while (n > 0) {
+      const p = (n - 1) >> 1;
+      if (!less(e, heap[p])) break;
+      heap[n] = heap[p];
+      n = p;
+    }
+    heap[n] = e;
+  };
+  const pop = (): Entry => {
+    const first = heap[0], last = heap.pop()!;
+    if (heap.length) {
+      let n = 0;
+      while (n * 2 + 1 < heap.length) {
+        let c = n * 2 + 1;
+        if (c + 1 < heap.length && less(heap[c + 1], heap[c])) c++;
+        if (!less(heap[c], last)) break;
+        heap[n] = heap[c];
+        n = c;
+      }
+      heap[n] = last;
+    }
+    return first;
+  };
+  for (const [x, y] of from) {
+    const i = tIdx(x, y);
+    if (!usable(x, y) || distance.has(i)) continue;
+    distance.set(i, 0);
+    parent.set(i, -1);
+    push(i, 0);
+  }
+  while (heap.length) {
+    const { i: cur, cost } = pop();
+    if (cost !== distance.get(cur)) continue;
+    if (goals.has(cur)) {
+      const path: [number, number][] = [];
+      for (let i = cur; i !== -1; i = parent.get(i)!) path.push([i % MAP_W, (i / MAP_W) | 0]);
+      return path.reverse();
+    }
+    const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+    const visit = (nx: number, ny: number, length: number) => {
+      if (!usable(nx, ny)) return;
+      const ni = tIdx(nx, ny), next = cost + length;
+      if (next >= (distance.get(ni) ?? Infinity)) return;
+      distance.set(ni, next);
+      parent.set(ni, cur);
+      push(ni, next);
+    };
+    for (const d of DIRS) {
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if ((bitsOf(x, y) & d) && (bitsOf(nx, ny) & OPPOSITE[d])) visit(nx, ny, 1);
+    }
+    for (const [nx, ny] of roadDiagNeighbours(track, x, y, kind)) visit(nx, ny, Math.SQRT2);
+    for (const d of DIRS) {
+      const jump = overpassJump(track, x, y, d, owner);
+      if (jump) visit(jump[0], jump[1], 2);
     }
   }
   return null;

@@ -43,15 +43,9 @@
 //     A bend is therefore two arms joined at the centre with a round join (the
 //     rails mitre together), not a quarter arc.
 //
-// WHAT IS NOT HERE. Every rule — where rail may be laid, what a crossing is,
-// what an owner is, what a structure's lane joins — lives in `rail.ts`. This
-// module re-states exactly one two-line shape test (`levelCrossing`, pinned
-// against `crossingOk` by `tests/unit/iso-rail-geometry.test.ts`) because a
-// value import of `rail.ts` from here would close a runtime cycle
-// (rail.ts → track.ts → renderer.ts → road-renderer.ts → here) and take the
-// whole module graph down at boot with a temporal-dead-zone error. The
-// direction bits are re-declared for the same reason, and pinned the same way
-// — exactly the arrangement `road-geometry.ts` documents for `track.ts`.
+// Crossing policy is shared with rail.ts through the track.ts leaf module.
+// The painter consumes resolved logical road diagonals, not stored bytes;
+// rail geometry keeps its compact N/E/S/W corner mask as before.
 //
 // OWNERSHIP IS NOT PAINTED. The rails are neutral steel and the sleepers are
 // weathered timber for every owner: the roads carry no owner tint either (the
@@ -80,6 +74,7 @@ import {
   ROAD_DIRS, ROAD_WIDTH, tileCentre, portPoint, neighbourOf, maskOf,
   roadFigures, type GroundPoint,
 } from "./road-geometry";
+import { crossingMasksOk, straightTrackDirection, DIR, ROAD_DE, ROAD_DS, ROAD_DW, ROAD_DN } from "./track";
 
 export type { GroundPoint };
 
@@ -118,20 +113,21 @@ export const railMaskOf = (cell: number): number => maskOf(cell);
 /** Is this mask a straight line (either diagonal)? */
 export const isStraightRail = (mask: number): boolean => STRAIGHT_MASKS.includes(mask);
 
+/** Convert geometry's compact corner bits to resolved model directions. */
+export function logicalRailDiagonals(diag: number): number {
+  return ((diag & DIAG_N) ? ROAD_DN : 0) | ((diag & DIAG_E) ? ROAD_DE : 0)
+    | ((diag & DIAG_S) ? ROAD_DS : 0) | ((diag & DIAG_W) ? ROAD_DW : 0);
+}
+
 /**
  * THE LEVEL-CROSSING SHAPE TEST, on masks alone.
  *
- * A crossing is a straight road crossed PERPENDICULARLY by a straight rail:
- * curves and junctions are refused on either side, and two parallel straights
- * are not a crossing (they would be track laid along the road). This is the
- * geometry twin of `crossingOk` in `rail.ts` — see the module header for why
- * it cannot simply be imported — and the unit test drives every one of the
- * 16×16 mask pairs through both functions to prove they agree.
+ * D4 crossings are straight axis/axis or axis/diagonal pairs. Two diagonals,
+ * parallel lines, curves and junctions are refused by the shared leaf policy.
+ * Road diagonals use resolved logical bits, rail diagonals compact corner bits.
  */
-export function levelCrossing(roadMask: number, railMask: number): boolean {
-  if ((roadMask & 0b1111) === 0) return false;
-  if (!isStraightRail(roadMask & 0b1111) || !isStraightRail(railMask & 0b1111)) return false;
-  return (roadMask & 0b1111) !== (railMask & 0b1111);
+export function levelCrossing(roadMask: number, railMask: number, roadDiagonal = 0, railDiagonal = 0): boolean {
+  return crossingMasksOk(roadMask, railMask, roadDiagonal, logicalRailDiagonals(railDiagonal));
 }
 
 // ── the cross-section, in tile units ───────────────────────────────────────
@@ -380,21 +376,33 @@ function stopBeam(tx: number, ty: number, dir: number): GroundPoint[] {
  * crossing. `plankSlab` is the same strip as one board, for the tiers below
  * High: the tiers may change how many boards are drawn, never where they are.
  */
-function crossingPlanks(tx: number, ty: number, mask: number): { boards: GroundPoint[][]; slab: GroundPoint[] } {
+function crossingPlanks(
+  tx: number, ty: number, railMask: number, diag: number, roadMask: number, roadDiagonal: number, roadWidth: number,
+): { boards: GroundPoint[][]; slab: GroundPoint[] } {
   const [cx, cy] = tileCentre(tx, ty);
-  // The rails run along one axis; the strip between them is as long as the road
-  // is wide (along the rails), and as wide as the clear space between them.
-  const railsAlongV = (mask & (NE | SW)) !== 0;
-  const acrossHalf = (RAIL_GAUGE + RAIL_WIDTH) / 2 - 0.02;
-  const roadHalf = PLANK_ROAD_WIDTH / 2;
-  const strip = (from: number, to: number): GroundPoint[] => railsAlongV
-    ? [[cx - acrossHalf, cy + from], [cx + acrossHalf, cy + from], [cx + acrossHalf, cy + to], [cx - acrossHalf, cy + to]]
-    : [[cx + from, cy - acrossHalf], [cx + from, cy + acrossHalf], [cx + to, cy + acrossHalf], [cx + to, cy - acrossHalf]];
-  const slab = strip(-roadHalf, roadHalf);
-  const board = (2 * roadHalf - (PLANK_BOARDS - 1) * PLANK_GAP) / PLANK_BOARDS;
+  const unit = (d: number): GroundPoint => {
+    const [x, y] = DIR[d], len = Math.hypot(x, y);
+    return [x / len, y / len];
+  };
+  const r = unit(straightTrackDirection(railMask | logicalRailDiagonals(diag))!);
+  const road = unit(straightTrackDirection((roadMask & 15) | roadDiagonal)!);
+  const n: GroundPoint = [-r[1], r[0]], m: GroundPoint = [-road[1], road[0]];
+  const mr = m[0] * r[0] + m[1] * r[1], mn = m[0] * n[0] + m[1] * n[1];
+  // Intersect the between-rails strip with the ROAD strip. At 45 degrees
+  // these are parallelograms: rotated rectangles leave holes at the kerbs.
+  // u is across rail; v is across road. Legal crossings guarantee mr != 0.
+  const point = (u: number, v: number): GroundPoint => {
+    const along = (v - u * mn) / mr;
+    return [cx + r[0] * along + n[0] * u, cy + r[1] * along + n[1] * u];
+  };
+  const acrossHalf = (RAIL_GAUGE + RAIL_WIDTH) / 2 - 0.02, half = roadWidth / 2;
+  const strip = (from: number, to: number): GroundPoint[] =>
+    [point(-acrossHalf, from), point(acrossHalf, from), point(acrossHalf, to), point(-acrossHalf, to)];
+  const slab = strip(-half, half);
+  const board = (2 * half - (PLANK_BOARDS - 1) * PLANK_GAP) / PLANK_BOARDS;
   const boards: GroundPoint[][] = [];
   for (let i = 0; i < PLANK_BOARDS; i++) {
-    const from = -roadHalf + i * (board + PLANK_GAP);
+    const from = -half + i * (board + PLANK_GAP);
     boards.push(strip(from, from + board));
   }
   return { boards, slab };
@@ -410,7 +418,7 @@ function crossingPlanks(tx: number, ty: number, mask: number): { boards: GroundP
  * end gets a buffer stop. A one-bit tile also ends at its centre, away from
  * its connected neighbour, and gets a buffer there. `roadMask` is the road byte's low nibble at this tile
  * (either tier), and turns the tile into a level crossing when the two are
- * straight and perpendicular.
+ * straight and transverse (axis/axis or axis/diagonal).
  */
 export function railTile(
   tx: number,
@@ -419,9 +427,11 @@ export function railTile(
   railAt: (tx: number, ty: number) => number,
   roadMask = 0,
   diag = 0,
+  roadDiagonal = 0,
+  roadWidth = PLANK_ROAD_WIDTH,
 ): RailTile {
   const mask = cell & 0b1111;
-  const crossing = diag === 0 && levelCrossing(roadMask, mask);
+  const crossing = levelCrossing(roadMask, mask, roadDiagonal, diag);
   const runs = railRuns(tx, ty, mask, diag);
   const bed: GroundPoint[][] = [];
   const rails: GroundPoint[][] = [];
@@ -435,7 +445,7 @@ export function railTile(
     }
     rails.push(offsetPath(run, -RAIL_GAUGE / 2), offsetPath(run, RAIL_GAUGE / 2));
   }
-  const planks = crossing ? crossingPlanks(tx, ty, mask) : null;
+  const planks = crossing ? crossingPlanks(tx, ty, mask, diag, roadMask, roadDiagonal, roadWidth) : null;
 
   const stops: GroundPoint[][] = [];
   if (mask === 0 && diag === 0) {
