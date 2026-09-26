@@ -84,6 +84,11 @@ import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
 import { FLAT_DRAPER, type Draper } from "./elevation";
+import { resolveDiagonalRoads, roadConnectionMask, type Track } from "./track";
+import { roadTile, roadWidth } from "./road-geometry";
+
+const DIAGONAL_ROADS = resolveDiagonalRoads();
+const EMPTY_ROADS = new Uint8Array(MAP_W * MAP_H);
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -112,6 +117,9 @@ export interface RailLayer {
 
 /** The world view a rail paint needs: the layer, plus the roads it crosses. */
 export interface RailWorld {
+  /** Same local DEV flag as RoadWorld; never persisted. */
+  diagonalRoads?: boolean;
+  roadTiers?: Uint8Array;
   rail?: RailLayer;
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
@@ -638,10 +646,6 @@ export const planksFor = (tile: RailTile, detail: RailDetail): readonly GroundPo
 const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
   arr && tx >= 0 && ty >= 0 && tx < MAP_W && ty < MAP_H ? arr[ty * MAP_W + tx] : 0;
 
-/** The road mask at a tile, either tier — the same OR `rail.ts`'s `roadAt` makes. */
-const roadMaskAt = (world: RailWorld, tx: number, ty: number): number =>
-  (cellAt(world.roadBits, tx, ty) | cellAt(world.dirtBits, tx, ty)) & BITS;
-
 /** Every rail tile in a range, as drawing descriptions. */
 export function railTilesIn(
   world: RailWorld, tx0: number, ty0: number, tx1: number, ty1: number,
@@ -649,6 +653,13 @@ export function railTilesIn(
   const layer = world.rail;
   if (!layer?.tile) return [];
   const maskAt = (x: number, y: number): number => cellAt(layer.tile, x, y) & BITS;
+  // Read-only shared D1 endpoint/tier reader, evaluated only while baking a
+  // cache chunk. No layer copies and no per-frame road or rail scans.
+  const roadView: Track = {
+    road: world.roadBits ?? EMPTY_ROADS, dirt: world.dirtBits ?? EMPTY_ROADS,
+    owner: EMPTY_ROADS, upgraded: EMPTY_ROADS, revision: 0, tier: world.roadTiers,
+    diagonalRoads: import.meta.env.DEV && (world.diagonalRoads ?? DIAGONAL_ROADS),
+  };
   const out: RailTile[] = [];
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
@@ -663,7 +674,15 @@ export function railTilesIn(
       if ((cell & DE) && on(tx + 1, ty - 1)) diag |= DIAG_E;
       if ((cell & DS) && on(tx + 1, ty + 1)) diag |= DIAG_S;
       if ((cellAt(layer.tile, tx - 1, ty + 1) & DE) && on(tx - 1, ty + 1)) diag |= DIAG_W;
-      out.push(railTile(tx, ty, cell, maskAt, roadMaskAt(world, tx, ty), diag));
+      const road = roadConnectionMask(roadView, tx, ty);
+      if (!road) { out.push(railTile(tx, ty, cell, maskAt, 0, diag)); continue; }
+      // D3's width contract, including narrow Street and 1.6x Highway, rather
+      // than another tier-width table. Geometry work stays inside cache misses.
+      const paved = cellAt(world.roadBits, tx, ty);
+      const surface = roadTile(tx, ty, road & BITS, paved & PRESENT ? "paved" : "dirt", () => false);
+      surface.tier = cellAt(world.roadTiers, tx, ty);
+      const roadDiagonal = cellAt(world.grid?.terrain, tx, ty) === WATER ? 0 : road & ~BITS;
+      out.push(railTile(tx, ty, cell, maskAt, road & BITS, diag, roadDiagonal, roadWidth(surface)));
     }
   }
   return out;
