@@ -275,15 +275,23 @@ describe("D1 graph and tiers", () => {
 });
 
 describe("D1 flags and persistence", () => {
-  it("requires DEV and exactly ?diag=1; production cannot enable it", () => {
-    expect(resolveDiagonalRoads("?diag=1", true)).toBe(true);
-    for (const q of ["", "?diag=0", "?diag=true"]) expect(resolveDiagonalRoads(q, true)).toBe(false);
-    expect(resolveDiagonalRoads("?diag=1", false)).toBe(false);
-    vi.stubGlobal("location", { search: "?diag=1" });
-    expect(createTrack().diagonalRoads).toBe(true);
-    vi.stubEnv("DEV", false);
+  it("#440: ON by default, ?diag=0 off, axis-only under the unit-test runner", () => {
+    // the reader's two arguments are the query and "is this the test runner"
+    expect(resolveDiagonalRoads("", false)).toBe(true);            // a new game
+    expect(resolveDiagonalRoads("?diag=1", false)).toBe(true);
+    expect(resolveDiagonalRoads("?diag=0", false)).toBe(false);    // the off switch
+    expect(resolveDiagonalRoads("?diag=true", false)).toBe(true);  // only 0/1 are read
+    expect(resolveDiagonalRoads("", true)).toBe(false);            // vitest stays axis-only
+    expect(resolveDiagonalRoads("?diag=1", true)).toBe(true);      // explicit still wins
+    vi.stubGlobal("location", { search: "" });
+    vi.stubEnv("MODE", "production");
+    expect(createTrack().diagonalRoads).toBe(true);                // production is not DEV-gated
+    vi.stubGlobal("location", { search: "?diag=0" });
     expect(createTrack().diagonalRoads).toBe(false);
-    expect(createTrack(true).diagonalRoads).toBe(false);
+    vi.unstubAllEnvs();
+    expect(createTrack().diagonalRoads).toBe(false);               // …and the runner stays off
+    expect(createTrack(true).diagonalRoads).toBe(true);            // a game's resolved flag
+    expect(createTrack(false).diagonalRoads).toBe(false);
   });
 
   it("flag OFF preserves legacy bytes, preview, route and costs", () => {
