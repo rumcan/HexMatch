@@ -10330,6 +10330,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let dragLive = false;
 
+  /** MOBILE-01: hold-then-drag for structure tools (harvester, plant, platform, raildepot, interchange, dam, demolish).
+   * Press and hold ~300ms to arm placement, then drag to position, release to show confirm button.
+   */
+  let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let holdPosition: { tx: number; ty: number } | null = null;
+  let isHolding = false;
+  let pendingPlacement: { tool: Tool; tx: number; ty: number; extra?: any } | null = null;
+  const HOLD_DELAY = 300; // ms
+
   /** D2: one preview seam for pointer motion and R (including tier/bridge costs). */
   const previewRoadGesture = (): DragPreview | null => drag ? previewDrag(
     grid, track, tool as TrackKind, me.purse, drag.ax, drag.ay, drag.bx, drag.by, drag.xFirst,
@@ -10370,6 +10379,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // closest, and every performance-mode frame).
     scareBirds(birds, p.tx + 0.5, p.ty + 0.5);
     const isTrackTool = tool === "road" || tool === "dirt" || tool === "rail";
+    const isStructureTool = tool === "harvester" || tool === "plant" || tool === "platform" || tool === "raildepot" || tool === "interchange" || tool === "dam" || tool === "demolish";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
     // An armed protest owns the left button: it must never start a track drag.
@@ -10385,6 +10395,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         dragLive = false;
         return;
       }
+    }
+    // MOBILE-01: hold-then-drag for structure tools on touch devices
+    // Press and hold ~300ms to arm placement, then drag to position, release to show confirm button
+    if (phase === "play" && isStructureTool && !pendingProtest && !isMouse && e.isPrimary) {
+      holdPosition = { tx: p.tx, ty: p.ty };
+      isHolding = true;
+      holdTimer = setTimeout(() => {
+        if (isHolding && holdPosition) {
+          // Show placement preview at hold position
+          pendingPlacement = { tool, tx: holdPosition.tx, ty: holdPosition.ty };
+          isHolding = false;
+          paintOverlayNow();
+        }
+      }, HOLD_DELAY);
+      return;
     }
     // TK-001: mouse panning is the MIDDLE button (button === 1). Left and
     // right mouse presses never enter the pan gesture. The right button's
@@ -10415,7 +10440,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** Drop the half-planned drag, if one is armed. */
   function dropDrag(): boolean {
-    if (!drag && !preview) return false;
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    isHolding = false;
+    holdPosition = null;
+    const hadPending = !!pendingPlacement;
+    pendingPlacement = null;
+    if (!drag && !preview && !hadPending) return false;
     drag = null; preview = null; dragLive = false; previewKey = "";
     return true;
   }
