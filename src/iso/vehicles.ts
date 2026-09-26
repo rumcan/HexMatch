@@ -333,6 +333,37 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
   }
 }
 
+/**
+ * #462: how often this lorry reaches the Factory, in trips per minute.
+ *
+ * One trip is one delivery — depot to factory and back, plus the load wait
+ * at the depot end. The segment speed is the same expression `tickTrucks`
+ * integrates (`TRUCK_SPEED × rate × pace × uphill`), so the number on the
+ * depot card is the lorry the player is watching, not a second clock.
+ */
+export function lorryRoundTripMs(truck: Truck): number {
+  const max = truck.route.length - 1;
+  if (max < 1) return Infinity;
+  const rate = truckRateMultOf(truck);
+  let ms = DEPOT_LOAD_MS;
+  for (let k = 0; k < max; k++) {
+    const a = truck.route[k], b = truck.route[k + 1];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const climb = truck.segClimb?.[k] ?? 0;
+    const pace = truck.segMult?.[k] ?? (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+    const out = TRUCK_SPEED * rate * pace * uphillSpeed(climb);
+    const back = TRUCK_SPEED * rate * pace * uphillSpeed(-climb);
+    if (out > 0) ms += length / out;
+    if (back > 0) ms += length / back;
+  }
+  return ms;
+}
+
+export function lorryTripsPerMin(truck: Truck): number {
+  const ms = lorryRoundTripMs(truck);
+  return Number.isFinite(ms) && ms > 0 ? 60000 / ms : 0;
+}
+
 // ── drawing ───────────────────────────────────────────────────────────────
 /** Track-bit of the step a truck is currently driving, signed for direction. */
 function stepBit(route: [number, number][], leg: number, reverse: boolean): number {
