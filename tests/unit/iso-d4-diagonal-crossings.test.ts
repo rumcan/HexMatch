@@ -259,6 +259,15 @@ describe("D4 axis-only structures and newer-system audit", () => {
     expect(RAIL_REFUSAL_TEXT["axis-only"]).toMatch(/axis-only/);
   });
 
+  it("a depot cannot create a sharp join onto a diagonal stub, but can depart through a 45-degree bend", () => {
+    const sharp = setup(); buildRail(sharp.grid, sharp.track, sharp.state, 1, [[21, 19], [22, 20]]);
+    const bytes = sharp.state.rail.tile.slice(), revision = sharp.state.rail.revision;
+    expect(depotRefusal(sharp.grid, sharp.state, 1, 20, 20, "se")).toBe("too-sharp");
+    expect(sharp.state.rail.tile).toEqual(bytes); expect(sharp.state.rail.revision).toBe(revision);
+    const gentle = setup(); buildRail(gentle.grid, gentle.track, gentle.state, 1, [[22, 20], [23, 21]]);
+    expect(depotRefusal(gentle.grid, gentle.state, 1, 20, 20, "se")).toBe("ok");
+  });
+
   it("keeps flat diagonals, rejects slope diagonals and retains the sharp-turn rule", () => {
     const w = setup(); w.grid.height = new Uint8Array(MAP_W * MAP_H).fill(1);
     const path: Tile[] = [[20, 20], [21, 21], [22, 22]];

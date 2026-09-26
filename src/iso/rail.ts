@@ -1518,7 +1518,14 @@ export function depotRefusal(
   // placing it autotiles the neighbour.
   if (railOpenTo(state.rail, ownerId, exit.tx, exit.ty)) return "ok";
   const nx = exit.tx + DIR[exit.dir][0], ny = exit.ty + DIR[exit.dir][1];
-  if (railOpenTo(state.rail, ownerId, nx, ny)) return "ok";
+  if (railOpenTo(state.rail, ownerId, nx, ny)) {
+    // The depot adds an axis arm at its neighbour. A diagonal stub pointing
+    // BACK towards the shed would otherwise make a sharp join without ever
+    // going through buildRail's turn guard. A 45-degree departure remains OK.
+    const arms = new Set(railArms(state, ownerId, nx, ny));
+    arms.add(octantOf(exit.tx - nx, exit.ty - ny));
+    return railArmsTurnOk([...arms]) ? "ok" : "too-sharp";
+  }
   // Nothing to join: is the tile even capable of carrying rail?
   if (!inMapT(nx, ny) || !railTerrainOk(grid, nx, ny)) return "exit-blocked";
   const exitBuilt = grid.builtAt?.(nx, ny);
