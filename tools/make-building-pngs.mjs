@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isCli } from "./is-cli.mjs";
 // ══════════════════════════════════════════════════════════════════════════
 // Building layers — ONE standalone PNG per building, placed free on its
 // footprint (the roads stay exact-grid; buildings don't have to).
@@ -510,7 +511,6 @@ export function templateSvg([w, h]) {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
 
 async function main() {
   mkdirSync(OUT, { recursive: true });
@@ -594,4 +594,4 @@ async function main() {
   console.log(`wrote ${join(OUT, "manifest.json")} (${Object.keys(manifest.sprites).length} building${Object.keys(manifest.sprites).length === 1 ? "" : "s"})`);
 }
 
-if (isCli) await main();
+if (isCli(import.meta.url)) await main();
