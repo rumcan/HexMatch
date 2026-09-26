@@ -116,7 +116,7 @@ import {
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER, type RoadTierKey,
-  tierTileCost, setRoadTier, ROAD_TIER, addCost,
+  tierTileCost, setRoadTier, ROAD_TIER, ROAD_TIER_KEYS, addCost, roadDragRefusalText,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -2162,7 +2162,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** C5: the atlas instance lives in the async boot; the debug console reads it here. */
   let atlasRef: Atlas | null = null;
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
-  let drag: { ax: number; ay: number } | null = null;
+  let drag: { ax: number; ay: number; bx: number; by: number; xFirst: boolean } | null = null;
   let preview: DragPreview | null = null;
 
   // ── helpers ────────────────────────────────────────────────────────────
@@ -8538,13 +8538,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const bx = int(payload.bx), by = int(payload.by);
         if (ax !== null && ay !== null && bx !== null && by !== null) {
           const kind: TrackKind = payload.kind === "road" ? "road" : "dirt";
+          const tier: RoadTierKey = track.diagonalRoads && kind === "road"
+            && ROAD_TIER_KEYS.includes(payload.roadTier as RoadTierKey) ? payload.roadTier as RoadTierKey : "road";
           const pv = previewDrag(grid, track, kind, p.purse, ax, ay, bx, by,
             payload.xFirst !== false, undefined, p.freeTrack,
             structureTiles(eco.factories, eco.harvesters, p.i + 1, factoryFp), newLoop,
             // R2 (#266): a deck is never shared, so the rail layer rides along.
-            { railAt: (x, y) => hasRail(rail.rail, x, y) });
-          if (pv.tiles.length === 0) toast("Can't build there.", "bad");
-          else commitTrackDrag(p, pv, kind);
+            { railAt: (x, y) => hasRail(rail.rail, x, y) }, tier);
+          if (pv.tiles.length === 0) toast(pv.why ? roadDragRefusalText(pv.why) : "Can't build there.", "bad");
+          else commitTrackDrag(p, pv, kind, tier);
         }
       } else if (what === "dam" && DAMS_ENABLED) {
         // R3 (#270): a guest's dam build. The host runs the SAME site rule,
@@ -9127,6 +9129,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [x, y] of preview.blocked ?? []) {
         items.push({ sprite: "highlight_bad", tx: x, ty: y });
       }
+      if (track.diagonalRoads && tool !== "rail") {
+        for (const [x, y] of preview.unaffordable) items.push({ sprite: "highlight_bad", tx: x, ty: y });
+      }
       // VP-01: a paved drag over your own gravel is the only road action that
       // scores, so the preview rings the tiles it actually upgrades. Read from
       // the same `tileCost` question the drag was priced with, so what is
@@ -9277,7 +9282,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ? costMarkup(preview.cost)
         : (preview.free > 0 ? `${preview.free} free` : "free");
       costInfo = hintLine(
-        `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated ? ` · <i>blocked</i>` : ""),
+        `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated
+          ? ` · <i>${preview.why && tool !== "rail" ? roadDragRefusalText(preview.why) : "blocked"}</i>` : ""),
         `${vpTxt} · ${owed}`,
       );
     } else if (tool === "plant" && hover) {
@@ -9806,7 +9812,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       { railAt: (x, y) => hasRail(rail.rail, x, y) }, kind === "road" ? roadTier : "road");
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
-      net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst });
+      net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst,
+        ...(track.diagonalRoads ? { roadTier: kind === "road" ? roadTier : "road" } : {}),
+      });
       return pv;
     }
     commitTrackDrag(me, pv, kind, roadTier);
@@ -9990,6 +9998,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let dragLive = false;
 
+  /** D2: one preview seam for pointer motion and R (including tier/bridge costs). */
+  const previewRoadGesture = (): DragPreview | null => drag ? previewDrag(
+    grid, track, tool as TrackKind, me.purse, drag.ax, drag.ay, drag.bx, drag.by, drag.xFirst,
+    undefined, me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
+    { railAt: (x, y) => hasRail(rail.rail, x, y) }, tool === "road" ? roadTier : "road",
+  ) : null;
+
   canvases.overlay.addEventListener("pointerdown", (e) => {
     if (typeof canvases.overlay.setPointerCapture === "function") {
       canvases.overlay.setPointerCapture(e.pointerId);
@@ -10029,7 +10044,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         || canBuildOn(grid, tool as TrackKind, p.tx, p.ty)
         || ownFloor(p.tx, p.ty);
       if (canStart) {
-        drag = { ax: p.tx, ay: p.ty };
+        drag = { ax: p.tx, ay: p.ty, bx: p.tx, by: p.ty, xFirst: true };
         dragLive = false;
         return;
       }
@@ -10167,21 +10182,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (changed) paintOverlayNow();
           return;
         }
+        drag.bx = p.tx; drag.by = p.ty;
         const kind = tool as TrackKind;   // build-track tools are dirt | road
         // A drag re-plans only when something it depends on moved: the end
         // tile, the network (netVersion), the purse or the free allowance.
         // Sub-tile pointer motion reuses the plan it already has.
         const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
-        const key = `${kind}:${roadTier}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
+        const key = `${kind}:${roadTier}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${drag.xFirst}:${netVersion}:${me.freeTrack}:${purseKey}`;
         if (!preview || key !== previewKey) {
           // Roads anywhere (main): no network adjacency requirement, so the
           // preview is allowed to start anywhere and grow without a seed.
           // L2: the drag prices with the loop's cost model (dirt free under newLoop).
-          preview = previewDrag(grid, track, kind, me.purse,
-            drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
-            structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
-            // R2 (#266): see `requestTrackBuild` — never a deck over rail.
-            { railAt: (x, y) => hasRail(rail.rail, x, y) }, kind === "road" ? roadTier : "road");
+          preview = previewRoadGesture();
           previewKey = key;
           changed = true;
         }
@@ -10266,7 +10278,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // W9: the allowance buys Dirt only, so a paved Road drag with no ore
         // previews nothing at all.
         const isRoad = tool === "road";
-        if (isRoad && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
+        if (track.diagonalRoads && preview.why) {
+          toast(roadDragRefusalText(preview.why), "bad");
+          flashAt(drag.ax, drag.ay, "Can't build here");
+        } else if (isRoad && (me.purse.ore ?? 0) < (TRANSPORT.road.cost.ore ?? 0)) {
           toast(me.freeTrack > 0
             ? "A paved Road costs ore — free setup tiles only cover Dirt Roads."
             : "A paved Road needs ore — connect an ore mine first.", "bad");
@@ -10281,7 +10296,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // MP-05: the endpoints the intent carries are the preview's own, so the
         // host reproduces the exact plan the guest just saw.
         const end = preview.tiles[preview.tiles.length - 1];
-        requestTrackBuild(tool as TrackKind, drag.ax, drag.ay, end[0], end[1], true);
+        // Keep R's bend order and the original outgoing-step context. Ending
+        // the request at the affordable prefix can turn an overpass crossing
+        // into a free endpoint, or make a valid bridge lose its far bank.
+        requestTrackBuild(tool as TrackKind, drag.ax, drag.ay,
+          track.diagonalRoads ? drag.bx : end[0], track.diagonalRoads ? drag.by : end[1], drag.xFirst);
       }
       drag = null; preview = null; downAt = null;
       g = pointerUp(g, e.pointerId);
@@ -10432,6 +10451,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // R3 (#270): and the dam's bank side (damSide) — the river's axis fixes
     // the footprint, the side is the choice.
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "r") {
+      if (track.diagonalRoads && drag && (tool === "road" || tool === "dirt")) {
+        e.preventDefault();
+        if (!e.repeat) {
+          drag.xFirst = !drag.xFirst;
+          preview = dragLive ? previewRoadGesture() : null;
+          previewKey = "";
+          paintOverlayNow();
+        }
+        return;
+      }
       // The Depot is placed in four rotations too, and R turns whichever tool
       // is armed: over a real site it steps through the sides that site can
       // actually open onto, so a turn never promises an impossible entrance.
@@ -12816,6 +12845,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // MP-05: the same seam the pointer path uses — commits on solo/host,
       // sends an intent on a guest.
       requestTrackBuild(kind, ax, ay, bx, by, xFirst),
+    /** D2: inspect the gesture and the actual overlay items (no second preview). */
+    get activeRoadDrag() { return drag && tool !== "rail" ? { ...drag, preview } : null; },
+    get activeDragOverlay() { return preview ? overlayFrame().items : []; },
     /**
      * W1/PP-15: the read-only half of `dragBuild` — the preview the pointer
      * drag WOULD compute, with nothing committed. The e2e corridor spec needs
