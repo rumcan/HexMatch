@@ -305,6 +305,15 @@ export const CHAPTERS: readonly StoryChapter[] = [
 export const chapterById = (id: string): StoryChapter | null =>
   CHAPTERS.find((c) => c.id === id) ?? null;
 
+/**
+ * PROG-1 (#475): the contract after `id` — the ending's "Next contract" door.
+ * Null past the Chairman's ledger (there is no sixth contract).
+ */
+export const chapterAfter = (id: string): StoryChapter | null => {
+  const at = CHAPTERS.findIndex((c) => c.id === id);
+  return at >= 0 && at + 1 < CHAPTERS.length ? CHAPTERS[at + 1] : null;
+};
+
 /** The firm the player works for; job lines read "<title>, Hextall Freight". */
 export const EMPLOYER = "Hextall Freight";
 

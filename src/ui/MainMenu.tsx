@@ -34,6 +34,9 @@ import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
+// PROG-1 (#475): the Scenarios door — four tuned maps beyond the default
+// island, unlocked by winning. It stands whether Story mode is hidden or not.
+import { SCENARIOS, effectiveUnlocked, loadScenarioProgress } from "../story/scenarios";
 import { STORY_MODE_ENABLED } from "../story/flag";
 // CONTINUE-01 (#191): the front door names the save it can resume. Read once
 // per mount — returning from a match mounts the menu afresh, so a slot just
@@ -53,6 +56,11 @@ export interface MainMenuProps {
    * existing resume path does the rest.
    */
   onContinue?: (chapterId: string | null) => void;
+  /**
+   * PROG-1 (#475): leave for the scenario list. Absent, the door is not
+   * offered — a surface with nowhere to list scenarios shows no dead door.
+   */
+  onScenarios?: () => void;
 }
 
 /** Deterministic embers: same sixteen every visit, no Math.random flicker. */
@@ -64,7 +72,7 @@ const EMBERS = Array.from({ length: 14 }, (_, i) => ({
   size: 2 + (i % 3),
 }));
 
-export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
+export default function MainMenu({ onPlay, onContinue, onScenarios }: MainMenuProps) {
   const [settings, setSettings] = useState(false);
   const [howTo, setHowTo] = useState(false);
   const howToRef = useRef<HTMLDivElement>(null);
@@ -128,6 +136,14 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
 
   const progress = loadStoryProgress();
   const filed = CHAPTERS.filter((c) => progress.results[c.id] === "win").length;
+  // PROG-1 (#475): the scenario shelf — how many maps are open, and the best
+  // margin anywhere on it. Read once per mount, like the campaign line.
+  const scenProgress = loadScenarioProgress();
+  const scenOpen = effectiveUnlocked(scenProgress, progress);
+  const scenPlayed = SCENARIOS.filter((s) => (scenProgress.results[s.id]?.wins ?? 0) > 0);
+  const scenBest = scenPlayed
+    .map((s) => scenProgress.results[s.id]!.bestMargin)
+    .filter((m): m is number => m !== null && m !== undefined);
   // CONTINUE-01 (#191): the freshest resumable solo save, if any — it gets
   // the gold door, and Play drops to a plain door beneath it. A fresh player
   // sees no Continue button and Play keeps the primary styling it always had.
@@ -189,8 +205,13 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             </button>
           ) : null}
           <button type="button" className={`menu-btn${resume ? "" : " primary"}`} data-sfx="open" onClick={onPlay}>
-            Play<span className="mb-tag">{resume ? "start a new game" : STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "sandbox · rooms"}</span>
+            Play<span className="mb-tag">{resume ? "start a new game" : STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "scenarios · sandbox · rooms"}</span>
           </button>
+          {onScenarios ? (
+            <button type="button" className="menu-btn" data-sfx="open" onClick={onScenarios}>
+              Scenarios<span className="mb-tag">four maps · unlock by winning</span>
+            </button>
+          ) : null}
           <button type="button" className="menu-btn" data-sfx="click" onClick={() => setSettings(true)}>
             Settings<span className="mb-tag">graphics · miniature · performance · clouds · sound</span>
           </button>
@@ -211,6 +232,11 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
               ? "The reel is watched. The first contract is open."
               : "No contracts filed. The first one is open."}
         </p> : null}
+        <p className="menu-scenarios">
+          {scenPlayed.length > 0 && scenBest.length > 0
+            ? `Scenarios: ${scenOpen} of ${SCENARIOS.length} open · best +${Math.max(...scenBest)}★`
+            : `Scenarios: ${scenOpen} of ${SCENARIOS.length} open`}
+        </p>
       </div>
       <section className="menu-leaderboard" aria-label="The Ladder — Top 10" data-testid="main-menu-leaderboard">
         <p className="start-kicker">THE LADDER</p>

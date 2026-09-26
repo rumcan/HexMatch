@@ -18,6 +18,8 @@ import {
 } from "./story/progress";
 import { chapterById } from "./story/chapters";
 import { STORY_MODE_ENABLED } from "./story/flag";
+// PROG-1 (#475): scenarios — four tuned maps with their own unlock list.
+import { SCENARIO_SAVE_PREFIX, pinnedScenario, scenarioById } from "./story/scenarios";
 // RANK-01 (#147): the rating store is built HERE, once per page, and handed to
 // the game. `iso/game.ts` may not import it — `rankstore.ts` reaches the RUN SDK
 // and `window` at load — and a single instance is also what keeps one match's
@@ -50,10 +52,10 @@ function isFirstLaunch(): boolean {
     if (localStorage.getItem(ONBOARDED_KEY)) return false;
     // A player with a save is not new, whatever the flag says.
     if (mostRecentSave()) return false;
-    // Links that ask for something specific (a room, a contract, a seed) are
-    // not a first launch either.
+    // Links that ask for something specific (a room, a contract, a scenario,
+    // a seed) are not a first launch either.
     const q = new URLSearchParams(location.search);
-    for (const k of ["room", "chapter", "seed", "join"]) if (q.has(k)) return false;
+    for (const k of ["room", "chapter", "scenario", "seed", "join"]) if (q.has(k)) return false;
     return true;
   } catch { return false; }
 }
@@ -73,6 +75,11 @@ export default function App() {
   /** STORY-01: leaving a contract through the ledger's third door reopens the
    *  mode screen ON the campaign list, seals and all. */
   const [backToCampaign, setBackToCampaign] = useState(false);
+  /** PROG-1 (#475): the same, for a scenario ledger's door to its list. */
+  const [backToScenarios, setBackToScenarios] = useState(false);
+  /** PROG-1 (#475): the manager picked for this match — "Next contract"
+   *  carries it into the next chapter rather than re-asking. */
+  const portraitRef = useRef<"vex" | "you">("vex");
   /** STORY-01: the reel, and what starts when it settles (null = the menu). */
   const [reel, setReel] = useState<{ next: StartChoice | null } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -93,6 +100,10 @@ export default function App() {
     // any other door forgets the campaign-list return — the mode screen
     // reopens where the player is actually heading from.
     if (next.mode !== "story") setBackToCampaign(false);
+    // PROG-1 (#475): the scenario list the same way.
+    if (next.mode !== "scenario") setBackToScenarios(false);
+    // (past the story-intro early return above, every choice has a portrait)
+    portraitRef.current = next.portrait;
     const progress = loadStoryProgress();
     // The reel is the campaign's opening, not chapter one's: it stands before
     // whichever contract comes first for a player who has not seen it, and
@@ -127,6 +138,14 @@ export default function App() {
     begin({ mode: "story", chapter: pin, portrait: "vex" });
   }, []); // boot-only: a playtest link is read once, like every other boot flag
 
+  // PROG-1 (#475): `?scenario=<id>` is the same straight into a scenario —
+  // and scenarios stand whether Story mode is hidden or not.
+  useEffect(() => {
+    const pin = pinnedScenario();
+    if (!pin || !scenarioById(pin)) return;
+    begin({ mode: "scenario", scenario: pin, portrait: "vex" });
+  }, []); // boot-only, like the contract pin above
+
   // SETTINGS-01/GFX-01: the in-game ☰ menu's "Quit to main menu" walks out
   // through here — unmount the match exactly as a navigation would (the save
   // is left alone; Play resumes what the pagehide autosave keeps), and stand
@@ -139,6 +158,7 @@ export default function App() {
   const quitToMenu = () => {
     setChoice(null);
     setBackToCampaign(false);
+    setBackToScenarios(false);
     setAtMenu(true);
   };
 
@@ -168,6 +188,7 @@ export default function App() {
         // STORY-01: the contract rides in on the options — rival, voice, ★
         // line, seed and the three scenes — and the ledger's third door
         // returns to the campaign menu through `onStoryExit`.
+        // PROG-1 (#475): "Next contract" walks straight into the next chapter.
         ? startIsoGame(ref.current, {
           role: "solo",
           portrait: choice.portrait,
@@ -178,7 +199,25 @@ export default function App() {
             setBackToCampaign(true);
             setAtMenu(false);
           },
+          onNextChapter: (chapterId) => {
+            setChoice({ mode: "story", chapter: chapterId, portrait: portraitRef.current });
+          },
         })
+        : choice.mode === "scenario"
+          // PROG-1 (#475): the scenario rides in on the options — seed, map,
+          // rival, ★ line — and the ledger's door returns to the scenario
+          // list through `onStoryExit`.
+          ? startIsoGame(ref.current, {
+            role: "solo",
+            portrait: choice.portrait,
+            scenario: choice.scenario,
+            onQuitToMenu: quitToMenu,
+            onStoryExit: () => {
+              setChoice(null);
+              setBackToScenarios(true);
+              setAtMenu(false);
+            },
+          })
         // The reel is never a mounted game: `begin` intercepts it, and this
         // branch exists only so the union stays exhaustive.
         : choice.mode === "story-intro"
@@ -217,21 +256,27 @@ export default function App() {
   if (choice) return <div ref={ref} className="game-root" />;
   if (atMenu) return (
     <MainMenu
-      onPlay={() => { setBackToCampaign(false); setAtMenu(false); }}
+      onPlay={() => { setBackToCampaign(false); setBackToScenarios(false); setAtMenu(false); }}
       // CONTINUE-01 (#191): the front door's gold button jumps straight into
       // the freshest resumable solo save — sandbox slot or a contract — by
       // handing `begin` the same choice the mode screen would. The boot finds
       // the slot and resumes it; no slot is cleared on this path.
+      // PROG-1 (#475): a scenario id routes to its scenario choice.
       onContinue={(chapterId) => begin(chapterId === null
         ? { mode: "ai", portrait: "vex" }
-        : { mode: "story", chapter: chapterId, portrait: "vex" })}
+        : chapterId.startsWith(SCENARIO_SAVE_PREFIX)
+          ? { mode: "scenario", scenario: chapterId.slice(SCENARIO_SAVE_PREFIX.length), portrait: "vex" }
+          : { mode: "story", chapter: chapterId, portrait: "vex" })}
+      // PROG-1 (#475): the Scenarios door walks past the mode pick straight
+      // to the list.
+      onScenarios={() => { setBackToScenarios(true); setAtMenu(false); }}
     />
   );
   return (
     <StartScreen
       onStart={begin}
       onBack={() => setAtMenu(true)}
-      initial={backToCampaign ? "story" : "choose"}
+      initial={backToCampaign ? "story" : backToScenarios ? "scenarios" : "choose"}
     />
   );
 }

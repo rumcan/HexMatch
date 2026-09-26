@@ -78,6 +78,13 @@ import { CHAPTERS, EMPLOYER, currentJobTitle, type StoryChapter } from "../story
 import { CAST, faceOf } from "../story/cast";
 import { loadStoryProgress, pinnedChapter, type StoryProgress } from "../story/progress";
 import { STORY_MODE_ENABLED } from "../story/flag";
+// PROG-1 (#475): the scenario list — four tuned maps, unlocked by winning.
+import {
+  SCENARIOS, SCENARIO_SAVE_PREFIX, describeScenarioBest, effectiveUnlocked,
+  formatBestTime, loadScenarioProgress, pinnedScenario, scenarioUnlockHint,
+  type ScenarioDef, type ScenarioProgress,
+} from "../story/scenarios";
+import { RIVAL_SKILLS } from "../iso/skill";
 
 /** RANK-01: the ladder panel's data, as `rankStore().loadLadder()` returns it. */
 type LadderView = {
@@ -90,6 +97,7 @@ export type StartChoice =
   | { mode: "ai"; portrait: Portrait; conquest?: boolean }
   | { mode: "story"; chapter: string; portrait: Portrait }
   | { mode: "story-intro"; portrait: Portrait }
+  | { mode: "scenario"; scenario: string; portrait: Portrait }
   | {
       mode: "host" | "guest";
       seed: number;
@@ -124,6 +132,7 @@ type ScreenState =
   | "choose"
   | "ladder"
   | "story"
+  | "scenarios"
   | "host"
   | "join"
   | "joined"
@@ -225,7 +234,8 @@ interface StartScreenProps {
   /** STORY-01: the main menu's Back door, when the screen was reached from it. */
   onBack?: () => void;
   /** STORY-01: reopening on the campaign list (the ledger's third door). */
-  initial?: "choose" | "story";
+  /** PROG-1 (#475): reopening on the scenario list (a scenario ledger's door). */
+  initial?: "choose" | "story" | "scenarios";
 }
 
 /** The deliberately low-friction entry point: AI is always available without auth. */
@@ -240,6 +250,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   /** STORY-01: the campaign record, re-read each time the menu opens so a
    *  finished contract seals itself without a reload. */
   const [progress, setProgress] = useState<StoryProgress>(() => loadStoryProgress());
+  /** PROG-1 (#475): the scenario record, re-read the same way. */
+  const [scenProgress, setScenProgress] = useState<ScenarioProgress>(() => loadScenarioProgress());
   /** Contract cards whose full description the player has opened. */
   const [openBriefs, setOpenBriefs] = useState<ReadonlySet<string>>(() => new Set());
   const [players, setPlayers] = useState<readonly ServerPlayer[]>([]);
@@ -920,6 +932,18 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     }
     return map;
   }, [state]);
+  // PROG-1 (#475): the scenario slots, keyed by scenario id.
+  const scenarioSaves = useMemo<Map<string, SoloSaveSummary>>(() => {
+    const map = new Map<string, SoloSaveSummary>();
+    if (state === "scenarios") {
+      for (const s of resumableSaves()) {
+        if (s.chapterId && s.chapterId.startsWith(SCENARIO_SAVE_PREFIX)) {
+          map.set(s.chapterId.slice(SCENARIO_SAVE_PREFIX.length), s);
+        }
+      }
+    }
+    return map;
+  }, [state]);
 
   // The one destructive-ask plate. It hangs off a body-level host the effect
   // owns, so every screen branch (mode pick, campaign list) gets it without
@@ -968,6 +992,20 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     }
     onStart({ mode: "ai", portrait, conquest });
   }, [onStart, portrait, sandboxSave]);
+
+  /** A scenario card resumes when a save exists; this sibling starts the
+   *  scenario over, clearing the slot only after the player confirms. */
+  const beginScenarioNew = useCallback((scenario: ScenarioDef, save: SoloSaveSummary) => {
+    setPendingNew({
+      title: `Start "${scenario.name}" over?`,
+      body: `Your saved scenario — ${describeSave(save)} — will be cleared. Use Continue on the card to pick it back up.`,
+      confirmLabel: "Start over",
+      act: () => {
+        discardSoloSave(`${SCENARIO_SAVE_PREFIX}${scenario.id}`);
+        onStart({ mode: "scenario", scenario: scenario.id, portrait });
+      },
+    });
+  }, [onStart, portrait]);
 
   /** A contract card resumes when a save exists; this sibling starts the
    *  contract over, clearing the slot only after the player confirms. */
@@ -1041,6 +1079,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open" onClick={() => beginAiNew(false)}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
           {/* 2026-09: play until the rival cannot go on — no ★ line. */}
           <button data-sfx="open" onClick={() => beginAiNew(true)}>Play vs AI — Conquest <small>no ★ line · win when the rival is bankrupt</small></button>
+          {/* PROG-1 (#475): four tuned maps beyond the default island. */}
+          <button data-sfx="open" onClick={() => { setScenProgress(loadScenarioProgress()); setState("scenarios"); }}>Scenarios <small>four maps · unlock by winning</small></button>
           <p className="start-actions-label">Multiplayer</p>
           <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
           <div className="start-actions-pair">
@@ -1103,6 +1143,14 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                     <span className="cc-name">{chapter.name}</span>
                     <span id={briefId} className={`cc-brief${expanded ? "" : " clamped"}`}>{chapter.brief}</span>
                     <span className="cc-meta">as {chapter.jobTitle} · vs {rival.name} · first to {chapter.target}★ · {chapter.skill}</span>
+                    {progress.bests?.[chapter.id] ? (
+                      <span className="cc-meta">Best: {[
+                        progress.bests[chapter.id].bestMargin !== undefined
+                          ? `+${progress.bests[chapter.id].bestMargin}★` : null,
+                        progress.bests[chapter.id].bestTimeMs !== undefined
+                          ? formatBestTime(progress.bests[chapter.id].bestTimeMs!) : null,
+                      ].filter((s): s is string => s !== null).join(" · ")}</span>
+                    ) : null}
                     {save ? (
                       <span className="cc-continue">
                         <b>▸ Continue</b> · {save.finished ? "match complete · " : ""}
@@ -1135,6 +1183,89 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           </div>
           <div className="story-menu-actions">
             <button data-sfx="open" onClick={() => onStart({ mode: "story-intro", portrait })}>Watch the opening reel</button>
+            <button onClick={() => setState("choose")}>Modes</button>
+            {onBack ? <button data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // PROG-1 (#475): the scenario list — the campaign list's shape (locks,
+  // seals, bests, Continue, Start over) over the four tuned maps.
+  if (state === "scenarios") {
+    const pin = pinnedScenario();
+    const openCount = effectiveUnlocked(scenProgress, progress);
+    return (
+      <main className="start-screen campaign" aria-label="Hexmatch scenarios">
+        <div className="start-panel story">
+          <p className="start-kicker">BEYOND THE ISLAND · SCENARIOS</p>
+          <h1>Four maps, each its own race</h1>
+          <p className="start-subtitle">Four tuned maps beyond the default island. Win the open one — or any campaign contract — to unlock the next. Each keeps its own best time and best margin.</p>
+          <div className="chapter-list">
+            {SCENARIOS.map((scenario) => {
+              const open = pin ? pin === scenario.id : scenario.index < openCount;
+              const best = scenProgress.results[scenario.id] ?? null;
+              const bestLine = best ? describeScenarioBest(best) : null;
+              const briefKey = `scenario:${scenario.id}`;
+              const expanded = openBriefs.has(briefKey);
+              const briefId = `sc-brief-${scenario.id}`;
+              const save = open ? scenarioSaves.get(scenario.id) ?? null : null;
+              const hint = !open ? scenarioUnlockHint(scenario.id) : null;
+              return (
+                <div key={scenario.id} className="chapter-item">
+                <button type="button" data-sfx="open"
+                  className={`chapter-card${open ? "" : " locked"}${save ? " has-save" : ""}`}
+                  disabled={!open}
+                  aria-label={`${scenario.name}${save ? ` — continue saved match, ${describeSave(save)}` : ""}${bestLine ? ` — ${bestLine}` : ""}${open ? "" : " (locked)"}`}
+                  onClick={() => onStart({ mode: "scenario", scenario: scenario.id, portrait })}>
+                  <span className="cc-body">
+                    <span className="cc-head">
+                      <span className="cc-kicker">SCENARIO {["I", "II", "III", "IV"][scenario.index]} · {scenario.tagline}</span>
+                      {best && best.wins > 0
+                        ? <span className="cc-seal">Filed · won</span>
+                        : open ? null : <span className="cc-lock" aria-hidden="true">🔒</span>}
+                    </span>
+                    <span className="cc-name">{scenario.name}</span>
+                    <span id={briefId} className={`cc-brief${expanded ? "" : " clamped"}`}>{scenario.brief}</span>
+                    <span className="cc-meta">vs {RIVAL_SKILLS[scenario.skill].label} · first to {scenario.winTarget}★</span>
+                    {bestLine ? (
+                      <span className="cc-meta">{bestLine}</span>
+                    ) : null}
+                    {hint ? (
+                      <span className="cc-meta">{hint}</span>
+                    ) : null}
+                    {save ? (
+                      <span className="cc-continue">
+                        <b>▸ Continue</b> · {save.finished ? "match complete · " : ""}
+                        {save.youStars}★ vs {save.rivalStars}★ · saved {formatSavedAgo(save.savedAt)}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+                <span className="cc-actions">
+                  <button type="button" className="cc-more" data-sfx="tab"
+                    aria-expanded={expanded} aria-controls={briefId}
+                    onClick={() => setOpenBriefs((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(briefKey)) next.delete(briefKey); else next.add(briefKey);
+                      return next;
+                    })}>
+                    {expanded ? "Less ▴" : "More ▾"}
+                  </button>
+                  {save ? (
+                    <button type="button" className="cc-restart" data-sfx="click"
+                      title="Clear the saved match and start this scenario again"
+                      onClick={() => beginScenarioNew(scenario, save)}>
+                      ↻ Start over
+                    </button>
+                  ) : null}
+                </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="story-menu-actions">
             <button onClick={() => setState("choose")}>Modes</button>
             {onBack ? <button data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
           </div>

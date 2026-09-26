@@ -8,8 +8,9 @@
 // NEW (which deliberately clears the slot first). This module is the shelf
 // those doors read from:
 //
-//   · it scans localStorage for the sandbox slot (`hexmatch:save`) and every
-//     story slot (`hexmatch:save:story:<chapter>`);
+//   · it scans localStorage for the sandbox slot (`hexmatch:save`), every
+//     story slot (`hexmatch:save:story:<chapter>`) and every scenario slot
+//     (PROG-1 #475, `hexmatch:save:scenario:<id>`);
 //   · it applies the SAME freshness rule the boot path uses
 //     (`loadRecentSave` — a save older than SAVE_FRESH_MS is nobody's current
 //     game);
@@ -21,8 +22,8 @@
 //     share with the ☰ menu's New Game.
 // ══════════════════════════════════════════════════════════════════════════
 import {
-  SAVE_KEY, clearSave, loadRecentSave, saveKeyFor, trackRestored,
-  type SaveGamePayload,
+  SAVE_KEY, SCENARIO_SAVE_KEY_PREFIX, clearSave, loadRecentSave, saveKeyFor,
+  scenarioSaveKey, trackRestored, type SaveGamePayload,
 } from "./savegame-runtime";
 import { createTrack } from "./track";
 import { createScoreState, rescore, vpFor, type LoopScoring } from "./victory";
@@ -34,13 +35,17 @@ import {
 } from "./economy";
 import { RIVAL_SKILLS, SKILL_STORAGE_KEY, type SkillKey } from "./skill";
 import { chapterById } from "../story/chapters";
+import { SCENARIO_SAVE_PREFIX, scenarioById } from "../story/scenarios";
 
 export interface SoloSaveSummary {
   /** The localStorage slot — `saveKeyFor(chapterId)`. */
   key: string;
-  /** null = the sandbox ("Play vs AI"); otherwise the story contract id. */
+  /**
+   * null = the sandbox ("Play vs AI"); otherwise the story contract id —
+   * or, PROG-1 (#475), a `scenario:<id>` tag for a scenario slot.
+   */
   chapterId: string | null;
-  /** Contract name for a story slot, null for the sandbox. */
+  /** Contract (or scenario) name for a story slot, null for the sandbox. */
   chapterName: string | null;
   savedAt: number;
   skillKey: SkillKey;
@@ -56,7 +61,10 @@ export interface SoloSaveSummary {
 const STORY_PREFIX = `${SAVE_KEY}:story:`;
 
 /** The slot key for the kind of solo game a menu door starts. */
-export const soloSaveKey = (chapterId: string | null): string => saveKeyFor(chapterId);
+export const soloSaveKey = (chapterId: string | null): string =>
+  chapterId !== null && chapterId.startsWith(SCENARIO_SAVE_PREFIX)
+    ? scenarioSaveKey(chapterId.slice(SCENARIO_SAVE_PREFIX.length))
+    : saveKeyFor(chapterId);
 
 function asSkillKey(raw: string): SkillKey {
   return (raw in RIVAL_SKILLS ? raw : "normal") as SkillKey;
@@ -159,11 +167,18 @@ function summarize(
   // A story slot whose contract the campaign no longer knows can never be
   // resumed (the boot would treat an unknown chapter as no story and read
   // the sandbox slot instead) — don't offer a door that leads nowhere.
+  // PROG-1 (#475): scenario slots read the same way, off the scenario list.
   let chapterName: string | null = null;
   if (chapterId !== null) {
-    const chapter = chapterById(chapterId);
-    if (!chapter) return null;
-    chapterName = chapter.name;
+    if (chapterId.startsWith(SCENARIO_SAVE_PREFIX)) {
+      const scenario = scenarioById(chapterId.slice(SCENARIO_SAVE_PREFIX.length));
+      if (!scenario) return null;
+      chapterName = scenario.name;
+    } else {
+      const chapter = chapterById(chapterId);
+      if (!chapter) return null;
+      chapterName = chapter.name;
+    }
   }
   const skillKey = asSkillKey(d.skillKey);
   const stars = starsFromSave(d);
@@ -210,6 +225,10 @@ export function resumableSaves(
   for (let i = 0; i < s.length; i++) {
     const k = s.key(i);
     if (k && k.startsWith(STORY_PREFIX)) consider(k, k.slice(STORY_PREFIX.length));
+    // PROG-1 (#475): scenario slots join the shelf as `scenario:<id>` tags.
+    if (k && k.startsWith(SCENARIO_SAVE_KEY_PREFIX)) {
+      consider(k, `${SCENARIO_SAVE_PREFIX}${k.slice(SCENARIO_SAVE_KEY_PREFIX.length)}`);
+    }
   }
   return out;
 }
@@ -272,8 +291,8 @@ export function describeSave(
  * Clear one solo slot so the next boot is a deliberately NEW game. The
  * sandbox also forgets the remembered difficulty pick — exactly the ☰ menu's
  * New Game semantics — so the new match re-asks rather than inheriting.
- * A story contract casts its own rival at a fixed difficulty and has no pick
- * to forget.
+ * A story contract (or a scenario) casts its own rival at a fixed difficulty
+ * and has no pick to forget.
  */
 export function discardSoloSave(
   chapterId: string | null,
