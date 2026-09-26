@@ -741,3 +741,27 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   border-top: 1px solid var(--sa-line); padding-top: 8px; margin-top: 4px;
 }
 .guide-menu-foot small { font-family: var(--sans); font-weight: 500; font-size: 11px; color: var(--sa-bone-mute); flex: 1 1 200px; }
+
+/* ── key art (owner, 2026-09-26): the poster behind the main menu and the
+   loading screen. Wide art on desktop, portrait art on phones / tall screens.
+   A flat charcoal veil keeps the menu and the loading card readable. ── */
+.start-screen.menu, #iso-loading {
+  background-color: #1f2427;
+  background-image: linear-gradient(rgba(31,36,39,.35), rgba(31,36,39,.35)), url("../assets/poster/keyart-desktop.webp");
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+}
+@media (max-aspect-ratio: 1/1), (max-width: 760px) {
+  .start-screen.menu, #iso-loading {
+    background-image: linear-gradient(rgba(31,36,39,.35), rgba(31,36,39,.35)), url("../assets/poster/keyart-mobile.webp");
+    background-position: center top;
+  }
+}
+/* the ladder / ember decorations sat on a plain backdrop; the art replaces them */
+.start-screen.menu .menu-embers { display: none; }
+.start-screen.menu::before { display: none; }
+.menu-title.menu-logo { margin: 0 0 14px; line-height: 0; }
+.menu-title.menu-logo img { display: block; width: 100%; max-width: 320px; height: auto; }
+
+/* main menu: the landscape (owner, 2026-09-26); the poster stays on the loading screen */
+.start-screen.menu { background-image: url("../assets/poster/menu-bg.webp") !important; background-position: 65% center !important; }
+.start-screen.menu > .menu-leaderboard { background: rgba(31,36,39,.88); border: 1px solid #343b3f; padding: 16px 18px; }

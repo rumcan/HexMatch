@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import logoUrl from "../assets/poster/logo.webp";
 // ══════════════════════════════════════════════════════════════════════════
 // STORY-01 — the front door: one engraved menu over a living plate.
 //
@@ -174,7 +175,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
       <div className="menu-card">
         <span className="menu-emblem" aria-hidden="true" />
         <p className="start-kicker">EST. 1949 · THE ISLAND RUNS ON WHOEVER MOVES IT FIRST</p>
-        <h1 className="menu-title">Hexmatch Industries</h1>
+        <h1 className="menu-title menu-logo"><img src={logoUrl} alt="Hexmatch Industries" /></h1>
         {STORY_MODE_ENABLED ? (<>
           <p className="menu-sub">The Foundry Syndicate · a campaign in five contracts</p>
           {/* BACK TO WORK: the player's job, and it grows with the campaign. */}
