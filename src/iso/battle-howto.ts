@@ -3,9 +3,9 @@
 //
 // Two things a new player needs before their first fight, and nothing more:
 //
-//   • THE PAGE — five cards on the same projector as the starting tour
-//     (`showTutorial` in tutorial.ts, the `.tut-*` CSS): turns, mana, extra
-//     turns, abilities, the 20-turn limit and the stakes. It opens from the
+//   • THE PAGE — five cards on the card projector (`showRefCards` in
+//     guide/refcard.ts, the `.tut-*` CSS): turns, mana, extra turns,
+//     abilities, the 20-turn limit and the stakes. It opens from the
 //     ❔ help modal (beside "Replay the tour"), the ☰ menu, and the "?" on the
 //     battle screen itself. Every number is read from the live tables
 //     (`BATTLE_RULES`, `BATTLE_ABILITIES`, `VICTORY.loop`) — never retyped —
@@ -24,13 +24,15 @@ import {
   BATTLE_ABILITIES, BATTLE_ABILITY_ORDER, BATTLE_RULES, CARGO, VICTORY,
   type BattleRules, type Cargo,
 } from "./config";
-import { showTutorial, type TutorialHandle, type TutorialStep, type TutorialStorage } from "./tutorial";
+import {
+  showRefCards, type RefCardHandle, type RefCardStep, type RefCardStorage,
+} from "./guide/refcard";
 
 export const BATTLE_HINT_KEY = "hexmatch:battle-hint";
 export const BATTLE_HINT_SEEN = "seen";
 export const BATTLE_HOWTO_ID = "iso-battle-howto";
 
-const liveStorage = (): TutorialStorage | null =>
+const liveStorage = (): RefCardStorage | null =>
   typeof localStorage !== "undefined" ? localStorage : null;
 
 /** The first-battle hint's three lines — what the first fight needs. */
@@ -49,7 +51,7 @@ export function battleHintLines(rules: BattleRules = BATTLE_RULES): string[] {
  * mid-battle cannot show it twice. No storage (private mode) = show it.
  */
 export function takeFirstBattleHint(
-  storage: TutorialStorage | null = liveStorage(),
+  storage: RefCardStorage | null = liveStorage(),
   rules: BattleRules = BATTLE_RULES,
 ): string[] | null {
   try {
@@ -71,7 +73,7 @@ const abilityLine = (id: (typeof BATTLE_ABILITY_ORDER)[number]): string => {
 };
 
 /** The five cards. `rules` defaults to the shipped table. */
-export function buildBattleHowtoSteps(rules: BattleRules = BATTLE_RULES): TutorialStep[] {
+export function buildBattleHowtoSteps(rules: BattleRules = BATTLE_RULES): RefCardStep[] {
   const chain = rules.extraTurnChain ?? 0;
   const second = rules.secondSeatHealth ?? 0;
   const matchDmg = rules.matchDamagePerGem ?? 0;
@@ -201,19 +203,12 @@ export interface ShowBattleHowtoOptions {
 }
 
 /** Open the battle How to Play. Always opens (it is a page asked for). */
-export function showBattleHowto(opts: ShowBattleHowtoOptions = {}): TutorialHandle | null {
-  if (typeof document === "undefined") return null;
-  const existing = document.getElementById(BATTLE_HOWTO_ID);
-  if (existing) return null;             // one at a time, from any door
-  const mount = opts.mount ?? document.body;
-  return showTutorial(mount, {
-    force: true,
-    vpTarget: VICTORY.loop.target,
-    freeTrack: 0,
+export function showBattleHowto(opts: ShowBattleHowtoOptions = {}): RefCardHandle | null {
+  return showRefCards(document.body, {
     steps: buildBattleHowtoSteps(opts.rules ?? BATTLE_RULES),
     overlayId: BATTLE_HOWTO_ID,
     doneLabel: "To battle →",
-    showNever: false,
     onClose: () => opts.onClose?.(),
+    mount: opts.mount,
   });
 }
