@@ -32,7 +32,7 @@ import { makeNoiseAtlas, makeProcedural, TEXTURE_SLOTS, type RawTexture, type Te
 export const TERRAIN_GRASS = 0, TERRAIN_WATER = 1, TERRAIN_ROUGH = 2, TERRAIN_SAND = 3;
 
 export type { TerrainMapInput } from "./mesh";
-export { hash2, worldOfCorner, buildTerrainMesh } from "./mesh";
+export { hash2, worldOfCorner, buildTerrainMesh, encodeLawn, LAWN_FEATHER } from "./mesh";
 
 export interface TerrainCamera {
   x: number; y: number;
@@ -76,6 +76,8 @@ interface GLState {
   idxBuf: WebGLBuffer;
   fieldTex: WebGLTexture;
   codesTex: WebGLTexture;
+  /** #437: the tended-ground mask (town blocks + aprons), R8 LINEAR. */
+  lawnTex: WebGLTexture;
   noiseTex: WebGLTexture;
   slotTex: Record<TextureSlot, WebGLTexture>;
   u: Record<string, WebGLUniformLocation | null>;
@@ -87,6 +89,8 @@ const UNIT: Record<TextureSlot, number> = {
   grass: 3, meadow: 4, dirt: 5, rock: 6, sand: 7, detail: 8, waterNormal: 9,
 };
 const UNIT_FIELD = 0, UNIT_CODES = 1, UNIT_NOISE = 2;
+/** #437: the tended-ground mask sits above every ground slot's unit. */
+const UNIT_LAWN = 10;
 
 /** Flat placeholder colours shown until a slot's real texture arrives. */
 const PLACEHOLDER: Record<TextureSlot, [number, number, number]> = {
@@ -95,7 +99,7 @@ const PLACEHOLDER: Record<TextureSlot, [number, number, number]> = {
 };
 
 const UNIFORMS = [
-  "uCam", "uZoom", "uView", "uField", "uCodes", "uNoise", "uGrass", "uMeadow", "uDirt", "uRock",
+  "uCam", "uZoom", "uView", "uField", "uCodes", "uLawn", "uNoise", "uGrass", "uMeadow", "uDirt", "uRock",
   "uSand", "uDetail", "uWaterN", "uMapSize", "uSeedOff", "uDetailAmt", "uWaterAnim", "uTime", "uGrid",
   "uTilesPerRepeat", "uLumA",
 ] as const;
@@ -258,16 +262,22 @@ class TerrainRendererImpl implements TerrainRenderer {
 
     const fieldTex = must(gl.createTexture(), "createTexture");
     const codesTex = must(gl.createTexture(), "createTexture");
+    const lawnTex = must(gl.createTexture(), "createTexture");
     const noiseTex = must(gl.createTexture(), "createTexture");
     const slotTex = {} as Record<TextureSlot, WebGLTexture>;
     for (const slot of TEXTURE_SLOTS) slotTex[slot] = must(gl.createTexture(), "createTexture");
 
-    this.st = { program, vao, posBuf, tileBuf, shadeBuf, idxBuf, fieldTex, codesTex, noiseTex, slotTex, u, aniso };
+    this.st = { program, vao, posBuf, tileBuf, shadeBuf, idxBuf, fieldTex, codesTex, lawnTex, noiseTex, slotTex, u, aniso };
 
     // Data textures: field is LINEAR (smooth interpolation between tile
-    // centres is the whole point), codes is NEAREST (hard flags).
+    // centres is the whole point), codes is NEAREST (hard flags). #437's
+    // tended-ground mask is LINEAR for the same reason the fields are — the
+    // apron has to be a smooth band, not a staircase of tiles.
     this.setupDataTexture(fieldTex, true);
     this.setupDataTexture(codesTex, false);
+    this.setupDataTexture(lawnTex, true);
+    // A map that never calls setMap still samples it: 1x1 of "wild ground".
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]));
 
     // Noise atlas: repeat + mipmaps so it never shimmers when zoomed out.
     gl.bindTexture(gl.TEXTURE_2D, noiseTex);
@@ -288,6 +298,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.useProgram(program);
     gl.uniform1i(u.uField, UNIT_FIELD);
     gl.uniform1i(u.uCodes, UNIT_CODES);
+    gl.uniform1i(u.uLawn, UNIT_LAWN);
     gl.uniform1i(u.uNoise, UNIT_NOISE);
     for (const slot of TEXTURE_SLOTS) gl.uniform1i(u[SLOT_UNIFORM[slot]], UNIT[slot]);
     gl.uniform1f(u.uTilesPerRepeat, this.tilesPerRepeat);
@@ -324,6 +335,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     if (!st) return;
     gl.activeTexture(gl.TEXTURE0 + UNIT_FIELD); gl.bindTexture(gl.TEXTURE_2D, st.fieldTex);
     gl.activeTexture(gl.TEXTURE0 + UNIT_CODES); gl.bindTexture(gl.TEXTURE_2D, st.codesTex);
+    gl.activeTexture(gl.TEXTURE0 + UNIT_LAWN); gl.bindTexture(gl.TEXTURE_2D, st.lawnTex);
     gl.activeTexture(gl.TEXTURE0 + UNIT_NOISE); gl.bindTexture(gl.TEXTURE_2D, st.noiseTex);
     for (const slot of TEXTURE_SLOTS) {
       gl.activeTexture(gl.TEXTURE0 + UNIT[slot]);
@@ -429,6 +441,8 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, map.w, map.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.fields.rgba);
     gl.bindTexture(gl.TEXTURE_2D, st.codesTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, map.w, map.h, 0, gl.RED, gl.UNSIGNED_BYTE, this.fields.codes);
+    gl.bindTexture(gl.TEXTURE_2D, st.lawnTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, map.w, map.h, 0, gl.RED, gl.UNSIGNED_BYTE, this.fields.lawn);
     this.bindAllTextures();
   }
 
@@ -475,6 +489,8 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, rw, rh, gl.RGBA, gl.UNSIGNED_BYTE, fields.rgba);
     gl.bindTexture(gl.TEXTURE_2D, st.codesTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, rw, rh, gl.RED, gl.UNSIGNED_BYTE, fields.codes);
+    gl.bindTexture(gl.TEXTURE_2D, st.lawnTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, rw, rh, gl.RED, gl.UNSIGNED_BYTE, fields.lawn);
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
     gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
     gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
@@ -529,7 +545,7 @@ class TerrainRendererImpl implements TerrainRenderer {
       gl.deleteProgram(st.program);
       gl.deleteVertexArray(st.vao);
       gl.deleteBuffer(st.posBuf); gl.deleteBuffer(st.tileBuf); gl.deleteBuffer(st.shadeBuf); gl.deleteBuffer(st.idxBuf);
-      gl.deleteTexture(st.fieldTex); gl.deleteTexture(st.codesTex); gl.deleteTexture(st.noiseTex);
+      gl.deleteTexture(st.fieldTex); gl.deleteTexture(st.codesTex); gl.deleteTexture(st.lawnTex); gl.deleteTexture(st.noiseTex);
       for (const slot of TEXTURE_SLOTS) gl.deleteTexture(st.slotTex[slot]);
     }
     this.st = null;

@@ -53,6 +53,7 @@ import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
 import { FLAT_DRAPER, draperFor, elevationLiftPx, type Draper } from "./elevation";
+import type { Decal } from "./scenery";
 import { DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads, type Track } from "./track";
 
 // Same local DEV query as the simulation, evaluated once, not every frame.
@@ -105,16 +106,32 @@ export interface RoadStyle {
   paved: RoadMaterialStyle;
   dirt: RoadMaterialStyle;
   /**
-   * #159: the surface a town's BLOCKS are paved with — the yards the houses
-   * stand on, between the streets. Its own material rather than a reuse of
-   * `dirt`, because a settlement's ground is its own thing: compacted,
-   * trodden, greyer than a rural track's earth, and it has to read as made
-   * ground beside both the asphalt and the grass.
+   * #159 / #437: the surface a town's BLOCKS carry — the ground the houses
+   * stand on, between the streets.
+   *
+   * #437 changed what that surface IS. It used to be the dirt texture under a
+   * grey-brown wash, on the theory that a settlement's ground is compacted and
+   * trodden; on the map it read as mud, and every lot a house did not cover
+   * was a flat brown stain. It is now a TENDED LAWN: the grass/meadow ground
+   * art, mown — a shade darker and a shade greener than the wild meadow
+   * around it. Its own material rather than a reuse of `dirt` precisely so the
+   * two can never drift back together.
    */
   town: RoadMaterialStyle;
   /** Worn, low-saturation marking colour. */
   paint: string;
   paintAlpha: number;
+  /**
+   * #437: the garden art bank — the loaded `garden_*` decal images, in file
+   * order. It rides the STYLE rather than the world because the style is what
+   * the chunk cache versions: `setRoadStyle` bumps `styleVersion`, so gardens
+   * that land after the first rasters simply invalidate them, exactly like the
+   * asphalt texture landing late does.
+   *
+   * Absent or empty — which is what ships today — and the garden pass does
+   * not run at all.
+   */
+  gardens?: readonly RoadTextureImage[];
 }
 
 /**
@@ -126,10 +143,13 @@ export interface RoadStyle {
 export const DEFAULT_ROAD_STYLE: RoadStyle = {
   paved: { flat: "#3c3b38", shoulder: "#2a2926", image: null, repeat: 2.6 },
   dirt: { flat: "#7b6443", shoulder: "#574631", image: null, repeat: 2.6 },
-  // Dark grey-brown, and deliberately within a shade or two of the asphalt:
-  // a town's ground is the same made surface as its streets, one step softer
-  // and browner, which is what makes the two read as one streetscape.
-  town: { flat: "#4b463d", shoulder: "#4b463d", image: null, repeat: 2.6 },
+  // #437: a town block is GRASS — a mown lawn, not made ground. The fallback
+  // colour sits between the grass texture's own mean (#354312) and the
+  // meadow's (#4a5618): unmistakably green, and a touch darker than the wild
+  // meadow so the block still reads as kept rather than as a gap in the town.
+  // The repeat is longer than the roads' so the lawn's grain matches the
+  // ground textures it abuts instead of looking like a second, finer surface.
+  town: { flat: "#3e4a1a", shoulder: "#364116", image: null, repeat: 5 },
   // Road markings: near-white and only lightly worn. The first pass used a
   // dim parchment tone at half opacity, which at 1x simply did not read as a
   // painted line.
@@ -162,15 +182,20 @@ const EDGE_SHADE: [number, string, number][] = [
 ];
 
 /**
- * #159: the wash laid over a town block's paving.
+ * #159 / #437: the wash laid over a town block's ground.
  *
- * TRANSLUCENT INK OVER WHATEVER TEXTURE THE YARD HAS, rather than a tint baked
- * into an asset, so the yard can borrow the road materials' own grain and
- * still read as the town's own surface: dark, desaturated, grey-brown. The
- * wash is what makes the same texture read as a rural track outside the
- * limits and as a trodden town yard inside them.
+ * TRANSLUCENT INK OVER WHATEVER TEXTURE THE BLOCK HAS, rather than a tint
+ * baked into an asset, so the block borrows the ground art's own grain and
+ * still reads as the town's own surface. #437 turned that surface from made
+ * ground into a lawn, so the ink turned with it: a thin, dark GREEN glaze —
+ * enough that the same grass texture reads as mown inside the limits and wild
+ * outside them, nowhere near enough to flatten it into a colour.
+ *
+ * Over the grass texture (mean #354312) this lands at roughly #2f3d12: a
+ * shade darker and a shade cooler than the meadow, which is what a kept lawn
+ * looks like beside a field.
  */
-const TOWN_GROUND_WASH = "rgba(38,37,33,0.42)";
+export const TOWN_GROUND_WASH = "rgba(30,44,16,0.26)";
 
 /**
  * Opacity of the shoulder pass. The shoulder is a darkening of the ground
@@ -378,6 +403,16 @@ export interface RoadWorld {
    * draws exactly the roads it always drew.
    */
   rail?: RailLayer;
+  /**
+   * #437: the town gardens (`scatterTownGardens`) — hedges, flower beds and
+   * paths on the town blocks. Painted by this raster, over the block's lawn
+   * and UNDER the kerbs, which is the only layer that gets the order right:
+   * the lawn is laid by this pass too, so a garden drawn with the ordinary
+   * ground decals (a whole layer below) would be buried by it.
+   *
+   * Optional, and inert without the `garden_*` art — see `RoadStyle.gardens`.
+   */
+  gardens?: readonly Decal[];
 }
 
 const cellAt = (arr: Uint8Array | undefined, tx: number, ty: number): number =>
@@ -518,6 +553,28 @@ export function townGroundQuadsIn(
   return out;
 }
 
+/**
+ * #437: the town gardens whose ART BOX touches a tile range.
+ *
+ * Measured by `reach` (the turned box's tile radius, as `scatterTownGardens`
+ * recorded it) rather than by the centre tile, so a garden that overhangs the
+ * chunk boundary is painted by both chunks and the seam is invisible — the
+ * same rule `paintDecals` culls the ground patches by.
+ */
+export function townGardensIn(
+  world: RoadWorld, tx0: number, ty0: number, tx1: number, ty1: number,
+): Decal[] {
+  const all = world.gardens;
+  if (!all || !all.length) return [];
+  const out: Decal[] = [];
+  for (const g of all) {
+    if (g.tx < tx0 - g.reach || g.tx > tx1 + g.reach) continue;
+    if (g.ty < ty0 - g.reach || g.ty > ty1 + g.reach) continue;
+    out.push(g);
+  }
+  return out;
+}
+
 // ── painting ────────────────────────────────────────────────────────────────
 /**
  * Add a figure to the CURRENT path, in ground coordinates. Separate from
@@ -615,13 +672,18 @@ export function makeMatrix(): DOMMatrix {
 type RoadFills = Record<"paved" | "dirt", string | CanvasPattern>;
 
 /**
- * #159 — the paved yards of a town's blocks, under everything else.
+ * #159 / #437 — the LAWNS of a town's blocks, under everything else.
  *
- * One path, one fill, one wash: the whole town's ground costs two canvas
+ * One path, one fill, one glaze: the whole town's ground costs two canvas
  * operations per chunk however many blocks it has. It goes down FIRST, before
  * the shoulders, the sidewalks and the asphalt, because it is the ground the
  * other three sit on — and because the kerbs have to be painted over the band
- * the paving reaches under them, not beside it.
+ * it reaches under them, not beside it.
+ *
+ * #437: the fill is opaque on purpose. It is the one pass that owns a town
+ * block's ground, so whatever the terrain underneath happens to have blended
+ * there — including the bare-earth material — cannot show through an empty
+ * lot. The grass art plus the glaze IS the lot's surface.
  */
 function paintTownGround(
   ctx: Ctx2D, quads: GroundPoint[][], fill: string | CanvasPattern,
@@ -642,6 +704,71 @@ function paintTownGround(
   ctx.fillStyle = TOWN_GROUND_WASH;
   ctx.fill();
   ctx.restore();
+}
+
+/**
+ * #437 — the gardens on a town's lots, over the lawn and under the kerbs.
+ *
+ * SCREEN SPACE, not ground space. The decal art is authored already 2:1
+ * squashed — it is a picture of a patch of ground as the camera sees it — so
+ * running it through this context's ground transform would project it a
+ * SECOND time and shear every hedge. Instead each garden's lifted ground
+ * point is pushed through that same transform by hand (it is affine, and the
+ * four coefficients are exactly the ones the caller set), the transform is
+ * dropped to the identity, and the art is blitted around the resulting device
+ * pixel the way `paintDecals` blits the country patches around theirs.
+ *
+ * A no-op without art, which is what ships until the lead draws the set.
+ */
+function paintTownGardens(
+  ctx: Ctx2D, gardens: readonly Decal[], images: readonly RoadTextureImage[],
+  elev: Draper = FLAT_DRAPER,
+): void {
+  if (!gardens.length || !images.length) return;
+  // The caller's ground transform: [a c e; b d f] maps (u, v) tile units to
+  // device pixels. Read it once — it is constant for the whole chunk.
+  const m = ctx.getTransform?.();
+  if (!m) return;
+  const { a, b, c, d, e, f } = m;
+  // One tile step along u is (a, b) device px, so |(a, b)| · 2 / TILE_W is the
+  // effective zoom: the scale the art must be blitted at to cover the ground
+  // it was measured against.
+  const z = Math.hypot(a, b) / HW;
+  if (!(z > 0)) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  for (const g of gardens) {
+    const img = images[g.variant % images.length];
+    if (!img) continue;
+    // The garden's centre, lifted onto the terrain and then projected.
+    const [gu, gv] = groundCentreOf(g);
+    const [lu, lv] = elev.point(gu, gv);
+    const px = a * lu + c * lv + e;
+    const py = b * lu + d * lv + f;
+    const w = g.w * z, h = w / 2;
+    const cos = Math.cos(g.rot), sin = Math.sin(g.rot);
+    ctx.globalAlpha = g.alpha;
+    ctx.save();
+    ctx.translate(px, py);
+    // Turned ON THE GROUND (S·R(θ)·S⁻¹ for the half-squash S), the same
+    // matrix `paintDecals` uses, so a garden lies flat instead of tilting
+    // toward the camera. Mirroring negates the image's own x axis.
+    ctx.transform(g.flip ? -cos : cos, g.flip ? -sin / 2 : sin / 2, -2 * sin, cos, 0, 0);
+    ctx.drawImage(img as unknown as CanvasImageSource, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/**
+ * #437: a garden's centre back in GROUND (tile) units. `scatterTownGardens`
+ * stores the world-pixel centre, which is what the screen-space decal painter
+ * wants; this pass needs the ground point so the draper can lift it onto a
+ * hill first. The inverse of `worldOf` in `scenery.ts`.
+ */
+function groundCentreOf(g: Decal): [number, number] {
+  const wy = g.wy - HH;
+  return [g.wx / (HW * 2) + wy / (HH * 2), wy / (HH * 2) - g.wx / (HW * 2)];
 }
 
 /**
@@ -797,7 +924,8 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * Pass order is bottom-up and deliberate, and #159 slots the town-street work
  * into it rather than beside it:
  *
- *   0. town ground  — the paved blocks a town's houses stand on;
+ *   0. town ground  — the lawns a town's houses stand on (#437);
+ *   0c. gardens     — the hedges and beds dressing those lawns (#437);
  *   1. shoulders    — ground disturbed at the road's edge, under the core;
  *   1b. sidewalks   — the walkways, over the shoulders and UNDER the asphalt,
  *                     which is what trims them at every junction for free;
@@ -813,8 +941,8 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * diagonal. The lamp is the one exception, drawn in projected pixels like the
  * sprite art it stands among.
  *
- * `townGround` is the block paving to lay down first, in the same ground
- * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
+ * `townGround` is the block ground to lay down first, in the same ground
+ * coordinates — one quad per town-block tile, from `townGroundQuadsIn`.
  */
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
@@ -836,6 +964,14 @@ export function paintRoadTiles(
   /** Use the same surface batching throughout every gutter, even when this
    * particular chunk contains only axis roads. */
   diagonalRoads = DIAGONAL_ROADS,
+  /**
+   * #437: the town gardens whose art reaches into this chunk
+   * (`townGardensIn`). Painted straight after the block lawns — over the
+   * grass, under the sidewalks and the asphalt, so a hedge can never be laid
+   * across a street. Empty by default, and skipped entirely when the style
+   * carries no garden art.
+   */
+  gardens: readonly Decal[] = [],
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -851,10 +987,14 @@ export function paintRoadTiles(
   // 0. R2 (#266) Bridge decks, under everything: the water texture has to go.
   paintBridgeDecks(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
 
-  // 0b. #159 Town ground: the paved yards the houses stand on, under everything
+  // 0b. #159/#437 Town ground: the LAWNS the houses stand on, under everything
   //    a road paints. Absent a `town` material the passes below still draw the
-  //    streets; only the blocks between them stay grass.
+  //    streets; only the blocks between them fall back to the raw terrain.
   if (townFill) paintTownGround(ctx, townGround, townFill, elev);
+
+  // 0c. #437 Town gardens: the details that dress an empty lot, over its
+  //    lawn. No art installed → no pass, which is today's town exactly.
+  if (style.gardens?.length) paintTownGardens(ctx, gardens, style.gardens, elev);
 
   // D3: join homogeneous legs across shared ports and stroke each material /
   // width once. Translucent shoulders/camber must not double-darken diagonal
@@ -1232,6 +1372,10 @@ export class RoadCache {
     // is paved by the chunk that owns it and the gutter simply agrees.
     const townGround = this.railOnly
       ? [] : townGroundQuadsIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    // #437: the gardens on those blocks. Only collected when the style has art
+    // to draw them with, so the default build does no work here at all.
+    const gardens = this.railOnly || !style.gardens?.length
+      ? [] : townGardensIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
     // RAIL-03: the railway rides the same range, the gutter included — the
     // geometry is per tile, so a chunk paints its own tiles plus the neighbours
     // inside its gutter and the seam between chunks is invisible.
@@ -1243,7 +1387,7 @@ export class RoadCache {
     // into a fresh surface would cost the same memory for a rectangle that
     // shows nothing, and the blit skips it on every frame after this one.
     let surface: Surface | null = null;
-    if (tiles.length || townGround.length || rail.length || roadDecks.length || railDecks.length) {
+    if (tiles.length || townGround.length || gardens.length || rail.length || roadDecks.length || railDecks.length) {
       surface = makeSurface(w, h);
       if (!surface) return null;
       const ctx = (surface as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
@@ -1252,7 +1396,7 @@ export class RoadCache {
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev, diagonalsOn(world));
+      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev, diagonalsOn(world), gardens);
       // …and the track OVER the finished road: that is what a level crossing
       // is, and why the road pass above has to stay exactly as it was.
       paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks, elev);

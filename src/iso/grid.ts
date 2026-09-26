@@ -2438,6 +2438,42 @@ export function townGroundBytes(grid: Grid): Uint8Array | null {
   return bytes;
 }
 
+/**
+ * #437 — SETTLED GROUND: every tile whose ground people keep.
+ *
+ * That is a town's own tiles (houses, centre and streets — everything stamped
+ * `TOWN_OCC`) plus every industry footprint. The terrain renderer takes this
+ * as the seed of a short distance falloff (`LAWN_FEATHER` in
+ * `terrain-gl/mesh.ts`), so the mask is BOTH the town blocks and the apron of
+ * worked ground around a site — which is exactly the ground the owner reported
+ * rendering as flat brown mud.
+ *
+ * Standing wheat fields and tree blocks (`FIELD_OCC`) are deliberately NOT
+ * settled: a field is a crop, not a lawn, and it carries its own art.
+ *
+ * Cached per grid exactly like `townGroundBytes`: occupancy is written by the
+ * generator and never moves during a game, so this costs one pass over the map
+ * the first time anything asks and nothing thereafter. Returns null when the
+ * map has no towns and no industries, which lets the caller skip the upload.
+ */
+const settledGroundCache = new WeakMap<Grid, Uint8Array | null>();
+
+export function settledGroundBytes(grid: Grid): Uint8Array | null {
+  const cached = settledGroundCache.get(grid);
+  if (cached !== undefined) return cached;
+  let bytes: Uint8Array | null = null;
+  const occ = grid.occupancy;
+  for (let i = 0; i < occ.length; i++) {
+    // >= 0 an industry, TOWN_OCC a town tile. -1 is open ground and FIELD_OCC
+    // is a standing crop; neither is tended.
+    if (occ[i] < 0 && occ[i] !== TOWN_OCC) continue;
+    if (!bytes) bytes = new Uint8Array(grid.w * grid.h);
+    bytes[i] = 1;
+  }
+  settledGroundCache.set(grid, bytes);
+  return bytes;
+}
+
 export const industryHasTile = (ind: Industry, tx: number, ty: number) =>
   tx >= ind.tx && tx < ind.tx + ind.w && ty >= ind.ty && ty < ind.ty + ind.h;
 

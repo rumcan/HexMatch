@@ -58,7 +58,8 @@ import {
 } from "./scenery";
 import {
   DEFAULT_ROAD_STYLE, RoadCache,
-  type RoadCacheStats, type RoadRenderMode, type RoadStyle, type RoadWorld,
+  type RoadCacheStats, type RoadRenderMode, type RoadStyle, type RoadTextureImage,
+  type RoadWorld,
 } from "./road-renderer";
 import { railDetailFor, type RailLayer } from "./rail-renderer";
 import {
@@ -778,6 +779,8 @@ export class IsoRenderer {
       dirtBits: this.world.dirtBits,
       roadTiers: this.world.roadTiers,
       rail: this.world.rail,
+      // #437: survives a world sync — the gardens are map data, not world data.
+      gardens: this.gardens ?? undefined,
     };
     this.syncRoadCache();
   }
@@ -1100,6 +1103,9 @@ export class IsoRenderer {
     this.groundChunkCache.clear();
     this.terrainDirty = true;
     this.structuresDirty = true;
+    // #437: the town gardens are ground detail like the decals, so they go
+    // with them. They live on the road style, so this is a style change.
+    this.applyGardenArt();
   }
 
   /** PERF-01, for `__iso.rendering()` and the settings layer. */
@@ -1113,8 +1119,18 @@ export class IsoRenderer {
     this.decals = scenery?.decals ?? null;
     this.decalGroups = null;
     this.decalGroupsFor = null;
+    // #437: the town gardens ride the ROAD world, not the terrain decals —
+    // they are painted over the block lawns that pass lays down. Stored here
+    // because `setDecals` is the one call that knows the map's scenery.
+    this.gardens = scenery?.gardens ?? null;
+    this.roadWorld = { ...this.roadWorld, gardens: this.gardens ?? undefined };
+    this.roadCache.bumpStyle("gardens");
+    this.structuresDirty = true;
     this.terrainDirty = true;
   }
+
+  /** #437: the map's town gardens, kept so `syncWorld` can re-attach them. */
+  private gardens: readonly Decal[] | null = null;
 
   /**
    * E2 (#267): the decals, bucketed by the lift they need. Cached against the
@@ -1156,6 +1172,30 @@ export class IsoRenderer {
   setDecalImages(images: DecalImages | null): void {
     this.decalImages = images;
     this.terrainDirty = true;
+    // #437: the GARDEN family is not painted with the other decals — it goes
+    // into the road style, because the pass that lays the town lawns is the
+    // pass that must lay the gardens on top of them. Installing it here bumps
+    // the chunk cache exactly as a late asphalt texture does, so a town
+    // already rasterised picks the gardens up.
+    this.gardenArt = images?.garden?.length ? images.garden : null;
+    this.applyGardenArt();
+  }
+
+  /** #437: the loaded garden art, before the performance-mode gate. */
+  private gardenArt: readonly RoadTextureImage[] | null = null;
+
+  /**
+   * #437: push the garden bank (or nothing, in performance mode) onto the
+   * road style. A no-op when the effective bank has not changed, so neither
+   * a perf toggle nor a decal reload throws away road rasters for nothing.
+   */
+  private applyGardenArt(): void {
+    const want = this.perfMode ? null : this.gardenArt;
+    const had = this.roadStyle.gardens ?? null;
+    if (want === had) return;
+    this.roadStyle = { ...this.roadStyle, gardens: want ?? undefined };
+    this.roadCache.bumpStyle("garden-art");
+    this.structuresDirty = true;
   }
 
   // Faster chunk surface lookup: pre-compute the zoom key once instead of

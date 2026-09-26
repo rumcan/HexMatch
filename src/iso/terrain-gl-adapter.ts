@@ -6,7 +6,7 @@
 // WebGL2 is missing the mount returns null and the 2D ground stays.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_H, MAP_W } from "../game/config";
-import type { Grid } from "./grid";
+import { settledGroundBytes, type Grid } from "./grid";
 import { cornerHeight, elevationActive } from "./elevation";
 import { createTerrainRenderer, type TerrainCamera, type TerrainMapInput, type TerrainRenderer } from "./terrain-gl";
 
@@ -45,7 +45,11 @@ export function terrainMapInput(grid: Grid, seed: number): TerrainMapInput {
       for (let i = 0; i <= MAP_W; i++) heights[j * (MAP_W + 1) + i] = Math.max(0, Math.round(cornerHeight(grid, i, j)));
     }
   }
-  return { w: MAP_W, h: MAP_H, terrain: grid.terrain, rivers: grid.rivers, heights, seed: seed >>> 0 };
+  // #437: the tended-ground mask — town blocks and industry footprints. The
+  // shader grows its apron from this and keeps the bare-earth material off
+  // both, so no town lot or works yard renders as flat brown dirt.
+  const settled = settledGroundBytes(grid) ?? undefined;
+  return { w: MAP_W, h: MAP_H, terrain: grid.terrain, rivers: grid.rivers, heights, settled, seed: seed >>> 0 };
 }
 
 export interface TerrainGl {
