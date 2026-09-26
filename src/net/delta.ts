@@ -166,6 +166,8 @@ export interface PublishFields {
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks. */
   clearedFields?: Snapshot["clearedFields"];
+  /** #456: the edited heights (whole diff from the seed map). */
+  heightEdits?: Snapshot["heightEdits"];
   /**
    * B5/B6: the battle layer (conquests, cooldowns, the live MP duel) and
    * TRADE: the offer book. Both must ride EVERY delta, not only full states —
@@ -232,6 +234,7 @@ export function buildPublish(track: Track, dirty: DirtyTiles, f: PublishFields):
     ...(f.dams !== undefined ? { dams: f.dams } : {}),
     ...(f.winner !== undefined ? { winner: f.winner } : {}),
     ...(f.clearedFields !== undefined ? { clearedFields: f.clearedFields } : {}),
+    ...(f.heightEdits !== undefined ? { heightEdits: f.heightEdits } : {}),
     ...(f.battle !== undefined ? { battle: f.battle } : {}),
     ...(f.offers !== undefined ? { offers: f.offers } : {}),
     ...(f.notice ? { notice: f.notice } : {}),

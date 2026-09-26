@@ -41,7 +41,7 @@ import { type CargoBag } from "../iso/purse";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, ROAD_TIERS, VICTORY, TUNING, moneyValueOf, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, ROAD_TIERS, VICTORY, TUNING, moneyValueOf, type Cargo, type Portrait , DEPOT_RUNG_GATE, LEVEL_GROUND_COST} from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -185,7 +185,10 @@ export type UiTool =
   // buttons.
   | "rail" | "platform" | "raildepot" | "railway"
   // R3 (#270): the hydro dam — a one-click placement on a river tile.
-  | "dam";
+  | "dam"
+  // #456: Level Ground — drag a rectangle (or tap one tile) to level it to
+  // the drag-start height; Shift/Alt tap raises/lowers one tile one level.
+  | "level";
 
 /** RAIL-05 (#182): the tools the railway feature flag owns — the set the
  *  campaign boot hides when the flag is down. */
@@ -2204,6 +2207,10 @@ export function createOriginalUi(
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${moneyMarkup(PLANT_COST)} · next to a town · R turns` },
+    // #456: Level Ground. The price is the per-tile-level row the commit
+    // charges (`LEVEL_GROUND_COST` × tile-levels moved) and the hover card
+    // quotes it live — the drag hint shows the exact total before the click.
+    { key: "level", label: "Level Ground", sub: `${moneyMarkup(LEVEL_GROUND_COST)} a tile-level · drag to flatten to where you started` },
     // ── RAIL-04 (#178): the railway's four buttons ────────────────────────
     // The prices are read from the same table the placement charges
     // (`RAIL_COSTS`) and the point from the same constant the scoreboard pays

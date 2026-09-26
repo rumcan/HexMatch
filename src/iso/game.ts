@@ -106,7 +106,15 @@ import {
 // AMB-2 (#391): the bird pool — cosmetic, seeded from the map seed, drawn at
 // the closest zoom through the renderer's shared above-structures hook.
 import { createBirds, paintBirds, scareBirds, tickBirds, BIRD_VIEW_PAD, type BirdState } from "./birds";
-import { LEVEL_PX, elevationActive, tileSurfaceHeight } from "./elevation";
+import { LEVEL_PX, MAX_LEVEL, elevationActive, invalidateDraper, invalidateElevation, tileSurfaceHeight } from "./elevation";
+// #456 LEVEL GROUND — the terraform rule: plan (pure), apply (the height
+// bytes), the wire diff of edited heights, and the refusal wording. The
+// planner's `levelCost` seam is for BUILD-1 (#460)'s "Slope: level it for $X"
+// card; this file owns the gesture, the charge and the rebuilds.
+import {
+  LEVEL_REFUSAL_TEXT, applyHeightEdits, applyLevelPlan, heightDiffWire, levelCost, planLevel, rectTiles,
+  type LevelPlan,
+} from "./level-ground";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { IsoRenderer, composeRouteOverlay, type World, type RouteOverlayPath } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
@@ -182,7 +190,7 @@ import {
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
   VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
-  BASE_PRICE, START_MONEY, moneyValueOf,
+  BASE_PRICE, START_MONEY, moneyValueOf, LEVEL_GROUND_COST,
   type Cargo, type Portrait,
 } from "./config";
 // ECON-1 (#421): the market — prices, slippage, demand events and the money
@@ -195,8 +203,11 @@ import {
 } from "./market";
 import {
   DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
-  depotTiles, rotateFacing, type DepotFacing,
+  depotSites, depotTiles, rotateFacing, type DepotFacing,
 } from "./depot";
+// #456: the flat-footprint test the rival's Level Ground planner reads — the
+// same "can a Depot stand here" question `planDepotPlacement` answers.
+import { footprintFlat } from "./slopes";
 import {
   depotRate, depotTransportTier, depotYield, distanceBandForPath, distanceFactorForPath,
   transportFactor,
@@ -500,7 +511,10 @@ export type Tool =
   | "rail" | "platform" | "raildepot" | "railway"
   // R3 (#270): the hydro dam — a one-click placement on a river tile, with
   // R rotating which bank the footprint leans onto.
-  | "dam";
+  | "dam"
+  // #456: Level Ground — a drag (rect) or tap (tile) that levels to the drag
+  // start's height; Shift/Alt tap raises/lowers one tile one level.
+  | "level";
 
 export interface PlayerState {
   /** Stable seat index — the wire, the save and the HUD all address a seat by
@@ -890,6 +904,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   });
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
   const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings });
+  // #456: the seed-derived heights, kept as the baseline the edited-heights
+  // diff is measured against (saves and the MP wire carry only the delta from
+  // THIS, the way map options travel — the terrain itself regenerates).
+  const seedHeights: Uint8Array | null = grid.height ? new Uint8Array(grid.height) : null;
   // F4 (#275): the Factory this map plays with. Shapes maps carry the long
   // `factory_2x4` span on the grid; every legacy map falls back to the
   // constant. Drawn from the grid (not re-derived) so the boot, the rules and
@@ -2517,6 +2535,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let hover: { tx: number; ty: number; ref: unknown } | null = null;
   let drag: { ax: number; ay: number; bx: number; by: number; xFirst: boolean } | null = null;
   let preview: DragPreview | null = null;
+  // #456: the Level Ground drag's plan — the same "one preview seam" the
+  // track tools have (`preview` is a DragPreview; this is its Level twin).
+  let levelPlan: LevelPlan | null = null;
 
   // ── helpers ────────────────────────────────────────────────────────────
   let lastToastText = "", lastToastAt = -1e9;
@@ -5624,6 +5645,146 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  // ══ #456 LEVEL GROUND ══════════════════════════════════════════════════
+  // The terraform tool's game half. The RULE (plan, refusals, ramps, the
+  // price formula) is pure in `level-ground.ts`; here are the four things
+  // only the game can do: pay, write through the map seam + invalidate every
+  // height cache, speak MP (guest intent in, height-edits diff out), and let
+  // the rival level a site its planner cannot use.
+
+  /** The bill for `plan.levels` tile-levels — the preview's $ number, spent. */
+  function levelBill(levels: number): Purse {
+    const bill: Purse = {};
+    for (const [k, v] of Object.entries(LEVEL_GROUND_COST)) bill[k as Cargo] = (v ?? 0) * levels;
+    return bill;
+  }
+
+  /**
+   * The ONE commit: pay `plan.money`, write the heights, rebuild exactly the
+   * touched caches (elevation lattice, draper, ground chunks, road/rail
+   * geometry, decals, terrain-GL chunk mesh), publish when hosting. Used by
+   * the local gesture AND by the host applying a guest's intent AND by the
+   * rival — one price, one rebuild contract, three callers.
+   */
+  function commitLevel(p: PlayerState, plan: LevelPlan): boolean {
+    if (!plan.changes.length) return false;
+    const bill = levelBill(plan.levels);
+    if (!canPayBuild(p, bill)) {
+      toast(`Not enough money — levelling costs $${plan.money}.`, "bad");
+      return false;
+    }
+    if (!spendBuild(p, bill)) return false;
+    const changed = applyLevelPlan(grid, plan);
+    invalidateElevation(grid);
+    invalidateDraper(grid);
+    renderer?.heightsInvalidated(changed);
+    terrainGl?.heightsChanged(grid, changed);
+    // The 1-second flash at the tile the gesture started from — the eye is
+    // already there, and the price it was charged is what it wants to see.
+    const [sx, sy] = plan.changes[0];
+    if (p.human) flashAt(sx, sy, `Levelled · $${plan.money}`, "good");
+    if (p.human) sfx.play("pave", { step: Math.min(6, plan.levels) });
+    rescoreNow();
+    if (isMp() && !isGuest()) publishNet(performance.now(), true);
+    return true;
+  }
+
+  /**
+   * The gesture's commit seam (the `requestTrackBuild` pattern): plan the
+   * rectangle toward `target` (the drag-start tile's height, or its ±1 for
+   * the Shift/Alt nudge), send a GUEST's levelling to the host as an intent,
+   * everyone else commits locally. Returns the plan either way so the caller
+   * can toast/flash the refusal the plan carried.
+   */
+  const requestLevelBuild = (
+    ax: number, ay: number, bx: number, by: number, target: number,
+  ): LevelPlan | null => {
+    if (phase !== "play") return null;
+    const plan = planLevel(grid, rectTiles(ax, ay, bx, by), { track }, target);
+    if (!plan.changes.length) {
+      if (plan.refused.length) {
+        toast(LEVEL_REFUSAL_TEXT[plan.refused[0][2]], "bad");
+        flashAt(plan.refused[0][0], plan.refused[0][1], LEVEL_REFUSAL_TEXT[plan.refused[0][2]]);
+      }
+      return plan;
+    }
+    if (isMp() && isGuest()) {
+      // Guest levelling is validated and priced by the host — `applyGuestIntent`
+      // re-plans the same rectangle and charges MY seat's purse there.
+      net?.sendIntent("build", { do: "level", ax, ay, bx, by, target });
+      return plan;
+    }
+    commitLevel(me, plan);
+    return plan;
+  };
+
+  /**
+   * GUEST: the host's edited heights ARE the world's. The wire carries the
+   * whole diff from the seed map, so this resets to the seed heights and
+   * applies it — and invalidates exactly the tiles whose byte moved (old vs
+   * new), so one changed tile rebuilds one chunk, not the island.
+   */
+  function applyHostHeights(flat: readonly number[] | undefined): void {
+    if (!grid.height || !seedHeights || !flat) return;
+    const before = Uint8Array.from(grid.height);
+    grid.height.set(seedHeights);
+    applyHeightEdits(grid, flat);
+    const changed: [number, number][] = [];
+    for (let i = 0; i < grid.height.length; i++) {
+      if (grid.height[i] !== before[i]) changed.push([i % MAP_W, Math.floor(i / MAP_W)]);
+    }
+    if (!changed.length) return;
+    invalidateElevation(grid);
+    invalidateDraper(grid);
+    renderer?.heightsInvalidated(changed);
+    terrainGl?.heightsChanged(grid, changed);
+  }
+
+  /**
+   * THE RIVAL HOOK (the ticket's "may use it"): when the rival's planner can
+   * find NO flat Depot lot (or no flat plant site), level the cheapest
+   * levelable lot one step toward flat — same rule, same price, its purse.
+   * Returns true when it levelled (the turn counts the action and syncs).
+   */
+  function rivalLevelStep(kind: "depot" | "plant"): boolean {
+    if (!grid.height || !elevationActive(grid)) return false;
+    const rival = players.find((pl) => !pl.human);
+    if (!rival || !canPayBuild(rival, levelBill(1))) return false;
+    const lots: [number, number][] = [];
+    if (kind === "depot") {
+      for (const ind of grid.industries) {
+        if (lockedIndustryIdsFor(eco, rival.id).has(ind.id)) continue;
+        for (const s of depotSites(grid, ind)) lots.push([s.tx, s.ty]);
+      }
+      // A flat lot already stands waiting — the planner will take it.
+      if (lots.some(([x, y]) => footprintFlat(grid, depotTiles(x, y)))) return false;
+    } else {
+      if (chooseAiPlantSpot(grid, track, eco, rival.id)) return false;
+      for (const t of grid.towns) {
+        for (let r = 1; r <= 2; r++) {
+          for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            const x = t.tx + dx, y = t.ty + dy;
+            if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+            if (plantRefusal(grid, track, eco, x, y) === "not-flat") lots.push([x, y]);
+          }
+        }
+      }
+    }
+    // The CHEAPEST legal lot: level its whole footprint toward the
+    // footprint's own median height — the ticket's simple case ("one tile is
+    // too high on a flat site") generalised to one plan, one price.
+    let best: LevelPlan | null = null;
+    for (const [x, y] of lots) {
+      const fp = kind === "depot" ? depotTiles(x, y) : plantFootprintTiles(x, y);
+      const hs = fp.map(([hx, hy]) => heightAt(grid, hx, hy));
+      const mid = [...hs].sort((a, b) => a - b)[Math.floor(hs.length / 2)];
+      const plan = planLevel(grid, fp, { track }, mid);
+      if (plan.changes.length && (!best || plan.money < best.money)) best = plan;
+    }
+    return best ? commitLevel(rival, best) : false;
+  }
+
   function commitTrackDrag(p: PlayerState, pv: DragPreview, kind: TrackKind, tier: RoadTierKey = "road") {
     // W2: every tile the drag lays is stamped with the builder's owner id,
     // so the committed road is exactly the tiles that join `p`'s network.
@@ -8585,6 +8746,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // placePlant rescores immediately; if that was the winning star the
           // curtain is already up, and nothing may be added after the ledger.
           if (winner !== null) return;
+        } else if (!spot && rivalLevelStep("plant")) {
+          // #456: every plant site is too bumpy to stand on — level one.
+          acted = true;
         }
       }
     }
@@ -8615,6 +8779,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (builtDepot) {
       acted = true;
       startSession();
+    } else if (rivalLevelStep("depot")) {
+      // #456: no flat Depot lot is left on the map — level the cheapest one
+      // toward flat instead (same rule, same price, its purse). Infrastructure
+      // is not a session: the turn goes on, and next turn's planner has a
+      // site again.
+      acted = true;
     }
     // 3. tune — the simulated session each new Depot would have been built
     //    with, on the record before the income clock next reads it.
@@ -8785,6 +8955,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // curtain is already up; do not let the rest of the same AI turn add
           // roads after the final ledger was photographed.
           if (winner !== null) return;
+        } else if (!spot && rivalLevelStep("plant")) {
+          // #456: every plant site is too bumpy to stand on — level one.
+          acted = true;
         }
       }
     }
@@ -8818,6 +8991,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!depotBuild()) break;
       acted = true;
     }
+    // #456: when the planner found no flat Depot lot (the loop broke out on
+    // its first try), level the cheapest lot toward flat — the rival's right
+    // to the same tool, at the same price, from its own purse.
+    if (rivalLevelStep("depot")) acted = true;
     // L4 (#218): however many Depots that turn raised, they are all tuned now —
     // the rival's simulated session result, at its difficulty's skill. No
     // board, no session, no waiting: the level is on the record before the
@@ -9020,6 +9197,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       winner: winner ? { id: winner.id, source: winningSource } : null,
       clearedFields: [...clearedFields],
       offers: offersToWire(offerBook, performance.now()),
+      // #456: the edited heights ride the full state as the diff from the
+      // seed map (absent = the unlevelled island, same as the save).
+      ...(seedHeights && grid.height
+        ? { heightEdits: heightDiffWire(grid.height, seedHeights, MAP_W, MAP_H) }
+        : {}),
     });
   }
 
@@ -9056,6 +9238,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // it to an array: an absent `dams` on a delta must mean "unchanged".
       dams: damsToWire(eco.dams) ?? [],
       clearedFields: [...clearedFields],
+      // #456: the edited heights ride EVERY delta whole (the clearedFields
+      // rule) — absent on an old host means "the seed heights stand". Pinned
+      // to an array so an absent field can only ever mean that.
+      heightEdits: seedHeights && grid.height
+        ? heightDiffWire(grid.height, seedHeights, MAP_W, MAP_H) : [],
       winner: winner ? { id: winner.id, source: winningSource } : null,
       offers: offersToWire(offerBook, now),
     } as any);
@@ -9276,6 +9463,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     track.road.set(applied.track.road);
     track.owner.set(applied.track.owner);
     track.upgraded.set(applied.track.upgraded);
+    // #456: the edited heights, in the snapshot's whole-diff form — reset to
+    // the seed map's heights, then apply what the host carries (an old host
+    // carries none, and the seed heights are exactly its world).
+    applyHostHeights(applied.heightEdits);
     eco.harvesters.length = 0;
     setClearedFields(applied.clearedFields);
     eco.harvesters.push(...applied.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
@@ -9362,6 +9553,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       setClearedFields(msg.clearedFields.filter((id) => Number.isInteger(id) && id >= 0));
       worldDirty = true;
     }
+    // #456: the edited heights ride every delta whole (the clearedFields
+    // rule). `applyHostHeights` is a no-op when the diff matches the world's
+    // current bytes, so the every-tick cost is one short array compare.
+    if (Array.isArray(msg.heightEdits)) applyHostHeights(msg.heightEdits);
     if (msg.harvesters) {
       eco.harvesters.length = 0;
       eco.harvesters.push(...msg.harvesters.map((h) => ({ ...h, facing: depotFacingOf(grid, h) })));
@@ -9489,6 +9684,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             { railAt: (x, y) => hasRail(rail.rail, x, y), gradeSeparated: true, railDeckAt: (x, y) => !!(rail.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) }, tier, p.money);
           if (pv.tiles.length === 0) toast(pv.why ? roadDragRefusalText(pv.why) : "Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind, tier);
+        }
+      } else if (what === "level") {
+        // #456: a guest's levelling. The host re-plans the same rectangle
+        // toward the same target with the SAME pure rule the guest previewed
+        // — refusals and ramps included — and charges the guest's purse for
+        // exactly what lands (`commitLevel` toasts through `intentEcho`, so
+        // "Not enough money" reaches the guest the way a build refusal does).
+        const ax = int(payload.ax), ay = int(payload.ay);
+        const bx = int(payload.bx), by = int(payload.by);
+        const target = typeof payload.target === "number" && Number.isInteger(payload.target) ? payload.target : null;
+        if (ax !== null && ay !== null && bx !== null && by !== null && target !== null) {
+          const plan = planLevel(grid, rectTiles(ax, ay, bx, by), { track }, target);
+          if (!plan.changes.length) {
+            echoed.push(plan.refused.length
+              ? LEVEL_REFUSAL_TEXT[plan.refused[0][2]]
+              : "Nothing to level there.");
+          } else commitLevel(p, plan);
         }
       } else if (what === "interchange") {
         const tx = int(payload.tx), ty = int(payload.ty);
@@ -10097,6 +10309,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // outline the vector overlay draws around the whole drag IS the preview.
       return { items, ghost: null };
     }
+    if (levelPlan && drag) {
+      // #456: the level drag paints the patch green, the automatic edge
+      // ramps as node marks (the ring they'll climb), and the refused tiles
+      // red — the road drag's own "blocked" convention, so a red tile in a
+      // level drag means exactly what it means in a road drag: this one
+      // stays as it is.
+      const items: OverlayItem[] = [];
+      const rx0 = Math.min(drag.ax, drag.bx), rx1 = Math.max(drag.ax, drag.bx);
+      const ry0 = Math.min(drag.ay, drag.by), ry1 = Math.max(drag.ay, drag.by);
+      for (const [x, y] of levelPlan.changes) {
+        const inRect = x >= rx0 && x <= rx1 && y >= ry0 && y <= ry1;
+        items.push({ sprite: inRect ? "highlight" : "node_mark", tx: x, ty: y });
+      }
+      for (const [x, y] of levelPlan.refused) items.push({ sprite: "highlight_bad", tx: x, ty: y });
+      return { items, ghost: null };
+    }
     if (pendingProtest && hover) {
       // The armed protest paints its own legality: green on a free public
       // road, red anywhere else — the same rule `placeProtest` enforces.
@@ -10240,6 +10468,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated
           ? ` · <i>${preview.why && tool !== "rail" ? roadDragRefusalText(preview.why) : "blocked"}</i>` : ""),
         `${vpTxt} · ${owed}`,
+      );
+    } else if (levelPlan && drag) {
+      // #456: the level drag's own numbers — what levels, what ramps, what
+      // refuses, and the price BEFORE the click (the acceptance's "preview
+      // shows the price first"). `levelPlan.money` is exactly what the
+      // commit charges; the ramp tiles ride the same per-level price.
+      const rx0 = Math.min(drag.ax, drag.bx), rx1 = Math.max(drag.ax, drag.bx);
+      const ry0 = Math.min(drag.ay, drag.by), ry1 = Math.max(drag.ay, drag.by);
+      let inside = 0, ramps = 0;
+      for (const [x, y] of levelPlan.changes) {
+        if (x >= rx0 && x <= rx1 && y >= ry0 && y <= ry1) inside++; else ramps++;
+      }
+      const n = levelPlan.refused.length;
+      const tilesTxt = `<b>${inside}</b> ${inside === 1 ? "tile" : "tiles"}`
+        + (ramps ? ` + ${ramps} edge ramp${ramps === 1 ? "" : "s"}` : "")
+        + (n ? ` · <i>${n} refused</i>` : "");
+      const units = levelPlan.levels;
+      costInfo = hintLine(tilesTxt,
+        `${units} tile-level${units === 1 ? "" : "s"} · ${costMarkup(levelBill(units))}`);
+    } else if (tool === "level") {
+      costInfo = hintLine(
+        "drag to flatten to where you started · Shift+click raises · Alt+click lowers",
+        `${costMarkup(levelBill(1))} a tile-level`,
       );
     } else if (tool === "interchange" && hover) {
       const plan = planInterchange(grid, track, me.i + 1, hover.tx, hover.ty, me.purse, me.money);
@@ -11029,7 +11280,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (secondFinger) {
         // The pinch/pan gesture outranks an armed road drag: drop it so the
         // two fingers steer the camera instead of the track preview.
-        if (drag) { drag = null; preview = null; dragLive = false; paintOverlayNow(); }
+        if (drag) { drag = null; preview = null; levelPlan = null; dragLive = false; paintOverlayNow(); }
         return;
       }
     }
@@ -11040,15 +11291,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // it is a no-op whenever the bird pool is parked (any zoom but the
     // closest, and every performance-mode frame).
     scareBirds(birds, p.tx + 0.5, p.ty + 0.5);
-    const isTrackTool = tool === "road" || tool === "dirt" || tool === "rail";
+    const isTrackTool = tool === "road" || tool === "dirt" || tool === "rail" || tool === "level";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
     // An armed protest owns the left button: it must never start a track drag.
     if (phase === "play" && isTrackTool && !pendingProtest && (!isMouse || e.button === 0) && e.isPrimary) {
       // RAIL-04: the rail drag arms anywhere — like a road drag, it has no
       // network-adjacency seed requirement (the tiles it lays are judged one by
-      // one, and the drag stops at the first tile that refuses).
+      // one, and the drag stops at the first tile that refuses). #456: a
+      // level drag arms anywhere too — its refusals are per-tile and painted.
       const canStart = tool === "rail"
+        || tool === "level"
         || canBuildOn(grid, tool as TrackKind, p.tx, p.ty)
         || ownFloor(p.tx, p.ty);
       if (canStart) {
@@ -11086,8 +11339,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** Drop the half-planned drag, if one is armed. */
   function dropDrag(): boolean {
-    if (!drag && !preview) return false;
-    drag = null; preview = null; dragLive = false; previewKey = "";
+    if (!drag && !preview && !levelPlan) return false;
+    drag = null; preview = null; levelPlan = null; dragLive = false; previewKey = "";
     return true;
   }
 
@@ -11136,6 +11389,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("Dams need a river map (rivers on) and the new economy loop.", "info");
       return;
     }
+    // #456: Level Ground edits `Grid.height`, and a map with no height bytes
+    // has nothing to edit — refuse the arm and say so, like the dam does.
+    if (t === "level" && !grid.height) {
+      toast("Level Ground needs an elevation map — start a game with elevation on.", "info");
+      return;
+    }
     // The opening Depot is owed: every click in this phase places it, so any
     // other build tool would light up and then silently build a Depot instead.
     if (phase === "setup-harvester" && t !== "harvester") {
@@ -11175,6 +11434,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // already dropped the drag when it arrived); fall through to the pan.
       if (g.pointers.length < 2) {
         const purseKeyEarly = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
+        if (tool === "level") {
+          // #456: the level preview is `planLevel`'s — the same function the
+          // commit re-runs, so the tiles painted and the price shown are one
+          // number. Re-plans only when the end tile (or the target's own
+          // height, if the ground moved under us) changed.
+          drag.bx = p.tx; drag.by = p.ty;
+          const levelKey = `level:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${heightAt(grid, drag.ax, drag.ay)}`;
+          if (!levelPlan || levelKey !== previewKey) {
+            levelPlan = planLevel(grid, rectTiles(drag.ax, drag.ay, p.tx, p.ty), { track },
+              heightAt(grid, drag.ax, drag.ay));
+            previewKey = levelKey;
+            changed = true;
+          }
+          if (changed) paintOverlayNow();
+          return;
+        }
         if (tool === "rail") {
           // RAIL-04: the rail preview is `railPreview`'s — the same function
           // the commit re-runs, so the tiles drawn and the price charged are one
@@ -11208,7 +11483,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (changed) paintOverlayNow();
         return;
       }
-      drag = null; preview = null; dragLive = false;
+      drag = null; preview = null; levelPlan = null; dragLive = false;
       changed = true;
     }
     if (changed) paintOverlayNow();
@@ -11252,17 +11527,40 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (drag && !dragLive) {
       const { ax, ay } = drag;
       const wasRail = tool === "rail";
-      drag = null; preview = null; dragLive = false;
+      const wasLevel = tool === "level";
+      drag = null; preview = null; levelPlan = null; dragLive = false; previewKey = "";
       if (!moved && phase === "play" && !pendingProtest) {
         // RAIL-04: one tile of rail under the finger, exactly like a one-tile
         // road — a tap is how a phone lays a single tile.
-        if (wasRail) requestRailBuild(ax, ay, ax, ay, true);
+        if (wasLevel) {
+          // #456: a TAP is one tile levelled to its own height (the edge
+          // ramps still run), and the modifier keys switch it to the ±1
+          // nudge — Shift raises, Alt lowers (Ctrl is right-click on macOS,
+          // so it stays out of the shortcuts).
+          const nudge = e.shiftKey ? 1 : (e.altKey ? -1 : 0);
+          const h0 = heightAt(grid, ax, ay);
+          if (nudge > 0 && h0 >= MAX_LEVEL) toast("Already at the top level.", "info");
+          else if (nudge < 0 && h0 <= 0) toast("Already at sea level.", "info");
+          else requestLevelBuild(ax, ay, ax, ay, h0 + nudge);
+        } else if (wasRail) requestRailBuild(ax, ay, ax, ay, true);
         else {
           const pv = requestTrackBuild(tool as TrackKind, ax, ay, ax, ay, true);
           if (!pv) refuseTrackAt(tool as TrackKind, ax, ay);
         }
       }
       downAt = null;
+      g = pointerUp(g, e.pointerId);
+      return;
+    }
+    if (drag && levelPlan) {
+      // #456: the level drag commits the plan it drew (or, on a guest, sends
+      // the same rectangle and target to the host as an intent). The target
+      // is the drag-START tile's height — "level to the height of the tile
+      // you started on" — and the plan re-runs over the same inputs.
+      const [ax, ay, bx, by] = [drag.ax, drag.ay, drag.bx, drag.by];
+      const plan = levelPlan;
+      drag = null; preview = null; levelPlan = null; downAt = null; previewKey = "";
+      if (plan.changes.length || plan.refused.length) requestLevelBuild(ax, ay, bx, by, heightAt(grid, ax, ay));
       g = pointerUp(g, e.pointerId);
       return;
     }
@@ -11310,11 +11608,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         requestTrackBuild(tool as TrackKind, drag.ax, drag.ay,
           track.diagonalRoads ? drag.bx : end[0], track.diagonalRoads ? drag.by : end[1], drag.xFirst);
       }
-      drag = null; preview = null; downAt = null;
+      drag = null; preview = null; levelPlan = null; downAt = null;
       g = pointerUp(g, e.pointerId);
       return;
     }
-    drag = null; preview = null;
+    drag = null; preview = null; levelPlan = null;
 
     // TK-001: a mouse click that places/builds is LEFT-button only. Middle
     // clicks (pan) and right clicks never fall through to the place path.
@@ -11419,7 +11717,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   canvases.overlay.addEventListener("pointerup", onUp);
   canvases.overlay.addEventListener("pointercancel", (e) => {
-    drag = null; preview = null; dragLive = false; downAt = null; g = pointerUp(g, e.pointerId);
+    drag = null; preview = null; levelPlan = null; dragLive = false; downAt = null; g = pointerUp(g, e.pointerId);
   });
   // The right button is a game control (it drops the held tool to the
   // pointer), so the browser's context menu must never fight it over the map.
@@ -11451,7 +11749,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // it is, RAIL-04's four included.
     const map: Record<string, Tool> = {
       "q": "select", "1": "dirt", "2": "road", "3": "harvester", "4": "plant",
-      "5": "demolish", "6": "rail", "7": "platform", "8": "dam",
+      "5": "demolish", "6": "rail", "7": "platform", "8": "dam", "9": "level",
     };
     if (!isTypingTarget(e) && map[e.key]) {
       if (map[e.key] === "select") cancelPlacement();
@@ -11792,6 +12090,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RAIL-04 (#178): the railway rides the save — a refresh must not take a
       // built line, its platforms or its train with it.
       rail: railToWire(rail),
+      // #456: the LEVELLED heights ride the save as the diff from the
+      // seed-derived map ("the way map options are" carried) — the terrain
+      // regenerates from `seed`, and these are the tiles the players changed.
+      ...(seedHeights && grid.height
+        ? { heightEdits: heightDiffWire(grid.height, seedHeights, MAP_W, MAP_H) }
+        : {}),
       // R3 (#270): the standing dams ride the save in the snapshot's own wire
       // shape (the map re-derives the river, so only the owner and the bank
       // the footprint leans on travel).
@@ -11862,6 +12166,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ★ ledger the restore rebuilds already knows about the platforms.
     if (d.rail) applyRailWire(rail, d.rail);
     else clearRail(rail);
+    // #456: the LEVELLED heights — the way map options ride. The terrain is
+    // seed-derived and already regenerated; apply the saved diff on top and
+    // drop the height caches (the terrain-GL input was mounted before this
+    // call, so its corner rows and mesh need the change, not a fresh mount).
+    if (grid.height && d.heightEdits?.length) {
+      const changed = applyHeightEdits(grid, d.heightEdits);
+      invalidateElevation(grid);
+      invalidateDraper(grid);
+      renderer?.heightsInvalidated(changed);
+      terrainGl?.heightsChanged(grid, changed);
+    }
     // R3 (#270): the dams come back the same way — one owner per site, the
     // bank from the wire row. `damsFromWire` validates row by row, so a stale
     // or foreign row is dropped rather than standing a phantom dam.
@@ -13994,9 +14309,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // MP-05: the same seam the pointer path uses — commits on solo/host,
       // sends an intent on a guest.
       requestTrackBuild(kind, ax, ay, bx, by, xFirst),
+    /**
+     * #456: the Level Ground twin of `dragBuild` — the same seam the pointer
+     * tap/drag uses (commits on solo/host, sends an intent on a guest).
+     * `target` is the height to level toward (default: the start tile's).
+     */
+    levelBuild: (ax: number, ay: number, bx: number, by: number, target?: number): LevelPlan | null =>
+      requestLevelBuild(ax, ay, bx, by, target ?? heightAt(grid, ax, ay)),
+    /** #456: the read-only twin — `levelCost`'s pure price/refusal answer. */
+    levelCostOf: (ax: number, ay: number, bx: number, by: number) =>
+      levelCost(grid, rectTiles(ax, ay, bx, by), { track }),
     /** D2: inspect the gesture and the actual overlay items (no second preview). */
-    get activeRoadDrag() { return drag && tool !== "rail" ? { ...drag, preview } : null; },
-    get activeDragOverlay() { return preview ? overlayFrame().items : []; },
+    get activeRoadDrag() { return drag && tool !== "rail" && tool !== "level" ? { ...drag, preview } : null; },
+    get activeDragOverlay() { return (preview || levelPlan) ? overlayFrame().items : []; },
     /**
      * W1/PP-15: the read-only half of `dragBuild` — the preview the pointer
      * drag WOULD compute, with nothing committed. The e2e corridor spec needs

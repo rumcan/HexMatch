@@ -23,6 +23,7 @@ import {
   buildTerrainMesh,
   buildVertexShade,
   hash2,
+  meshRefreshWindow,
   updateFieldsRegion,
   writeIndexRows,
   writeShadeRows,
@@ -686,23 +687,20 @@ class TerrainRendererImpl implements TerrainRenderer {
   invalidateTiles(tiles: ReadonlyArray<readonly [number, number]>): void {
     const map = this.map, fields = this.fields;
     if (!map || !fields || tiles.length === 0) return;
-    let x0 = map.w, y0 = map.h, x1 = -1, y1 = -1;
-    for (const [tx, ty] of tiles) {
-      if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) continue;
-      if (tx < x0) x0 = tx; if (tx > x1) x1 = tx;
-      if (ty < y0) y0 = ty; if (ty > y1) y1 = ty;
-    }
-    if (x1 < 0) return;
+    // #456: ONE window computation — the same pure helper the Level Ground
+    // test pins ("a levelled patch rebuilds only its own chunk").
+    const win = meshRefreshWindow(map, tiles);
+    if (!win) return;
+    const { x0, y0, x1, y1, j0, j1, ty0, ty1 } = win;
     // A change touching most of the map is cheaper to rebuild wholesale.
-    if ((x1 - x0 + 1) * (y1 - y0 + 1) > map.w * map.h * 0.4) { this.setMap(map); return; }
+    if (win.full) { this.setMap(map); return; }
 
     // 1. Fields: recompute the affected window only.
     const r = updateFieldsRegion(map, fields, x0, y0, x1, y1);
     // 2. Geometry: vertex rows around the tiles (shade needs ±1 neighbour).
-    const j0 = Math.max(0, y0 - 1), j1 = Math.min(map.h, y1 + 2);
     writeVertexRows(map, j0, j1, this.positions, this.uvTile);
     writeShadeRows(map, j0, j1, this.shade);
-    writeIndexRows(map, y0, y1, this.indices);
+    writeIndexRows(map, ty0, ty1, this.indices);
     // 3. Elevation/erosion field: flow accumulation is a global property of
     //    the height lattice, so an ELEVATION edit re-bakes the whole field. A
     //    tile edit that leaves the heights alone (the road-drag hot path)
@@ -717,7 +715,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.bufferSubData(gl.ARRAY_BUFFER, v0 * 8, this.positions, v0 * 2, (v1 - v0) * 2);
     gl.bindBuffer(gl.ARRAY_BUFFER, st.shadeBuf);
     gl.bufferSubData(gl.ARRAY_BUFFER, v0 * 4, this.shade, v0, v1 - v0);
-    const i0 = y0 * map.w * 6, i1 = (y1 + 1) * map.w * 6;
+    const i0 = ty0 * map.w * 6, i1 = (ty1 + 1) * map.w * 6;
     gl.bindVertexArray(st.vao);
     gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, i0 * 4, this.indices, i0, i1 - i0);
     gl.bindVertexArray(null);

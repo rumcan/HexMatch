@@ -1017,6 +1017,15 @@ export const moneyValueOf = (cost: Partial<Record<Cargo, number>>): number => {
 };
 
 /**
+ * #456 LEVEL GROUND — the unit bill for moving one tile by one level. The
+ * total charge is this purse × the plan's tile-levels (`spendBuild` prices a
+ * purse in money, so the charge lands on the seat's `money` like every build).
+ * `BUILD_COSTS_MONEY.levelGround` below is its money form, and `levelCost` in
+ * `level-ground.ts` quotes THAT — one price, three readers.
+ */
+export const LEVEL_GROUND_COST: Readonly<Partial<Record<Cargo, number>>> = { stone: 2 };
+
+/**
  * ECON-1: the ONE money price table. Every build in the game is priced here,
  * derived from `BUILD_COSTS` (the resource table that city upgrades and the
  * depot rungs still read) × `BASE_PRICE`, so early-game pacing stays close to
@@ -1052,6 +1061,14 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   highway: moneyValueOf({ wood: 4, stone: 10, ore: 24 }),
   ramp: moneyValueOf({ wood: 3, stone: 6, ore: 10 }),
   overpass: moneyValueOf({ wood: 6, stone: 12, ore: 8 }),
+  // #456 Level Ground: the price of ONE tile moved ONE level (patch tiles and
+  // the automatic edge ramps both). Priced as a small stone bill so the charge
+  // rides `canPayBuild`/`spendBuild` like every other build, and exposed as a
+  // money row so the drag hint, the tool card and BUILD-1's refusal card quote
+  // the same number the commit debits. $10 a tile-level: a 3×3 site levelled
+  // one step costs about as much as a paved tile, cheap enough to fix a hill
+  // and dear enough that terraforming a whole district is a plan, not a habit.
+  levelGround: moneyValueOf(LEVEL_GROUND_COST),
 };
 
 /** What a seat starts with ($). Buys the opening Depot and a few paved tiles. */
