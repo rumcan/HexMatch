@@ -93,7 +93,7 @@ import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
-  bootZoomFor, tapSlop, visibleTileRange,
+  bootZoomFor, tapSlop, HH, HW, visibleTileRange,
   type Camera, type GestureState,
 } from "./camera";
 // AMB-2 (#391): the bird pool — cosmetic, seeded from the map seed, drawn at
@@ -260,6 +260,7 @@ import { RES } from "../game/config";
 // rival's yield is docked by them once, in `rivalTuningYield`. One board, one
 // name; the sabotage overlay that used to travel the wire for it went too.
 import { createRivalPlant } from "./rival-plant";
+import type { GuideAnchor } from "./guide/types";
 import { createFloatLayer, type FloatLayer } from "./floats";
 import {
   createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester,
@@ -305,9 +306,11 @@ import { mountRadioWidget, radio, radioText, type RadioWidget } from "../audio/r
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
 import { createLoadingScreen, createRevealGate } from "./loading-screen";
-// TUT-01: the starting tour — one stepped card that walks the whole loop
-// (plant → depot → road → board → expand → points) before the first click.
-import { showTutorial, type TutorialHandle } from "./tutorial";
+// TUT-03 (#422): the in-game, voiced guide — a step engine that points at
+// the real controls and waits for the player to use them. It replaces the
+// eight-card tour (`src/iso/tutorial.ts`, removed): the Tutorial menu, the
+// spotlight and the narrator all live in src/iso/guide.
+import { createGuideHost, takeQueuedSection, type GuideHost } from "./guide";
 import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
 // MON-1 (#367): the RUN Bits store — THE panel the main menu raises too, so
 // the front door and a live match never quote a different price. `loadStore`
@@ -1408,9 +1411,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui?.chatLine({ role: "system", who: "", colour: "", text });
   }
 
-  /** TUT-01: the boot tour, while it is open. Held so `dispose` can take its
-   *  document keydown listener with it — the same reason `endingView` is. */
-  let tutorialView: TutorialHandle | null = null;
+  /** TUT-03 (#422): the guide — spotlight, caption strip, Tutorial menu. Held
+   *  so `dispose` can unmount the layer and drop its document listener, the
+   *  same reason `endingView` is. */
+  let guide: GuideHost | null = null;
   /** STORY-01: the contract reel (briefing or epilogue) while it stands — the
    *  same ownership rule: its document listeners die with the game. */
   let storyView: SceneHandle | null = null;
@@ -1753,6 +1757,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onQuestAction: (id, action) => questAction(id, action),
     // L5 (#219): …and the city upgrade's key. Same rule: it calls the game.
     onTownUpgrade: () => { buyTownUpgrade(); },
+    // TUT-03 (#422): the ❔ card's Tutorial door opens the same menu ☰ does.
+    onTutorial: () => guide?.openMenu(),
     /**
      * L11 (#226), restored by L17 (#245): the bank exchange. A guest's is a
      * REQUEST — the host owns the purse, validates the pair against the guest
@@ -1840,6 +1846,49 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   onBoardChange = () => ui.renderBoard();
   root.appendChild(ui.el);
 
+  // ── TUT-03 (#422): the guide ────────────────────────────────────────────
+  // The step engine, the spotlight and the Tutorial menu, over the live game.
+  // Two seams and nothing else:
+  //   · `mapRect` — the camera maths that turns a tile into a screen rect,
+  //     asked for once a frame while a step is standing (never polled);
+  //   · `assist` — the one thing a step may do FOR the player: open the sheet
+  //     its target lives in, or arm the tool it is about to use.
+  // Completions arrive as events from the placement paths below, so the guide
+  // advances on the same gesture the game already handles.
+  guide = createGuideHost({
+    root: ui.el,
+    ctx: { vpTarget: winTarget(), freeTrack: me.freeTrack },
+    live: true,
+    mapRect: (target) => {
+      if (target.kind === "screen") return null;
+      const box = target.kind === "area" ? target
+        // A UI or full-screen target has no place on the map; the spotlight
+        // finds it by its selector instead, and this seam answers "nothing".
+        : target.kind === "ui" ? null
+        : guideAnchorBox(target);
+      return box ? guideTileRect(box) : null;
+    },
+    assist: (a) => {
+      // Every assist goes through a door the player already has: the tool
+      // BUTTON (not the internal arming), the drawer tab, the phone sheet.
+      if (a.kind === "tool") {
+        ui.el.querySelector<HTMLButtonElement>(`[data-tool="${a.tool}"]`)?.click();
+      } else if (a.kind === "tab") ui.setTab(a.tab);
+      else if (a.kind === "sheet") ui.setMobileView(a.view);
+      else if (a.kind === "recenter") recenterCamera();
+    },
+  });
+  // A section picked on the FRONT menu's Tutorial door waits for this boot.
+  const queuedGuide = takeQueuedSection();
+  if (queuedGuide) guide.run(queuedGuide);
+  /**
+   * True while a guide step is standing. The only two things that still bow
+   * to it are the boot toasts (a save or loop announcement must not be
+   * shouted over a caption) and the tool-cancel key — the guide never blocks
+   * the game, the clock or the map.
+   */
+  const guideRunning = (): boolean => guide?.controller.view().running === true;
+
   // LOAD-01: the loading screen takes over once the boot prompts below are
   // done (or at once when nothing is asked) and lifts when every art load has
   // settled. The loads themselves start at boot regardless — the tour and the
@@ -1887,31 +1936,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ? `Rival: ${skill().label} · first to ${winTarget()}★ wins`
     : `${aiOpponent ? `Rival: ${skill().label} · ` : "Setting the table for two tycoons · "}${describeMatchSettings(settings)}`);
 
-  // TUT-01 + AI-02: the two one-shot boot prompts, in the order a new player
-  // meets them. The TOUR goes first — it is the "how does this game work" card,
-  // and the difficulty chooser that follows is a much smaller question that
-  // only makes sense once ★ and the rival exist as ideas. They are awaited in
-  // sequence so two overlays never stack on the same boot.
+  // TUT-03 (#422) + AI-02: the boot prompts, in the order a new player meets
+  // them. A CONTRACT's briefing stands first (STORY-01), then the difficulty
+  // chooser — a much smaller question than "how does this game work", which is
+  // why the guide no longer stands in this chain at all: it is a caption over
+  // a LIVE game, it starts itself once the boot is done, and nothing waits on
+  // it. The first game runs "Getting started" and nothing else; every other
+  // section is one click away in the Tutorial menu.
   //
-  // Both are gated the same way, and the gate is the same one AI-03 settled:
-  // a saved game means NO tour and NO difficulty prompt and NO fresh map — the
-  // save carries the pick, and refresh resumes exactly where it left off ("a
-  // refresh restarts the game" — not any more; Restart starts over). A
-  // networked seat skips them too: that match is already live and the host is
-  // waiting. (`bootSave` was read up top, before the map generated, so the seed
-  // the save carries is the seed the map was grown from.)
-  //
-  // The tour returns null once the player has pressed "Never show this again"
-  // (src/iso/tutorial.ts owns that key), which leaves the difficulty prompt as
-  // the only card on an ordinary boot.
+  // The chain is gated the same way AI-03 settled it: a saved game means no
+  // prompt and no fresh map — the save carries the pick, and refresh resumes
+  // exactly where it left off ("a refresh restarts the game" — not any more;
+  // Restart starts over). A networked seat skips it too: that match is already
+  // live and the host is waiting. (`bootSave` was read up top, before the map
+  // generated, so the seed the save carries is the seed the map was grown
+  // from.) A dismissed guide never restarts itself — `guide.runFirstGame()`
+  // reads the record (src/iso/guide/progress.ts) and stays quiet.
   if (!bootSave && isSolo()) {
     void (async () => {
       // STORY-01: a contract opens with its briefing — the rival's face, the
-      // bookkeeper's terms — before any onboarding card, because "who am I
-      // and who is that" precedes "what button is this". Skippable like every
-      // other reel; a skip is a choice, not a fault. Then the tour (if it is
-      // still welcome) and the difficulty prompt — which a contract does not
-      // ask, the chapter having already cast the rival at a fixed difficulty.
+      // bookkeeper's terms — before any onboarding, because "who am I and who
+      // is that" precedes "what button is this". Skippable like every other
+      // reel; a skip is a choice, not a fault. Then the guide (if it is still
+      // welcome) and the difficulty prompt — which a contract does not ask,
+      // the chapter having already cast the rival at a fixed difficulty.
       if (storyChapter) {
         ui.feed(`${storyChapter.kicker} — ${storyChapter.name}`, "Contract");
         ui.feed(storyChapter.objective, "Contract");
@@ -1925,26 +1973,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         storyView = null;
         if (disposed) return;
       }
-      // The two numbers the tour cannot read for itself: the ★ line belongs to
-      // the live difficulty, and the free dirt tiles are DATA on the player
-      // record. Passing them keeps the copy honest without importing game.ts
-      // into tutorial.ts (which would be a cycle). The tour itself is the NEW
-      // loop's (L15 #230 wrote it for the tuning session — its "the board is
-      // not up otherwise" would lie on the retired loop), so a `?loop=old`
-      // boot or a story contract stands no tour at all; the briefing and the
-      // difficulty prompt carry those players instead.
-      tutorialView = newLoop && !opts.firstRun ? showTutorial(ui.el, {
-        vpTarget: winTarget(),
-        freeTrack: me.freeTrack,
-        newLoop,
-      }) : null;
-      // Always yield, tour or no tour: the rest of this chain reads `disposed`
-      // (declared with the other boot state at the top of this function), and a
-      // microtask is the earliest point at which reading it is meaningful.
-      await (tutorialView ? tutorialView.promise : Promise.resolve());
-      tutorialView = null;
-      // The game may have been torn down while the card was up (a test's
-      // dispose, a rematch). The difficulty prompt belongs to a live boot only.
+      // TUT-03 (#422): the card tour is gone. The guide never BLOCKS the boot
+      // chain — it is a caption over a live game, so the difficulty prompt and
+      // the loading screen no longer wait on a modal a player has to read.
+      // The game may have been torn down while a reel was up (a test's
+      // dispose, a rematch); the rest of this chain belongs to a live boot.
       if (disposed) return;
       // AI-02: ask for the difficulty before the first click (only when no
       // previous choice exists — see skill-picker.ts). The overlay sits over
@@ -1953,12 +1986,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // selector the `onSkill` hook would otherwise own. A contract skips the
       // question: the chapter cast the rival, and re-asking would un-cast it.
       if (opts.firstRun && newLoop) {
-        // First game: Normal, no question asked; the coach takes over.
+        // First game: Normal, no question asked; the guide takes over — ONE
+        // section (Getting started), pointed at the real controls, voiced, and
+        // dismissible at any moment. It never blocks the clock: the player
+        // reads it while the island runs.
         setRivalSkill("normal");
         try { localStorage.setItem(SKILL_STORAGE_KEY, "normal"); } catch { /* private mode */ }
         const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
         if (sel) sel.value = "normal";
-        ui.setCoach(true);
+        guide?.runFirstGame();
       } else if (!storyChapter) {
         await promptForRivalSkill(ui.el, {
           onPick: (key) => {
@@ -2048,6 +2084,63 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ? tileSurfaceHeight(grid, Math.floor(tx), Math.floor(ty)) * LEVEL_PX
       : 0;
     return [x / d, (y - lift) / d];
+  };
+  // ── TUT-03 (#422): the guide's map maths ────────────────────────────────
+  // The camera is in device pixels; the DOM is in CSS pixels. Everything the
+  // guide points at on the map goes through here, once a frame, so a pan, a
+  // zoom or a raised tile moves the spotlight with the thing it names.
+  type GuideBox = { x0: number; y0: number; x1: number; y1: number };
+  const guideTileRect = (box: GuideBox): { x: number; y: number; w: number; h: number } | null => {
+    const d = dpr();
+    const host = ui.mapHost.getBoundingClientRect();
+    const hw = (HW * cam.zoom) / d;
+    const hh = (HH * cam.zoom) / d;
+    const [, ty] = tileToScreenAt(cam, box.x0, box.y0);     // the top vertex
+    const [, by] = tileToScreenAt(cam, box.x1, box.y1);     // the bottom tile
+    const [lx] = tileToScreenAt(cam, box.x0, box.y1);       // the left flank
+    const [rx] = tileToScreenAt(cam, box.x1, box.y0);       // the right flank
+    const left = (lx - hw) / d;
+    const top = (ty - hh) / d;
+    const right = (rx + hw) / d;
+    const bottom = (by + 2 * hh) / d;
+    if (right - left < 4 || bottom - top < 4) return null;
+    return { x: host.left + left, y: host.top + top, w: right - left, h: bottom - top };
+  };
+  /**
+   * A LIVE anchor: the town you build beside, the industry your first Depot
+   * serves, your own factory. Resolved against the game state every frame, so
+   * the guide points at the thing this seed actually grew.
+   */
+  const guideAnchorBox = (
+    t: { kind: "tile"; tx: number; ty: number } | { kind: "anchor"; what: GuideAnchor },
+  ): GuideBox | null => {
+    if (t.kind === "tile") return { x0: t.tx, y0: t.ty, x1: t.tx, y1: t.ty };
+    const mine = eco.factories.find((f) => f.owner === "you") ?? null;
+    const dist = (tx: number, ty: number): number => {
+      if (!mine) return 0;
+      return Math.abs(tx - mine.tx) + Math.abs(ty - mine.ty);
+    };
+    const nearest = <T extends { tx: number; ty: number }>(rows: readonly T[]): T | null =>
+      rows.reduce<T | null>((best, r) => (!best || dist(r.tx, r.ty) < dist(best.tx, best.ty) ? r : best), null);
+    if (t.what === "factory") {
+      return mine ? { x0: mine.tx, y0: mine.ty, x1: mine.tx, y1: mine.ty } : null;
+    }
+    if (t.what === "depot") {
+      const d = eco.harvesters.find((h) => h.owner === "you");
+      return d ? { x0: d.tx, y0: d.ty, x1: d.tx, y1: d.ty } : null;
+    }
+    if (t.what === "town") {
+      const town = nearest(grid.towns);
+      // A town is a cluster; frame its centre with a tile of margin so the
+      // spotlight reads as "here" rather than as one house.
+      return town ? { x0: town.tx - 1, y0: town.ty - 1, x1: town.tx + 1, y1: town.ty + 1 } : null;
+    }
+    if (t.what === "industry") {
+      const ind = nearest(grid.industries);
+      return ind ? { x0: ind.tx, y0: ind.ty, x1: ind.tx + ind.w - 1, y1: ind.ty + ind.h - 1 } : null;
+    }
+    const c = Math.floor(MAP_W / 2);
+    return { x0: c - 2, y0: c - 2, x1: c + 2, y1: c + 2 };
   };
   const floats: FloatLayer = createFloatLayer(ui.mapHost, tileScreenCss);
   const labels: LabelLayer = createLabelLayer(ui.mapHost, tileScreenCss);
@@ -3460,6 +3553,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     phase = "setup-harvester";
     syncWorld();
+    // TUT-03 (#422): the guide's "raise your factory" step ends here — the
+    // player DID it, which is the only thing that ever advances a step.
+    guide?.emit({ kind: "build", what: "factory" });
     // Owner (2026-09): the objective line says the next step — no toast repeats it.
     return true;
   }
@@ -3597,8 +3693,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(depot
         ? "Platform built at the industry — tune its yield, then run rail to your plant's platform."
         : "Plant platform built — run rail to it from an industry platform.", "good");
-      voiceCue("coach:platform", true);
     }
+    guide?.emit({ kind: "build", what: "platform" });
     if (depot && newLoop && p === me && !isGuest()) openTuningSession(depot);
     return !!built;
   }
@@ -3835,7 +3931,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human && res.built.length) {
       const end = res.built[res.built.length - 1];
       flashAt(end[0], end[1], "Rail laid", "good");
-      voiceCue("coach:rail", true);
+      guide?.emit({ kind: "build", what: "rail" });
     }
   }
 
@@ -4683,6 +4779,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       );
       ui.closeSessionBoard();
       rescoreNow();
+      guide?.emit({ kind: "build", what: "city" });
       return;
     }
     if (depot && r.outcome) {
@@ -4735,6 +4832,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         gained ? "good" : lost ? "bad" : "info",
       );
       ui.feed(`Depot tuned: yield ×${level}${paid}${rung}`, me.name);
+      guide?.emit({ kind: "game", name: "session-finished" });
     } else if (note) {
       toast(note, "info");
     }
@@ -4907,6 +5005,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     d.level = lvl + 1;
+    guide?.emit({ kind: "game", name: "depot-upgraded" });
     toast(`Depot upgraded to level ${d.level} — its yield cap is now ×${depotYieldCap(d.level)}. Tune it up!`, "good");
     ui.feed(`Depot upgraded to level ${d.level} (cap ×${depotYieldCap(d.level)})`, me.name);
     rescoreNow();
@@ -5171,6 +5270,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // intent on the host, and the host has no board of the guest's to open
     // (newLoop is refused in a room anyway — belt and braces).
     if (newLoop && p === me && !isGuest()) openTuningSession(h);
+    guide?.emit({ kind: "build", what: "depot" });
     return true;
   }
 
@@ -5263,6 +5363,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     syncWorld();
     rescoreNow();
+    // TUT-03 (#422): the guide's "join Depot to Factory" step ends on the
+    // drag, not on the button — the player laid the road themselves.
+    if (p.human && res.built.length) {
+      // Both tiers are a ROAD to the guide: the lesson is "join the Depot to
+      // the Factory", whichever tile the player reached for.
+      guide?.emit({ kind: "build", what: "road" });
+    }
     if (pv.free > 0) toast(`${pv.free} free setup tile${pv.free > 1 ? "s" : ""} used.`, "info");
   }
 
@@ -5914,6 +6021,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         battleScreen = null;
         const s = mapStake;
         mapStake = null;
+        // TUT-03 (#422): the guide's battle step ends when the fight does —
+        // win, lose or draw, the player has seen one.
+        guide?.emit({ kind: "game", name: "battle-finished" });
         if (!s) return;
         // `result.winner` is the SEAT (0 = the player, the contender list's
         // first entry). `settleMapBattle` speaks for the CHALLENGER (industry
@@ -7012,13 +7122,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // for the integer credit and retain any sub-unit remainder per
             // depot (one map serves both seats: depot ids are unique).
             earn(seat, { [cargoes[0][0]]: whole } as Purse);
-            // VO-1: the narrator's walk continues past the coach — income, then
-            // rail and platform, once, and only while a first game is listening.
+            // TUT-03 (#422): the guide's own walk — the first cargo that pays
+            // is the Logistics step's door, and it fires once per game.
             if (seat === me && !voicedIncome) {
               voicedIncome = true;
-              voiceCue("coach:first-income", true);
-              voiceCue("coach:rail", true);
-              voiceCue("coach:platform", true);
+              guide?.emit({ kind: "game", name: "first-income" });
             }
           }
         }
@@ -10707,7 +10815,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // scene or the ending must not also disarm a tool behind it. (The ☰
       // menu, Settings and a confirm question already swallow Esc in a capture
       // listener, so this never fires underneath one of them.)
-      if (tutorialView || storyView) return;
+      if (guideRunning() || storyView) return;
       if (endingView && !endingView.element.classList.contains("hidden")) return;
       if (drag || preview) { cancelPlacement(); toast("Drag cancelled.", "info"); return; }
       if (tool !== "select") { cancelPlacement(); toast("Tool cancelled.", "info"); return; }
@@ -11297,7 +11405,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       settingsView = view;
       void view.promise.then(() => { if (settingsView === view) settingsView = null; });
     });
-    menuItem("How to Play", "the reference card, eight rules", () => ui.showHelp());
+    // TUT-03 (#422): the Tutorial menu — the list of sections, each one
+    // replayable in the game you are standing in, with a ✓ on the ones you
+    // have finished. It replaces the card tour AND the "How to Play" door:
+    // the short text reference lives inside the menu now.
+    menuItem("Tutorial", "replay any section · reset your progress", () => guide?.openMenu());
     // B7 (#252): the battle page, one tap from the same menu
     menuItem("How battles work", "turns, mana, abilities, stakes", () => { showBattleHowto(); });
     // MON-1 (#367): the Store — the same panel the front door raises, over
@@ -11938,15 +12050,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     let lastFrameT = 0;
     const frame = (t: number) => {
       if (disposed) return;
-      if (loopToastPending && !loading.active && !storyView && !tutorialView) {
+      if (loopToastPending && !loading.active && !storyView && !guideRunning()) {
         loopToastPending = false;
         toast("The new loop is sandbox-only for now.", "info");
       }
-      if (oldSaveToastPending && !loading.active && !storyView && !tutorialView) {
+      if (oldSaveToastPending && !loading.active && !storyView && !guideRunning()) {
         oldSaveToastPending = false;
         toast(OLD_SAVE_TOAST, "info");
       }
-      if (saveToastPending && !loading.active && !storyView && !tutorialView) {
+      if (saveToastPending && !loading.active && !storyView && !guideRunning()) {
         saveToastPending = false;
         toast(OLD_SAVE_TOAST, "info");
       }
@@ -13441,8 +13553,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // TUT-01: the tour holds a document keydown listener, so it goes the same
     // way the ending ledger does — and destroying it settles its promise, which
     // is what stops the boot chain from awaiting a card that no longer exists.
-    tutorialView?.destroy();
-    tutorialView = null;
+    guide?.destroy();
+    guide = null;
     storyView?.destroy();
     storyView = null;
     floats.clear();
