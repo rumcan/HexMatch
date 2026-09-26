@@ -1,3 +1,4 @@
+import { TOWN_PARK_VARIANTS } from "../../src/iso/config";
 // ══════════════════════════════════════════════════════════════════════════
 // F4 (#275) — the shapes map option: towns merge blocks along a street for
 // the long #273 buildings, industries keep their depot/platform sites with
@@ -186,7 +187,9 @@ describe("F4 shapes option — towns gain the long buildings", () => {
       for (const b of village) {
         const [fw, fh] = footprintOf(b.sprite);
         if (b.tx === t.tx && b.ty === t.ty) continue;   // the church
-        expect([fw, fh], `${b.sprite} in a shapes village`).toEqual([1, 1]);
+        // no shape art in a village; single tiles are parks (owner, 2026-09-26)
+        expect(fw <= 2 && fh <= 2, `${b.sprite} in a shapes village`).toBe(true);
+        if (fw === 1 && fh === 1) expect(TOWN_PARK_VARIANTS as readonly string[]).toContain(b.sprite);
       }
       // tier 2 adds the ring without crashing on the merged layout
       const city = townBuildings(t, footprintOf, { shapes: true, tier: 2, grid });
