@@ -40,7 +40,8 @@ import { HW, HH, MAP_W, MAP_H, ZOOM_STEPS } from "../game/config";
 import type { Camera } from "./camera";
 import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
-  ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH,
+  ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH, roadWidth as widthOf, sidewalkOffset,
+  continuousRoadFigures, highwayDividerFigures,
   hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
   type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
@@ -52,6 +53,12 @@ import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
 import { FLAT_DRAPER, draperFor, elevationLiftPx, type Draper } from "./elevation";
+import { DIAGONAL_DIRS, DIR, roadDiagLinked, resolveDiagonalRoads, type Track } from "./track";
+
+// Same local DEV query as the simulation, evaluated once, not every frame.
+const DIAGONAL_ROADS = resolveDiagonalRoads();
+const EMPTY_ROADS = new Uint8Array(MAP_W * MAP_H);
+const diagonalsOn = (world: RoadWorld): boolean => import.meta.env.DEV && (world.diagonalRoads ?? DIAGONAL_ROADS);
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -345,6 +352,9 @@ export function tilesForRect(
  * costs or speed.
  */
 export interface RoadWorld {
+  /** Optional local renderer override; omitted by the live World, which uses
+   * the simulation's DEV ?diag=1 query. Never a saved or network field. */
+  diagonalRoads?: boolean;
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
   /** ROADS-2 (#393): the paved tier per tile (0 Road, 1 Street, 2 Highway). */
@@ -425,6 +435,24 @@ export function roadTilesIn(
 ): RoadTile[] {
   const out: RoadTile[] = [];
   const paved = (x: number, y: number) => isPaved(world, x, y);
+  // Read-only view for D1's link reader: use its endpoint/tier rules rather
+  // than guessing diagonal adjacency from PRESENT or duplicating storage.
+  // owner/upgraded are not consulted by roadDiagLinked; no arrays are copied.
+  const track: Track | undefined = diagonalsOn(world) ? {
+    road: world.roadBits ?? EMPTY_ROADS, dirt: world.dirtBits ?? EMPTY_ROADS,
+    tier: world.roadTiers, owner: EMPTY_ROADS, upgraded: EMPTY_ROADS,
+    revision: 0, diagonalRoads: true,
+  } : undefined;
+  const onWater = (x: number, y: number) => cellAt(world.grid?.terrain, x, y) === WATER;
+  const diagonalAt = (x: number, y: number): number => {
+    if (!track || onWater(x, y)) return 0; // Bridge decks remain axis-only.
+    let mask = 0;
+    for (const d of DIAGONAL_DIRS) {
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (!onWater(nx, ny) && roadDiagLinked(track, x, y, nx, ny)) mask |= d;
+    }
+    return mask;
+  };
   // Town level is visual building progression only. Town road bytes are
   // paved at every level, so the road material and its connection geometry do
   // not change when a town is upgraded. In particular, a level-0 town must
@@ -442,7 +470,7 @@ export function roadTilesIn(
         // ROADS-2 (#393): a Street is kerbed like a town street; a Highway
         // is wider with a solid centre line (see paintRoadTiles).
         const tier = world.roadTiers?.[ty * MAP_W + tx] ?? 0;
-        const tile = roadTile(tx, ty, road, "paved", paved, town || tier === 1);
+        const tile = roadTile(tx, ty, road, "paved", paved, tier === 1 || (tier === 0 && town), diagonalAt(tx, ty));
         if (tier) tile.tier = tier;
         out.push(tile);
         // ROADS-3 (#394): an overpass carries a road deck ACROSS the highway.
@@ -454,7 +482,7 @@ export function roadTilesIn(
           out.push(deck);
         }
       }
-      else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
+      else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town, diagonalAt(tx, ty)));
     }
   }
   return out;
@@ -512,6 +540,7 @@ function traceInto(ctx: Ctx2D, fig: RoadFigure, elev: Draper = FLAT_DRAPER): voi
   }
   ctx.moveTo(pts[0][0], pts[0][1]);
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  if (pts.length > 2 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) ctx.closePath();
 }
 
 /** Trace one figure into a path of its own. */
@@ -531,11 +560,16 @@ function trace(ctx: Ctx2D, fig: RoadFigure, elev: Draper = FLAT_DRAPER): void {
 function dashOffsetFor(fig: RoadFigure): number {
   const pts = fig.points;
   if (pts.length !== 3) return 0;
-  const [a, , c] = pts;
+  const [a, b, c] = pts;
   const du = Math.abs(c[0] - a[0]), dv = Math.abs(c[1] - a[1]);
   const cycle = DASH_ON + DASH_OFF;
-  // A straight run moves along exactly one ground axis.
-  if (du > 1e-9 && dv > 1e-9) return 0;
+  // Axial runs retain their original phase; diagonal straights use signed
+  // world distance along their unit tangent (bends still start at the port).
+  if (du > 1e-9 && dv > 1e-9) {
+    if (Math.abs(a[0] + c[0] - 2 * b[0]) > 1e-9 || Math.abs(a[1] + c[1] - 2 * b[1]) > 1e-9) return 0;
+    const along = (a[0] * (c[0] - a[0]) + a[1] * (c[1] - a[1])) / Math.hypot(du, dv);
+    return -(((along % cycle) + cycle) % cycle);
+  }
   const along = du > dv ? a[0] : a[1];
   return -(((along % cycle) + cycle) % cycle);
 }
@@ -630,7 +664,7 @@ function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPE
   const paths: RoadFigure[] = [];
   const joints: RoadFigure[] = [];
   for (const t of streets) {
-    for (const path of sidewalkPaths(t.tx, t.ty, t.mask)) {
+    for (const path of sidewalkPaths(t.tx, t.ty, t.mask, t.diagonal, sidewalkOffset(t))) {
       paths.push(path);
       for (const joint of sidewalkJoints(path)) joints.push(joint);
     }
@@ -682,7 +716,7 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
     // from there with the same screen-pixel offsets, so a lamp stands on the
     // pavement however the street slopes, and still rises straight up the
     // screen by exactly LAMP_POST_H pixels.
-    for (const spot of streetLampSpots(t.tx, t.ty, t.mask)) {
+    for (const spot of streetLampSpots(t.tx, t.ty, t.mask, t.diagonal, sidewalkOffset(t))) {
       const [u, v] = elev.point(spot[0], spot[1]);
       spots.push([u, v]);
     }
@@ -780,15 +814,6 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * `townGround` is the block paving to lay down first, in the same ground
  * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
  */
-/** ROADS-2 (#393): a tile's carriageway width — Street narrower, Highway wider. */
-const widthOf = (t: RoadTile): number =>
-  t.material !== "paved" ? ROAD_WIDTH[t.material]
-    : t.deck ? ROAD_WIDTH.paved
-      : (t.tier === 2 || t.tier === 4 || t.tier === 5) ? ROAD_WIDTH.paved * 1.6
-        : t.tier === 3 ? ROAD_WIDTH.paved * 1.2
-          : t.tier === 1 ? ROAD_WIDTH.paved * 0.8
-            : ROAD_WIDTH.paved;
-
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
   /**
@@ -806,6 +831,9 @@ export function paintRoadTiles(
    * tilts with the hill instead of floating over it or sinking into it.
    */
   elev: Draper = FLAT_DRAPER,
+  /** Use the same surface batching throughout every gutter, even when this
+   * particular chunk contains only axis roads. */
+  diagonalRoads = DIAGONAL_ROADS,
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -826,16 +854,42 @@ export function paintRoadTiles(
   //    streets; only the blocks between them stay grass.
   if (townFill) paintTownGround(ctx, townGround, townFill, elev);
 
+  // D3: join homogeneous legs across shared ports and stroke each material /
+  // width once. Translucent shoulders/camber must not double-darken diagonal
+  // tile corners. Stable group order also makes gutter rasters agree.
+  const angled = diagonalRoads || tiles.some((t) => t.diagonal);
+  let surfaces = tiles.map((tile) => ({ tile, figures: tile.figures }));
+  if (angled) {
+    const groups = new Map<string, typeof surfaces[number]>();
+    for (const tile of tiles) {
+      const key = `${tile.material}:${widthOf(tile)}:${!!tile.deck}`;
+      const group = groups.get(key) ?? { tile, figures: [] };
+      group.figures.push(...tile.figures);
+      groups.set(key, group);
+    }
+    surfaces = [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, g]) =>
+      ({ tile: g.tile, figures: continuousRoadFigures(g.figures) }));
+  }
+  const strokeSurface = (figures: RoadFigure[]) => {
+    if (!angled) {
+      for (const f of figures) { trace(ctx, f, elev); ctx.stroke(); }
+      return;
+    }
+    ctx.beginPath();
+    for (const f of figures) traceInto(ctx, f, elev);
+    ctx.stroke();
+  };
+
   // 1. Shoulders — ground disturbed at the road's edge, NOT an outline. Drawn
   //    semi-transparent so it darkens whatever it happens to lie on (grass, a
   //    dry patch, sand) rather than ringing the road in one flat colour,
   //    which is how the opaque version of this read: a thick cartoon border
   //    around every road, which is the one thing the art direction rules out.
   ctx.globalAlpha = SHOULDER_ALPHA;
-  for (const t of tiles) {
+  for (const { tile: t, figures } of surfaces) {
     ctx.strokeStyle = style[t.material].shoulder;
     ctx.lineWidth = widthOf(t) + SHOULDER_WIDTH * 2;
-    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
+    strokeSurface(figures);
   }
   ctx.globalAlpha = 1;
 
@@ -852,10 +906,10 @@ export function paintRoadTiles(
   paintSidewalks(ctx, tiles, elev);
 
   // 2. The opaque material core.
-  for (const t of tiles) {
+  for (const { tile: t, figures } of surfaces) {
     ctx.strokeStyle = fills[t.material];
     ctx.lineWidth = widthOf(t);
-    for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
+    strokeSurface(figures);
   }
 
   // 2b. Shade the road ACROSS its width: dark at both edges, lifting towards
@@ -878,19 +932,14 @@ export function paintRoadTiles(
   //     tile's band begins, so the shading runs continuously down the sides
   //     and appears nowhere across the road.
   ctx.lineCap = "butt";
-  for (const t of tiles) {
+  for (const { tile: t, figures } of surfaces) {
     const w = widthOf(t);
     for (const [frac, colour, alpha] of EDGE_SHADE) {
       ctx.globalAlpha = alpha;
       ctx.strokeStyle = colour;
       ctx.lineWidth = w * frac;
-      for (const f of t.figures) {
-        // A pad (a lone road tile) is a zero-length segment: with butt caps
-        // it strokes nothing at all, so it keeps its plain core rather than
-        // gaining a cross-road arc it has no sides to justify.
-        if (f.points.length < 2) continue;
-        trace(ctx, f, elev); ctx.stroke();
-      }
+      // Pads have no sides; butt-capped zero-length shade strokes are empty.
+      strokeSurface(figures.filter((f) => f.points.length > 1));
     }
   }
   ctx.globalAlpha = 1;
@@ -932,17 +981,8 @@ export function paintRoadTiles(
   ctx.lineCap = "butt";
   for (const t of tiles) {
     if (t.material !== "paved") continue;
-    if (t.tier === 1) continue;                 // ROADS-2: a Street has no centre line
-    for (const f of paintFigures(t.tx, t.ty, t.mask)) {
-      // ROADS-2 (#393): a Highway's centre is a solid divider, twice as heavy.
-      if (t.tier === 2) {
-        ctx.setLineDash([]);
-        ctx.lineWidth = PAINT_WIDTH * 2.2;
-        trace(ctx, f, elev);
-        ctx.stroke();
-        ctx.lineWidth = PAINT_WIDTH;
-        continue;
-      }
+    if (t.tier === 1 || (!t.deck && [2, 4, 5].includes(t.tier ?? 0))) continue;
+    for (const f of paintFigures(t.tx, t.ty, t.mask, t.diagonal)) {
       ctx.setLineDash([DASH_ON, DASH_OFF]);
       // The dash phase stays anchored on the FLAT figure: the lattice it is
       // pinned to is a property of the world's tile grid, and a slope changes a
@@ -953,6 +993,13 @@ export function paintRoadTiles(
     }
   }
   ctx.setLineDash([]);
+
+  // One solid stroke per continuous Highway run, including its overpass
+  // highway lanes. Junction mouths remain trimmed; the road decks stay axis-only.
+  ctx.lineWidth = PAINT_WIDTH * 2.2;
+  ctx.lineDashOffset = 0;
+  for (const f of highwayDividerFigures(tiles)) { trace(ctx, f, elev); ctx.stroke(); }
+  ctx.lineWidth = PAINT_WIDTH;
 
   // 4b. ROADS-3 (#394) Overpass decks: a shadow on the highway, the deck,
   //     then railings — over the highway's markings.
@@ -1136,7 +1183,7 @@ export class RoadCache {
     cx: number, cy: number, zoom: number, world: RoadWorld, style: RoadStyle,
     makeSurface: (w: number, h: number) => Surface | null,
   ): CacheEntry | null {
-    const key = `${this.styleVersion}:${zoom}:${cx},${cy}`;
+    const key = `${this.styleVersion}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${cx},${cy}`;
     const hit = this.entries.get(key);
     if (hit) {
       this.hits++;
@@ -1191,7 +1238,7 @@ export class RoadCache {
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev);
+      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev, diagonalsOn(world));
       // …and the track OVER the finished road: that is what a level crossing
       // is, and why the road pass above has to stay exactly as it was.
       paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks, elev);
