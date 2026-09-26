@@ -7,6 +7,9 @@
  *  - per-vertex slope lighting from the height lattice (buildVertexShade)
  *  - the signed distance fields (buildFields) that the fragment shader uses
  *    for every soft transition (beach, dither, depth, foam, rock edges).
+ *  - the elevation/erosion field (buildErosionField) that drives the material
+ *    weights: slope, curvature (ridge vs hollow), flow accumulation and a few
+ *    steps of thermal erosion, all baked from the height lattice alone.
  */
 
 export const TERRAIN_GRASS = 0;
@@ -278,6 +281,180 @@ export function signedDistance(w: number, h: number, mask: Uint8Array): Float32A
   const out = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) out[i] = mask[i] !== 0 ? -(dOut[i] - 0.5) : dIn[i] - 0.5;
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Elevation / erosion field                                           */
+/* ------------------------------------------------------------------ */
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+const clamp1 = (v: number): number => (v < -1 ? -1 : v > 1 ? 1 : v);
+
+/**
+ * Per-corner terrain-shaping data: what the ground is MADE OF, baked from the
+ * height lattice instead of from cloud noise. The fragment shader reads it as
+ * `uGround` (RGBA8, (w+1)*(h+1), LINEAR) and derives every material weight
+ * from it — see `shaders.ts` section 3.
+ *
+ *   R  slope        0 flat → 1 steep (1.5 levels per lattice step saturates)
+ *   G  curvature   −1 ridge (above its neighbourhood) → +1 hollow (stored 0.5+v/2)
+ *   B  flow         0 none → 1 a main drainage line (accumulation, relief-gated)
+ *   A  erosion     −1 sediment gained (hollow) → +1 material lost (bare crest)
+ *
+ * Everything comes from the heights alone, so the same map always bakes the
+ * same field. The seed only enters the D8 routing as a deterministic tie-break
+ * between two equally-steep neighbours (no Math.random, no time).
+ */
+export interface ErosionField {
+  /** Corner lattice size: (map.w + 1) × (map.h + 1). */
+  w: number;
+  h: number;
+  slope: Float32Array;
+  curv: Float32Array;
+  flow: Float32Array;
+  ero: Float32Array;
+  /** RGBA8, w*h*4 — the packed field, uploaded as `uGround`. */
+  rgba: Uint8Array;
+}
+
+/**
+ * Bakes the elevation/erosion field. 145² = 21k corners: two local stencils, a
+ * counting-sort D8 flow accumulation and 3 relaxation steps of thermal
+ * erosion, ~5 ms for a 144² map. Deterministic from the map alone.
+ */
+export function buildErosionField(map: TerrainMapInput): ErosionField {
+  const w = map.w + 1;
+  const h = map.h + 1;
+  const n = w * h;
+  const slope = new Float32Array(n);
+  const curv = new Float32Array(n);
+  const flow = new Float32Array(n);
+  const ero = new Float32Array(n);
+  const rgba = new Uint8Array(n * 4);
+  const hgt = new Uint8Array(n);
+  if (map.heights) hgt.set(map.heights.length > n ? map.heights.subarray(0, n) : map.heights);
+
+  // --- slope + curvature (same central differences as writeShadeRows) ------
+  // Slope is in levels per lattice step (a 1-level step per tile = 0.5, the
+  // steepest the generator makes = 1) normalised so 1.5 saturates at 1.
+  // Curvature is the centre minus the 8-neighbour mean: + hollow, − ridge.
+  for (let j = 0; j < h; j++) {
+    const jm = (j > 0 ? j - 1 : 0) * w;
+    const jc = j * w;
+    const jp = (j < h - 1 ? j + 1 : h - 1) * w;
+    for (let i = 0; i < w; i++) {
+      const v = jc + i;
+      const im = i > 0 ? i - 1 : 0;
+      const ip = i < w - 1 ? i + 1 : w - 1;
+      const c = hgt[v];
+      const gi = (hgt[jc + ip] - hgt[jc + im]) * 0.5;
+      const gj = (hgt[jp + i] - hgt[jm + i]) * 0.5;
+      slope[v] = Math.min(1, Math.sqrt(gi * gi + gj * gj) * (1 / 1.5));
+      const sum = hgt[jm + im] + hgt[jm + i] + hgt[jm + ip]
+                + hgt[jc + im] + hgt[jc + ip]
+                + hgt[jp + im] + hgt[jp + i] + hgt[jp + ip];
+      curv[v] = clamp1(sum * 0.125 - c); // + hollow, − ridge
+    }
+  }
+
+  // --- flow accumulation: one drop of rain per cell, D8 steepest descent ---
+  const acc = new Float32Array(n).fill(1);
+  const recv = new Int32Array(n).fill(-1);
+  const seed = map.seed >>> 0;
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const v = j * w + i;
+      const c = hgt[v];
+      // 8 neighbours; strict drop only, ties broken by a seed hash so the
+      // same map always drains the same way (deterministic, no RNG)
+      let best = -1, bestDrop = 0, bestTie = -1;
+      for (let dj = -1; dj <= 1; dj++) {
+        const nj = j + dj;
+        if (nj < 0 || nj >= h) continue;
+        const row = nj * w;
+        for (let di = -1; di <= 1; di++) {
+          if (di === 0 && dj === 0) continue;
+          const ni = i + di;
+          if (ni < 0 || ni >= w) continue;
+          const nv = row + ni;
+          const drop = c - hgt[nv];
+          if (drop <= 0) continue;
+          if (drop > bestDrop) { bestDrop = drop; best = nv; bestTie = -1; }
+          else if (drop === bestDrop) {
+            const tie = hash2(seed, ni, nj);
+            if (tie > bestTie) { bestTie = tie; best = nv; }
+          }
+        }
+      }
+      recv[v] = best;
+    }
+  }
+  // Counting sort by height, high → low, so a cell's donors are all in before
+  // it hands its own accumulated flow on. Cells with no downhill neighbour
+  // (flat ground, hollows) keep their single drop.
+  const cursor = new Int32Array(256);
+  for (let v = 0; v < n; v++) cursor[hgt[v]]++;
+  let run = 0;
+  for (let lvl = 255; lvl >= 0; lvl--) { const c = cursor[lvl]; cursor[lvl] = run; run += c; }
+  const order = new Int32Array(n);
+  for (let v = 0; v < n; v++) order[cursor[hgt[v]]++] = v;
+  for (let k = 0; k < n; k++) {
+    const v = order[k];
+    const r = recv[v];
+    if (r >= 0) acc[r] += acc[v];
+  }
+  let maxAcc = 1;
+  for (let v = 0; v < n; v++) if (acc[v] > maxAcc) maxAcc = acc[v];
+  const invAcc = maxAcc > 1 ? 1 / Math.log1p(maxAcc) : 0;
+  for (let v = 0; v < n; v++) {
+    // Relief gate: a cell with no gradient has no drainage line, however much
+    // rain passed through it — that is what keeps a flat map uniform.
+    flow[v] = invAcc === 0 ? 0 : Math.log1p(acc[v]) * invAcc * Math.min(1, slope[v] * 8);
+  }
+
+  // --- thermal erosion: 3 relaxation steps on a scratch copy ---------------
+  // Material above the talus angle of a cell's neighbourhood slides into the
+  // hollows. The net loss/gain is what the shader reads as bare, exposed
+  // ground (loss, crests) versus sediment-fed, lusher ground (gain, hollows).
+  const STEPS = 3;
+  let cur = Float32Array.from(hgt);
+  let next = new Float32Array(n);
+  const gain = new Float32Array(n);
+  for (let step = 0; step < STEPS; step++) {
+    for (let j = 0; j < h; j++) {
+      const jm = (j > 0 ? j - 1 : 0) * w;
+      const jc = j * w;
+      const jp = (j < h - 1 ? j + 1 : h - 1) * w;
+      for (let i = 0; i < w; i++) {
+        const v = jc + i;
+        const im = i > 0 ? i - 1 : 0;
+        const ip = i < w - 1 ? i + 1 : w - 1;
+        const sum = cur[jm + im] + cur[jm + i] + cur[jm + ip]
+                  + cur[jc + im] + cur[jc + ip]
+                  + cur[jp + im] + cur[jp + i] + cur[jp + ip];
+        // relax a quarter of the way to the neighbourhood mean, capped at
+        // half a level per step (stable on a 1-level-per-step ramp)
+        const d = Math.max(-0.5, Math.min(0.5, (sum * 0.125 - cur[v]) * 0.25));
+        next[v] = cur[v] + d;
+        gain[v] -= d; // + material lost (ridge), − material gained (hollow)
+      }
+    }
+    const swap = cur;
+    cur = next;
+    next = swap;
+  }
+  let maxEro = 0;
+  for (let v = 0; v < n; v++) { const a = Math.abs(gain[v]); if (a > maxEro) maxEro = a; }
+  const invEro = maxEro > 1e-6 ? 1 / maxEro : 0;
+  for (let v = 0; v < n; v++) ero[v] = clamp1(gain[v] * invEro);
+
+  for (let v = 0; v < n; v++) {
+    rgba[v * 4] = Math.round(clamp01(slope[v]) * 255);
+    rgba[v * 4 + 1] = Math.round(clamp01(curv[v] * 0.5 + 0.5) * 255);
+    rgba[v * 4 + 2] = Math.round(clamp01(flow[v]) * 255);
+    rgba[v * 4 + 3] = Math.round(clamp01(ero[v] * 0.5 + 0.5) * 255);
+  }
+  return { w, h, slope, curv, flow, ero, rgba };
 }
 
 export interface TerrainFields {
