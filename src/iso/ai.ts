@@ -66,7 +66,7 @@ import {
   PRESENT, ROAD_DE, ROAD_DS, DIAGONAL_DIRS, roadDiagonalRefusal, roadClassesConnect, buildRoadDiagonal, overpassJump,
   DIRS, DIR, tIdx, inMapT, hasTrack, canBuildOn, canAfford, tileCost, addCost,
   buildTile, trackOpenTo, tileAlreadyCarries, freeAllowanceCovers, playerNetwork,
-  mergedPresent,
+  mergedPresent, mergedBitsAt,
   plantFootprintTiles, PUBLIC_OWNER, NE, SE, SW, NW,
   type Track, type TrackKind, type Purse,
 } from "./track";
@@ -187,6 +187,42 @@ export function stepCost(
     const held = track.owner[i];
     if (held !== 0 && held !== owner && held !== PUBLIC_OWNER) return IMPASSABLE;
   }
+  // #444: never build a new road tile adjacent-parallel to an existing road.
+  // If the step from `from` to (tx,ty) is along x (east-west) and there is an
+  // existing road immediately north/south that also runs east-west, the new
+  // tile would be a parallel strip one tile away — the bug that shows as a
+  // double-width road leaving a town. We forbid it outright for fresh tiles;
+  // a tile that already carries track is reuse, not a new parallel.
+  if (from && !tileAlreadyCarries(track, kind, tx, ty)) {
+    const dx = tx - from[0], dy = ty - from[1];
+    const isDiag = Math.abs(dx) === 1 && Math.abs(dy) === 1;
+    if (!isDiag) {
+      const stepAxis = dx !== 0 ? "x" : "y";
+      for (const d of DIRS) {
+        const nx = tx + DIR[d][0], ny = ty + DIR[d][1];
+        if (nx === from[0] && ny === from[1]) continue;
+        if (!inMapT(nx, ny)) continue;
+        if (!mergedPresent(track, nx, ny)) continue;
+        const nb = mergedBitsAt(track, nx, ny);
+        const hasX = (nb & (SE | NW)) !== 0;
+        const hasY = (nb & (NE | SW)) !== 0;
+        const parallel = (stepAxis === "x" && hasX) || (stepAxis === "y" && hasY);
+        if (parallel) return IMPASSABLE;
+      }
+    } else if (track.diagonalRoads) {
+      // Diagonal step (D5): forbid if 4-adjacent to any existing road (axis or
+      // diagonal) — a diagonal laid next to an axis road is the other half of
+      // the double-width bug. Reuse (already carries) is allowed.
+      for (const d of DIRS) {
+        const nx = tx + DIR[d][0], ny = ty + DIR[d][1];
+        if (nx === from[0] && ny === from[1]) continue;
+        if (!inMapT(nx, ny)) continue;
+        if (!mergedPresent(track, nx, ny)) continue;
+        return IMPASSABLE;
+      }
+    }
+  }
+
   const terrain = grid.terrain[i];
   let c = terrain === ROUGH ? COST_ROUGH : COST_FLAT;
   // reuse our own trunk lines rather than building parallel spurs
