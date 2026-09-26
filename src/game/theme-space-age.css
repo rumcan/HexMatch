@@ -625,6 +625,33 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .ui-root[data-phone="1"] .guide-strip { bottom: 62px; width: calc(100vw - 16px); }
 /* the target is low on screen: the strip moves up so it never covers it */
 .guide-top .guide-strip { top: 64px; bottom: auto; }
+/* ── tool groups: Road Ways / Rail Ways drawers beside the rail ───────── */
+.tool-group { position: static; }
+.group-btn { position: relative; }
+.group-caret { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  font-family: var(--display); font-weight: 500; font-size: 14px; color: var(--sa-bone-dim); }
+.group-btn[aria-expanded="true"] { background: var(--sa-panel-2) !important; color: var(--sa-bone); }
+.group-btn[aria-expanded="true"] .group-caret { color: var(--sa-orange); }
+.ui-root:not([data-phone="1"]) .tool-flyout {
+  display: none; position: fixed; z-index: 40; width: 96px;
+  background: var(--sa-panel); border: 1px solid var(--sa-ink); border-left: 3px solid var(--sa-orange);
+  border-radius: 0; box-shadow: none;
+}
+.ui-root:not([data-phone="1"]) .tool-flyout.open { display: flex; flex-direction: column; }
+.ui-root:not([data-phone="1"]) .tool-flyout .build-btn {
+  flex-direction: column; justify-content: center; gap: 3px; min-height: 58px; padding: 6px 2px;
+  text-align: center; color: var(--sa-bone-dim);
+}
+.ui-root:not([data-phone="1"]) .tool-flyout .build-btn.active { background: var(--sa-orange) !important; color: var(--sa-on-orange); }
+.ui-root:not([data-phone="1"]) .tool-flyout .build-btn.active .bb-mid b { color: var(--sa-on-orange); }
+.tool-flyout-head {
+  font-family: var(--display); font-weight: 500; font-size: 10px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--sa-orange); padding: 6px 6px 4px;
+  border-bottom: 1px solid var(--sa-line);
+}
+/* phone: the Build sheet lists every tool flat - no drawers */
+.ui-root[data-phone="1"] .group-btn, .ui-root[data-phone="1"] .tool-flyout-head { display: none; }
+.ui-root[data-phone="1"] .tool-flyout { display: contents; }
 /* one voice at a time: the objective banner and hint hide while the guide runs */
 .guide-on #iso-objective, .guide-on .iso-hint { display: none !important; }
 .guide-head { display: flex; align-items: center; gap: 8px; }
