@@ -740,19 +740,35 @@ describe("L8 the live HUD on the new loop", () => {
 });
 
 
-// run.world feedback (2026-09): the first game is coached one step at a time.
-describe("first-run coach", () => {
-  it("skips the tour and coaches step 1", async () => {
+// TUT-03 (#422): the first game is GUIDED one step at a time — the coach
+// banner and the eight-card tour are both gone.
+describe("first-run guide", () => {
+  it("skips the tour and stands the guide's strip on step 1", async () => {
+    // The suite's shared beforeEach remembers the legacy tour key, which the
+    // guide reads as a dismissal (progress.ts). A FIRST game is a clean shelf.
+    localStorage.removeItem("hexmatch:tutorial");
     await boot({ newLoop: true, firstRun: true });
     for (let i = 0; i < 4; i++) await settle();
-    expect(root.querySelector("#iso-tutorial"), "no tour on the first game").toBeNull();
-    expect(objectiveEl().classList.contains("coach")).toBe(true);
-    expect(objectiveText()).toMatch(/^Step 1\/4/);
+    expect(root.querySelector("#iso-tutorial"), "no card tour on the first game").toBeNull();
+    const layer = root.querySelector<HTMLElement>("#iso-guide");
+    expect(layer, "the guide's layer is mounted").toBeTruthy();
+    expect(layer!.classList.contains("hidden"), "and it is standing").toBe(false);
+    expect(layer!.dataset.section).toBe("getting-started");
+    expect(layer!.dataset.step).toBe("map");
+    // the strip's own words are what the player reads
+    expect(layer!.querySelector(".guide-kicker")!.textContent).toBe("Getting started");
+    expect(layer!.querySelector(".guide-count")!.textContent).toBe("1 / 3");
+    // …and the two exits are always there
+    for (const act of ["guide-skip", "guide-end"]) {
+      expect(layer!.querySelector(`[data-act="${act}"]`), `${act} is always there`).toBeTruthy();
+    }
   });
 
-  it("a normal boot has no coach", async () => {
+  it("a normal boot has no guide standing", async () => {
     await boot({ newLoop: true });
     for (let i = 0; i < 4; i++) await settle();
-    expect(objectiveEl().classList.contains("coach")).toBe(false);
+    const layer = root.querySelector<HTMLElement>("#iso-guide");
+    expect(layer, "the layer is always mounted").toBeTruthy();
+    expect(layer!.classList.contains("hidden"), "and idle").toBe(true);
   });
 });

@@ -1,259 +1,281 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { bootBudget } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
-// TUT-01 — the starting tour, against the REAL built game (vite preview).
+// TUT-03 (#422) — the in-game guide, against the REAL built game.
 //
-// The unit suite (tests/unit/iso-tutorial.test.ts) owns the content and the
-// card's mechanics in jsdom. What only a real browser can prove is the wiring
-// around it:
+// The unit suite (tests/unit/iso-guide.test.ts) owns the engine, the sections
+// and the projector in jsdom. What only a real browser can prove is the
+// wiring around them:
 //
-//   * the tour is what a first-time player actually meets after "Play vs AI",
-//     and the difficulty prompt WAITS for it instead of stacking on top of it;
-//   * every step paints its figure, and the numbers in it are the live game's;
-//   * "Never show this again" is the ONE exit that survives a reload — Skip,
-//     Esc and the veil all bring the tour back next boot;
-//   * once dismissed, the ❔ help modal still replays it (the preference stops
-//     the tour opening itself, it never takes the lesson away);
-//   * a RESUMED save never opens the tour — and does so without writing the
-//     preference, so the four states (fresh start, resume, permanent
-//     dismissal, replay) stay distinguishable.
+//   * the guide is what a first-time player actually meets after "Play vs AI",
+//     and it stands OVER a live game — the clock runs, the map takes a click,
+//     nothing is blocked;
+//   * the spotlight really lands on the chrome (the veil is one box-shadow,
+//     so the hole has to be measured to exist);
+//   * a real click on the target is what advances a step, and a real drawer
+//     tab is what advances the drawer section;
+//   * "End tutorial" is the one exit that is remembered — the next fresh game
+//     does not start the guide by itself, and the Tutorial menu is the door
+//     back in (a dismissed guide never restarts unasked);
+//   * finishing a section marks it, and the mark survives a reload;
+//   * `?guide=0` (and the legacy `?tutorial=0`) keep it out of the way.
 //
-// Every step boots through the start screen, the app's only entry point.
-// Because the game autosaves (5s + pagehide), "boot again" is a RESUME unless
-// the spec clears the save first — see `boot(..., { fresh: true })`; nothing relies on a
-// second navigation happening to be a new game.
+// Every step boots through the start screen, the app's only entry point, and
+// drops the autosave first so each boot is a FRESH game by construction.
 // ══════════════════════════════════════════════════════════════════════════
 
 const BASE = "/";
-const TOUR = "#iso-tutorial";
-const STEP_IDS = ["loop", "plant", "depot", "roads", "board", "expand", "victory", "desk"];
-
-// ── save control ──────────────────────────────────────────────────────────
-// The game autosaves every 5s AND on `pagehide`, so the moment a spec
-// navigates away from a booted game there is a recent save — and the next
-// boot RESUMES it, which by design (src/iso/game.ts: `!bootSave && isSolo()`)
-// never opens the tour. A spec that wants a fresh game must therefore say so,
-// rather than trusting that "another navigation" means "another game".
+const GUIDE = "#iso-guide";
 const SAVE_KEY = "hexmatch:save";
-const hasSave = (page: import("@playwright/test").Page) =>
+
+/** The strip's one caption. */
+const caption = (page: Page) => page.locator(`${GUIDE} .guide-caption`);
+const key = (page: Page, act: string) => page.locator(`${GUIDE} [data-act="${act}"]`);
+
+const hasSave = (page: Page) =>
   page.evaluate((k) => localStorage.getItem(k) !== null, SAVE_KEY);
-const tutorialPref = (page: import("@playwright/test").Page) =>
-  page.evaluate(() => localStorage.getItem("hexmatch:tutorial"));
-const readSave = (page: import("@playwright/test").Page) =>
-  page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "null") as { savedAt: number; seed: number } | null, SAVE_KEY);
+const guideRecord = (page: Page) =>
+  page.evaluate(() => localStorage.getItem("hexmatch:guide"));
 
 /**
- * Boot a solo game through the start screen and wait for the map to exist.
+ * Boot a solo game through the front door and wait for the map.
  *
- * `fresh: true` drops the autosave on the START SCREEN — after the previous
- * game's `pagehide` save has been written and before Play mounts the next
- * one, the only moment nothing can race the write. That makes the boot a
- * fresh game by construction; without it, a second boot is a RESUME.
+ * `fresh: true` (the default) drops the autosave on the START SCREEN — after
+ * the previous game's `pagehide` write and before Play mounts the next one —
+ * so the boot is a new game by construction. Without it a shelf with a save
+ * turns the front door's gold button into CONTINUE, which resumes the match.
  */
-async function boot(page: import("@playwright/test").Page, extra = "", opts: { fresh?: boolean } = {}) {
-  // L1f (#237): this spec walks the tour of the RETIRED loop — a 4-row ★
-  // ledger ending on 10★/5★ and the roads card counting down the 12 free
-  // tiles. The new loop re-voices those same steps (its ledger pays ★ for
-  // depot types, rungs and city upgrades to 12★), and that tour is walked in
-  // `iso-loop-default.spec.ts`; `?loop=old` is what keeps THESE assertions
-  // about the copy the escape hatch still shows.
-  await page.goto(`${BASE}?seed=79&loop=old${extra}`);
-  if (opts.fresh) {
+async function boot(page: Page, extra = "", opts: { fresh?: boolean } = {}) {
+  await page.goto(`${BASE}?seed=79${extra}`);
+  if (opts.fresh ?? true) {
     await page.evaluate((k) => localStorage.removeItem(k), SAVE_KEY);
     expect(await hasSave(page)).toBe(false);
   }
-  // CONTINUE-01 (#191): a shelf with a save makes the front door's gold
-  // button CONTINUE, which resumes the match in one click — so a resume boot
-  // never walks into Play vs AI (that door now starts a NEW game and would
-  // ask first). A fresh shelf keeps Play gold, then Play vs AI boots clean.
+  // CONTINUE-01 (#191): a shelf with a save resumes in one click.
   if (await hasSave(page)) {
     await page.getByRole("button", { name: /^Continue/ }).click();
   } else {
-    // STORY-01 menu: the mode screen stands behind the front door — Play first
     await page.locator(".menu-btn.primary").click();
     await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
   }
   await page.waitForFunction(() => {
-    const h = (window as unknown as { __iso?: { phase: string } }).__iso;
-    return !!h && h.phase === "setup-factory";
+    const h = (window as unknown as {
+      __iso?: { phase: string; loading: boolean; grid?: { industries: unknown[] } };
+    }).__iso;
+    return !!h && h.phase === "setup-factory" && !!h.grid
+      && h.grid.industries.length > 0 && !h.loading;
   }, null, { timeout: bootBudget() });
 }
 
 /** Remember a difficulty so AI-02's picker stays out of the way. */
-async function pickDifficulty(page: import("@playwright/test").Page, key = "normal") {
+async function pickDifficulty(page: Page, key_ = "normal") {
   await page.addInitScript(
-    (k: string) => localStorage.setItem("hexmatch:rival-skill", k), key,
+    (k: string) => localStorage.setItem("hexmatch:rival-skill", k), key_,
   );
 }
 
-test("TUT-01 the first boot walks the tour, then hands over to the difficulty", async ({ page }) => {
+/** ☰ → Tutorial — the menu that lists every section. */
+async function openTutorialMenu(page: Page) {
+  await page.locator("#iso-menu-btn").click();
+  await page.locator(".tm-item", { hasText: "Tutorial" }).first().click();
+  const menu = page.locator("[data-act='guide-menu']");
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+test("TUT-03 the first boot stands the guide over a live, playable game", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
-  // No remembered difficulty on purpose: this spec asserts the tour hands the
-  // boot over to AI-02's prompt rather than stacking under it.
+  // No remembered difficulty on purpose: the guide stands from the boot, and
+  // AI-02's prompt must not be what this spec is really looking at.
 
   await boot(page);
-  const tour = page.locator(TOUR);
-  await expect(tour).toBeVisible();
-  await expect(tour).toHaveAttribute("data-step", "loop");
-  await expect(tour.locator(".tut-title")).toHaveText("One island, one loop");
-  await expect(tour.locator(".tut-dot")).toHaveCount(STEP_IDS.length);
-
-  // Walk it with the real button, and check each step painted its own figure.
-  const expectFigure = async (id: string) => {
-    if (id === "loop") return expect(tour.locator(".tut-chain-node")).toHaveCount(7);
-    if (id === "victory") return expect(tour.locator(".tut-ledger-row")).toHaveCount(4);
-    // every other step shows a real screenshot of the game, and it loads
-    const img = tour.locator("img.tut-shot");
-    await expect(img).toHaveCount(1);
-    await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBeGreaterThan(0);
-  };
-  await expectFigure("loop");
-  for (const id of STEP_IDS.slice(1)) {
-    await tour.locator('[data-act="tut-next"]').click();
-    await expect(tour).toHaveAttribute("data-step", id);
-    await expectFigure(id);
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "getting-started");
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "map");
+  await expect(page.locator(`${GUIDE} .guide-kicker`)).toHaveText("Getting started");
+  await expect(page.locator(`${GUIDE} .guide-count`)).toHaveText("1 / 3");
+  // the one caption, and the two exits that are ALWAYS there
+  await expect(caption(page)).toContainText(/island is yours/i);
+  for (const act of ["guide-skip", "guide-end"]) {
+    await expect(key(page, act)).toBeVisible();
   }
-  // the finish line the ledger prints is the shipped one (no difficulty yet)
-  await tour.locator('[data-step="victory"]').click();
-  await expect(tour.locator(".tut-ledger-total")).toContainText("10★");
-  await tour.locator('[data-step="desk"]').click();
-  await expect(tour.locator('[data-act="tut-done"]')).toBeVisible();
 
-  // The last key ends the tour — and finishing it is NOT dismissing it.
-  await tour.locator('[data-act="tut-done"]').click();
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem("hexmatch:tutorial"))).toBeNull();
+  // The game underneath is live: still the boot phase the guide is covering,
+  // nothing placed, nothing charged.
+  expect(await page.evaluate(() =>
+    (window as unknown as { __iso: { phase: string } }).__iso.phase)).toBe("setup-factory");
 
-  // AI-02's prompt is what the tour hands over to.
-  await page.locator("#iso-skill-prompt [data-skill='normal']").click();
-  await expect(page.locator("#iso-skill-prompt")).toHaveCount(0);
-  await expect(page.locator("#iso-vp")).toContainText("/10");
+  // …and the guide never takes a click: the veil is pointer-events:none, so a
+  // tap on the map lands on the map. (The strip is the only hit area.)
+  const blocked = await page.evaluate(() => {
+    const hole = document.querySelector("#iso-guide .guide-hole") as HTMLElement | null;
+    const layer = document.querySelector("#iso-guide") as HTMLElement | null;
+    return { hole: hole ? getComputedStyle(hole).pointerEvents : null,
+      layer: layer ? getComputedStyle(layer).pointerEvents : null };
+  });
+  expect(blocked.hole).toBe("none");
+  expect(blocked.layer).toBe("none");
 
-  // …and the game underneath is still in the boot phase the tour was covering:
-  // nothing was placed, nothing was charged, no clock ran off without the player.
-  expect(await page.evaluate(() => (window as unknown as { __iso: { phase: string } }).__iso.phase))
-    .toBe("setup-factory");
-  // no hint banner stands over the map — the tour is where setup is taught
-  await expect(page.locator("#iso-banner")).toBeHidden();
+  // The section is three steps and each one is walked with the real key.
+  await key(page, "guide-next").click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "camera");
+  await expect(page.locator(`${GUIDE} .guide-count`)).toHaveText("2 / 3");
+  // Back only exists after the first step.
+  await expect(key(page, "guide-back")).toBeVisible();
+  await key(page, "guide-back").click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "map");
+  await expect(key(page, "guide-back")).toBeHidden();
+
+  await key(page, "guide-next").click();
+  await key(page, "guide-next").click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "topbar");
+  await key(page, "guide-next").click();
+  // finishing the section is NOT dismissing the guide: the layer goes idle
+  // (display:none) and nothing is written to the record
+  await expect(page.locator(GUIDE)).toBeHidden();
+  expect(await guideRecord(page)).toBeNull();
 
   expect(errors).toEqual([]);
 });
 
-test("TUT-01 fresh games: only “never show this again” survives to the next one", async ({ page }) => {
+test("TUT-03 the spotlight lands on the chrome it names, and a click on it advances", async ({ page }) => {
   await pickDifficulty(page);
-
-  // A skip (Esc) closes the card and remembers nothing.
   await boot(page);
-  await expect(page.locator(TOUR)).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await tutorialPref(page)).toBeNull();
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
 
-  // So the next FRESH game asks again. (A resume would not — that is the
-  // separate rule the next spec pins down — so the save is dropped on purpose.)
-  await boot(page, "", { fresh: true });
-  await expect(page.locator(TOUR)).toBeVisible();
+  // Step 2's target is the recenter key in the top bar: the hole must be a
+  // real box over that button, not a full-screen dim.
+  await key(page, "guide-next").click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "camera");
+  const over = await page.evaluate(() => {
+    const hole = document.querySelector("#iso-guide .guide-hole") as HTMLElement;
+    const btn = document.querySelector('[data-act="recenter"]') as HTMLElement;
+    const h = hole.getBoundingClientRect(), b = btn.getBoundingClientRect();
+    return { w: h.width, h: h.height, vw: window.innerWidth, vh: window.innerHeight,
+      dx: Math.abs(h.left + h.width / 2 - (b.left + b.width / 2)),
+      dy: Math.abs(h.top + h.height / 2 - (b.top + b.height / 2)) };
+  });
+  expect(over.w).toBeGreaterThan(8);
+  expect(over.h).toBeGreaterThan(8);
+  expect(over.w).toBeLessThan(over.vw);       // a hole, not a veil
+  expect(over.h).toBeLessThan(over.vh);
+  expect(over.dx).toBeLessThan(24);
+  expect(over.dy).toBeLessThan(24);
 
-  // The veil is the other "for now" exit: it closes, it remembers nothing.
-  await page.locator(`${TOUR} .tut-shade`).click({ position: { x: 4, y: 4 } });
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await tutorialPref(page)).toBeNull();
-
-  await boot(page, "", { fresh: true });
-  await expect(page.locator(TOUR)).toBeVisible();
-
-  // The button is the one exit that persists.
-  await page.locator('[data-act="tut-never"]').click();
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await tutorialPref(page)).toBe("never");
-
-  // …and a fresh game now boots straight to the map.
-  await boot(page, "", { fresh: true });
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  await expect(page.locator("#iso-vp")).toBeVisible();
-
-  // The lesson is still one click away from the ❔, dismissal or not.
-  await page.locator(".top-right .icon-btn[title='How to play']").click();
-  await expect(page.locator(".modal.box")).toBeVisible();
-  await page.locator("#tourBtn").click();
-  await expect(page.locator(".modal-root")).toHaveClass(/hidden/);
-  await expect(page.locator(TOUR)).toBeVisible();
-  await expect(page.locator(TOUR)).toHaveAttribute("data-step", "loop");
-  // Replaying leaves the stored preference exactly as it was.
-  await page.locator('[data-act="tut-close"]').click();
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await tutorialPref(page)).toBe("never");
+  // The real click on that key is what the step waits for.
+  await page.locator('[data-act="recenter"]').click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "topbar");
 });
 
-test("TUT-01 a resumed game skips the tour without touching the preference", async ({ page }) => {
+test("TUT-03 a real drawer tab advances the drawer section", async ({ page }) => {
   await pickDifficulty(page);
-
-  // A player mid-match who reloads is not a first-time player: the product
-  // rule is "a restored save never opens the tour" — and it must do so by
-  // reading the SAVE, not by writing the preference.
   await boot(page);
-  await expect(page.locator(TOUR)).toBeVisible();
-  await page.locator('[data-act="tut-close"]').click();
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await tutorialPref(page)).toBeNull();
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
+  await key(page, "guide-end").click();          // the first section is not the subject
+  await expect(page.locator(GUIDE)).toBeHidden();
 
-  // Wait for the autosave to actually exist (the 5s writer, no fixed sleep),
-  // so the next boot is a resume by construction rather than by luck.
+  // ☰ → Tutorial → The drawer. The step points at the Bank tab, opens the
+  // Economy sheet for the player (the assist), and waits for the tab.
+  const menu = await openTutorialMenu(page);
+  await expect(menu.locator("[data-act='guide-section']")).toHaveCount(10);
+  await menu.locator('[data-section="drawer"]').click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "drawer");
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "open");
+  await expect(caption(page)).toContainText(/Bank, Market, Black Market, Feed and Quests/i);
+
+  await page.locator('#iso-trade [data-tab="bank"]').click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "bank");
+  await expect(caption(page)).toContainText(/exchange/i);
+  // …and the rest of the drawer is walked the same way, one tab at a time
+  for (const [tab, step, words] of [
+    ["black", "black", /blockade/i],
+    ["feed", "feed", /logs everything/i],
+    ["quests", "quests", /optional/i],
+  ] as const) {
+    await key(page, "guide-next").click();
+    await page.locator(`#iso-trade [data-tab="${tab}"]`).click();
+    await expect(page.locator(GUIDE)).toHaveAttribute("data-step", step);
+    await expect(caption(page)).toContainText(words);
+  }
+});
+
+test("TUT-03 a dismissed guide stays dismissed, and the menu is the door back in", async ({ page }) => {
+  await pickDifficulty(page);
+  await boot(page);
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
+  await key(page, "guide-end").click();
+  await expect(page.locator(GUIDE)).toBeHidden();
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").dismissed)).toBe(true);
+
+  // A FRESH game does not start the guide by itself…
+  await boot(page);
+  await expect(page.locator(GUIDE)).toBeHidden();
+  // …and the mark on the section it did not finish is not there either
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done ?? [])).not.toContain("getting-started");
+
+  // …but the Tutorial menu still lists every section, and a pick runs it now.
+  const menu = await openTutorialMenu(page);
+  await expect(menu.locator("[data-act='guide-section']")).toHaveCount(10);
+  await menu.locator('[data-section="getting-started"]').click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "getting-started");
+  // asking by name is the one thing that lifts the dismissal
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").dismissed ?? false)).toBe(false);
+  await key(page, "guide-end").click();
+});
+
+test("TUT-03 a finished section is marked, and the mark survives a reload", async ({ page }) => {
+  await pickDifficulty(page);
+  await boot(page);
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
+  for (let i = 0; i < 3; i++) await key(page, "guide-next").click();
+  await expect(page.locator(GUIDE)).toBeHidden();
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done)).toContain("getting-started");
+
+  // The autosave exists by now, so this boot RESUMES — a resumed game never
+  // opens the guide by itself, and the menu shows the section as done.
   await expect.poll(() => hasSave(page), { timeout: 15000 }).toBe(true);
+  await boot(page, "", { fresh: false });
+  await expect(page.locator(GUIDE)).toBeHidden();
+  const menu = await openTutorialMenu(page);
+  const row = menu.locator('[data-section="getting-started"]');
+  await expect(row.locator(".guide-menu-mark")).toHaveText("✓");
+  await expect(row.locator(".guide-menu-go")).toHaveText("Replay");
 
-  const before = await readSave(page);
-  expect(before).not.toBeNull();
-
-  await boot(page);
-  // This boot RESUMED: the save it found is still the save it keeps writing
-  // (same world, newer stamp) — no fresh game replaced it.
-  await expect.poll(async () => (await readSave(page))?.savedAt ?? 0, { timeout: 15000 })
-    .toBeGreaterThan(before!.savedAt);
-  expect((await readSave(page))!.seed).toBe(before!.seed);
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  await expect(page.locator("#iso-vp")).toBeVisible();
-  // The tour is absent because of the save — the preference is still unset…
-  expect(await tutorialPref(page)).toBeNull();
-
-  // …which is why dropping the save brings the tour straight back.
-  await boot(page, "", { fresh: true });
-  await expect(page.locator(TOUR)).toBeVisible();
-  await expect(page.locator(TOUR)).toHaveAttribute("data-step", "loop");
+  // "Reset tutorial" clears the marks and the dismissal.
+  await page.locator("[data-act='guide-reset']").click();
+  await expect(row.locator(".guide-menu-mark")).toHaveText("");
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done)).toEqual([]);
 });
 
-test("TUT-01 the tour quotes the live game, and ?tutorial=0 keeps it out of the way", async ({ page }) => {
-  await pickDifficulty(page, "easy");   // the Easy chair races a 5★ line
+test("TUT-03 ?guide=0 and the legacy ?tutorial=0 keep the guide out of the way", async ({ page }) => {
+  await pickDifficulty(page);
+  await boot(page, "&guide=0");
+  await expect(page.locator(GUIDE)).toBeHidden();
+  await expect(page.locator("#iso-vp")).toBeVisible();
+  // …without writing the preference: the next plain boot asks again
+  expect(await guideRecord(page)).toBeNull();
+
+  await boot(page, "&tutorial=0");
+  await expect(page.locator(GUIDE)).toBeHidden();
+  expect(await guideRecord(page)).toBeNull();
 
   await boot(page);
-  const tour = page.locator(TOUR);
-  await expect(tour).toBeVisible();
-  await tour.locator('[data-step="victory"]').click();
-  await expect(tour).toHaveAttribute("data-step", "victory");
-  // AI-04: the ★ line belongs to the difficulty the boot resolved, so the
-  // ledger the tour prints is the one the HUD badge shows beside it.
-  await expect(tour.locator(".tut-ledger-total")).toContainText("5★");
-  await expect(page.locator("#iso-vp")).toContainText("/5");
-  // the roads step quotes the allowance the live player record carries
-  await tour.locator('[data-step="roads"]').click();
-  await expect(tour).toHaveAttribute("data-step", "roads");
-  await expect(tour.locator(".tut-points")).toContainText("first 12 of them");
-  // Mid-tour there is no Done — the last key is "Next" until the final step.
-  await expect(tour.locator('[data-act="tut-done"]')).toHaveCount(0);
-  await expect(tour.locator('[data-act="tut-next"]')).toBeVisible();
-  // Finish it the real way: jump to the last step, where Done actually lives.
-  await tour.locator('[data-step="desk"]').click();
-  await expect(tour).toHaveAttribute("data-step", "desk");
-  await expect(tour.locator('[data-act="tut-done"]')).toBeVisible();
-  await tour.locator('[data-act="tut-done"]').click();
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  expect(await tutorialPref(page)).toBeNull();
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
+});
 
-  // The URL opt-out the gameplay specs and playtest links use — proven on a
-  // FRESH game, so it is the flag keeping the tour away and not the autosave.
-  await boot(page, "&tutorial=0", { fresh: true });
-  await expect(page.locator(TOUR)).toHaveCount(0);
-  await expect(page.locator("#iso-vp")).toBeVisible();
-  expect(await tutorialPref(page)).toBeNull();
+test("TUT-03 Skip section drops the section without marking it", async ({ page }) => {
+  await pickDifficulty(page);
+  await boot(page);
+  await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
+  await key(page, "guide-skip").click();
+  await expect(page.locator(GUIDE)).toBeHidden();
+  expect(await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done ?? [])).not.toContain("getting-started");
 });

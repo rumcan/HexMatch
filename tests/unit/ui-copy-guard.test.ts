@@ -21,9 +21,8 @@ import { VICTORY } from "../../src/iso/config";
 import { showSettingsSheet } from "../../src/iso/settings-sheet";
 import { RIVAL_SKILLS, SKILL_KEYS } from "../../src/iso/skill";
 import { promptForRivalSkill } from "../../src/iso/skill-picker";
-import {
-  buildTutorialSteps, showTutorial, type TutorialStep,
-} from "../../src/iso/tutorial";
+import { allGuideSteps } from "../../src/iso/guide/sections";
+import { showRefCards } from "../../src/iso/guide/refcard";
 
 /** The three shapes the ticket forbids in anything a player can read. */
 const FORBIDDEN: { name: string; test: (text: string) => string | null }[] = [
@@ -71,16 +70,15 @@ function faceOf(where: string, root: ParentNode): Sample[] {
   return samples;
 }
 
-function stepCopy(where: string, steps: TutorialStep[]): Sample[] {
+/** The boot context the guide is built with (the shipped ★ line and allowance). */
+const ctx = { vpTarget: VICTORY.loop.target, freeTrack: 12 };
+
+/** Every word the in-game guide puts in front of a player, section by section. */
+function guideCopy(where = "guide"): Sample[] {
   const samples: Sample[] = [];
-  for (const step of steps) {
-    const bits = [step.kicker, step.title, step.lede, step.tip, ...step.points];
-    const fig = step.figure;
-    bits.push(fig.caption);
-    if (fig.kind === "chain") bits.push(...fig.nodes.map((n) => `${n.icon} ${n.label}`));
-    else if (fig.kind === "shot") bits.push(fig.alt);
-    else if (fig.kind === "ledger") bits.push(...fig.rows.map((r) => `${r.icon} ${r.label} ${r.vp}`));
-    bits.forEach((text, i) => samples.push({ where: `${where} ${step.id}#${i}`, text }));
+  for (const { section, step } of allGuideSteps(ctx)) {
+    const bits = [step.title, step.caption, step.hint ?? ""];
+    bits.forEach((text, i) => samples.push({ where: `${where} ${section.id}/${step.id}#${i}`, text }));
   }
   return samples;
 }
@@ -250,17 +248,11 @@ describe("#383 difficulty copy has no developer comments", () => {
 });
 
 describe("#383 How to Play and settings copy", () => {
-  const ctx = { vpTarget: VICTORY.loop.target, freeTrack: 12 };
 
-  it("keeps them out of every How to Play card, including the battle pages", () => {
+  it("keeps them out of every guide step, including the battle pages", () => {
     mountHost();
-    const touch = withCoarse(true, () => stepCopy("tour touch", buildTutorialSteps(ctx)));
-    expect(touch.some((s) => s.text.includes("One finger")), "phone tour branch did not render").toBe(true);
     const samples = [
-      ...stepCopy("tour", buildTutorialSteps(ctx)),
-      ...stepCopy("tour old loop", buildTutorialSteps({ ...ctx, newLoop: false })),
-      ...touch,
-      ...renderedPages("tour", () => showTutorial(host, { force: true, ...ctx })),
+      ...guideCopy(),
       ...renderedPages("battles", () => showBattleHowto({ mount: host })),
     ];
     expect(samples.length).toBeGreaterThan(20);

@@ -36,7 +36,7 @@ import {
 } from "../../src/iso/tuning";
 import { buildSnapshot, applySnapshot, type SnapshotSource } from "../../src/iso/snapshot";
 import { SAVE_KEY, readSave, type SaveGamePayload } from "../../src/iso/savegame-runtime";
-import { buildTutorialSteps } from "../../src/iso/tutorial";
+import { allGuideSteps } from "../../src/iso/guide/sections";
 import { depotYield } from "../../src/iso/loop";
 import type { Harvester } from "../../src/iso/economy";
 import type { Board } from "../../src/game/board";
@@ -612,21 +612,19 @@ describe.skip("L4 the level travels, and the shipped loop is untouched", () => {
     expect(h.tuning, "and no session was invented for it").toBeNull();
   });
 
-  it("describes the new loop in the opening copy (tour + setup toast)", async () => {
-    const shipped = buildTutorialSteps({ vpTarget: 10, freeTrack: 12 });
-    const tuned = buildTutorialSteps({ vpTarget: 10, freeTrack: 12, newLoop: true });
-    expect(JSON.stringify(tuned)).not.toBe(JSON.stringify(shipped));
-
-    const loop = tuned.find((s) => s.id === "loop")!;
-    expect(loop.points.join(" ")).toMatch(/tuning session/i);
-    const board = tuned.find((s) => s.id === "board")!;
-    expect(board.title).toMatch(/tune/i);
-    expect(board.points.join(" ")).toMatch(/yield/i);
-    expect(board.points.join(" ")).toContain(`×${TUNING.maxYield}`);
-
-    // the shipped tour still promises the board that loop actually has
-    const oldBoard = shipped.find((s) => s.id === "board")!;
-    expect(oldBoard.points.join(" ")).toMatch(/tokened/i);
+  it("describes the new loop in the opening copy (guide + setup toast)", async () => {
+    // The eight-card tour is gone (TUT-03): the guide's "Depots and tuning"
+    // section teaches the same loop, and it reads its numbers off the tables.
+    const steps = allGuideSteps({ vpTarget: 10, freeTrack: 12 }).map((x) => x.step);
+    const text = (id: string) => {
+      const s = steps.find((x) => x.id === id)!;
+      return [s.title, s.caption, s.hint ?? ""].join(" ");
+    };
+    expect(text("session")).toMatch(/tuning session/i);
+    expect(text("score")).toMatch(/yield/i);
+    expect(text("score")).toContain(`×${TUNING.maxYield}`);
+    expect(text("score")).toContain(String(TUNING.targetScore));
+    expect(text("session")).toContain(String(TUNING.moves));
 
     // …and the setup toast on a real new-loop boot speaks the clock, not tokens.
     const h = await boot({ newLoop: true });

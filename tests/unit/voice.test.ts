@@ -340,11 +340,12 @@ describe("VO-1 settings", () => {
 });
 
 describe("VO-1 script", () => {
-  it("ships about forty short lines the lead can record", () => {
+  it("ships short lines the lead can record — the guide's 28 among them", () => {
     const parsed = parseVoiceLines(linesJson);
     expect(parsed.length).toBe(VOICE_LINES.length);
     expect(parsed.length).toBeGreaterThanOrEqual(40);
-    expect(parsed.length).toBeLessThanOrEqual(48);
+    // TUT-03 (#422) added the guide's narrator lines on top of the shipped set.
+    expect(parsed.length).toBeLessThanOrEqual(80);
     const ids = new Set<string>();
     const triggers = new Set<string>();
     for (const line of parsed) {
@@ -364,6 +365,14 @@ describe("VO-1 script", () => {
     ]) {
       expect(triggers.has(trigger), trigger).toBe(true);
     }
+    // …and the guide's own: one `guide:<section>:<step>` trigger per narrated
+    // step, all narrator, all short.
+    for (const line of parsed) {
+      if (!line.trigger.startsWith("guide:")) continue;
+      expect(line.speaker, `${line.id} is narrated`).toBe("narrator");
+      expect(voiceWordCount(line.text), `${line.id} is short`).toBeLessThan(18);
+    }
+    expect([...triggers].filter((t) => t.startsWith("guide:")).length).toBe(28);
     expect(voiceFileUrl("narrator", "n-factory", "./")).toBe("./assets/voice/narrator/n-factory.mp3");
     expect(voiceFileUrl("rival", "r-block", "/hex/")).toBe("/hex/assets/voice/rival/r-block.mp3");
   });

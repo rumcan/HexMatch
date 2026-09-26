@@ -74,7 +74,7 @@ describe("MainMenu — the front door", () => {
     const screen = host.querySelector(".start-screen.menu");
     expect(screen).not.toBeNull();
     expect(host.querySelector(".menu-embers")).not.toBeNull();
-    for (const door of [/^Play/, /^Settings/, /^How to Play/]) {
+    for (const door of [/^Play/, /^Settings/, /^Tutorial/]) {
       expect(button(door)).toBeTruthy();
     }
     // Story mode is hidden (src/story/flag.ts): no campaign line at all.
@@ -155,17 +155,23 @@ describe("MainMenu — the front door", () => {
     expect(document.querySelector(".settings-sheet")).toBeNull();
   });
 
-  it.skip("How to Play raises the real tour, even after a boot dismissal", async () => {
-    // the player already said "never show this again" at boot…
+  it("Tutorial raises the real menu, even after a dismissal", async () => {
+    // a dismissed guide stays dismissed — but the menu is the door back in
     localStorage.setItem("hexmatch:tutorial", "never");
     mount();
-    act(() => { button(/^How to Play/).click(); });
-    await Promise.resolve();
-    // …and still gets the eight cards when they ask by name (force: true)
-    expect(document.querySelector("#iso-tutorial")).not.toBeNull();
-    const host2 = document.querySelector(".menu-howto");
-    expect(host2).not.toBeNull();
-    expect(host2!.contains(document.querySelector("#iso-tutorial"))).toBe(true);
+    act(() => { button(/^Tutorial/).click(); });
+    await act(async () => { await Promise.resolve(); });
+    const sheet = document.querySelector(".guide-menu");
+    expect(sheet, "the Tutorial menu opened").not.toBeNull();
+    // every section is listed, none of them marked done
+    expect(sheet!.querySelectorAll("[data-act='guide-section']")).toHaveLength(10);
+    expect(sheet!.querySelectorAll(".guide-menu-mark")
+      .length && [...sheet!.querySelectorAll(".guide-menu-mark")]
+      .every((m) => m.textContent !== "✓")).toBe(true);
+    // a pick queues the section for the next boot
+    act(() => { (sheet!.querySelector('[data-section="factory"]') as HTMLElement).click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(document.querySelector(".guide-menu")).toBeNull();
   });
 
   it.skipIf(!STORY_MODE_ENABLED)("reports filed contracts from saved campaign progress", () => {
