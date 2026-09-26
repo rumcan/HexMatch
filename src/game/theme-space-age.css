@@ -575,3 +575,124 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .market-held { flex: 1; font-size: 12px; color: var(--sa-bone-dim); }
 .market-act .sell-btn { padding: 2px 8px; font-size: 12px; }
 .market-event { color: var(--sa-lemon); }
+/* ══════════════════════════════════════════════════════════════════════
+   TUT-03 (#422) — the in-game guide. Flat charcoal, lemon counter, square
+   corners, no gradients, no glows, weight ≤ 500. The layer never takes a
+   click: `pointer-events: none` on everything but the strip's own keys.
+   ══════════════════════════════════════════════════════════════════════ */
+.guide-layer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.guide-layer.hidden { display: none; }
+/* the veil: one element, a 9999px shadow — nothing to keep in sync */
+.guide-hole {
+  position: fixed; left: 0; top: 0; width: 0; height: 0;
+  box-shadow: 0 0 0 9999px rgb(15 18 20 / .68);
+  border: 2px solid var(--sa-lemon);
+  outline: 1px solid rgb(242 214 75 / .35);
+  transition: left .12s linear, top .12s linear, width .12s linear, height .12s linear;
+  animation: guide-pulse 1.5s ease-in-out infinite;
+}
+@keyframes guide-pulse {
+  0%, 100% { border-color: var(--sa-lemon); }
+  50% { border-color: var(--sa-orange); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-hole { animation: none; transition: none; }
+}
+/* the hand: decoration, never a hit area */
+.guide-pointer {
+  position: fixed; transform: translate(-38%, -18%);
+  font-size: 26px; line-height: 1; color: var(--sa-lemon);
+  text-shadow: 0 1px 0 var(--sa-ink);
+  animation: guide-bob 1.1s ease-in-out infinite;
+}
+.guide-pointer.hidden { display: none; }
+@keyframes guide-bob {
+  0%, 100% { transform: translate(-38%, -18%) scale(1); }
+  50% { transform: translate(-38%, -34%) scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) { .guide-pointer { animation: none; } }
+
+/* the ONE caption strip */
+.guide-strip {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  width: min(620px, calc(100vw - 24px));
+  background: var(--sa-panel); color: var(--sa-bone);
+  border: 1px solid var(--sa-ink); border-top: 3px solid var(--sa-orange);
+  border-radius: 0; box-shadow: none;
+  padding: 8px 10px 9px; pointer-events: auto;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ui-root[data-phone="1"] .guide-strip { bottom: 62px; width: calc(100vw - 16px); }
+.guide-head { display: flex; align-items: center; gap: 8px; }
+.guide-kicker {
+  font-family: var(--display); font-weight: 500; font-size: 11px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--sa-orange);
+}
+/* lemon step counter, dark text on it */
+.guide-count {
+  margin-left: auto; background: var(--sa-lemon); color: var(--sa-on-lemon);
+  font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: .1em;
+  padding: 1px 7px; border-radius: 0;
+}
+.guide-caption {
+  margin: 0; font-family: var(--sans); font-weight: 500; font-size: 14px;
+  line-height: 1.32; color: var(--sa-bone);
+}
+.guide-hint {
+  font-family: var(--sans); font-weight: 500; font-size: 11.5px;
+  color: var(--sa-bone-dim); line-height: 1.3;
+}
+.guide-hint.hidden { display: none; }
+.guide-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.guide-spacer { flex: 1 1 auto; }
+.guide-key {
+  font-family: var(--display); font-weight: 500; font-size: 11px; letter-spacing: .1em;
+  text-transform: uppercase; padding: 5px 9px; border-radius: 0;
+  background: var(--sa-panel-2); color: var(--sa-bone); border: 1px solid var(--sa-line-hi);
+  cursor: pointer;
+}
+.guide-key:hover { background: var(--sa-line); border-color: var(--sa-bone-dim); }
+.guide-key.ghost { background: transparent; color: var(--sa-bone-dim); border-color: var(--sa-line); }
+.guide-key.ghost:hover { color: var(--sa-bone); }
+.guide-key.hidden { display: none; }
+
+/* ── the Tutorial menu sheet ─────────────────────────────────────── */
+.guide-menu .modal.box { width: min(560px, calc(100vw - 24px)); }
+.guide-menu-head { display: flex; flex-direction: column; gap: 4px; }
+.guide-menu-head h2 { margin: 0; }
+.guide-menu-done { align-self: flex-start; margin-top: 4px; }
+.guide-menu-list { display: flex; flex-direction: column; gap: 2px; margin: 10px 0; }
+.guide-menu-row {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  background: var(--sa-panel-2); border: 1px solid var(--sa-line); border-radius: 0;
+  padding: 7px 9px; cursor: pointer; color: var(--sa-bone);
+}
+.guide-menu-row:hover { background: var(--sa-line); border-color: var(--sa-line-hi); }
+.guide-menu-mark {
+  width: 20px; height: 20px; flex: 0 0 20px; display: grid; place-items: center;
+  background: var(--sa-lemon); color: var(--sa-on-lemon);
+  font-family: var(--display); font-weight: 500; font-size: 12px;
+}
+.guide-menu-mark:empty { background: transparent; border: 1px solid var(--sa-line-hi); }
+.guide-menu-copy { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; }
+.guide-menu-copy b { font-family: var(--display); font-weight: 500; font-size: 12.5px; letter-spacing: .06em; }
+.guide-menu-copy small { font-family: var(--sans); font-weight: 500; font-size: 11px; color: var(--sa-bone-dim); }
+.guide-menu-go {
+  font-family: var(--display); font-weight: 500; font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--sa-aqua);
+}
+.guide-menu-ref { border-top: 1px solid var(--sa-line); padding-top: 8px; }
+.guide-menu-ref h3 {
+  margin: 0 0 4px; font-family: var(--display); font-weight: 500; font-size: 11px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--sa-orange);
+}
+.guide-menu-ref ul { margin: 0; padding-left: 16px; }
+.guide-menu-ref li {
+  font-family: var(--sans); font-weight: 500; font-size: 11.5px;
+  color: var(--sa-bone-dim); line-height: 1.35;
+}
+.guide-menu-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border-top: 1px solid var(--sa-line); padding-top: 8px; margin-top: 4px;
+}
+.guide-menu-foot small { font-family: var(--sans); font-weight: 500; font-size: 11px; color: var(--sa-bone-mute); flex: 1 1 200px; }
