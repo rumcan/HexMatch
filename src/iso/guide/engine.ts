@@ -80,7 +80,10 @@ export function selectorSatisfies(want: string, got: string): boolean {
  */
 export function stepSatisfied(step: GuideStep, event: GuideEvent): boolean {
   const c = step.complete;
-  if (event.kind === "next") return c.kind === "next" || step.next === true;
+  // Owner call: EVERY step can be moved on from with Next — the game may
+  // already be past it (the Factory is built), or the player just wants
+  // to read on. Doing the action still advances by itself.
+  if (event.kind === "next") return true;
   // A step whose only door is Next is never satisfied by a gesture.
   if (c.kind === "next") return false;
   switch (event.kind) {
@@ -217,7 +220,6 @@ export function createGuide(opts: GuideOptions = {}): GuideController {
     next() {
       const cur = currentStep();
       if (!cur) return;
-      if (cur.complete.kind !== "next" && cur.next !== true) return;
       advance();
     },
     back() {
