@@ -11,6 +11,8 @@
 //   introSeen  the opening reel was watched OR skipped (both are "seen": the
 //              skip button is a choice, not an interruption),
 //   advisor    the player's last word on Mabel's in-game hints (default on).
+//   bests      (PROG-1 #475, optional) each won contract's widest ★ margin
+//              and fastest win, for the chapter list's best-results line.
 //
 // Corruption is not an error: an unparsable value reads as a fresh campaign
 // rather than locking the player out of their own game, and private mode
@@ -21,11 +23,23 @@ export const STORY_STORAGE_KEY = "hexmatch:story";
 
 export type ChapterResult = "win" | "loss";
 
+/**
+ * PROG-1 (#475): a contract's best results — the widest ★ margin and the
+ * fastest win, for the chapter list's "best results" line. Wins only: a loss
+ * keeps nothing. Optional and absent on old records, so the STORY-01 shape
+ * (and its pinned tests) never moves.
+ */
+export interface ChapterBest {
+  bestMargin?: number;
+  bestTimeMs?: number;
+}
+
 export interface StoryProgress {
   unlocked: number;
   results: Record<string, ChapterResult>;
   introSeen: boolean;
   advisor: boolean;
+  bests?: Record<string, ChapterBest>;
 }
 
 export type StoryStorage = Pick<Storage, "getItem" | "setItem">;
@@ -46,6 +60,24 @@ export function loadStoryProgress(storage: StoryStorage | null = liveStorage()):
     const raw = storage.getItem(STORY_STORAGE_KEY);
     if (!raw) return { ...FRESH_PROGRESS, results: {} };
     const parsed = JSON.parse(raw) as Partial<StoryProgress>;
+    // PROG-1 (#475): bests ride along only when a record carries them — a
+    // fresh load has no `bests` key at all, so the STORY-01 shape is untouched.
+    let bests: Record<string, ChapterBest> | undefined;
+    if (parsed.bests && typeof parsed.bests === "object") {
+      bests = {};
+      for (const [k, v] of Object.entries(parsed.bests)) {
+        if (!v || typeof v !== "object") continue;
+        const clean: ChapterBest = {};
+        if (typeof v.bestMargin === "number" && Number.isFinite(v.bestMargin)) {
+          clean.bestMargin = v.bestMargin;
+        }
+        if (typeof v.bestTimeMs === "number" && Number.isFinite(v.bestTimeMs) && v.bestTimeMs >= 0) {
+          clean.bestTimeMs = Math.floor(v.bestTimeMs);
+        }
+        if (clean.bestMargin !== undefined || clean.bestTimeMs !== undefined) bests[k] = clean;
+      }
+      if (Object.keys(bests).length === 0) bests = undefined;
+    }
     return {
       unlocked: typeof parsed.unlocked === "number" && parsed.unlocked >= 1
         ? Math.floor(parsed.unlocked)
@@ -57,6 +89,7 @@ export function loadStoryProgress(storage: StoryStorage | null = liveStorage()):
         : {},
       introSeen: parsed.introSeen === true,
       advisor: parsed.advisor !== false,
+      ...(bests ? { bests } : {}),
     };
   } catch {
     return { ...FRESH_PROGRESS, results: {} };
@@ -81,11 +114,16 @@ export function isChapterUnlocked(
 /**
  * Record a finished contract. A win opens the next chapter; a loss only
  * records itself (the retry is the point). A win never downgrades to a loss.
+ *
+ * PROG-1 (#475): a win may also carry the match's stats — the ★ margin and
+ * the wall time — which keep the contract's bests (widest margin, fastest
+ * win) for the chapter list. A loss keeps nothing.
  */
 export function recordChapterResult(
   chapterId: string, index: number, won: boolean, chapterCount: number,
   progress: StoryProgress = loadStoryProgress(),
   storage: StoryStorage | null = liveStorage(),
+  stats: { margin?: number; timeMs?: number } = {},
 ): StoryProgress {
   const next: StoryProgress = {
     ...progress,
@@ -95,6 +133,22 @@ export function recordChapterResult(
   if (won) {
     next.results[chapterId] = "win";
     next.unlocked = Math.max(next.unlocked, Math.min(chapterCount, index + 2));
+    const margin = stats.margin !== undefined && Number.isFinite(stats.margin)
+      ? stats.margin : undefined;
+    const timeMs = stats.timeMs !== undefined && Number.isFinite(stats.timeMs) && stats.timeMs >= 0
+      ? Math.floor(stats.timeMs) : undefined;
+    if (margin !== undefined || timeMs !== undefined) {
+      const hadBest = next.bests?.[chapterId] ?? {};
+      next.bests = {
+        ...(next.bests ?? {}),
+        [chapterId]: {
+          bestMargin: margin === undefined ? hadBest.bestMargin
+            : hadBest.bestMargin === undefined ? margin : Math.max(hadBest.bestMargin, margin),
+          bestTimeMs: timeMs === undefined ? hadBest.bestTimeMs
+            : hadBest.bestTimeMs === undefined ? timeMs : Math.min(hadBest.bestTimeMs, timeMs),
+        },
+      };
+    }
   } else if (had !== "win") {
     next.results[chapterId] = "loss";
   }
