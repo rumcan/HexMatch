@@ -53,6 +53,12 @@ export interface MainMenuProps {
    * existing resume path does the rest.
    */
   onContinue?: (chapterId: string | null) => void;
+  /**
+   * FTUE-1 (#464): "Play the Starter Island" — the Tutorial menu's replay
+   * door. The App boots the scenario (the fixed island, the trainee, the
+   * guided chain) exactly like the first launch does.
+   */
+  onStarterIsland?: () => void;
 }
 
 /** Deterministic embers: same sixteen every visit, no Math.random flicker. */
@@ -64,7 +70,7 @@ const EMBERS = Array.from({ length: 14 }, (_, i) => ({
   size: 2 + (i % 3),
 }));
 
-export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
+export default function MainMenu({ onPlay, onContinue, onStarterIsland }: MainMenuProps) {
   const [settings, setSettings] = useState(false);
   const [howTo, setHowTo] = useState(false);
   const howToRef = useRef<HTMLDivElement>(null);
@@ -93,6 +99,9 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
       live: false,
       onRun: (id) => { queueGuideSection(id); return true; },
       onReset: () => { resetProgress(); },
+      // FTUE-1 (#464): the Starter Island's replay door (absent in tests that
+      // do not ask for it — the row is then simply not offered).
+      onStarterIsland,
     });
     menuRef.current = handle;
     void handle.promise.then(() => { menuRef.current = null; setHowTo(false); });
