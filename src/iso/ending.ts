@@ -17,6 +17,7 @@ import portraitYou from "../assets/ui/tycoon_you.png";
 // medallion master (`tools/make-rank-badges.mjs`) and bundled by Vite, so a
 // ledger never depends on a network fetch to show a player their tier.
 import { UNRANKED_KEY, badgeUrlFor } from "../ui/rank-badge";
+import type { SummaryModel, HistorySample } from "./match-history";
 
 /**
  * L13 (#228): the new loop's winner is read on its own axes — BREADTH (many
@@ -463,6 +464,16 @@ export interface EndingScreenOptions {
    * round trip after the ledger mounts.
    */
   rank?: EndingRankLine | null;
+  /** END-1 (#472): the match summary, when available. */
+  summary?: SummaryModel | null;
+  /** END-1: one-click rematch — same settings, new seed. */
+  onRematch?: () => void;
+  /** END-1: same map again — same seed. */
+  onSameMap?: () => void;
+  /** END-1: next contract in the campaign. */
+  onNextContract?: () => void;
+  /** END-1: back to main menu. */
+  onMainMenu?: () => void;
 }
 
 export interface EndingScreenHandle {
@@ -609,8 +620,217 @@ function appendRankRow(
   return { element: section, fill };
 }
 
+
+// ── END-1 (#472): summary charts (plain SVG, Space Age palette) ────────────
+
+const SA_ORANGE = "#f08a24";
+const SA_AQUA = "#4fb3bf";
+const SA_LEMON = "#f2d64b";
+const SA_BONE = "#eee6d4";
+const SA_LINE = "#343b3f";
+
+function fmtTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function fmtMoney(n: number): string {
+  if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+  return `$${Math.round(n)}`;
+}
+
 /**
- * Project an ending model as a full-screen movie intertitle. Celebration is
+ * Build an SVG chart for two series over time. Pure-ish: takes samples and
+ * accessors, returns an SVG element. Space Age palette, flat, no library.
+ */
+function chartSvg(
+  samples: HistorySample[],
+  label: string,
+  getP: (s: HistorySample) => number,
+  getR: (s: HistorySample) => number,
+  yFmt: (v: number) => string,
+): SVGElement {
+  const W = 320, H = 88, PAD_L = 32, PAD_R = 8, PAD_T = 12, PAD_B = 18;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg") as unknown as SVGElement;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", `${H}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", label);
+  svg.classList.add("ending-chart");
+  (svg as any).dataset.chart = label;
+
+  // Background
+  const bg = document.createElementNS(ns, "rect");
+  bg.setAttribute("x", "0"); bg.setAttribute("y", "0");
+  bg.setAttribute("width", String(W)); bg.setAttribute("height", String(H));
+  bg.setAttribute("fill", "#1f2427");
+  bg.setAttribute("rx", "0");
+  svg.appendChild(bg);
+
+  if (samples.length < 2) {
+    const txt = document.createElementNS(ns, "text");
+    txt.setAttribute("x", String(W / 2)); txt.setAttribute("y", String(H / 2));
+    txt.setAttribute("text-anchor", "middle");
+    txt.setAttribute("fill", SA_BONE); txt.setAttribute("font-size", "10");
+    txt.textContent = samples.length === 0 ? "No data yet" : `${yFmt(getP(samples[0]))} at ${fmtTime(samples[0].t)}`;
+    svg.appendChild(txt);
+    return svg;
+  }
+
+  const tMin = samples[0].t;
+  const tMax = samples[samples.length - 1].t || 1;
+  const tSpan = Math.max(1, tMax - tMin);
+  const allVals = samples.flatMap((s) => [getP(s), getR(s)]);
+  const vMax = Math.max(1, ...allVals);
+  const vMin = Math.min(0, ...allVals);
+
+  const xOf = (t: number) => PAD_L + ((t - tMin) / tSpan) * innerW;
+  const yOf = (v: number) => PAD_T + (1 - (v - vMin) / Math.max(1, vMax - vMin)) * innerH;
+
+  // Grid lines (3 horizontal)
+  for (let i = 0; i <= 2; i++) {
+    const y = PAD_T + (i / 2) * innerH;
+    const line = document.createElementNS(ns, "line");
+    line.setAttribute("x1", String(PAD_L)); line.setAttribute("x2", String(W - PAD_R));
+    line.setAttribute("y1", String(y)); line.setAttribute("y2", String(y));
+    line.setAttribute("stroke", SA_LINE); line.setAttribute("stroke-width", "0.5");
+    line.setAttribute("opacity", "0.6");
+    svg.appendChild(line);
+    const v = vMax - (i / 2) * (vMax - vMin);
+    const lab = document.createElementNS(ns, "text");
+    lab.setAttribute("x", String(PAD_L - 4)); lab.setAttribute("y", String(y + 3));
+    lab.setAttribute("text-anchor", "end"); lab.setAttribute("fill", SA_BONE);
+    lab.setAttribute("font-size", "8"); lab.setAttribute("opacity", "0.7");
+    lab.textContent = yFmt(v);
+    svg.appendChild(lab);
+  }
+
+  // Time labels
+  const tLab0 = document.createElementNS(ns, "text");
+  tLab0.setAttribute("x", String(PAD_L)); tLab0.setAttribute("y", String(H - 2));
+  tLab0.setAttribute("fill", SA_BONE); tLab0.setAttribute("font-size", "8"); tLab0.setAttribute("opacity", "0.6");
+  tLab0.textContent = fmtTime(tMin);
+  svg.appendChild(tLab0);
+  const tLab1 = document.createElementNS(ns, "text");
+  tLab1.setAttribute("x", String(W - PAD_R)); tLab1.setAttribute("y", String(H - 2));
+  tLab1.setAttribute("text-anchor", "end"); tLab1.setAttribute("fill", SA_BONE);
+  tLab1.setAttribute("font-size", "8"); tLab1.setAttribute("opacity", "0.6");
+  tLab1.textContent = fmtTime(tMax);
+  svg.appendChild(tLab1);
+
+  const pathFor = (get: (s: HistorySample) => number, color: string) => {
+    let d = "";
+    samples.forEach((s, i) => {
+      const x = xOf(s.t), y = yOf(get(s));
+      d += i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`;
+    });
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("d", d); p.setAttribute("fill", "none");
+    p.setAttribute("stroke", color); p.setAttribute("stroke-width", "1.6");
+    p.setAttribute("stroke-linejoin", "round"); p.setAttribute("stroke-linecap", "round");
+    return p;
+  };
+
+  svg.appendChild(pathFor(getP, SA_ORANGE));
+  svg.appendChild(pathFor(getR, SA_AQUA));
+
+  // Title
+  const title = document.createElementNS(ns, "text");
+  title.setAttribute("x", String(PAD_L)); title.setAttribute("y", String(PAD_T - 2));
+  title.setAttribute("fill", SA_LEMON); title.setAttribute("font-size", "9");
+  title.setAttribute("font-weight", "600"); title.setAttribute("letter-spacing", "0.8");
+  title.textContent = label.toUpperCase();
+  svg.appendChild(title);
+
+  return svg;
+}
+
+function appendSummaryCharts(host: HTMLElement, summary: SummaryModel): void {
+  const wrap = el("section", "ending-summary-charts");
+  wrap.setAttribute("aria-label", "Match charts");
+  const h = el("h2", "ending-section-title", "Over time");
+  wrap.appendChild(h);
+  const grid = el("div", "ending-charts-grid");
+  const starsBox = el("div", "ending-chart-box");
+  starsBox.appendChild(el("div", "ending-chart-label", "★ over time"));
+  starsBox.appendChild(chartSvg(summary.samples, "Stars", (s) => s.pStars, (s) => s.rStars, (v) => `${fmt(v)}★`));
+  const moneyBox = el("div", "ending-chart-box");
+  moneyBox.appendChild(el("div", "ending-chart-label", "$ over time"));
+  moneyBox.appendChild(chartSvg(summary.samples, "Money", (s) => s.pMoney, (s) => s.rMoney, fmtMoney));
+  // Legend
+  const legend = el("div", "ending-chart-legend");
+  const pDot = el("span", "ending-legend-dot"); pDot.style.background = SA_ORANGE;
+  const rDot = el("span", "ending-legend-dot"); rDot.style.background = SA_AQUA;
+  legend.append(pDot, el("span", undefined, "You"), rDot, el("span", undefined, "Rival"));
+  grid.append(starsBox, moneyBox);
+  wrap.append(grid, legend);
+  host.appendChild(wrap);
+}
+
+function appendSummaryHighlights(host: HTMLElement, summary: SummaryModel): void {
+  const wrap = el("section", "ending-summary-highlights");
+  wrap.setAttribute("aria-label", "Highlights");
+  wrap.appendChild(el("h2", "ending-section-title", "Highlights"));
+  const list = el("div", "ending-highlights");
+
+  const addRow = (icon: string, label: string, detail: string) => {
+    const row = el("div", "ending-highlight-row");
+    row.appendChild(el("span", "ending-highlight-icon", icon));
+    const copy = el("span", "ending-highlight-copy");
+    copy.appendChild(el("b", undefined, label));
+    copy.appendChild(el("small", undefined, detail));
+    row.appendChild(copy);
+    list.appendChild(row);
+  };
+
+  const hl = summary.highlights;
+  if (hl.bestRoute) {
+    const who = hl.bestRoute.seat === 0 ? "You" : "Rival";
+    addRow("⬢", "Best route", `${hl.bestRoute.cargo} — ${hl.bestRoute.total} cargo, ${hl.bestRoute.perMin.toFixed(1)}/min — ${who} (Depot #${hl.bestRoute.depotId})`);
+  } else {
+    addRow("⬢", "Best route", "No cargo delivered yet");
+  }
+  if (hl.biggestSale) {
+    const who = hl.biggestSale.seat === 0 ? "You" : "Rival";
+    addRow("$", "Biggest sale", `${hl.biggestSale.units} ${hl.biggestSale.cargo} for $${Math.round(hl.biggestSale.revenue)} — ${who} at ${fmtTime(hl.biggestSale.t)}`);
+  } else {
+    addRow("$", "Biggest sale", "No sales");
+  }
+  addRow("⚔", "Battles won", `You ${hl.battles.pWins} – Rival ${hl.battles.rWins} (total ${hl.battles.total})`);
+  addRow("📦", "Contracts & tenders", `Offers taken: You ${hl.offers.pTaken} – Rival ${hl.offers.rTaken} · Quests: You ${hl.quests.pDone} – Rival ${hl.quests.rDone}`);
+  if (hl.townFirsts.length) {
+    const txt = hl.townFirsts.slice(0, 8).map((f) => {
+      const who = f.firstSeat === 0 ? "You" : "Rival";
+      return `Town ${f.townId} → Lv${f.level} by ${who} @${fmtTime(f.firstT)}`;
+    }).join(" · ");
+    const more = hl.townFirsts.length > 8 ? ` +${hl.townFirsts.length - 8} more` : "";
+    addRow("▰", "First to each town tier", txt + more);
+  } else {
+    addRow("▰", "First to each town tier", "No city upgrades yet");
+  }
+
+  wrap.appendChild(list);
+  host.appendChild(wrap);
+}
+
+function appendSummarySection(card: HTMLElement, summary: SummaryModel): void {
+  const section = el("section", "ending-summary");
+  section.id = "iso-ending-summary";
+  section.setAttribute("aria-label", "Match summary");
+  section.appendChild(el("h2", "ending-section-title", "Match summary"));
+  appendSummaryCharts(section, summary);
+  appendSummaryHighlights(section, summary);
+  card.appendChild(section);
+}
+
+/**
+ * Project an ending model as a full-screen movie intertitle.
+ Celebration is
  * present only for a win; defeat gets falling ash. The explicit Review button
  * leaves a small "Final ledger" ticket behind so the ending is never lost.
  */
@@ -682,6 +902,12 @@ export function showEndingScreen(
   // score, then what the scoreboard did to the ladder, then what happened next.
   const rankRow = options.rank === undefined ? null : appendRankRow(card, options.rank);
 
+  // END-1 (#472): summary, if available, stands after the rank row and before the epilogue
+  // so the score, then what the scoreboard did to the ladder, then the charts, then what happened next.
+  if (options.summary) {
+    appendSummarySection(card, options.summary);
+  }
+
   const after = el("section", "ending-after");
   after.appendChild(el("h2", "ending-section-title", "The years that followed"));
   after.appendChild(el("p", "ending-epilogue", model.epilogue));
@@ -717,7 +943,47 @@ export function showEndingScreen(
     continueBtn.type = "button";
     continueBtn.dataset.sfx = "open";
   }
-  actions.append(review, ...(continueBtn ? [continueBtn] : []), restart);
+  // END-1 (#472): new doors — rematch (new seed), same map (same seed), next contract, main menu
+  const rematchBtn = options.onRematch
+    ? el("button", "ending-button ending-rematch", "Rematch")
+    : null;
+  if (rematchBtn) {
+    rematchBtn.type = "button";
+    rematchBtn.dataset.sfx = "open";
+    rematchBtn.title = "Same settings, new map";
+  }
+  const sameMapBtn = options.onSameMap
+    ? el("button", "ending-button ending-same-map", "Same map again")
+    : null;
+  if (sameMapBtn) {
+    sameMapBtn.type = "button";
+    sameMapBtn.dataset.sfx = "open";
+    sameMapBtn.title = "Same seed, same map";
+  }
+  const nextContractBtn = options.onNextContract
+    ? el("button", "ending-button ending-next-contract", "Next contract ▸")
+    : null;
+  if (nextContractBtn) {
+    nextContractBtn.type = "button";
+    nextContractBtn.dataset.sfx = "open";
+  }
+  const mainMenuBtn = options.onMainMenu
+    ? el("button", "ending-button ending-main-menu", "Main menu")
+    : null;
+  if (mainMenuBtn) {
+    mainMenuBtn.type = "button";
+    mainMenuBtn.dataset.sfx = "close";
+  }
+  // Order: review, rematch, same-map, next-contract / continue, main-menu, restart (restart last as the old primary)
+  actions.append(
+    review,
+    ...(rematchBtn ? [rematchBtn] : []),
+    ...(sameMapBtn ? [sameMapBtn] : []),
+    ...(nextContractBtn ? [nextContractBtn] : []),
+    ...(continueBtn ? [continueBtn] : []),
+    ...(mainMenuBtn ? [mainMenuBtn] : []),
+    restart,
+  );
   card.appendChild(actions);
   screen.appendChild(card);
 
@@ -743,10 +1009,30 @@ export function showEndingScreen(
   if (continueBtn && options.onContinue) {
     continueBtn.addEventListener("click", options.onContinue);
   }
+  if (rematchBtn && options.onRematch) {
+    rematchBtn.addEventListener("click", options.onRematch);
+  }
+  if (sameMapBtn && options.onSameMap) {
+    sameMapBtn.addEventListener("click", options.onSameMap);
+  }
+  if (nextContractBtn && options.onNextContract) {
+    nextContractBtn.addEventListener("click", options.onNextContract);
+  }
+  if (mainMenuBtn && options.onMainMenu) {
+    mainMenuBtn.addEventListener("click", options.onMainMenu);
+  }
   reopen.addEventListener("click", open);
   // The ledger's keyboard trap walks whatever doors this match actually has:
-  // two in a sandbox match, three inside a contract.
-  const doors = [review, ...(continueBtn ? [continueBtn] : []), restart];
+  // two in a sandbox match, three inside a contract, plus END-1's new doors.
+  const doors = [
+    review,
+    ...(rematchBtn ? [rematchBtn] : []),
+    ...(sameMapBtn ? [sameMapBtn] : []),
+    ...(nextContractBtn ? [nextContractBtn] : []),
+    ...(continueBtn ? [continueBtn] : []),
+    ...(mainMenuBtn ? [mainMenuBtn] : []),
+    restart,
+  ];
   const onKey = (event: KeyboardEvent) => {
     if (screen.classList.contains("hidden")) return;
     if (event.key === "Escape") {
