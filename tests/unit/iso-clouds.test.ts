@@ -123,9 +123,9 @@ describe("AMB-1 deterministic sky", () => {
 // ── zoom fade ───────────────────────────────────────────────────────────────
 
 describe("AMB-1 zoom fade", () => {
-  it("is full at 0.5, ~40% at 1, gone at 2", () => {
+  it("is full at 0.5 and gone from the medium zoom on (owner: far zoom only)", () => {
     expect(cloudAlphaForZoom(0.5)).toBe(1);
-    expect(cloudAlphaForZoom(1)).toBeCloseTo(0.7, 10);
+    expect(cloudAlphaForZoom(1)).toBe(0);
     expect(cloudAlphaForZoom(2)).toBe(0);
   });
 
@@ -320,15 +320,15 @@ describe("AMB-1 renderer plumbing", () => {
     expect(ctxO.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT);
   });
 
-  it("paints nothing at the closest zoom (fade 0), thinly in the middle", () => {
+  it("paints no veils at the medium or closest zoom (fade 0)", () => {
     const near = setupRenderer(7, 2);
     near.renderer.drawOverlay([], 20_000);
     expect(near.ctxO.drawImage).not.toHaveBeenCalled();
     expect(near.renderer.cloudDiagnostics()).toMatchObject({ fade: 0, blits: 0 });
     const mid = setupRenderer(7, 1);
     mid.renderer.drawOverlay([], 20_000);
-    expect(mid.ctxO.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT);
-    expect(mid.renderer.cloudDiagnostics().fade).toBeCloseTo(0.7, 10);
+    expect(mid.ctxO.drawImage).not.toHaveBeenCalled();
+    expect(mid.renderer.cloudDiagnostics().fade).toBe(0);
   });
 
   it("freezes the sky when reduced motion asks (same draws at any time)", () => {
