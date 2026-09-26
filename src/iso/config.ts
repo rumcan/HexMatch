@@ -1313,7 +1313,7 @@ export const TOWN_HOUSE_VARIANTS = [ "town_office_1460",
   "town_fountain_1x1",
   "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_small_house_1x1_1", "town_townhouse_garden_2", "town_townhouse_gardens_2",
   "town_townhouse_3", "town_townhouse_garden_3", "town_bank", "town_cinema", "town_flats",
-  "town_flats_2", "town_flats_4", "town_flats_grey", "town_hotel", "town_house_pool",
+  "town_flats_2", "town_flats_4", "town_flats_grey", "town_house_pool",
   "town_shops_modern", "town_office_tower_modern",
   "town_shops_offices", "town_shops_offices_2", "town_cottage_old_small_a",
   "town_cottage_old_small",
@@ -1433,6 +1433,9 @@ export const TOWN_WINTER_VARIANTS = [
  * a small park; whole blocks hold 2×2 (or larger) buildings. Entries whose
  * art is not in the manifest yet are filtered out by footprint at pick time.
  */
+/** A plain tended lawn lot: fills a town tile where a park would repeat. */
+export const TOWN_LAWN = "town_lawn_1x1";
+
 export const TOWN_PARK_VARIANTS = [
   "town_fountain_1x1", "park_garden_1x1", "park_pond_1x1", "park_playground_1x1",
   "park_allotment_1x1",

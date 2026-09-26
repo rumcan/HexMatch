@@ -72,5 +72,11 @@
       1
     ],
     "footRoom": 8
+  },
+  "town_lawn_1x1": {
+    "footprint": [
+      1,
+      1
+    ]
   }
 }
