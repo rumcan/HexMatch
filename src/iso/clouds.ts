@@ -33,19 +33,22 @@ import { TILE_W, mulberry32 } from "../game/config";
 import { mapWorldBounds, type Camera } from "./camera";
 
 /** How many clouds share the sky — the ticket caps on-screen sprites at ~8. */
-export const CLOUD_COUNT = 6;
+// Owner: at least 8 clouds on screen at the normal zoom. The field is ~60x
+// the screen, so the sky holds a few hundred small clouds; only the ones on
+// screen are drawn.
+export const CLOUD_COUNT = 480;
 /** Procedural placeholder variants (the lead's rundot set is 4–6 too). */
 export const CLOUD_VARIANTS = 4;
 /** The veil's alpha at the furthest zoom (the ticket wants about 0.25–0.45). */
-export const CLOUD_ALPHA_MAX = 0.42;
+export const CLOUD_ALPHA_MAX = 0.36;
 /** The ground shadows stay a whisper — barely-there darkening. */
-export const CLOUD_SHADOW_ALPHA = 0.15;
+export const CLOUD_SHADOW_ALPHA = 0.32;
 /** Wind speed in world pixels per second: slow drift, ~10 min to cross. */
 export const CLOUD_WIND_MIN = 8;
 export const CLOUD_WIND_MAX = 16;
 /** One cloud covers 10–18 tiles across — a veil, not confetti. */
-export const CLOUD_W_MIN_TILES = 10;
-export const CLOUD_W_MAX_TILES = 18;
+export const CLOUD_W_MIN_TILES = 4;
+export const CLOUD_W_MAX_TILES = 8;
 /** The placeholder sprite raster (16:9, soft blobs on transparency). */
 export const CLOUD_SPRITE_W = 256;
 export const CLOUD_SPRITE_H = 144;
@@ -56,6 +59,9 @@ export const CLOUD_WRAP_MARGIN = 640;
  * a straight screen offset once projected). Small on purpose: a large offset
  * reads as a second cloud, not as shade.
  */
+/** Owner: the clouds sit ABOVE the map - they slide faster than the ground
+ *  when the camera pans (parallax). Shadows stay pinned to the ground. */
+export const CLOUD_PARALLAX = 1.4;
 export const CLOUD_SHADOW_DX = 96;
 export const CLOUD_SHADOW_DY = 48;
 
@@ -128,8 +134,8 @@ const smooth = (t: number): number => t * t * (3 - 2 * t);
 export function cloudAlphaForZoom(zoom: number): number {
   if (zoom <= 0.5) return 1;
   if (zoom >= 2) return 0;
-  if (zoom <= 1) return 1 - smooth((zoom - 0.5) / 0.5) * 0.6;
-  return 0.4 * (1 - smooth(zoom - 1));
+  if (zoom <= 1) return 1 - smooth((zoom - 0.5) / 0.5) * 0.3;
+  return 0.7 * (1 - smooth(zoom - 1));
 }
 
 /**
@@ -327,8 +333,22 @@ export function paintCloudLayer(
     }
     const w = c.w * z;
     const h = w * aspect;
-    const sx = wx * z + cam.x - w / 2;
-    const sy = wy * z + cam.y - h / 2;
+    let sx: number, sy: number;
+    if (shadow) {
+      sx = wx * z + cam.x - w / 2;
+      sy = wy * z + cam.y - h / 2;
+    } else {
+      // Parallax: the veil layer moves CLOUD_PARALLAX x the ground's pan,
+      // wrapped in screen space over the field's span so the sky never
+      // runs out at the map edge.
+      const spanX = (field.maxX - field.minX) * z;
+      const spanY = (field.maxY - field.minY) * z;
+      const ax = -w, ay = -h;
+      const px = wx * z + cam.x * CLOUD_PARALLAX - w / 2 - ax;
+      const py = wy * z + cam.y * CLOUD_PARALLAX - h / 2 - ay;
+      sx = ax + (px - Math.floor(px / spanX) * spanX);
+      sy = ay + (py - Math.floor(py / spanY) * spanY);
+    }
     // Cull fully off-screen veils — a zoomed-in frame skips most of the sky.
     if (sx + w < 0 || sy + h < 0 || sx > cam.vw || sy > cam.vh) continue;
     const img = set[c.variant % set.length] as unknown as CanvasImageSource;
