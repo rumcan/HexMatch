@@ -571,6 +571,11 @@ async function main() {
   if (existsSync(manifestPath)) {                     // merge — partial runs keep the rest
     const prev = JSON.parse(readFileSync(manifestPath, "utf8"));
     manifest.sprites = prev.sprites ?? {};
+    // A FULL run (no names) drops buildings whose master is gone - removed or
+    // moved aside (e.g. buildings-src/winter/) - so they stop shipping.
+    if (!nameArgs.length) {
+      for (const k of Object.keys(manifest.sprites)) if (!names.includes(k)) delete manifest.sprites[k];
+    }
   }
   const known = { ...manifest.sprites };               // footprints before this run
   for (const name of names) {

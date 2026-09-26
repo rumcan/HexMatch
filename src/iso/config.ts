@@ -1311,16 +1311,14 @@ export const DEPOT_SPRITE = "truck_depot";
  */
 export const TOWN_HOUSE_VARIANTS = [
   "town_offices_1423", "town_office_1460", "town_flats_trop_1x1_4", "town_flats_trop_1x1_7",
-  "town_cottage_arctic_1x1_1", "town_flats_arctic_1x1_1", "town_flats_arctic_1x1_2",
-  "town_fountain_1x1", "town_house_arctic_1x1_5", "town_shops_arctic_1x1_2",
-  "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_small_house_1x1_1",
-  "town_small_house_arctic_1x1_2", "town_townhouse_garden_2", "town_townhouse_gardens_2",
-  "town_flats_trop_2x1_6", "town_flats_arctic_2x1_1", "town_flats_arctic_2x1_2",
+  "town_fountain_1x1",
+  "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_small_house_1x1_1", "town_townhouse_garden_2", "town_townhouse_gardens_2",
+  "town_flats_trop_2x1_6",
   "town_townhouse_3", "town_townhouse_garden_3", "town_bank", "town_cinema", "town_flats",
   "town_flats_2", "town_flats_4", "town_flats_grey", "town_hotel", "town_house_pool",
   "town_shops_modern", "town_house_modern", "town_house_modern_2", "town_office_tower_modern",
   "town_shops_offices", "town_shops_offices_2", "town_cottage_old_small_a",
-  "town_cottage_old_small", "town_cottage_old_small_2", "town_shop_small", "town_house_swiss",
+  "town_cottage_old_small", "town_cottage_old_small_2",
   "town_cottage_tall", "town_offices_tall", "town_flats_townhouse_tall",
 ] as const;
 
@@ -1415,11 +1413,23 @@ export function townTierLabel(tier: number): string {
  * tile only changes art when its town's tier changes — deterministic and
  * multiplayer-safe, exactly like the full list above.
  */
-export const TOWN_VILLAGE_VARIANTS = [
-  "town_cottage_arctic_1x1_1", "town_house_arctic_1x1_5", "town_small_house_1x1_1",
-  "town_small_house_arctic_1x1_2", "town_small_flat_1x1_1", "town_small_flat_1x1_2",
-  "town_cottage_old_small_a", "town_cottage_old_small", "town_cottage_old_small_2",
-  "town_shop_small", "town_house_swiss", "town_fountain_1x1",
+/**
+ * Owner (2026-09-26): snow-roofed town art, kept for a future WINTER season.
+ * Not drawn anywhere today; the masters live in assets/buildings-src/winter/.
+ */
+export const TOWN_WINTER_VARIANTS = [
+  "town_cottage_arctic_1x1_1",
+  "town_flats_arctic_1x1_1",
+  "town_flats_arctic_1x1_2",
+  "town_flats_arctic_2x1_1",
+  "town_flats_arctic_2x1_2",
+  "town_house_arctic_1x1_5",
+  "town_shops_arctic_1x1_2",
+  "town_small_house_arctic_1x1_2",
+] as const;
+
+export const TOWN_VILLAGE_VARIANTS = [ "town_small_house_1x1_1", "town_small_flat_1x1_1", "town_small_flat_1x1_2",
+  "town_cottage_old_small_a", "town_cottage_old_small", "town_cottage_old_small_2", "town_fountain_1x1",
 ] as const;
 
 /**
