@@ -30,6 +30,11 @@ import {
 import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
+import {
+  JAM_TIMEOUT_MS, YIELD_WAIT_MS, STATIONARY_SPEED,
+  buildHash, laneOffsetFor, overpassLiftFor, approachingJunction,
+  followSpeed, segKey,
+} from "./traffic";
 
 /** Default traffic volume — a dozen cars feels lived-in. */
 export const CAR_COUNT = 12;
@@ -84,6 +89,14 @@ export interface Car {
 
   /** Last trip key to avoid immediate identical repeats where alternatives exist. */
   lastTripKey: string | null;
+
+  // ── TRAFFIC-1 state (fields defaulted in planCars for old saves) ──────
+  /** Milliseconds spent at near-zero speed (jam-detector). */
+  _stuckMs?: number;
+  /** Milliseconds already waited at a yield/junction. */
+  _yieldMs?: number;
+  /** Last effective speed (tiles/ms) the car moved at this frame, for stuck detection. */
+  _lastSpeed?: number;
 
   // ── legacy compat (for old tests/snapshots that read loop/reverse) ───────
   /** @deprecated — TRAFFIC-02 has no loops; kept as optional for compat. */
@@ -463,6 +476,9 @@ export function planCars(
           state: p.state ?? "driving",
           leg: p.leg ?? 0,
           t: p.t ?? 0,
+          _stuckMs: p._stuckMs ?? 0,
+          _yieldMs: p._yieldMs ?? 0,
+          _lastSpeed: p._lastSpeed ?? 0,
         };
         // Clamp leg/t to valid range
         if (retained.leg >= retained.route.length) retained.leg = 0;
@@ -497,6 +513,9 @@ export function planCars(
         arriveMs: 0,
         waitMs: p.waitMs ?? (WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS) + i * 150),
         lastTripKey: p.lastTripKey ?? null,
+        _stuckMs: 0,
+        _yieldMs: 0,
+        _lastSpeed: 0,
       };
       out.push(waiting);
       continue;
@@ -525,6 +544,9 @@ export function planCars(
         fade: 0,
         arriveMs: 0,
         lastTripKey: trip.key,
+        _stuckMs: 0,
+        _yieldMs: 0,
+        _lastSpeed: 0,
         loop: false,
         reverse: false,
       };
@@ -564,6 +586,9 @@ export function planCars(
         fade: 0,
         arriveMs: 0,
         lastTripKey: lastKey,
+        _stuckMs: 0,
+        _yieldMs: 0,
+        _lastSpeed: 0,
         loop: false,
         reverse: false,
       };
@@ -623,6 +648,65 @@ export function tickCars(
     rng = mulberry32(seed);
   }
 
+  // TRAFFIC-1: build a spatial hash of active cars (driving OR arriving at
+  // destination) AT THE START of this tick so car-following reads consistent
+  // positions (1-frame lag is acceptable for visual spacing and avoids O(n²)
+  // or mid-tick rebuilds). Arriving cars still occupy their final tile and
+  // should be considered by followers.
+  const drivingCars = state.cars.filter(
+    (c) => (c.state === "driving" || c.state === "arriving") && c.route.length >= 2,
+  );
+  const hash = buildHash(
+    drivingCars.map((c) => ({ id: c.name, v: c })),
+  );
+
+  // Helper: distance (tiles) from this car to the nearest car AHEAD in same
+  // lane on the current segment, measured along the direction of travel.
+  // Returns Infinity if the segment is clear ahead.
+  const distAhead = (car: Car): number => {
+    const n = car.route.length;
+    if (n < 2) return Infinity;
+    const k = Math.min(car.leg, n - 2);
+    const a = car.route[k], b = car.route[k + 1];
+    const sk = segKey(a[0], a[1], b[0], b[1]);
+    const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const myAlong = car.t * segLen;
+    let best = Infinity;
+    for (const mate of hash.segmentMates(sk)) {
+      if (mate.id === car.name) continue;
+      const other = mate.v as Car;
+      if (other.state !== "driving" && other.state !== "arriving") continue;
+      const ok = Math.min(other.leg, other.route.length - 2);
+      // Same segment only (same route[k] → route[k+1] in canonical form)
+      const oa = other.route[ok], ob = other.route[ok + 1];
+      const oKey = segKey(oa[0], oa[1], ob[0], ob[1]);
+      if (oKey !== sk) continue;
+      const oLen = Math.hypot(ob[0] - oa[0], ob[1] - oa[1]) || 1;
+      // Determine if other is AHEAD in same lane (same canonical segment
+      // key means shared bucket; we need to check direction parity: along
+      // value greater than ours if heading same direction in canonical
+      // order, or smaller if opposite direction (which is NOT same lane)).
+      // Cars are one-way; the canonical segKey (lower-idx first) means one
+      // direction is a→b (lower to higher idx) and the opposite is b→a.
+      // We consider a mate "ahead" only if their heading matches ours along
+      // the canonical segment, AND they are in front of us.
+      // Cars are always one-way forward along route (leg → leg+1), so
+      // myHeadingCanonical = true if route[k]→route[k+1] goes from lower-idx
+      // to higher-idx tile (the canonical key order). If we're heading the
+      // REVERSE of the canonical order, our "along" is measured from the
+      // canonical end.
+      const myHeadingCanonical = tIdx(a[0], a[1]) < tIdx(b[0], b[1]);
+      const oHeadingCanonical = tIdx(oa[0], oa[1]) < tIdx(ob[0], ob[1]);
+      if (myHeadingCanonical !== oHeadingCanonical) continue; // opposite direction
+      // My along-measure from the BACK of my heading direction.
+      const myAlongH = myHeadingCanonical ? myAlong : segLen - myAlong;
+      const oAlongH = oHeadingCanonical ? other.t * oLen : oLen - other.t * oLen;
+      const gap = oAlongH - myAlongH;
+      if (gap > 0.001 && gap < best) best = gap;
+    }
+    return best;
+  };
+
   for (const car of state.cars) {
     let remaining = dtMs;
     let guard = 0;
@@ -638,6 +722,8 @@ export function tickCars(
             car.fadeMs = SPAWN_FADE_MS;
             car.leg = 0;
             car.t = 0;
+            car._stuckMs = 0;
+            car._yieldMs = 0;
           } else if (track && grid && neighbours && townNodes && rng) {
             // Need to find a new trip now
             const trip = findTrip(rng, townNodes, neighbours, car.lastTripKey);
@@ -654,6 +740,8 @@ export function tickCars(
               car.leg = 0;
               car.t = 0;
               car.waitMs = 0;
+              car._stuckMs = 0;
+              car._yieldMs = 0;
             } else {
               // No valid route — wait without spinning retry loop
               car.waitMs = WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS);
@@ -674,6 +762,8 @@ export function tickCars(
           car.state = "driving";
           car.leg = 0;
           car.t = 0;
+          car._stuckMs = 0;
+          car._yieldMs = 0;
         } else {
           car.fadeMs -= remaining;
           car.fade = 1 - car.fadeMs / SPAWN_FADE_MS;
@@ -689,35 +779,125 @@ export function tickCars(
           car.arriveMs = ARRIVE_PAUSE_MS;
           break;
         }
-        // Advance along one-way route
+
+        // Check junction yield
+        if (approachingJunction(car)) {
+          const jk = (() => {
+            const kk = Math.min(car.leg, n - 2);
+            if (kk + 1 >= n) return null;
+            const bb = car.route[kk + 1];
+            return `j:${tIdx(bb[0], bb[1])}`;
+          })();
+          if (jk) {
+            // Count who's already in the junction (excluding self). A mate
+            // already IN the junction has priority; we wait up to YIELD_WAIT_MS
+            // before forcing entry (jam recovery).
+            let occupants = 0;
+            for (const mate of hash.junctionMates(jk)) {
+              if (mate.id === car.name) continue;
+              const other = mate.v as Car;
+              if (other.state === "driving") occupants++;
+            }
+            if (occupants > 0 && (car._yieldMs ?? 0) < YIELD_WAIT_MS) {
+              car._yieldMs = (car._yieldMs ?? 0) + remaining;
+              car._lastSpeed = 0;
+              car._stuckMs = (car._stuckMs ?? 0) + remaining;
+              remaining = 0;
+              break;
+            }
+          }
+        }
+
+        // Advance along one-way route, with car-following speed cap
+        let moved = 0;
+        const subDt = remaining;
         while (remaining > 1e-9) {
           if (car.leg >= n - 1) {
             // reached end
             car.t = 1;
             car.state = "arriving";
             car.arriveMs = ARRIVE_PAUSE_MS;
+            car._stuckMs = 0;
+            car._yieldMs = 0;
             break;
           }
           const a = car.route[car.leg], b = car.route[car.leg + 1];
-          // Owner: Dirt < Street < Road < Highway, relative to Road's pace.
+          const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          // Density cap: refuse to enter the NEXT segment if it is already
+          // saturated, to prevent pile-ups from snowballing across tiles.
+          if (car.t >= 0.99 && car.leg + 1 < n - 1) {
+            const na = car.route[car.leg + 1], nb = car.route[car.leg + 2];
+            const nextKey = segKey(na[0], na[1], nb[0], nb[1]);
+            let occupants = 0;
+            const myCanonFwd = tIdx(na[0], na[1]) < tIdx(nb[0], nb[1]);
+            for (const mate of hash.segmentMates(nextKey)) {
+              if (mate.id === car.name) continue;
+              const other = mate.v as Car;
+              if (other.state !== "driving" && other.state !== "arriving") continue;
+              const ok = Math.min(other.leg, other.route.length - 2);
+              const oa = other.route[ok], ob = other.route[Math.min(ok + 1, other.route.length - 1)];
+              if (segKey(oa[0], oa[1], ob[0], ob[1]) !== nextKey) continue;
+              const oFwd = tIdx(oa[0], oa[1]) < tIdx(ob[0], ob[1]);
+              if (oFwd === myCanonFwd) occupants++;
+            }
+            if (occupants >= 4) { car._lastSpeed = 0; break; }
+          }
+          // Tier pace: Dirt < Street < Road < Highway, relative to Road's pace.
           const pace = carTierPace(trackOrBlocked, a, b);
-          const speed = CAR_SPEED * pace / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1);
-          const need = (1 - car.t) / speed;
+          const baseSpeed = CAR_SPEED * pace / segLen;
+          const aheadDist = distAhead(car);
+          const effSpeed = followSpeed(baseSpeed, aheadDist);
+          const need = (1 - car.t) / (effSpeed || 1e-9);
+          if (effSpeed <= 1e-9) {
+            // Blocked by car ahead — hold position
+            car._lastSpeed = 0;
+            break;
+          }
           if (remaining < need) {
-            car.t += remaining * speed;
+            car.t += remaining * effSpeed;
+            moved += remaining * effSpeed * segLen;
             remaining = 0;
             break;
           }
+          moved += (1 - car.t) * segLen;
           remaining -= need;
           car.t = 0;
           car.leg++;
+          car._yieldMs = 0; // cleared a junction / progressed onto new leg
           if (car.leg >= n - 1) {
             car.t = 1;
             car.leg = n - 1;
             car.state = "arriving";
             car.arriveMs = ARRIVE_PAUSE_MS;
+            car._stuckMs = 0;
+            car._yieldMs = 0;
             break;
           }
+        }
+        // Track stuck-time for jam recovery
+        const effectiveSpeed = moved / Math.max(subDt - remaining, 0.001); // tiles/ms
+        car._lastSpeed = effectiveSpeed;
+        if (effectiveSpeed < STATIONARY_SPEED) {
+          car._stuckMs = (car._stuckMs ?? 0) + (subDt - remaining);
+        } else {
+          car._stuckMs = 0;
+        }
+        // Jam recovery: if stuck too long, despawn and pick a new trip
+        if ((car._stuckMs ?? 0) > JAM_TIMEOUT_MS && track && grid && neighbours && townNodes && rng) {
+          car.state = "waiting";
+          car.route = [];
+          car.origin = null;
+          car.dest = null;
+          car.originTownId = null;
+          car.destTownId = null;
+          car.leg = 0;
+          car.t = 0;
+          car.fade = 0;
+          car.fadeMs = 0;
+          car.arriveMs = 0;
+          car._stuckMs = 0;
+          car._yieldMs = 0;
+          car.waitMs = WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS);
         }
         break; // driving consumes remaining or transitions
       } else if (car.state === "arriving") {
@@ -749,6 +929,8 @@ export function tickCars(
           car.leg = 0;
           car.t = 0;
           car.arriveMs = 0;
+          car._stuckMs = 0;
+          car._yieldMs = 0;
         } else {
           car.fadeMs -= remaining;
           car.fade = car.fadeMs / DESPAWN_FADE_MS;
@@ -784,7 +966,7 @@ function dirBit(from: [number, number], to: [number, number]): number {
   return SE;
 }
 
-export function carItems(state: CarState): DrawItem[] {
+export function carItems(state: CarState, track?: Track | null): DrawItem[] {
   const out: DrawItem[] = [];
   for (const car of state.cars) {
     if (car.state === "waiting") continue;
@@ -803,10 +985,18 @@ export function carItems(state: CarState): DrawItem[] {
       // Position at dest for fade out
       if (car.state === "despawning" || car.state === "arriving") {
         // fx/fy at dest
-        const fx = b[0];
-        const fy = b[1];
+        let fx = b[0];
+        let fy = b[1];
         const dir = dirBit(a, b);
         const sprite = carSprite(car.carIndex, dir);
+        // Lane offset on the arriving leg too so the arrival position is
+        // consistent with the driving position.
+        const tmpPos: VehiclePosLike = { route: car.route, leg: n - 2, t: 1 };
+        if (track) {
+          const [du, dv] = laneOffsetFor(tmpPos, track);
+          fx += du; fy += dv;
+        }
+        const lift = track ? overpassLiftFor(tmpPos, track) : 0;
         out.push({
           sprite,
           tx: Math.round(fx),
@@ -814,6 +1004,7 @@ export function carItems(state: CarState): DrawItem[] {
           fx,
           fy,
           alpha: car.fade,
+          ...(lift ? { lift } : {}),
           ref: { car: car.name, state: car.state, fade: car.fade },
         });
         continue;
@@ -829,10 +1020,18 @@ export function carItems(state: CarState): DrawItem[] {
       a = car.route[n - 2] ?? car.route[n - 1];
       b = car.route[n - 1];
     }
-    const fx = a[0] + (b[0] - a[0]) * car.t;
-    const fy = a[1] + (b[1] - a[1]) * car.t;
+    let fx = a[0] + (b[0] - a[0]) * car.t;
+    let fy = a[1] + (b[1] - a[1]) * car.t;
     const dir = dirBit(a, b);
     const sprite = carSprite(car.carIndex, dir);
+    // TRAFFIC-1: lane offset + overpass depth lift
+    const tmpPos: VehiclePosLike = { route: car.route, leg: k, t: car.t };
+    let lift = 0;
+    if (track) {
+      const [du, dv] = laneOffsetFor(tmpPos, track);
+      fx += du; fy += dv;
+      lift = overpassLiftFor(tmpPos, track);
+    }
     out.push({
       sprite,
       tx: Math.round(fx),
@@ -840,11 +1039,15 @@ export function carItems(state: CarState): DrawItem[] {
       fx,
       fy,
       alpha: car.fade,
+      ...(lift ? { lift } : {}),
       ref: { car: car.name, state: car.state, fade: car.fade },
     });
   }
   return out;
 }
+
+/** Local alias for lane-offset/overpass helpers — matches traffic.VehiclePos. */
+interface VehiclePosLike { route: readonly (readonly [number, number])[]; leg: number; t: number; }
 
 // ── helpers for tests / game integration ─────────────────────────────────
 /** For tests: check if a car route is local (same town) */
