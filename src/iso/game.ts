@@ -12400,6 +12400,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * the only thing a test fixture needs to seed, so they hang here.
      */
     get purses() { return players.map((p) => p.purse); },
+    /** ECON-1 (#421): every seat's money, and a setter so a test can fund a seat. */
+    get moneys() { return players.map((p) => p.money); },
+    setSeatMoney: (i: number, v: number) => { const p = players[i]; if (p) p.money = Math.max(0, v); },
     /**
      * #186: the seats, as the game holds them — id, name, whether a person is
      * on it, its purse and its ★. The two-seat purse check ("host and guest
