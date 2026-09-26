@@ -1,3 +1,5 @@
+import { MENU_CAST } from "./MainMenu";
+import logoUrl from "../assets/poster/logo.webp";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   NO_ROOM_SERVER_MESSAGE,
@@ -985,30 +987,40 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   useEffect(() => () => { /* room ownership moves to App after resolution */ }, []);
 
-  if (state === "choose") return (
-    <main className="start-screen" aria-label="Hexmatch start screen">
-      <div className="start-panel start-modes">
-        <section className="start-modes-info" aria-label="Manager and rating">
-          <header className="start-modes-head">
-            <p className="start-kicker">HEXMatch Industries</p>
-            <h1>Back to work, Logistics Manager.</h1>
-            <p className="start-subtitle">Your first shift at {EMPLOYER}: move the freight, beat the rival, earn the promotion.</p>
-          </header>
-          <div className="portrait-picker" role="radiogroup" aria-label="Choose your manager">
-            <p className="portrait-label">Your manager</p>
-            <div className="portrait-options">
-              {PORTRAITS.map((p) => (
-                <button key={p} type="button"
-                  className={`portrait-opt${portrait === p ? " on" : ""}`}
-                  aria-pressed={portrait === p}
-                  data-sfx="select"
-                  onClick={() => setPortrait(p)}>
-                  <span className={`portrait-face portrait-${p}`} aria-hidden="true" />
-                  <span className="portrait-name">{p === "vex" ? "Anne Hextall" : "James Hextall"}</span>
+  if (state === "choose") {
+    // Owner (2026-09-26): the Play screen is the Hextall character card.
+    // PORTRAITS: "vex" is Anne, the other is James.
+    const castOf = (p: Portrait) => MENU_CAST.find((c) => c.id === (p === "vex" ? "anne" : "james")) ?? MENU_CAST[0];
+    const cast = castOf(portrait);
+    return (
+    <main className="start-screen menu play-card" aria-label="Hexmatch start screen">
+      <div className="mc" data-accent={cast.accent}>
+        <aside className="mc-strip">
+          <h1 className="menu-title menu-logo"><img src={logoUrl} alt="Hexmatch Industries" /></h1>
+          <div className="mc-cast portrait-picker" role="radiogroup" aria-label="Choose your manager">
+            <span className="mc-scroll" aria-hidden="true">Your manager</span>
+            {PORTRAITS.map((p) => {
+              const c = castOf(p);
+              return (
+                <button key={p} type="button" role="radio"
+                  className={`mc-thumb portrait-opt${portrait === p ? " on" : ""}`} data-accent={c.accent}
+                  aria-pressed={portrait === p} aria-checked={portrait === p}
+                  data-sfx="select" onClick={() => setPortrait(p)} aria-label={`${c.first} ${c.last}`}>
+                  <img src={c.thumb} alt="" />
+                  <span className="portrait-name">{c.first} {c.last}</span>
                 </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
+        </aside>
+        <div className="mc-hero" aria-hidden="true"><img key={cast.id} src={cast.hero} alt="" /></div>
+      <div className="start-panel start-modes menu-card">
+        <section className="start-modes-info mc-profile" aria-label="Manager and rating">
+          <p className="start-kicker mc-kicker">Back to work, Logistics Manager.</p>
+          <h2 className="mc-name">{cast.first}<br />{cast.last}</h2>
+          <p className="mc-quote">“{cast.quote}”</p>
+          <span className="mc-rule" aria-hidden="true" />
+          <p className="mc-bio">{cast.bio}</p>
           {rank ? (
             <div className="rank-block">
               <RankChip model={chipFor(rank)} />
@@ -1022,7 +1034,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               </p>
             </div>
           ) : null}
-      </section>
+        </section>
         <nav className="start-actions" aria-label="Game modes">
           <p className="start-actions-label">Solo</p>
           {/* CONTINUE-01 (#191): a resumable sandbox save gets the gold door,
@@ -1051,8 +1063,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </nav>
       </div>
+      </div>
     </main>
-  );
+    );
+  }
   if (state === "story") {
     const pin = pinnedChapter();
     return (
