@@ -16,6 +16,9 @@ const ICON_BODY: Record<string, string> = {
   rail: `<path d="M4 15l11 -11m5 5l-11 11m-4 -8l7 7m-3.5 -10.5l7 7m-3.5 -10.5l7 7" />`,
   platform: `<path d="M21 13c0 -3.87 -3.37 -7 -10 -7h-8" /> <path d="M3 15h16a2 2 0 0 0 2 -2" /> <path d="M3 6v5h17.5" /> <path d="M3 11v4" /> <path d="M8 11v-5" /> <path d="M13 11v-4.5" /> <path d="M3 19h18" />`,
   dam: `<path d="M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12" /> <path d="M4 8h16" /> <path d="M20 12h-16" /> <path d="M4 16h16" /> <path d="M9 4v4" /> <path d="M14 8v4" /> <path d="M8 12v4" /> <path d="M16 12v4" /> <path d="M11 16v4" />`,
+  // #456 Level Ground — an original vector placeholder (stepped ground, one
+  // arrow pressing the top step down onto the middle). No raster art here.
+  level: `<path d="M3 18h5v-4h6v-4h7" /> <path d="M12 2v6" /> <path d="M9 5.5l3 -3l3 3" /> <path d="M3 21h18" />`,
   demolish: `<path d="M2 17a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /> <path d="M12 17a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /> <path d="M19 13v4a2 2 0 0 0 2 2h1" /> <path d="M14 19h-10" /> <path d="M4 15h10" /> <path d="M9 11v-5h2a3 3 0 0 1 3 3v6" /> <path d="M5 15v-3a1 1 0 0 1 1 -1h8" /> <path d="M19 17h-3" />`,
 };
 
