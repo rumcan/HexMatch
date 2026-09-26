@@ -8702,8 +8702,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     eco.dams = damsFromWire(applied.dams);
     if (applied.cars || applied.rail) {
       // Ensure guest renders vehicles
-      world.vehicles = (carItems(cars as any) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined))
+      world.vehicles = (carItems(cars as any, track) as any)
+        .concat(truckItems(trucks as any, atlasRef ?? undefined, track))
         .concat(trainItems(rail, atlasRef ?? undefined));
     }
     // L15 (#230): boards and crossPrompt are gone from the wire — the board
@@ -8787,16 +8787,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if ((msg as any).cars) {
       (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
-      world.vehicles = (carItems(cars as any) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined))
+      world.vehicles = (carItems(cars as any, track) as any)
+        .concat(truckItems(trucks as any, atlasRef ?? undefined, track))
         .concat(trainItems(rail, atlasRef ?? undefined));
     }
     // RAIL-04 (#178): a delta's rail field is present on every publish from a
     // host that HAS a railway; absent means "unchanged", so nothing is cleared
     // here (only a full state decides that).
     if ((msg as any).rail && applyRailWire(rail, (msg as any).rail)) {
-      world.vehicles = (carItems(cars as any) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined))
+      world.vehicles = (carItems(cars as any, track) as any)
+        .concat(truckItems(trucks as any, atlasRef ?? undefined, track))
         .concat(trainItems(rail, atlasRef ?? undefined));
       worldDirty = true;
     }
@@ -11821,6 +11821,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // trucks integrate with dt, so position is the whole migration state
         t2.leg = old.leg; t2.t = old.t; t2.reverse = old.reverse;
         t2.waitMs = old.waitMs;
+        t2._yieldMs = old._yieldMs ?? 0;
+        t2._stuckMs = old._stuckMs ?? 0;
+        t2._lastSpeed = old._lastSpeed ?? 0;
       }
       // L7: rateMult always comes from `next` (the live yield × distance ×
       // transport). A replan after a tune or a decay must pick up the new
@@ -12156,7 +12159,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // Protests hold lorries before the blocked tile — the set is rebuilt per
         // frame only while a protest stands (usually it is undefined: no crowd,
         // no cost, no behaviour change).
-        tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined);
+        tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined, track);
         // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
         tickCars(cars, dt, track, grid, seed);
       } else {
@@ -12216,8 +12219,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
       // branded sprites only exist once `loadVehicleLayers` has installed them
       // (see below), and until then every truck draws the legacy goods cell.
-      world.vehicles = carItems(cars)
-        .concat(truckItems(trucks, atlasRef ?? undefined))
+      world.vehicles = carItems(cars, track)
+        .concat(truckItems(trucks, atlasRef ?? undefined, track))
         .concat(trainItems(rail, atlasRef ?? undefined));
       // AMB-2 (#391): the birds. Cosmetic, seeded from the map seed, and a
       // no-op unless the camera is at the closest zoom — the fade parks the
@@ -12769,7 +12772,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         rivalQuarry.setTruckServed(truckServedCargos(now, "ai"));
       }
       refreshTruckRates();
-      tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined);
+      tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined, track);
       tickCars(cars, dtMs, track, grid, seed);
       collectDeliveries(now);
     },
