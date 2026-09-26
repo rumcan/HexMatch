@@ -145,8 +145,7 @@ import {
   DAM_BONUS, DAM_COST, DAM_RANGE, DAM_REFUSAL_TEXT, DAM_SIDES, SIDES,
   damBonusAtTiles, damCityBonusAt, damContains, damDrawOrigin, damFootprint,
   damRefusal, damRiverAt, damSitesFor, damsFromWire, damsToWire,
-  type Dam, type DamSide,
-} from "./dams";
+  type Dam, type DamSide, DAMS_ENABLED } from "./dams";
 import {
   aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades,
   planUpgrades, executePaves,
@@ -1636,7 +1635,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // flags its placement rule gates on (no dam-able water without rivers,
     // and the bonus multiplies a clock-income factor that only the new loop
     // pays). The button hides where the rules could never say "ok".
-    dams: riversOn && newLoop,
+    dams: DAMS_ENABLED && riversOn && newLoop,
     newLoop,
     /**
      * C2 (#257): the chat panel, and the whole of its gate.
@@ -7563,7 +7562,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * option off: no river, no site, ever. Returns whether a dam was built.
    */
   function rivalDamStep(): boolean {
-    if (!riversOn || !newLoop) return false;
+    if (!DAMS_ENABLED || !riversOn || !newLoop) return false;
     if (!canPay(rival.purse, DAM_COST)) return false;
     const owner = rival.i + 1;
     const sites = damSitesFor(grid);
@@ -8547,7 +8546,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (pv.tiles.length === 0) toast("Can't build there.", "bad");
           else commitTrackDrag(p, pv, kind);
         }
-      } else if (what === "dam") {
+      } else if (what === "dam" && DAMS_ENABLED) {
         // R3 (#270): a guest's dam build. The host runs the SAME site rule,
         // the SAME charge and the SAME build against the guest's seat — the
         // side the guest DREW is the side built (#181's heading rule). The
@@ -10109,6 +10108,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // map option there is no dam-able water, and without the new loop there
     // is no clock-income factor for the bonus to multiply — so a hotkey that
     // arms it in that mode would summon a build the rules always refuse.
+    if (t === "dam" && !DAMS_ENABLED) return;
     if (t === "dam" && !(riversOn && newLoop)) {
       toast("Dams need a river map (rivers on) and the new economy loop.", "info");
       return;
