@@ -36,6 +36,12 @@ export interface TutorialMenuOptions {
   onRun: (id: GuideSectionId) => boolean;
   /** "Reset tutorial" — the caller clears the record and repaints. */
   onReset: () => void;
+  /**
+   * FTUE-1 (#464): "Play the Starter Island" — the scenario's replay door.
+   * Present on the front menu (which boots the island); absent inside a live
+   * game, where it would tear down the match the player is standing in.
+   */
+  onStarterIsland?: () => void;
   /** True when a match is live. False on the front menu, where a pick queues
    *  the section for the next boot instead of running it now. */
   live: boolean;
@@ -161,6 +167,33 @@ export function showTutorialMenu(
     const rows = buildGuideSections(opts.ctx);
     const byId = new Map(rows.map((s) => [s.id, s]));
     list.innerHTML = "";
+    // FTUE-1 (#464): the Starter Island's replay door, above the sections —
+    // the scenario (map, trainee, the whole chain), playable again on demand.
+    if (opts.onStarterIsland) {
+      const play = document.createElement("button");
+      play.type = "button";
+      play.className = "guide-menu-row guide-menu-starter";
+      play.dataset.act = "guide-starter";
+      play.dataset.sfx = "open";
+      const copy = document.createElement("span");
+      copy.className = "guide-menu-copy";
+      const name = document.createElement("b");
+      name.textContent = "Play the Starter Island";
+      const blurb = document.createElement("small");
+      blurb.textContent = "The first game's island — one town, four industries, and the whole guided chain.";
+      copy.append(name, blurb);
+      const go = document.createElement("span");
+      go.className = "guide-menu-go";
+      go.textContent = "Play";
+      play.append(copy, go);
+      play.setAttribute("aria-label", "Play the Starter Island — the guided first-game scenario");
+      play.onclick = () => {
+        sfx.play("open");
+        close();
+        opts.onStarterIsland?.();
+      };
+      list.appendChild(play);
+    }
     for (const id of GUIDE_SECTION_IDS) {
       const sec = byId.get(id);
       if (!sec) continue;

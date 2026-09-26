@@ -31,6 +31,13 @@ import {
 
 export interface GuideRect { x: number; y: number; w: number; h: number }
 
+/** FTUE-1 (#464): the first game's chain — the Starter Island's teaching run.
+ *  The ticket's five, in the ticket's order (Rail and the drawer are later
+ *  questions; each stays one click away in the Tutorial menu). */
+export const FIRST_GAME_CHAIN: readonly GuideSectionId[] = [
+  "getting-started", "factory", "depots", "logistics", "upgrades",
+];
+
 export interface GuideHostHooks {
   /** Where the layer and the menu sheet hang (the game root). */
   root: HTMLElement;
@@ -48,13 +55,27 @@ export interface GuideHostHooks {
   /** Is the game already past this step (the Factory stands, a Depot is
    *  built, income flows)? Such a step is skipped on arrival. */
   already?: (sectionId: string, stepId: string) => boolean;
+  /**
+   * FTUE-1 (#464): leave the Starter Island for the NORMAL game. While the
+   * first-game chain runs, the host stands a "Skip to the real game" key in
+   * the strip's own row — the first screen the player sees — and this is
+   * where it lands. Absent = no chip (every ordinary boot).
+   */
+  onPlayNormalGame?: () => void;
 }
 
 export interface GuideHost {
   readonly controller: GuideController;
   /** Run one section now. */
   run(id: GuideSectionId): boolean;
-  /** The first game's auto-run: Getting started, and nothing else. */
+  /**
+   * FTUE-1 (#464): the first game's auto-run — the whole teaching chain the
+   * Starter Island is played under: Getting started → Factory → Depots →
+   * Logistics → Upgrades (the ticket's chain; the other five sections stay
+   * one click away in the Tutorial menu). Still gated on the guide being
+   * welcome (`allowed`, not `dismissed`): a dismissed guide never comes back
+   * unasked — but "Skip to the real game" is an EXIT, never a dismissal.
+   */
   runFirstGame(): void;
   /** A completion event from the game. */
   emit(event: GuideEvent): void;
@@ -134,24 +155,59 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
       try { hooks.onOutcome?.(view.outcome); } catch { /* garnish */ }
     }
     if (!view.running) lastStepKey = "\u0000";
+    paintChip(view);
   }
 
   const off = controller.onChange(() => paint());
 
   renderer.mount(hooks.root);
 
+  // ── FTUE-1 (#464): the Starter Island's exit door ────────────────────────
+  // "Skip to the real game" stands in the strip's own key row (the strip is
+  // the first screen of the first game) while the FIRST-GAME chain runs —
+  // on the first screen and every screen after it, because a player who
+  // wants out should never have to hunt. It is an EXIT, not a dismissal:
+  // the guide's own "End tutorial" keeps its meaning (stay in the game, stop
+  // teaching), and this leaves the scenario for the normal match.
+  let chip: HTMLButtonElement | null = null;
+  let chainRunning = false;
+  function paintChip(view: GuideView): void {
+    const show = chainRunning && view.running === true && !!hooks.onPlayNormalGame;
+    if (show && !chip) {
+      const row = hooks.root.querySelector(".guide-row");
+      if (row) {
+        chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "guide-key ghost";
+        chip.dataset.act = "guide-skip-real";
+        chip.dataset.sfx = "open";
+        chip.textContent = "Skip to the real game";
+        chip.title = "Leave the Starter Island and open the real game";
+        chip.onclick = () => { try { hooks.onPlayNormalGame?.(); } catch { /* garnish */ } };
+        row.appendChild(chip);
+      }
+    }
+    chip?.classList.toggle("hidden", !show);
+  }
+
   const host: GuideHost = {
     controller,
     run(id) {
+      // A section picked by name is not the first-game chain: the exit chip
+      // stands down (the Tutorial menu is where a section is asked for).
+      chainRunning = false;
       const ok = controller.run(id);
       paint();
       return ok;
     },
     runFirstGame() {
-      // THE FIRST GAME runs ONE section. The rest are there for the asking.
+      // FTUE-1 (#464): THE FIRST GAME runs the whole chain — Getting started
+      // → Factory → Depots → Logistics → Upgrades — inside the Starter
+      // Island. The rest are there for the asking (Tutorial menu).
       if (!controller.allowed()) return;
       if (controller.dismissed()) return;
-      controller.runChain(["getting-started"]);
+      chainRunning = true;
+      controller.runChain(FIRST_GAME_CHAIN);
       paint();
     },
     emit(event) {
@@ -184,6 +240,8 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
       off();
       menu?.destroy();
       menu = null;
+      chip?.remove();
+      chip = null;
       renderer.unmount();
       controller.destroy();
     },
