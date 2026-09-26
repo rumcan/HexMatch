@@ -313,6 +313,17 @@ export interface UiState {
   objective?: string | null;
   /** L8 (#222): banner vs objective stability key for objective dismissal. */
   objectiveKey?: string | null;
+  /**
+   * GOAL-1 (#459): tile the camera pans to when the "Next step" line is
+   * clicked; null means recentre on the player's anchor.
+   */
+  objectiveTarget?: { tx: number; ty: number } | null;
+  /**
+   * GOAL-1 (#459): tool the click arms (through the same onTool door the
+   * Build buttons use), or null to leave what's in the hand alone.
+   * "city" fires onTownUpgrade; "market" switches the bottom sheet to Economy.
+   */
+  objectiveTool?: string | null;
   /** L8 (#222): per-second income per cargo — the build/match delta, so the
    *  chip bar reads as a live rate and not a static purse. Omitted on the
    *  shipped loop. */
@@ -639,6 +650,12 @@ export interface UiHooks {
    * the refusal copy; the chrome only reports the click.
    */
   onTownUpgrade?: () => void;
+  /**
+   * GOAL-1 (#459): "Next step" click pans the camera to a tile. `onRecenter`
+   * (no args) pans to the player's anchor; `onCenterTile` pans to a specific
+   * tile — same door the "jump to" buttons use.
+   */
+  onCenterTile?: (tx: number, ty: number) => void;
 }
 
 export interface UiRivalryBeat {
@@ -1658,6 +1675,39 @@ export function createOriginalUi(
   // hides only when a banner with higher priority owns the lane.
   const objectiveEl = h("div", "objective hidden");
   objectiveEl.id = "iso-objective";
+  objectiveEl.setAttribute("role", "button");
+  objectiveEl.setAttribute("tabindex", "0");
+  objectiveEl.title = "Next step — click to go there";
+  // GOAL-1 (#459): clicking the advisor pans the camera to the target tile
+  // and arms the tool through the same door the Build buttons use. The chip
+  // says exactly what the click will do, so it is never a surprise.
+  const fireObjective = () => {
+    const s = lastState;
+    if (!s) return;
+    const t = s.objectiveTarget ?? null;
+    const tool = s.objectiveTool ?? null;
+    if (tool === "city") { hooks.onTownUpgrade?.(); return; }
+    if (tool === "market") {
+      // Switch to the Economy / Market tab. The desktop opens the trade
+      // column; on a phone the bottom bar uses the "trade" view.
+      const tab = root.querySelector<HTMLButtonElement>("#iso-trade .tab[data-tab='market']");
+      if (tab) { tab.click(); return; }
+      const tradeBtn = root.querySelector<HTMLButtonElement>("[data-view=\"trade\"]");
+      tradeBtn?.click();
+      return;
+    }
+    if (t && typeof (t as { tx: number; ty: number }).tx === "number") {
+      const p = t as { tx: number; ty: number };
+      hooks.onCenterTile?.(p.tx, p.ty);
+    } else {
+      hooks.onRecenter();
+    }
+    if (tool && tool !== "select") hooks.onTool(tool as UiTool);
+  };
+  objectiveEl.addEventListener("click", fireObjective);
+  objectiveEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fireObjective(); }
+  });
   root.appendChild(objectiveEl);
   // VO-1: subtitle plate. The rival wire (`#iso-rival-quip`) is hidden by CSS,
   // and a `.toast` would land in the lane the tests read, so this is the same
@@ -2078,6 +2128,9 @@ export function createOriginalUi(
   // the rest of the game (the ❔ help still re-tells the rules).
   let lastBannerText: string | null = null;
   let lastBannerKey: string | null = null;
+  /** GOAL-1 (#459): the last-painted state, so the advisor's click handler can
+   *  read the current target/tool without rebuilding the DOM. */
+  let lastState: UiState | null = null;
   /** MOBILE-01: paint gates for the held-tool chip and the banner height var. */
   let lastChipTool: string = "\u0000";
   let lastBannerH = -1;
@@ -2138,10 +2191,10 @@ export function createOriginalUi(
     // allowance burns down. L5 (#219): on the new loop the price is the
     // industry's own mix, so the line says "from …" rather than quoting the
     // retired loop's single mix.
-    { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0 }) },
+    { key: "harvester", label: "Depot", sub: `${depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0 })} · R turns` },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
-    { key: "plant", label: "Processing Plant", sub: `${moneyMarkup(PLANT_COST)} · next to a town` },
+    { key: "plant", label: "Processing Plant", sub: `${moneyMarkup(PLANT_COST)} · next to a town · R turns` },
     // ── RAIL-04 (#178): the railway's four buttons ────────────────────────
     // The prices are read from the same table the placement charges
     // (`RAIL_COSTS`) and the point from the same constant the scoreboard pays
@@ -4664,6 +4717,7 @@ export function createOriginalUi(
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
+    lastState = state;
     paintTuning(state.tuning, state.tuningIdle);
     // #300: after the plate — the window it rides in is stood up (or taken
     // down) by `paintTuning` first.
@@ -4978,6 +5032,12 @@ export function createOriginalUi(
     renderBank();
   }
 
+  // GOAL-1 (#459): the single "Next step" advisor is the one instruction
+  // channel over the map. The match-3 board's old .iso-hint paragraph is
+  // removed (it duplicated the advisor's "connect a depot" line while
+  // opening and said something the board itself shows once a game is in
+  // flight). Tool hotkeys (R rotates, Esc / right-click cancel) live in
+  // each tool's own card (`<small>` on the .build-btn).
   function setReach(next: Partial<Record<Cargo, number>>) {
     const chipsHtml = CARGOES
       .filter((c) => (next[c] ?? 0) > 0)
@@ -4985,11 +5045,6 @@ export function createOriginalUi(
     reachEl.innerHTML = chipsHtml
       ? `<b>Network reaches</b>${chipsHtml}`
       : "<b>Network reaches</b><i>nothing — connect a depot</i>";
-    const hint = h("div", "iso-hint");
-    hint.textContent = chipsHtml
-      ? "Match 3+ gems. Only tokened gems (numbered) process the cargo above."
-      : "Connect a depot to your Factory: tokens only spawn on cargo you reach.";
-    reachEl.appendChild(hint);
   }
 
   // ── help / modals ─────────────────────────────────────────────────────────
