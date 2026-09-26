@@ -41,8 +41,13 @@ import { depotRate, distanceFactor } from "./loop";
 import { gradeOf, uphillSpeed } from "./slopes";
 import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import {
-  NE, SE, SW, NW, tIdx,
+  NE, SE, SW, NW, tIdx, type Track,
 } from "./track";
+import {
+  YIELD_WAIT_MS, STATIONARY_SPEED, buildHash, laneOffsetFor,
+  overpassLiftFor, approachingJunction, followSpeed, segKey,
+  type VehicleEntry,
+} from "./traffic";
 
 /**
  * Tiles per millisecond on GRAVEL: one tile every 600 ms. Dirt is free to lay
@@ -129,6 +134,13 @@ export interface Truck {
    * lorry arrives.
    */
   deliveries: number;
+  // ── TRAFFIC-1 (defaulted by planTrucks for old saves) ──────────────────
+  /** Ms spent waiting at a junction yield. */
+  _yieldMs?: number;
+  /** Ms spent at near-zero speed (for logging/debug; trucks never despawn). */
+  _stuckMs?: number;
+  /** Last effective speed (tiles/ms), for stuck detection. */
+  _lastSpeed?: number;
 }
 
 export interface TruckState {
@@ -239,6 +251,7 @@ export function planTrucks(eco: EconomyState): Truck[] {
       depot: [h.tx, h.ty],
       rateMult: depotRate(h, distanceFactor(eco, h)),
       leg: 0, t: 0, reverse: false, waitMs: 0, deliveries: 0,
+      _yieldMs: 0, _stuckMs: 0, _lastSpeed: 0,
     });
   }
   return out;
@@ -264,8 +277,67 @@ export function truckRateMultOf(truck: Truck): number {
   return typeof r === "number" && Number.isFinite(r) && r > 0 ? r : 1;
 }
 
-export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySet<number>): void {
+export function tickTrucks(
+  state: TruckState, dtMs: number, blocked?: ReadonlySet<number>, track?: Track | null,
+): void {
   if (dtMs <= 0) return;
+  // TRAFFIC-1: spatial hash of driving trucks at start of tick for same-lane
+  // follow and junction yield. Only built when a track is provided; the
+  // block-only code path (old tests, protest blocking) keeps its simple
+  // behaviour.
+  const useTraffic = !!track;
+  const hash = useTraffic
+    ? buildHash(state.trucks
+        .filter((t) => t.route.length >= 2)
+        .map((t) => ({ id: t.depotId, v: t } as VehicleEntry)))
+    : null;
+
+  const distAhead = (truck: Truck): number => {
+    if (!hash) return Infinity;
+    const max = truck.route.length - 1;
+    // Segment is always indexed k (route[k]→route[k+1]), in both directions.
+    // Forward: heading a→b, along = t * length. Reverse: heading b→a,
+    // along = (1 - t) * length (distance from b toward a).
+    const k = Math.min(truck.leg, max - 1);
+    const sa = truck.route[k];
+    const sb = truck.route[k + 1];
+    const segLen = Math.hypot(sb[0] - sa[0], sb[1] - sa[1]) || 1;
+    // My "along" measured from the BACK of the segment in my heading direction:
+    // forward = t * L (distance from sa toward sb); reverse = (1-t) * L (distance from sb toward sa).
+    const along = truck.reverse ? (1 - truck.t) * segLen : truck.t * segLen;
+    const sk = segKey(sa[0], sa[1], sb[0], sb[1]);
+    // am I heading sa→sb in canonical (lower-then-higher idx) direction?
+    const myCanonicalFwd = tIdx(sa[0], sa[1]) < tIdx(sb[0], sb[1]);
+    const myHeadingCanonical = truck.reverse ? !myCanonicalFwd : myCanonicalFwd;
+    let best = Infinity;
+    for (const mate of hash.segmentMates(sk)) {
+      if (mate.id === truck.depotId) continue;
+      const other = mate.v as Truck;
+      const omax = other.route.length - 1;
+      const ok = Math.min(other.leg, omax - 1);
+      const osa = other.route[ok];
+      const osb = other.route[ok + 1];
+      if (segKey(osa[0], osa[1], osb[0], osb[1]) !== sk) continue;
+      const oLen = Math.hypot(osb[0] - osa[0], osb[1] - osa[1]) || 1;
+      const oCanonicalFwd = tIdx(osa[0], osa[1]) < tIdx(osb[0], osb[1]);
+      const oHeadingCanonical = other.reverse ? !oCanonicalFwd : oCanonicalFwd;
+      if (myHeadingCanonical !== oHeadingCanonical) continue; // opposite direction
+      const oAlong = other.reverse ? (1 - other.t) * oLen : other.t * oLen;
+      // Both heading in same canonical direction: vehicle AHEAD is further
+      // along in that direction.
+      let gap: number;
+      if (myHeadingCanonical) {
+        gap = oAlong - along;
+      } else {
+        // Heading b→a (opposite canonical): "along" measures from b, so
+        // ahead means larger along (closer to a).
+        gap = oAlong - along;
+      }
+      if (gap > 0.001 && gap < best) best = gap;
+    }
+    return best;
+  };
+
   for (const truck of state.trucks) {
     const max = truck.route.length - 1;
     if (max < 1) { truck.leg = 0; truck.t = 0; continue; }
@@ -279,15 +351,8 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
       return TRUCK_SPEED * rate * pace
         * uphillSpeed(reverse ? -climb : climb);
     };
-    // AI-02: integrate SEGMENT BY SEGMENT at each segment's own pace — the
-    // triangle-fold over a uniform axis would be exact only when every leg
-    // has the same speed. The loop still folds exactly at both ends (a huge
-    // tick turns the truck around at the exact end tile, never a teleport).
-    // A1: turning around at the FAR end is the delivery — one arrival is one
-    // delivery, counted here and read by the game on the same frame.
     let ms = dtMs;
-    // Frame-capped dt makes this ~1 iteration; tests with a large dt loop at
-    // most dt/segment-time.
+    let movedDist = 0;
     while (ms > 1e-9) {
       // Standing at the depot, loading: the clock runs, the lorry does not.
       if (truck.waitMs && truck.waitMs > 0) {
@@ -311,25 +376,81 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
           if (truck.t > 0 && cur && blocked.has(tIdx(cur[0], cur[1]))) break;
         }
       }
+      // Junction yield: build a forward-facing VehiclePos view regardless of
+      // reverse flag, so approachingJunction reads the correct approach.
+      if (useTraffic) {
+        const vLeg = truck.reverse ? Math.max(k - 1, 0) : k;
+        const vT = truck.reverse ? 1 - truck.t : truck.t;
+        const vForApproach = { route: truck.route, leg: vLeg, t: vT };
+        const headingAhead = truck.reverse
+          ? (k > 0 ? truck.route[k - 1] : null)
+          : (k + 1 <= max ? truck.route[k + 1] : null);
+        if (headingAhead && approachingJunction(vForApproach)) {
+          const jk = `j:${tIdx(headingAhead[0], headingAhead[1])}`;
+          let occupants = 0;
+          for (const mate of hash!.junctionMates(jk)) {
+            if (mate.id === truck.depotId) continue;
+            occupants++;
+          }
+          if (occupants > 0 && (truck._yieldMs ?? 0) < YIELD_WAIT_MS) {
+            truck._yieldMs = (truck._yieldMs ?? 0) + ms;
+            truck._lastSpeed = 0;
+            truck._stuckMs = (truck._stuckMs ?? 0) + ms;
+            ms = 0;
+            break;
+          }
+        }
+      }
       // Progress is a fraction of this segment, not a tile count: diagonal
       // legs take sqrt(2), overpass jumps two tile-times. Legacy axes stay 1.
       const a = truck.route[k], b = truck.route[k + 1];
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-      const v = speed(k, truck.reverse) / length;
+      const baseV = speed(k, truck.reverse) / length;
+      const ahead = useTraffic ? distAhead(truck) : Infinity;
+      const v = followSpeed(baseV, ahead);
+      if (v <= 1e-9) {
+        truck._lastSpeed = 0;
+        break;
+      }
       if (!truck.reverse) {
         const need = (1 - truck.t) / v;
-        if (ms < need) { truck.t += ms * v; ms = 0; continue; }
+        if (ms < need) {
+          const step = ms * v;
+          truck.t += step;
+          movedDist += step * length;
+          ms = 0; continue;
+        }
+        movedDist += (1 - truck.t) * length;
         ms -= need;
-        if (k === max - 1) { truck.reverse = true; truck.t = 1; truck.deliveries++; }
-        else { truck.leg = k + 1; truck.t = 0; }
+        if (k === max - 1) { truck.reverse = true; truck.t = 1; truck.deliveries++; truck._yieldMs = 0; truck._stuckMs = 0; }
+        else { truck.leg = k + 1; truck.t = 0; truck._yieldMs = 0; }
       } else {
         const need = truck.t / v;
-        if (ms < need) { truck.t -= ms * v; ms = 0; continue; }
+        if (ms < need) {
+          const step = ms * v;
+          truck.t -= step;
+          movedDist += step * length;
+          ms = 0; continue;
+        }
+        movedDist += truck.t * length;
         ms -= need;
-        if (k === 0) { truck.reverse = false; truck.t = 0; truck.waitMs = DEPOT_LOAD_MS; }
-        else { truck.leg = k - 1; truck.t = 1; }
+        if (k === 0) { truck.reverse = false; truck.t = 0; truck.waitMs = DEPOT_LOAD_MS; truck._yieldMs = 0; truck._stuckMs = 0; }
+        else { truck.leg = k - 1; truck.t = 1; truck._yieldMs = 0; }
       }
     }
+    // Track stuck time
+    const usedMs = dtMs - ms;
+    const effSpeed = movedDist / Math.max(usedMs, 0.001);
+    truck._lastSpeed = effSpeed;
+    if (effSpeed < STATIONARY_SPEED) {
+      truck._stuckMs = (truck._stuckMs ?? 0) + usedMs;
+    } else {
+      truck._stuckMs = 0;
+    }
+    // Trucks do NOT despawn — they are the economy's contract — so if stuck
+    // they wait. The cap on segment density (SEGMENT_CAP) keeps new trucks
+    // from entering a jammed segment, which combined with protest clearing
+    // should let jams dissolve naturally.
   }
 }
 
@@ -397,15 +518,42 @@ export function truckSpriteName(
  * moving item at the fractional tile's diamond centre; `pickSprite` skips such
  * items.
  */
-export function truckItems(state: TruckState, atlas?: TruckSpriteSource): DrawItem[] {
+export function truckItems(
+  state: TruckState, atlas?: TruckSpriteSource, track?: Track | null,
+): DrawItem[] {
   const out: DrawItem[] = [];
   for (const truck of state.trucks) {
     const { route, leg, t } = truck;
-    const a = route[leg], b = route[Math.min(leg + 1, route.length - 1)];
-    const fx = a[0] + (b[0] - a[0]) * t;
-    const fy = a[1] + (b[1] - a[1]) * t;
+    const n = route.length;
+    if (n < 2) continue;
+    // Determine the segment we're on, handling reverse.
+    let vLeg: number, vT: number, a: [number, number], b: [number, number];
+    if (!truck.reverse) {
+      vLeg = Math.min(leg, n - 2);
+      vT = t;
+      a = route[vLeg]; b = route[vLeg + 1];
+    } else {
+      // Reverse: heading back from factory to depot. leg points at the tile
+      // we're moving away from (route[k+1] in forward direction), t goes
+      // from 1→0. We construct a synthetic forward vehicle pos whose leg
+      // points to the leg we're currently traversing.
+      vLeg = Math.max(0, Math.min(leg - 1, n - 2));
+      vT = 1 - t;
+      a = route[vLeg]; b = route[vLeg + 1];
+    }
+    let fx = a[0] + (b[0] - a[0]) * vT;
+    let fy = a[1] + (b[1] - a[1]) * vT;
+    const vForOffset = { route, leg: vLeg, t: vT, reverse: false };
+    let extraLift = 0;
+    if (track) {
+      const [du, dv] = laneOffsetFor(vForOffset, track);
+      fx += du; fy += dv;
+      extraLift = overpassLiftFor(vForOffset, track);
+    }
     const sprite = truckSpriteName(truck.ownerId, stepBit(route, leg, truck.reverse), atlas);
     if (!sprite) continue;
+    const depotLiftVal = truck.depot ? depotLift(truck.depot, fx, fy) : 0;
+    const lift = depotLiftVal + extraLift;
     out.push({
       sprite,
       tx: Math.round(fx), ty: Math.round(fy),
@@ -415,7 +563,7 @@ export function truckItems(state: TruckState, atlas?: TruckSpriteSource): DrawIt
       // depot would paint over the lorry parked in its yard. Lift the lorry
       // just past the building's key while it is inside the lot: the exact
       // gap, so nothing else on the map changes order.
-      ...(truck.depot ? { lift: depotLift(truck.depot, fx, fy) } : {}),
+      ...(lift ? { lift } : {}),
     });
   }
   return out;
