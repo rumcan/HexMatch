@@ -628,10 +628,13 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 /* ── tool groups: Road Ways / Rail Ways drawers beside the rail ───────── */
 .tool-group { position: static; }
 .group-btn { position: relative; }
-.group-caret { position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-  font-family: var(--display); font-weight: 500; font-size: 14px; color: var(--sa-bone-dim); }
+/* a small corner mark, out of the centred icon + label's way */
+.group-caret { position: absolute; right: 0; bottom: 0; width: 0; height: 0; font-size: 0;
+  border-style: solid; border-width: 0 0 8px 8px;
+  border-color: transparent transparent var(--sa-bone-dim) transparent; }
 .group-btn[aria-expanded="true"] { background: var(--sa-panel-2) !important; color: var(--sa-bone); }
-.group-btn[aria-expanded="true"] .group-caret { color: var(--sa-orange); }
+.group-btn[aria-expanded="true"] .group-caret { border-bottom-color: var(--sa-orange); }
+.group-btn.active .group-caret { border-bottom-color: var(--sa-on-orange); }
 .ui-root:not([data-phone="1"]) .tool-flyout {
   display: none; position: fixed; z-index: 40; width: 96px;
   background: var(--sa-panel); border: 1px solid var(--sa-ink); border-left: 3px solid var(--sa-orange);

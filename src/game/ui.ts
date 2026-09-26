@@ -2284,6 +2284,8 @@ export function createOriginalUi(
       buildList.appendChild(cityBtn);
     }
   }
+  // Rail Ways sits directly under Road Ways (owner, 2026-09-26).
+  { const r = groupEls.get("roads"), l = groupEls.get("rails"); if (r && l) r.wrap.after(l.wrap); }
   // ── Black Market ──────────────────────────────────────────────────────────
   function renderSabotage() {
     sabList.innerHTML = "";
