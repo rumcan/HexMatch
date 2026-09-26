@@ -87,7 +87,13 @@ type LadderView = {
 } | null;
 
 export type StartChoice =
-  | { mode: "ai"; portrait: Portrait; conquest?: boolean }
+  | {
+      mode: "ai"; portrait: Portrait; conquest?: boolean;
+      /** FTUE-1 (#464): boot the Starter Island scenario (the Tutorial menu's
+       *  "Play the Starter Island" replay). The first launch passes the same
+       *  scenario through `firstRun`. */
+      starter?: boolean;
+    }
   | { mode: "story"; chapter: string; portrait: Portrait }
   | { mode: "story-intro"; portrait: Portrait }
   | {

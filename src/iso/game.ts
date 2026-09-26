@@ -110,6 +110,7 @@ import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
 import {
   FIELD_OCC, WATER, generateMap, heightAt, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
+  STARTER_ISLAND_SEED, starterIslandGrid,
   TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
   tileInFootprint, townHouseAt, townObstacleTiles, rotatedSpan,
   type Grid, type Industry, type Town,
@@ -640,8 +641,28 @@ export interface IsoGameOptions {
    * run.world feedback (2026-09): the player's very first game. No tour, no
    * difficulty prompt (Normal, changeable in the top bar) — the coach teaches
    * the loop one step at a time instead.
+   *
+   * FTUE-1 (#464): the first game IS the Starter Island (see `starterIsland`
+   * below) — this flag still owns the first-launch extras (the camera opens
+   * on the town).
    */
   firstRun?: boolean;
+  /**
+   * FTUE-1 (#464): the STARTER ISLAND scenario — the fixed preset map (one
+   * town, four industries close by, flat aprons), the trainee rival and the
+   * short 6★ line. The first launch runs it (`firstRun` implies it), the
+   * Tutorial menu's "Play the Starter Island" replays it, and a save taken
+   * inside it resumes it (its skill is cast as `trainee`). Absent = the
+   * ordinary game.
+   */
+  starterIsland?: boolean;
+  /**
+   * FTUE-1 (#464): leave the Starter Island for the NORMAL game. Wired to the
+   * first screen's "Skip to the real game" and to the won ledger's "Build
+   * another empire" door — both mark onboarding done and open a real match.
+   * Absent (a test harness, a room) keeps every existing door as it was.
+   */
+  onPlayNormalGame?: () => void;
   /**
    * Owner call (2026-09): CONQUEST — no ★ line; the game ends only when a
    * player cannot go on (no open plant, no Gold for a challenge, nothing left
@@ -655,8 +676,12 @@ export interface IsoGameOptions {
    * nothing to rejoin, and a stale memo would offer exactly that on the next
    * boot. Fires once, from `presentEnding`, for every mode — only a networked
    * seat is handed a callback that cares.
+   *
+   * FTUE-1 (#464): `won` says whether the local seat took the ledger — the
+   * Starter Island marks onboarding done on a win (a loss leaves it open so
+   * "Demand a rematch" runs the island again).
    */
-  onMatchEnded?: () => void;
+  onMatchEnded?: (won?: boolean) => void;
 }
 
 /**
@@ -850,18 +875,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // so the chapter's seed sits in the chain between an explicit `?seed=`
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
   // carrying its own seed, as always.
-  const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
+  // FTUE-1 (#464): the STARTER ISLAND runs on a first launch (App's routing),
+  // on the Tutorial menu's "Play the Starter Island" replay — and when a save
+  // taken inside it resumes (its rival is cast `trainee`, a skill no ordinary
+  // game ever stores). The scenario is a PLACE: one fixed seed, the preset's
+  // map features, whatever the ambient options say.
+  const starterSaved = (bootSave as { skillKey?: string } | null)?.skillKey === "trainee";
+  const starterIsland = opts.starterIsland === true || opts.firstRun === true || starterSaved;
+  const seed = starterIsland
+    ? STARTER_ISLAND_SEED
+    : (opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed());
   // MAP-1 (#412): rivers + dams, elevation and shapes are ON for new games;
   // see map-options.ts for who decides (save, room, story, URL, default).
-  const mapOptions: MapOptions = resolveMapOptions({
-    explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes, rings: (opts as { rings?: boolean }).rings },
-    search: searchNow,
-    save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
-    room: isMp() ? settings : null,
-    story: storyOn ? (storyChapter ?? {}) : null,
-  });
+  // FTUE-1 (#464): …except the Starter Island, which is tuned terrain (its
+  // own map options, recorded on the save like any other game's).
+  const mapOptions: MapOptions = starterIsland
+    ? { rivers: false, elevation: true, shapes: true, rings: true }
+    : resolveMapOptions({
+      explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes, rings: (opts as { rings?: boolean }).rings },
+      search: searchNow,
+      save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
+      room: isMp() ? settings : null,
+      story: storyOn ? (storyChapter ?? {}) : null,
+    });
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
-  const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings });
+  const grid: Grid = starterIsland
+    ? starterIslandGrid()
+    : generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings });
   // F4 (#275): the Factory this map plays with. Shapes maps carry the long
   // `factory_2x4` span on the grid; every legacy map falls back to the
   // constant. Drawn from the grid (not re-derived) so the boot, the rules and
@@ -1118,16 +1158,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // the difficulty the host picked in the lobby, not this browser's last solo
   // pick. A human guest keeps the seat's own (unused) preset, and a solo game
   // resolves exactly as it always did: contract, then URL/storage, then normal.
-  let skillKey: SkillKey = storyChapter
-    ? storyChapter.skill
-    : aiOpponent
-      ? settings.aiSeats[0]
-      : resolveSkillKey();
+  // FTUE-1 (#464): the Starter Island CASTS its rival (the trainee), exactly
+  // like a contract does — the resolver never gets a vote, and the pick is
+  // not persisted: the player's own difficulty for normal games is theirs.
+  let skillKey: SkillKey = starterIsland
+    ? "trainee"
+    : storyChapter
+      ? storyChapter.skill
+      : aiOpponent
+        ? settings.aiSeats[0]
+        : resolveSkillKey();
   // AI-01: a pinned `?rival=` link is an explicit choice, exactly like a pick
   // in the top-bar selector — so it persists for the next boot. Only the URL
   // path writes here: a plain boot must leave the storage key ABSENT or the
-  // AI-02 start-of-game picker would never ask a fresh player again.
-  if (!storyChapter && skillKeyFromUrl()) {
+  // AI-02 start-of-game picker would never ask a fresh player again. A
+  // scenario cast (Starter Island) never writes the player's key at all.
+  if (!starterIsland && !storyChapter && skillKeyFromUrl()) {
     try { localStorage.setItem(SKILL_STORAGE_KEY, skillKey); } catch { /* private mode */ }
   }
   const skill = (): RivalSkill => RIVAL_SKILLS[skillKey];
@@ -1185,11 +1231,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // without touching a contract's target or a room's setting.
   let conquest = opts.conquest === true;
   let lastConquestCheck = 0;
-  const winTarget = (): number => newLoop
-    ? VICTORY.loop.target
-    : (storyChapter
-      ? storyChapter.target
-      : (isSolo() ? skill().winTarget : settings.winTarget));
+  // FTUE-1 (#464): the Starter Island is a SHORT, winnable race — the
+  // trainee's own ★ line (6), read live like every other line, so the HUD,
+  // the king bars and the win check all agree.
+  const winTarget = (): number => starterIsland
+    ? skill().winTarget
+    : (newLoop
+      ? VICTORY.loop.target
+      : (storyChapter
+        ? storyChapter.target
+        : (isSolo() ? skill().winTarget : settings.winTarget)));
 
   // R3 (#270): the standing dams live on the economy state — the clock reads
   // their bonus off it in `economyTick`, and the save/snapshot carry it as
@@ -1798,7 +1849,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // to restart.
     // MP-05: the difficulty selector is an AI feature — there is no AI rival
     // in a hosted game, so the selector is simply not built.
-    onSkill: isSolo() ? (key) => setRivalSkill(key) : undefined,
+    // FTUE-1 (#464): no difficulty switch beside a scenario cast — the
+    // Starter Island's rival is the trainee, the same way a hosted game has
+    // no selector (the hook's absence is what keeps it out of the top bar).
+    onSkill: isSolo() && !starterIsland ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
   }, {
     rail: railAvailable,
@@ -1859,6 +1913,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     root: ui.el,
     ctx: { vpTarget: winTarget(), freeTrack: me.freeTrack },
     live: true,
+    // FTUE-1 (#464): the Starter Island's exit door — the host stands the
+    // "Skip to the real game" chip beside the strip while the first-game
+    // chain runs, and this is where it lands (App boots the normal match).
+    onPlayNormalGame: opts.onPlayNormalGame,
     mapRect: (target) => {
       if (target.kind === "screen") return null;
       const box = target.kind === "area" ? target
@@ -1995,15 +2053,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // `setRivalSkill`, persists for the next boot, and syncs the top-bar
       // selector the `onSkill` hook would otherwise own. A contract skips the
       // question: the chapter cast the rival, and re-asking would un-cast it.
-      if (opts.firstRun && newLoop) {
-        // First game: Normal, no question asked; the guide takes over — ONE
-        // section (Getting started), pointed at the real controls, voiced, and
-        // dismissible at any moment. It never blocks the clock: the player
-        // reads it while the island runs.
-        setRivalSkill("normal");
-        try { localStorage.setItem(SKILL_STORAGE_KEY, "normal"); } catch { /* private mode */ }
-        const sel = ui.el.querySelector<HTMLSelectElement>("#iso-rival-skill");
-        if (sel) sel.value = "normal";
+      if (starterIsland && newLoop) {
+        // FTUE-1 (#464): the Starter Island — no difficulty question (the
+        // rival is CAST as the trainee, above, and never persisted), and the
+        // guide takes over with its whole chain (Getting started → Factory →
+        // Depots → Logistics → Upgrades), pointed at the real controls,
+        // voiced, and dismissible at any moment. It never blocks the clock:
+        // the player reads it while the island runs.
         guide?.runFirstGame();
       } else if (!storyChapter) {
         await promptForRivalSkill(ui.el, {
@@ -2291,7 +2347,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // Mobile pass (2026-09): the coached first game opens on a TOWN — its
     // first instruction is "place your Factory next to a town", and a phone
     // screen that shows only a farm leaves nothing to aim at.
-    if (opts.firstRun && ind && grid.towns.length) {
+    // FTUE-1 (#464): every Starter Island boot opens this way (first launch,
+    // replay, resume) — the town is the scenario's heart.
+    if (starterIsland && ind && grid.towns.length) {
       const near = [...grid.towns].sort((a, b) =>
         Math.hypot(a.tx - ind.tx, a.ty - ind.ty) - Math.hypot(b.tx - ind.tx, b.ty - ind.ty))[0];
       return { tx: near.tx, ty: near.ty };
@@ -2763,8 +2821,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // #164: the match is decided — whatever "match in progress" memo the
     // front door wrote for this seat is now a lie, and only the layer that
-    // wrote it can drop it.
-    opts.onMatchEnded?.();
+    // wrote it can drop it. FTUE-1 (#464): `won` says whose ledger this is —
+    // the Starter Island marks onboarding done on a win.
+    opts.onMatchEnded?.(winner.id === me.id);
     const playerBreakdown = victoryBreakdown(eco, me.id, railPlatforms(), loopScoring());
     const rivalBreakdown = victoryBreakdown(eco, rival.id, railPlatforms(), loopScoring());
     const model = buildEnding({
@@ -2798,6 +2857,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         onRestart: () => {
           restartArmed = true;
           clearSave(saveKey);
+          // FTUE-1 (#464): won the Starter Island? "Build another empire" is
+          // the NORMAL game (the real map, a real rival) — the scenario's exit
+          // door, the same one the first screen's skip chip opens. A LOSS
+          // keeps today's reload: no onboarding flag is set, so the reload
+          // runs the island again — "Demand a rematch" means exactly that.
+          if (starterIsland && model.outcome === "victory" && opts.onPlayNormalGame) {
+            opts.onPlayNormalGame();
+            return;
+          }
           // Keep the selected difficulty: this is a rematch, not first-run
           // onboarding. The ☰ menu's New Game remains the full reset.
           location.reload();
@@ -6149,6 +6217,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function maybeRivalChallenge(now: number): void {
     if (phase === "won" || inSetup()) return;
     if (fightBusy()) return;
+    // FTUE-1 (#464): a skill that never challenges (the trainee) never calls
+    // one — not even the boot-fresh clock's first. It still defends.
+    if (!skill().challenges) return;
     if (!rivalChallengeDue(challengeState, now)) return;
     if (isComeback(eco, rival.id) && (rival.purse.gold ?? 0) < BATTLE_RULES.challengeGold) {
       const sale = cheapestSale(eco, rival.id, pavedCountOf(rival), rival.townLevel);
@@ -7983,6 +8054,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         stock: rival.purse, purse: rival.purse,
         free: rival.freeTrack, freeDepots: rival.freeDepots, now,
         newLoop, depotTier: rival.depotTier, wantCargo: want,
+        // FTUE-1 (#464): the trainee never plans a Depot on the player's stakes.
+        contests: skill().contests,
       }, allocHarvesterId());
       if (!out) return false;
       rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
@@ -8184,6 +8257,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // L5 (#219): the tree gate — the planner may only plan a Depot whose
       // type sits on a rung the rival has opened (a played session each).
       depotTier: rival.depotTier,
+      // FTUE-1 (#464): the trainee never plans a Depot on the player's stakes.
+      contests: skill().contests,
     });
     const depotBuild = (): boolean => {
       const out = aiBuildStep(eco, f, opts(), allocHarvesterId());

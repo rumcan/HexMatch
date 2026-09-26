@@ -850,6 +850,16 @@ export interface PlanOptions {
    * would deadlock on its own preference.
    */
   wantCargo?: readonly Cargo[];
+  /**
+   * FTUE-1 (#464): does this seat CONTEST other seats' industries — plan a
+   * Depot that could claim one another network has already staked (covered
+   * by their harvester's catchment, serviced or not)? Omitted/true is the
+   * shipped race (first come, first served). `false` is the trainee's flag
+   * (`RivalSkill.contests`): its plans skip every staked industry AND every
+   * lot whose catchment could take one, so a polite rival can never quietly
+   * switch off — or lock out — the player's opening four.
+   */
+  contests?: boolean;
 }
 
 /**
@@ -1034,6 +1044,18 @@ export function planCandidates(
   // `placeHarvester` does. A site another seat holds, with no rights, is not
   // a destination.
   const claimLocked = lockedIndustryIdsFor(state, factory.owner);
+  // FTUE-1 (#464): the trainee's `contests: false`. Every industry another
+  // seat's network has STAKED — its harvester's catchment, serviced or not;
+  // an unconnected Depot is a claim in waiting — is that player's, and a plan
+  // that could take one is not offered at all. Built once per pass, the same
+  // way `locks` and `claimLocked` are.
+  const staked = new Set<number>();
+  if (opts.contests === false) {
+    for (const h of state.harvesters) {
+      if (h.owner === factory.owner) continue;
+      for (const ind of industriesInCatchment(grid, h)) staked.add(ind.id);
+    }
+  }
   const now = opts.now ?? 0;
   // L2 (#216): the new-loop cost model — dirt free, allowance inapplicable —
   // shared with the human drag preview, never re-derived.
@@ -1079,6 +1101,9 @@ export function planCandidates(
       // a first battle win drop the id (`claimLocked`), so the search is not
       // stricter than the click.
       if (claimLocked.has(ind.id)) continue;
+      // FTUE-1 (#464): …and, for a seat that does not contest, anything the
+      // PLAYER has staked (see `staked` above).
+      if (staked.has(ind.id)) continue;
 
       // Nearest lots to the network first: the search stops at the first
       // viable site, so the order is what makes that site a cheap one.
@@ -1090,6 +1115,13 @@ export function planCandidates(
         .sort((a, b) => a.d - b.d || a.ty - b.ty || a.tx - b.tx);
       for (const { tx: hx, ty: hy } of sites) {
         if (lotTaken(hx, hy)) continue;
+        // FTUE-1 (#464): a contest-free seat's lot may not even CATCH a
+        // staked industry — the claim rule pays the catchment, not the target,
+        // and a polite rival must not take what the player staked sideways.
+        if (staked.size > 0
+          && industriesInCatchment(grid, {
+            id: -1, owner: factory.owner, ownerId: factory.ownerId, tx: hx, ty: hy,
+          }).some((x) => staked.has(x.id))) continue;
         // L5 (#219): the TYPE this lot would raise, by the same `depotCargo`
         // rule the game prices and gates with (the site's biggest held
         // producer — not necessarily the industry A* aimed at). A locked rung
@@ -1356,6 +1388,9 @@ export interface DeepPlanOptions {
    * saving.
    */
   wantCargo?: readonly Cargo[];
+  /** FTUE-1 (#464): the contest-free flag (see `PlanOptions.contests`) — part
+   *  of the cache key like every other input that changes the candidate SET. */
+  contests?: boolean;
 }
 
 interface DeepSlot {
@@ -1365,6 +1400,7 @@ interface DeepSlot {
   depotTier: number;
   newLoop: boolean;
   want: string;
+  contests: boolean;
   cands: Candidate[];
 }
 
@@ -1412,17 +1448,19 @@ export function deepPlanCandidates(
   let slots = deepPlanCache.get(state);
   if (!slots) deepPlanCache.set(state, (slots = new Map()));
   const want = [...(opts.wantCargo ?? [])].sort().join(",");
+  const contests = opts.contests !== false;
   const hit = slots.get(key);
   if (hit && hit.fp === fp && hit.free === free && hit.freeDepots === freeDepots
-    && hit.depotTier === depotTier && hit.newLoop === newLoop && hit.want === want) {
+    && hit.depotTier === depotTier && hit.newLoop === newLoop && hit.want === want
+    && hit.contests === contests) {
     return hit.cands;
   }
   const cands = planCandidates(state, factory, {
     stock: opts.stock ?? {}, purse: DEEP_PLAN_PURSE,
     free, freeDepots, depotTier, oreUrgency: opts.oreUrgency, now: opts.now, newLoop,
-    wantCargo: opts.wantCargo,
+    wantCargo: opts.wantCargo, contests: opts.contests,
   });
-  slots.set(key, { fp, free, freeDepots, depotTier, newLoop, want, cands });
+  slots.set(key, { fp, free, freeDepots, depotTier, newLoop, want, contests, cands });
   return cands;
 }
 

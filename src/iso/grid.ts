@@ -164,7 +164,61 @@ export interface MapGenOptions {
    * byte-identical; MAP-1 turns it on for new games.
    */
   rings?: boolean;
+  /**
+   * FTUE-1 (#464): a map PRESET — the scenario's shape on top of the seed
+   * (Starter Island). Absent (every default map) changes nothing: the preset
+   * stages below only draw when one is passed, so the ordinary generator is
+   * byte-identical with or without the field existing.
+   */
+  preset?: MapPreset;
 }
+
+/**
+ * FTUE-1 (#464) — the shape of a scenario map, beyond its seed.
+ *
+ * PROG-1 grows this into a shelf of scenarios (River Valley, Highlands, …);
+ * the Starter Island is the first one. It is DATA, not a fork: the generator
+ * reads these numbers through the same stages every map runs — only the
+ * counts, the neighbourhood and the apron change.
+ */
+export interface MapPreset {
+  /** Stable id (debug, saves, PROG-1's scenario list). */
+  key: string;
+  /** Exactly one industry of each listed type — the map's whole industry set. */
+  industries: readonly string[];
+  /** Towns to place (the ordinary map places TOWN_COUNT). */
+  towns: number;
+  /**
+   * The industries ring the town: each footprint's CENTRE lands at this
+   * Chebyshev distance from the cluster centre (the town's own), so "close
+   * by" is a guarantee of the generator and not a hope about the seed.
+   */
+  industryRing: readonly [number, number];
+  /**
+   * Gentle terrain: a flat apron of this many tiles around every industry
+   * (its own level, rough ground cleared). #436 gives every map this one
+   * day; the preset bakes it in so the scenario plays the same before and
+   * after that lands.
+   */
+  industryApron: number;
+}
+
+/** FTUE-1 (#464): the Starter Island — one town, four industries close by. */
+export const STARTER_ISLAND: MapPreset = {
+  key: "starter-island",
+  // farm, forest, ore, quarry — the four the guide's chain teaches with.
+  industries: ["farm", "forest", "ore_mine", "quarry"],
+  towns: 1,
+  industryRing: [22, 28],
+  industryApron: 4,
+};
+
+/**
+ * FTUE-1 (#464): the Starter Island's fixed seed. The scenario is a PLACE —
+ * every first launch (and every replay) sees the same island — so the seed is
+ * a constant, not a draw. `starterIslandGrid()` is the one door.
+ */
+export const STARTER_ISLAND_SEED = 20260926;
 
 /**
  * What the game says stands on a tile (`Grid.builtAt`), for the rules that must
@@ -529,7 +583,10 @@ export function carveRivers(terrain: Uint8Array, rng: () => number): Uint8Array 
   return mask;
 }
 
-function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Industry[]; occ: Int16Array } {
+function placeIndustries(
+  terrain: Uint8Array, rng: () => number,
+  preset?: MapPreset, centre?: [number, number] | null,
+): { list: Industry[]; occ: Int16Array } {
   const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
   const list: Industry[] = [];
   const idAt = (tx: number, ty: number) =>
@@ -569,6 +626,42 @@ function placeIndustries(terrain: Uint8Array, rng: () => number): { list: Indust
   };
 
   const defs = INDUSTRIES.map((d) => ({ d, n: INDUSTRY_QUOTA[d.key] ?? 0 }));
+
+  // FTUE-1 (#464): a PRESET map places exactly the listed types, one of each,
+  // in one neighbourhood — each footprint's centre inside the preset's ring
+  // around the cluster centre the caller drew. No quota ladder, no scatter:
+  // "four industries close by" is a construction, not a seed to hunt for.
+  if (preset && centre) {
+    const wanted = preset.industries
+      .map((key) => INDUSTRY_BY_KEY[key])
+      .filter((d): d is NonNullable<typeof d> => !!d);
+    for (const d of wanted) {
+      const w = d.footprint[0], h = d.footprint[1];
+      let done = false;
+      for (const sep of [6, 4, 3, 2, 1]) {
+        for (let attempt = 0; attempt < 120 && !done; attempt++) {
+          const ang = rng() * Math.PI * 2;
+          const r = preset.industryRing[0]
+            + rng() * (preset.industryRing[1] - preset.industryRing[0]);
+          const tx = Math.round(centre[0] + Math.cos(ang) * r - w / 2);
+          const ty = Math.round(centre[1] + Math.sin(ang) * r - h / 2);
+          if (footprintFree(tx, ty, w, h) && separated(tx, ty, w, h, sep)) {
+            list.push({
+              id: list.length, type: d.key, tx, ty, w, h,
+              output: d.output, banditUntil: 0,
+            });
+            for (let x = 0; x < w; x++) {
+              for (let y = 0; y < h; y++) occ[idx(tx + x, ty + y)] = list.length - 1;
+            }
+            done = true;
+          }
+        }
+        if (done) break;
+      }
+    }
+    list.forEach((ind, i) => { ind.id = i; });
+    return { list, occ };
+  }
   // try to guarantee the quota: relax separation 12 → … → 1 (overlap-only).
   // T4: on the 144×144 map the same INDUSTRY_QUOTA has 9× the room, so start
   // from a much wider target sep (was 6) and let the fallback converge; this
@@ -1976,6 +2069,9 @@ export function publicRoadTiles(
 function placeTowns(
   terrain: Uint8Array, occ: Int16Array, industries: Industry[], rng: () => number,
   shapes = false, rings = false,
+  /** FTUE-1 (#464): a preset's town count and neighbourhood (the ordinary map
+   *  passes nothing and gets TOWN_COUNT scattered over the island). */
+  preset?: { towns?: number; centre?: [number, number] | null; jitter?: number },
 ): Town[] {
   const towns: Town[] = [];
 
@@ -2096,13 +2192,23 @@ function placeTowns(
     return true;
   };
 
-  for (let t = 0; t < TOWN_COUNT; t++) {
+  const wantTowns = preset?.towns ?? TOWN_COUNT;
+  // FTUE-1 (#464): a preset's towns sit at the cluster centre (± jitter) —
+  // "1 town, 4 industries close by" means the town is the neighbourhood's
+  // heart, not a settlement the seed happened to park near the ring.
+  const townCentre = preset?.centre ?? null;
+  const townJitter = preset?.jitter ?? 0;
+  for (let t = 0; t < wantTowns; t++) {
     let placed = false;
     // try candidate centres at relaxing separation
     for (const sep of [TOWN_TOWN_SEP, 6, 4, 2]) {
       for (let attempt = 0; attempt < 120 && !placed; attempt++) {
-        const cx = 4 + Math.floor(rng() * (MAP_W - 8));
-        const cy = 4 + Math.floor(rng() * (MAP_H - 8));
+        const cx = townCentre
+          ? Math.round(townCentre[0] + (rng() * 2 - 1) * townJitter)
+          : 4 + Math.floor(rng() * (MAP_W - 8));
+        const cy = townCentre
+          ? Math.round(townCentre[1] + (rng() * 2 - 1) * townJitter)
+          : 4 + Math.floor(rng() * (MAP_H - 8));
         if (!tileFree(cx, cy)) continue;
         if (industrySep(cx, cy) < TOWN_INDUSTRY_SEP) continue;
         if (sep > 0 && townSep(cx, cy) < sep) continue;
@@ -2179,6 +2285,9 @@ function makeElevation(
   rivers: Uint8Array | undefined,
   industries: readonly Industry[],
   towns: readonly Town[],
+  /** FTUE-1 (#464): flat apron tiles around every industry (0 = none — every
+   *  ordinary map keeps today's terrain byte for byte). */
+  industryApron = 0,
 ): Uint8Array {
   const n = MAP_W * MAP_H;
   const height = new Uint8Array(n);
@@ -2253,6 +2362,33 @@ function makeElevation(
     }
   }
 
+  // FTUE-1 (#464): the same flat apron around every industry a preset asks
+  // for — the industry's own level, the ring blended back by the relaxation
+  // below exactly as the town apron is. #436 will give every map this; the
+  // Starter Island bakes it in so its "gentle terrain" holds either way, and
+  // an ordinary map (industryApron 0) never touches a tile.
+  if (industryApron > 0) {
+    for (const ind of industries) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+        for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+          x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+          x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        }
+      }
+      const level = height[idx(ind.tx, ind.ty)];
+      for (let y = y0 - industryApron; y <= y1 + industryApron; y++) {
+        for (let x = x0 - industryApron; x <= x1 + industryApron; x++) {
+          if (!inBounds(x, y)) continue;
+          const i = idx(x, y);
+          if (fixed[i]) continue;                       // water, rivers, the footprint itself
+          height[i] = level;
+          fixed[i] = 1;
+        }
+      }
+    }
+  }
+
   // Repeatedly project each unfixed tile into the intersection of the
   // one-level bands around its neighbours. Fixed footprints and water are
   // never changed. More passes than the map diameter makes the result stable
@@ -2301,22 +2437,42 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // routes around them as water. Off by default: no RNG is drawn and no tile
   // changes, so option-OFF seeds stay byte-identical to the old generator.
   const riverMask = opts.rivers ? carveRivers(terrain, rng) : undefined;
-  const { list, occ } = placeIndustries(terrain, rng);
+  // FTUE-1 (#464): a preset draws its cluster centre from the seed — near the
+  // middle of the island so the neighbourhood stays inland — and every stage
+  // below places against it. A default map draws NOTHING here: the seeded
+  // stream every later stage reads is untouched, byte for byte.
+  const preset = opts.preset ?? null;
+  const cluster: [number, number] | null = preset
+    ? [Math.round(MAP_W / 2 + (rng() * 2 - 1) * 6), Math.round(MAP_H / 2 + (rng() * 2 - 1) * 6)]
+    : null;
+  const { list, occ } = placeIndustries(terrain, rng, preset ?? undefined, cluster);
   // TOWN-1: towns are placed AFTER industries (sequencing), using the same
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
   // TOWN_OCC in the occupancy array so roads/other structures route around.
-  const towns = placeTowns(terrain, occ, list, rng, opts.shapes === true, opts.rings === true);
+  const towns = placeTowns(terrain, occ, list, rng, opts.shapes === true, opts.rings === true,
+    preset ? { towns: preset.towns, centre: cluster, jitter: 2 } : undefined);
   // PP-13: highways between the towns, derived from the towns that were
   // actually placed. No RNG draws, so the seeded stream the rest of the map
   // depends on is untouched — and the highway is a pure function of the seed.
   const publicRoads = publicRoadTiles(towns, terrain, occ);
-  // PP-14: industries keep out of the roads' verges. The buffer cannot be a
-  // `placeIndustries` constraint — the roads it measures against are derived
-  // from the towns, which are derived from the industries — so it is repaired
-  // here, once the highways and the town streets are known. Uses the seeded
-  // stream (every earlier stage is done drawing from it), so the map is still a
-  // pure function of `seed`.
-  applyRoadSpawnBuffer(terrain, occ, list, publicRoads);
+  // PP-14: industries keep out of the roads' verges. … (see the note above).
+  // FTUE-1 (#464): a PRESET owns its layout — the ring IS the design, and the
+  // repair's local nudge would quietly break "close by" — so it runs only for
+  // the ordinary generator.
+  if (!preset) applyRoadSpawnBuffer(terrain, occ, list, publicRoads);
+  // FTUE-1 (#464): gentle terrain — no rough ground in a preset's industry
+  // aprons. Buildable, flat-cost land all around the four industries, so the
+  // Starter Island's first Depot sites are kind ground.
+  if (preset) {
+    for (const ind of list) {
+      for (let y = ind.ty - preset.industryApron; y < ind.ty + ind.h + preset.industryApron; y++) {
+        for (let x = ind.tx - preset.industryApron; x < ind.tx + ind.w + preset.industryApron; x++) {
+          if (!inBounds(x, y)) continue;
+          if (terrain[idx(x, y)] === ROUGH) terrain[idx(x, y)] = GRASS;
+        }
+      }
+    }
+  }
   // PP-02: guarantee every town can host a Factory. The only thing that could
   // wall a town off from a legal Factory site is ROUGH terrain around it,
   // so flatten the rough in a small ring around every town tile. A town tile
@@ -2384,7 +2540,7 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // generated industry and town footprint can be flat without changing the
   // placement RNG stream. Option-off still returns a flat compatibility map.
   const height = opts.elevation
-    ? makeElevation(s, terrain, riverMask, list, towns)
+    ? makeElevation(s, terrain, riverMask, list, towns, preset?.industryApron ?? 0)
     : new Uint8Array(MAP_W * MAP_H);
   // fillCoastalHoles only fills sea-disconnected WATER; rivers reach the sea so
   // they survive — but re-assert the mask as water regardless, so the layer
@@ -2398,6 +2554,25 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
     // carry nothing, so every consumer keeps the legacy constant.
     factoryFootprint: opts.shapes ? factoryFootprintFor(true) : undefined,
   };
+}
+
+/**
+ * FTUE-1 (#464): the Starter Island — the one door to the first game's map.
+ *
+ * Fixed seed, preset overrides, and the map features the scenario is tuned
+ * for (rivers OFF: the guide's chain teaches roads, not bridges; elevation ON
+ * so the aprons mean something; shapes and rings ON — the modern island).
+ * The game boots this instead of `generateMap` whenever the scenario runs,
+ * so the browser and the unit tests can never see two different islands.
+ */
+export function starterIslandGrid(): Grid {
+  return generateMap(STARTER_ISLAND_SEED, {
+    preset: STARTER_ISLAND,
+    rivers: false,
+    elevation: true,
+    shapes: true,
+    rings: true,
+  });
 }
 
 

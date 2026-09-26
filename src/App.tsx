@@ -44,7 +44,7 @@ export const ONBOARDED_KEY = "hexmatch:onboarded";
 export const isFreshLink = (): boolean => {
   try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; }
 };
-function isFirstLaunch(): boolean {
+export function isFirstLaunch(): boolean {
   try {
     if (isFreshLink()) return true;
     if (localStorage.getItem(ONBOARDED_KEY)) return false;
@@ -59,13 +59,30 @@ function isFirstLaunch(): boolean {
 }
 
 /**
+ * FTUE-1 (#464): onboarding is DONE. Written when the player wins the
+ * Starter Island or skips it ("Skip to the real game") — not at launch — so
+ * the island is what a fresh browser plays, and a win or a skip is what
+ * opens the normal game. Later launches read it and go straight to the main
+ * menu. `?fresh=1` writes nothing (a brand-new player every time).
+ */
+export function markOnboarded(): void {
+  try {
+    if (!isFreshLink()) localStorage.setItem(ONBOARDED_KEY, "1");
+  } catch { /* private mode */ }
+}
+
+/**
  * Multiplayer is opt-in: keeping the start screen outside the game means the
  * AI match remains playable without an account or a realtime connection.
  */
 export default function App() {
-  const [firstRun] = useState(isFirstLaunch);
+  // FTUE-1 (#464): the first launch boots the STARTER ISLAND (a `starter: true`
+  // ai choice — the guided scenario) and never again once onboarding is done
+  // (won the island, or skipped it). `firstRun` rides along for the launch
+  // extras (the camera opens on the town).
+  const [firstRun, setFirstRun] = useState(isFirstLaunch);
   const [choice, setChoice] = useState<StartChoice | null>(
-    firstRun ? { mode: "ai", portrait: "vex" } : null,
+    firstRun ? { mode: "ai", portrait: "vex", starter: true } : null,
   );
   /** STORY-01: the front door stands until Play is pressed (or a playtest
    *  link pins a contract, which walks straight past it). */
@@ -132,14 +149,33 @@ export default function App() {
   // is left alone; Play resumes what the pagehide autosave keeps), and stand
   // the front door back up. Rooms use the same door, and `startIsoGame` turns
   // it into "Leave room" wording with a confirm of its own.
-  // The first game has started — every later boot is a normal one.
-  useEffect(() => {
-    if (firstRun && !isFreshLink()) try { localStorage.setItem(ONBOARDED_KEY, "1"); } catch { /* private mode */ }
-  }, [firstRun]);
+  // FTUE-1 (#464): onboarding is NO LONGER marked at launch — it is marked
+  // when the Starter Island is WON (its ledger's "Build another empire") or
+  // SKIPPED ("Skip to the real game"), both of which run `goToNormalGame`
+  // below. Until then the island survives reloads, exactly as the ticket
+  // asks.
   const quitToMenu = () => {
     setChoice(null);
     setBackToCampaign(false);
     setAtMenu(true);
+  };
+  // FTUE-1 (#464): the Starter Island's exit — "Skip to the real game" (the
+  // first screen's chip) or the won ledger's "Build another empire", both of
+  // which land here: onboarding marked done, and the NORMAL game boots (the
+  // real map, a real rival, no guided chain).
+  const goToNormalGame = () => {
+    markOnboarded();
+    setFirstRun(false);
+    setBackToCampaign(false);
+    setAtMenu(false);
+    setChoice({ mode: "ai", portrait: "vex", starter: false });
+  };
+  // FTUE-1 (#464): the Tutorial menu's "Play the Starter Island" — the
+  // scenario again (fixed island, trainee, guided chain), on demand.
+  const playStarterIsland = () => {
+    setBackToCampaign(false);
+    setAtMenu(false);
+    setChoice({ mode: "ai", portrait: "vex", starter: true });
   };
 
   /**
@@ -163,6 +199,16 @@ export default function App() {
         conquest: choice.conquest === true,
         // run.world feedback: the very first game is coached, not toured.
         firstRun,
+        // FTUE-1 (#464): the Starter Island — the fixed preset map, the
+        // trainee rival, the 6★ line and the guided chain; its exit doors
+        // open the normal game (skip chip, won ledger) and its WIN marks
+        // onboarding done (a loss leaves it open: "Demand a rematch" runs
+        // the island again).
+        starterIsland: choice.starter === true || firstRun,
+        onPlayNormalGame: goToNormalGame,
+        onMatchEnded: choice.starter === true || firstRun
+          ? (won) => { if (won) markOnboarded(); }
+          : undefined,
       })
       : choice.mode === "story"
         // STORY-01: the contract rides in on the options — rival, voice, ★
@@ -216,8 +262,9 @@ export default function App() {
   if (reel) return <div ref={reelRef} className="reel-host" />;
   if (choice) return <div ref={ref} className="game-root" />;
   if (atMenu) return (
-    <MainMenu
-      onPlay={() => { setBackToCampaign(false); setAtMenu(false); }}
+      <MainMenu
+        onPlay={() => { setBackToCampaign(false); setAtMenu(false); }}
+        onStarterIsland={playStarterIsland}
       // CONTINUE-01 (#191): the front door's gold button jumps straight into
       // the freshest resumable solo save — sandbox slot or a contract — by
       // handing `begin` the same choice the mode screen would. The boot finds

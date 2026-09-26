@@ -59,6 +59,10 @@ const CARD_TEXT: Record<SkillKey, { pace: string }> = {
   easy: { pace: "≈14s between moves · never raids · easy market" },
   normal: { pace: "≈9s between moves · raids every couple of minutes" },
   hard: { pace: "≈5s between moves · expands twice a turn · raids often" },
+  // FTUE-1 (#464): never rendered — the picker's cards are the SKILL_KEYS
+  // three (its pins), and the trainee is a scenario cast, not a pick. The
+  // Record needs the key because SkillKey grew one.
+  trainee: { pace: "builds slowly · never contests · never challenges" },
 };
 
 /**
