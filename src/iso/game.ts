@@ -196,8 +196,12 @@ import {
 // multiplies; ui.ts paints them. (ui.ts has carried the objective element and
 // the chip rate since #287 — this is the wiring that fills them.)
 import {
-  depotReadout, incomeRates as loopIncomeRates, objectiveLine, type RateRow,
+  depotReadout, incomeRates as loopIncomeRates, type RateRow,
 } from "./readouts";
+// GOAL-1 (#459): the "Next step" advisor — replaces the old objectiveLine with
+// a priority list that reads from more of the live state (money, market,
+// town upgrades, rival contests). Pure in next-step.ts; this file wires it.
+import { nextStep as nextStepAdvisor, type AdvisorTool, type NextStep } from "./next-step";
 // L8 (#222): the OPTIONAL quests — suggestions voiced by the match's cast,
 // generated from this map and this seat, never a requirement. The rules are
 // pure (`quests.ts`); this file owns which ones are on offer, what pays them,
@@ -1701,6 +1705,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onNames: toggleNames,
     names: showNames,
     onRecenter: recenterCamera,
+    // GOAL-1 (#459): the "Next step" advisor click pans to a specific tile and
+    // arms the right tool. Same centerOnTile the "?" and debug paths use.
+    onCenterTile: (tx: number, ty: number) => {
+      commitCamera(centerOnTile(cam, tx, ty));
+    },
     // MOBILE-01: the floating +/− keys are the wheel's touch twin — one zoom
     // step about the middle of the screen, exactly where a thumb-panner's eye
     // already is. Anchored at the viewport centre, like a wheel at centre.
@@ -9494,6 +9503,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let objective: string | null = null;
   let objectiveKey: string | null = null;
+  // GOAL-1 (#459): click-pan target / arm-tool produced by the advisor this frame.
+  let objectiveTarget: NextStep["target"] = null;
+  let objectiveTool: AdvisorTool | null = null;
   let incomeRates: Partial<Record<Cargo, number>> | undefined;
 
   function paintUi(now: number) {
@@ -9864,41 +9876,63 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     objective = null;
     objectiveKey = null;
     incomeRates = undefined;
+    // GOAL-1 (#459): the "Next step" advisor replaces the old objectiveLine.
+    // It reads live state (factories, depots, money, market, town upgrades,
+    // rival contests) and returns one line, a target tile and a tool. Click
+    // is wired through the same onTool/onRecenter doors the player uses.
+    objectiveTarget = null;
+    objectiveTool = null;
     if (newLoop) {
       const myDepots = eco.harvesters.filter((hh) => hh.owner === me.id);
-      const connected = myDepots.filter((hh) => isServiced(eco.track, hh, eco.rail));
-      const offer = retuneOffer();
-      // The tree's next step, NAMED: the cheapest type on a rung this seat has
-      // not opened, offered only while its mix is already in the purse.
-      // Earning the mix is the `grow` line's job; this line names the unlock.
-      const nextType = (Object.values(DEPOT_TREE) as { cargo: Cargo; name: string; tier: number }[])
-        .filter((t) => DEPOT_RUNG_GATE && t.tier > me.depotTier)
-        .sort((a, b) => a.tier - b.tier)[0] ?? null;
-      const nextPrice = nextType
-        ? priceDepot(buildPurse(me), me.freeDepots, { cargo: nextType.cargo, tier: me.depotTier, newLoop })
-        : null;
-      const obj = objectiveLine({
+      // Build the per-cargo price map for the idle-money/Stockpile rule.
+      const prices: Partial<Record<Cargo, number>> = {};
+      for (const c of CARGOES) {
+        if (sellable(c)) prices[c] = priceOf(market, c, marketMs);
+      }
+      // Tuning anchor tile, for click-pan while the board is up.
+      let tuningTarget: { tx: number; ty: number } | null = null;
+      const tNow = tuning;
+      if (tNow) {
+        if (tNow.kind === "town") {
+          const fac = eco.factories.find((f) => f.owner === me.id);
+          if (fac) tuningTarget = { tx: fac.tx, ty: fac.ty };
+        } else {
+          const d = eco.harvesters.find((h) => h.id === tNow.depotId);
+          if (d) tuningTarget = { tx: d.tx + 1, ty: d.ty + 1 };
+        }
+      }
+      const step = nextStepAdvisor({
         phase,
-        tuning: tuning
+        playerId: me.id,
+        factories: eco.factories,
+        harvesters: eco.harvesters,
+        industries: grid.industries,
+        towns: grid.towns,
+        isConnected: (h) => isServiced(eco.track, h, eco.rail),
+        money: me.money,
+        purse: me.purse,
+        freeDepots: me.freeDepots,
+        depotTier: me.depotTier,
+        townLevel: me.townLevel,
+        marketPrices: prices,
+        tuning: tNow
           ? {
-              kind: tuning.kind,
-              cargo: tuning.cargo,
-              movesLeft: tuningMovesLeft(tuning),
-              moves: tuning.moves,
+              kind: tNow.kind,
+              cargo: tNow.cargo,
+              movesLeft: tuningMovesLeft(tNow),
+              moves: tNow.moves,
+              target: tuningTarget,
             }
           : null,
-        depotCount: myDepots.length,
-        connectedCount: connected.length,
-        retune: offer ? { cargo: offer.cargo } : null,
-        townLevel: me.townLevel,
-        townLevelCount: TOWN_UPGRADES.length,
-        nextRung: nextType && nextPrice?.affordable
-          ? { name: nextType.name, tier: nextType.tier }
-          : null,
+        activeContract: null,        // CONTRACT-1 (#466) plugs in later
+        contestedIndustry: null,     // RIVAL-3 (#467) plugs in later
         winTarget: winTarget(),
+        newLoop: true,
       });
-      objective = obj.text;
-      objectiveKey = obj.key;
+      objective = step.text;
+      objectiveKey = step.key;
+      objectiveTarget = step.target;
+      objectiveTool = step.tool;
 
       // The chip bar's rates: the same rows the inspector prices, summed per
       // cargo per second. One flood fill for the seat (`componentsFor`, cached
@@ -9980,6 +10014,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // banner and the chips.
       objective,
       objectiveKey,
+      // GOAL-1 (#459): click the advisor → pan camera + arm the right tool.
+      objectiveTarget,
+      objectiveTool,
       incomeRates,
       // …and the optional quests: what a character suggests, in their voice,
       // with the progress and the reward the game has already computed. The
@@ -12335,7 +12372,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * `__iso.incomeRates` is what the chips print. Exposed so a probe can pin
      * the numbers the chrome paints without parsing the DOM.
      */
-    get objective() { return { key: objectiveKey, text: objective }; },
+    // GOAL-1 (#459): expose the advisor's target+tool so tests/debug can read
+    // the click routing the same frame the chrome paints it.
+    get objective() { return { key: objectiveKey, text: objective, target: objectiveTarget, tool: objectiveTool }; },
     get incomeRates() { return incomeRates ?? {}; },
     /**
      * L8 (#222): the optional quests as the HUD is being handed them — the

@@ -2447,6 +2447,10 @@ html, body, #root {
    so a player never mistakes a goal for a dismissible alert. Shares the same
    mobile --banner-h accounting the HUD publishes (ui.ts counts whichever lane
    is visible). */
+/* GOAL-1 (#459): the "Next step" advisor is a clickable chip — click pans
+   the camera and arms the right tool. It looks like a quiet reminder; the
+   cursor changes to hint that it does something. On a phone it compresses
+   to a compact Space-Age chip. */
 .objective {
   position: fixed; top: 104px; left: 50%; transform: translateX(-50%); z-index: 44;
   max-width: 560px; padding: 7px 16px; border-radius: 0; text-align: center;
@@ -2454,13 +2458,17 @@ html, body, #root {
   background: rgba(15, 21, 23, 0.92);
   border: 1px solid var(--brass-lo); border-left: 3px solid var(--brass);
   box-shadow: none;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: border-color 120ms ease;
 }
+.objective:hover, .objective:focus-visible { border-left-color: var(--aqua); outline: none; }
 .objective.hidden { display: none; }
-/* a phone has less width for the one line, so let it wrap to two */
+/* a phone has less width for the one line, so let it wrap to two and look
+   like a compact chip (Space Age). */
 @media (max-width: 760px) {
-  .objective { max-width: calc(100vw - 24px); white-space: normal; font-size: 11px; padding: 6px 12px; }
+  .objective { max-width: calc(100vw - 24px); white-space: normal; font-size: 11px; padding: 6px 12px; border-radius: 2px; }
 }
 
 /* ── L8 (#222): the optional quests ────────────────────────────────────────
