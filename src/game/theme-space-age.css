@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Anton&display=swap");
 /* ═══════════════════════════════════════════════════════════════════
    UI SPACE AGE — docs/UI_SPACE_AGE_PLAN.md
    Charcoal, orange, aqua and lemon; square corners; flat colour; no
@@ -787,4 +788,90 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
     linear-gradient(115deg, transparent 0 68%, rgba(79,179,191,.45) 68% 71%, transparent 71%),
     url("../assets/poster/menu-bg.webp") !important;
   background-size: cover !important;
+}
+
+/* ══ Menu card (owner, 2026-09-26): the Hextall character-select look ══ */
+.start-screen.menu { display: flex !important; align-items: center; justify-content: center; padding: 3vh 3vw; }
+.start-screen.menu > .mc {
+  --acc: #f08a24; --bone: #eee6d4; --ink: #1f2427;
+  position: relative; display: grid; grid-template-columns: minmax(150px, 15%) minmax(260px, 34%) 1fr;
+  width: min(1320px, 94vw); height: min(760px, 88vh);
+  background: var(--bone); border: 3px solid var(--ink); box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  overflow: hidden;
+}
+.start-screen.menu > .mc[data-accent="aqua"] { --acc: #3fb4c6; }
+.mc-strip { display: flex; flex-direction: column; align-items: center; gap: 3vh; padding: 3vh 12px; }
+.mc-strip .menu-logo { margin: 0 !important; }
+.mc-strip .menu-logo img { width: 100%; max-width: 190px !important; max-height: none !important; }
+.mc-cast { position: relative; display: flex; flex-direction: column; gap: 12px; padding-left: 26px; margin-top: 4vh; }
+.mc-scroll { position: absolute; left: 0; top: 50%; transform: translate(-40%, -50%) rotate(-90deg);
+  font: 600 11px/1 "Jost", sans-serif; letter-spacing: .2em; text-transform: uppercase; color: var(--ink); }
+.mc-cast::before { content: ""; position: absolute; left: 6px; top: 0; bottom: 0; width: 1px; background: var(--ink); }
+.mc-thumb { width: clamp(64px, 7vw, 104px); aspect-ratio: 1; padding: 0; border: 3px solid transparent; background: #6b6259;
+  filter: grayscale(.8) brightness(.8); cursor: pointer; transition: filter .15s, border-color .15s; }
+.mc-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.mc-thumb.on { border-color: var(--acc); filter: none; }
+.mc-thumb:hover { filter: none; }
+.mc-hero { position: relative; background: transparent; overflow: visible; }
+.mc-hero::before { content: ""; position: absolute; left: 0; top: 7%; bottom: 0; width: 66%; background: var(--acc); }
+.mc-hero img { position: absolute; left: 0; bottom: 0; height: 100%; width: auto; max-width: none; z-index: 1;
+  animation: mcHero .35s ease-out; }
+@keyframes mcHero { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+/* the right panel */
+.start-screen.menu .mc > .menu-card {
+  position: static !important; background: transparent !important; height: auto !important;
+  display: flex !important; flex-direction: column; justify-content: flex-start; gap: 14px;
+  padding: 3vh 3vw 3vh 2vw !important; color: var(--ink); overflow-y: auto; z-index: 2;
+}
+.mc .menu-actions { display: flex !important; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 18px; }
+.mc .menu-btn { background: none !important; border: 0 !important; color: var(--ink) !important; padding: 8px 2px !important;
+  font: 600 15px/1 "Jost", sans-serif; letter-spacing: .06em; text-transform: uppercase; min-height: 0; width: auto;
+  border-bottom: 3px solid transparent !important; border-radius: 0; }
+.mc .menu-btn .mb-tag { display: none; }
+.mc .menu-btn:hover { border-bottom-color: var(--acc) !important; color: var(--acc) !important; }
+.mc .menu-btn.primary { order: 9; background: var(--acc) !important; color: #fff !important; padding: 14px 34px !important;
+  font-size: 20px; letter-spacing: .04em; border-bottom: 0 !important; }
+.mc .menu-btn.primary:hover { background: var(--ink) !important; color: #fff !important; }
+.mc-profile { margin-top: 2vh; }
+.mc-name { font: 400 clamp(56px, 8.4vw, 132px)/.9 "Anton", "Impact", sans-serif; text-transform: uppercase; color: var(--ink);
+  margin: 0 0 18px; letter-spacing: .005em; }
+.mc-quote { font: italic 700 clamp(18px, 1.7vw, 26px)/1.25 "Jost", sans-serif; color: var(--ink); margin: 0 0 16px; }
+.mc-rule { display: block; width: 56px; height: 4px; background: var(--acc); margin: 0 0 14px; }
+.mc-bio { font: 400 clamp(14px, 1.1vw, 17px)/1.5 "Jost", sans-serif; color: #3a3f42; max-width: 46ch; margin: 0; }
+.mc-tabs { margin-top: auto; display: flex; gap: 18px; }
+.mc-tabs button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 6px 0; cursor: pointer;
+  font: 600 13px/1 "Jost", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: #6b6259; }
+.mc-tabs button.on { color: var(--acc); border-bottom-color: var(--acc); }
+.mc .menu-leaderboard { position: static !important; width: auto !important; background: transparent !important; border: 0 !important;
+  padding: 0 !important; color: var(--ink); opacity: 1 !important; max-height: none !important; margin: 0 !important; }
+.mc .menu-leaderboard[hidden], .mc-profile[hidden] { display: none !important; }
+.mc .menu-leaderboard * { color: var(--ink); }
+.mc .menu-leaderboard .start-kicker { color: var(--acc); }
+.mc .menu-campaign, .mc .menu-sub { color: #3a3f42; }
+/* phones: stack - strip on top, hero hidden behind the panel */
+@media (max-width: 760px), (max-aspect-ratio: 3/4) {
+  .start-screen.menu > .mc { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: 94dvh; }
+  .mc-strip { flex-direction: row; justify-content: space-between; padding: 12px; gap: 12px; }
+  .mc-strip .menu-logo img { max-width: 150px !important; }
+  .mc-cast { flex-direction: row; margin: 0; padding: 0; }
+  .mc-cast::before, .mc-scroll { display: none; }
+  .mc-thumb { width: 56px; }
+  .mc-hero { position: absolute; inset: 22% 0 0 0; opacity: .22; pointer-events: none; }
+  .mc-name { font-size: 64px; }
+  .mc .menu-actions { justify-content: flex-start; }
+}
+.start-screen.menu .mc > .menu-card { width: auto !important; min-width: 0 !important; max-width: none !important; border: 0 !important; margin: 0 !important; }
+.start-screen.menu .mc .menu-actions { flex-direction: row !important; width: auto !important; }
+.start-screen.menu .mc .menu-btn { width: auto !important; flex: 0 0 auto !important; }
+.mc-hero img { height: 96%; left: -4%; }
+.mc-name { position: relative; z-index: 2; }
+.start-screen.menu .mc .menu-btn .mb-tag { display: none !important; }
+.start-screen.menu .mc .menu-btn.primary .mb-tag { display: block !important; font: 400 11px/1.3 "Jost", sans-serif; letter-spacing: .02em; text-transform: none; opacity: .9; margin-top: 4px; }
+.mc .menu-card, .mc-profile, .mc-name, .mc-quote, .mc-bio { text-align: left !important; }
+.start-screen.menu .mc .menu-actions { flex-wrap: nowrap; }
+.mc-hero img { height: auto !important; width: auto !important; max-width: 108%; max-height: 96%; left: -3%; }
+@media (max-width: 760px), (max-aspect-ratio: 3/4) {
+  .start-screen.menu .mc .menu-actions { flex-wrap: wrap !important; justify-content: flex-start; }
+  .start-screen.menu .mc .menu-btn.primary { order: -1; flex: 1 1 100% !important; width: 100% !important; }
+  .start-screen.menu .mc > .menu-card { padding: 12px 16px 16px !important; }
 }
