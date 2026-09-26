@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import logoUrl from "../assets/poster/logo.webp";
 import heroJames from "../assets/poster/hero-james.webp";
 import heroAnne from "../assets/poster/hero-anne.webp";
+import menuDuo from "../assets/poster/menu-duo.webp";
 import thumbJames from "../assets/poster/thumb-james.webp";
 import thumbAnne from "../assets/poster/thumb-anne.webp";
 
 /** The two Hextalls on the menu card (owner, 2026-09-26). Presentation only. */
-const MENU_CAST = [
+export const MENU_CAST = [
   { id: "james", first: "James", last: "Hextall", hero: heroJames, thumb: thumbJames, accent: "orange",
     quote: "Build it first. Build it bigger. Then build the road to it.",
     bio: "Founder of Hextall Freight. Came home from the war with one lorry and a plan to own every road on the island." },
@@ -14,7 +15,7 @@ const MENU_CAST = [
     quote: "Anyone can build a factory. I read the ledger.",
     bio: "Runs the books and the backroom deals. Knows the price of every ton of ore on the island before the market does." },
 ] as const;
-const CAST_KEY = "hexmatch:menu-character";
+export const CAST_KEY = "hexmatch:menu-character";
 
 // ══════════════════════════════════════════════════════════════════════════
 // STORY-01 — the front door: one engraved menu over a living plate.
@@ -175,15 +176,6 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
     };
   }, []);
 
-  const [who, setWho] = useState<"james" | "anne">(() => {
-    try { return localStorage.getItem(CAST_KEY) === "anne" ? "anne" : "james"; } catch { return "james"; }
-  });
-  const [tab, setTab] = useState<"profile" | "ladder">("profile");
-  const pick = (id: "james" | "anne") => {
-    setWho(id);
-    try { localStorage.setItem(CAST_KEY, id); } catch { /* private mode */ }
-  };
-  const cast = MENU_CAST.find((c) => c.id === who) ?? MENU_CAST[0];
 
   return (
     <main className="start-screen menu" aria-label="Hexmatch main menu">
@@ -198,21 +190,11 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
           }} />
         ))}
       </div>
-      <div className="mc" data-accent={cast.accent}>
+      <div className="mc">
         <aside className="mc-strip">
           <h1 className="menu-title menu-logo"><img src={logoUrl} alt="Hexmatch Industries" /></h1>
-          <div className="mc-cast" role="radiogroup" aria-label="Choose your Hextall">
-            <span className="mc-scroll" aria-hidden="true">Scroll</span>
-            {MENU_CAST.map((c) => (
-              <button key={c.id} type="button" role="radio" aria-checked={who === c.id}
-                className={`mc-thumb${who === c.id ? " on" : ""}`} data-accent={c.accent}
-                data-sfx="click" onClick={() => pick(c.id)} aria-label={`${c.first} ${c.last}`}>
-                <img src={c.thumb} alt="" />
-              </button>
-            ))}
-          </div>
         </aside>
-        <div className="mc-hero" aria-hidden="true"><img key={cast.id} src={cast.hero} alt="" /></div>
+        <div className="mc-hero mc-duo" aria-hidden="true"><img src={menuDuo} alt="" /></div>
       <div className="menu-card">
         {STORY_MODE_ENABLED ? (<>
           <p className="menu-sub">The Foundry Syndicate · a campaign in five contracts</p>
@@ -243,16 +225,6 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
           </button>
           ) : null}
         </nav>
-        <div className="mc-profile" hidden={tab !== "profile"}>
-          <h2 className="mc-name">{cast.first}<br />{cast.last}</h2>
-          <p className="mc-quote">“{cast.quote}”</p>
-          <span className="mc-rule" aria-hidden="true" />
-          <p className="mc-bio">{cast.bio}</p>
-        </div>
-        <div className="mc-tabs" role="tablist" aria-label="Menu panel">
-          <button type="button" role="tab" aria-selected={tab === "profile"} className={tab === "profile" ? "on" : ""} onClick={() => setTab("profile")}>Profile</button>
-          <button type="button" role="tab" aria-selected={tab === "ladder"} className={tab === "ladder" ? "on" : ""} onClick={() => setTab("ladder")}>Ladder</button>
-        </div>
         {STORY_MODE_ENABLED ? <p className="menu-campaign">
           {filed > 0
             ? `Campaign: ${filed} of ${CHAPTERS.length} contracts filed · ${progress.unlocked} open`
@@ -260,7 +232,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
               ? "The reel is watched. The first contract is open."
               : "No contracts filed. The first one is open."}
         </p> : null}
-      <section hidden={tab !== "ladder"} className="menu-leaderboard" aria-label="The Ladder — Top 10" data-testid="main-menu-leaderboard">
+      <section className="menu-leaderboard" aria-label="The Ladder — Top 10" data-testid="main-menu-leaderboard">
         <p className="start-kicker">THE LADDER</p>
         <h2 className="menu-leaderboard-title">Top Rankings — Top 10</h2>
         <p className="menu-leaderboard-sub">Every rated quick match moves one number. The badge is the band it lands in.</p>
