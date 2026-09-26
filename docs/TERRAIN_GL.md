@@ -81,7 +81,9 @@ No runtime dependencies. Strict TypeScript, no `any`.
   0.5×, 3 at 1× and 2×, 1 in `quality:"low"`.
 * **Material weights come from the terrain, not from clouds (#451).** `uGround` (slope,
   curvature, flow, thermal erosion) + distance to water drive the targets: dirt from
-  `steep*0.85 + ridge*0.60 + bare*0.70 + drain*0.35`, rock from
+  `steep*0.85 + ridge*0.60 + bare*0.70 + scuff*0.40 + drain*0.35` (the `scuff` term is the crest of
+  the ridged variant mask on gentle ground, which is what keeps an elevation-off map from reading
+  as one flat colour), rock from
   `smoothstep(.35,.78, steep*0.75 + ridge*0.30 + drain*0.25)`, meadow from
   `hollow*0.85 + damp*0.60 + sediment*0.35 + drain*hollow*0.6`. A ~2.5-tile `nudge` term
   (`clump − 0.5`) breaks the edges up so they follow the ground noise instead of drawing clean
