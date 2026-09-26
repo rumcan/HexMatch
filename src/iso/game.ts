@@ -2870,16 +2870,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     townPlantTiles = new Set();
     const townItems = grid.towns.flatMap((t) => {
       const tier = newLoop ? townTier(t) : TOWN_TIER_LEGACY;
-      const ring = new Set<number>();
-      if (tier >= 2) {
-        for (const [gx, gy] of grownTownHouses(t, grid, townGrownRings(tier), isBuilt)) {
-          const gi = tIdx(gx, gy);
-          built.add(gi);
-          blocked.add(gi);
-          ring.add(gi);
-        }
-      }
+      // #417: the GROWN tiles are read while `built` still holds only the
+      // player's ground, and are marked built only AFTER `townBuildings` has
+      // laid the districts. That function derives the very same ring through
+      // the same `isBuilt` question — marking the tiles first made its own
+      // grownTownHouses call skip every grown tile, so the draw list came
+      // back with the base town only (tall centre, empty grass around it).
+      const grown = tier >= 2 ? grownTownHouses(t, grid, townGrownRings(tier), isBuilt) : [];
       const laid = townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt, shapes: shapesOn });
+      const ring = new Set<number>();
+      for (const [gx, gy] of grown) {
+        const gi = tIdx(gx, gy);
+        built.add(gi);
+        blocked.add(gi);
+        ring.add(gi);
+      }
       for (const [x, y] of townObstacleTiles(
         t,
         laid.map((b) => {
@@ -12047,6 +12052,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const ok = setTownLevel(t, level);
       if (ok) growTownArt(t);
       return ok;
+    },
+    /**
+     * #417: the town draw items exactly as `syncWorld` laid them — sprite,
+     * tile and town id. Read-only (the list rebuilds on every world sync);
+     * exposed so a probe can check what a grown town actually draws: the
+     * base blocks, the tier centre, and the tier-2+ GROWN districts.
+     */
+    get townDrawItems() {
+      return (world.extra ?? [])
+        .filter((e) => (e.ref as { kind?: unknown } | undefined)?.kind === "town")
+        .map((e) => ({
+          sprite: e.sprite,
+          tx: e.tx,
+          ty: e.ty,
+          townId: (e.ref as { kind: string; id: number }).id,
+        }));
     },
     /** VP-01: run the rival's pave pass on demand (the AI turn's third action,
      *  exposed so a test can assert the pave without waiting on the clock).
