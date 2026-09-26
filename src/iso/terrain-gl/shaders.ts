@@ -2,8 +2,9 @@
  * GLSL ES 3.00 sources for the terrain renderer (plain strings, no plugins).
  *
  * One program is compiled at startup and never again: every zoom / quality
- * dependent behaviour is driven by uniforms (uDetailAmt, uWaterAnim, ...), so
- * there are no per-zoom shader variants and no runtime recompiles.
+ * dependent behaviour is driven by uniforms (uDetailAmt, uWaterAnim,
+ * uVariantAmt, ...), so there are no per-zoom shader variants and no runtime
+ * recompiles.
  */
 
 export const TERRAIN_VS = /* glsl */ `#version 300 es
@@ -37,6 +38,7 @@ void main() {
 export const TERRAIN_FS = /* glsl */ `#version 300 es
 precision highp float;
 precision highp sampler2D;
+precision highp sampler2DArray;
 
 in vec2  vWorld;
 in vec2  vTile;
@@ -44,27 +46,31 @@ in float vShade;
 out vec4 fragColor;
 
 // Per-map data ----------------------------------------------------------
-uniform sampler2D uField;   // RGBA8 LINEAR  signed distances (tiles, /16+0.5): R shore, G rough, B river, A sand
-uniform sampler2D uCodes;   // R8 NEAREST    bits 0-1 terrain code, bit 7 river flag
-uniform sampler2D uNoise;   // RGBA8 REPEAT  R,G low fBm  B clump fBm  A fine fBm (seed enters via uSeedOff)
-// Ground art --------------------------------------------------------------
-uniform sampler2D uGrass;
-uniform sampler2D uMeadow;
-uniform sampler2D uDirt;
-uniform sampler2D uRock;
-uniform sampler2D uSand;
-uniform sampler2D uDetail;
-uniform sampler2D uWaterN;
+uniform sampler2D      uField;  // RGBA8 LINEAR  signed distances (tiles, /16+0.5): R shore, G rough, B river, A sand
+uniform sampler2D      uCodes;  // R8 NEAREST    bits 0-1 terrain code, bit 7 river flag
+uniform sampler2D      uNoise;  // RGBA8 REPEAT  R,G low fBm  B clump fBm  A fine fBm (seed enters via uSeedOff)
+uniform sampler2D      uGround; // RGBA8 LINEAR  elevation/erosion field on the corner lattice: R slope, G curvature, B flow, A erosion
+// Ground art: one 3-layer array per material — layers 0/1/2 are the A/B/C
+// variants of the same texture (see matVariants below) -------------------------
+uniform sampler2DArray uGrassArr;
+uniform sampler2DArray uMeadowArr;
+uniform sampler2DArray uDirtArr;
+uniform sampler2DArray uRockArr;
+uniform sampler2DArray uSandArr;
+uniform sampler2D      uDetail;
+uniform sampler2D      uWaterN;
 uniform float uGrid;      // 0..1 strength of the faint tile grid (0 = off)
 
 uniform vec2  uMapSize;        // (w, h) tiles
+uniform vec2  uCornerSize;     // (w+1, h+1): texels of uGround (the corner lattice)
 uniform vec2  uSeedOff;        // seed-derived UV offset into uNoise
 uniform float uZoom;           // 0.5 | 1 | 2
 uniform float uDetailAmt;      // 1 @2, 0.35 @1, 0 @0.5 (0 in low quality)
 uniform float uWaterAnim;      // 1 @2, 0.5 @1, 0 @0.5 (0 in low quality)
+uniform float uVariantAmt;     // how many variants blend per material: 1..3
 uniform float uTime;           // seconds
 uniform float uTilesPerRepeat; // ground texture repeat length in tiles (~5)
-uniform vec4  uLumA;           // mean luminance of grass, meadow, dirt, rock (height-blend reference)
+uniform vec4  uLumA;           // mean luminance of grass, meadow, dirt, rock (variant A)
 
 const vec3 LIGHT       = normalize(vec3(-0.42, -0.5, 0.76)); // toward the light (screen upper-left)
 const vec3 SEA_SHALLOW = vec3(0.247, 0.549, 0.580); // #3f8c94
@@ -84,20 +90,65 @@ float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 // the ground while panning instead of crawling over it.
 float ign(vec2 px) { return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))); }
 
+mat2 rot2(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+
 // Inigo Quilez' anti-repetition: pick two pseudo-random offsets of the texture
 // from a low-frequency index noise and cross-fade them where the index
 // changes, biased by the colour difference so the seam hides in the texture's
 // own contrast. The index noise k is shared by all layers (one fetch total).
-vec3 noTile(sampler2D samp, vec2 uv, vec2 dx, vec2 dy, float k) {
+// Array-sampler version: layer 0 is the material's base variant.
+vec3 noTileArr(sampler2DArray samp, vec2 uv, vec2 dx, vec2 dy, float k) {
   float l  = k * 8.0;
   float f  = fract(l);
   float ia = floor(l), ib = ia + 1.0;
   vec2 offa = sin(vec2(3.0, 7.0) * ia);
   vec2 offb = sin(vec2(3.0, 7.0) * ib);
-  vec3 ca = textureGrad(samp, uv + offa, dx, dy).rgb;
-  vec3 cb = textureGrad(samp, uv + offb, dx, dy).rgb;
+  vec3 ca = textureGrad(samp, vec3(uv + offa, 0.0), dx, dy).rgb;
+  vec3 cb = textureGrad(samp, vec3(uv + offb, 0.0), dx, dy).rgb;
   float s = dot(ca - cb, vec3(1.0));
   return mix(ca, cb, smoothstep(0.2, 0.8, f - 0.1 * s));
+}
+
+// ONE material, three variants. The variants are blended through a
+// high-frequency, domain-warped ridged mask (vB: the mid band, vC: the crest
+// of the same field — both computed once per fragment in main), never through
+// a smooth low-frequency field: the seams are thin, branching and wiggle with
+// the fine noise instead of reading as round "golf course" patches.
+// Each variant is fetched at its own rotation / scale / offset so the three
+// repeats never line up, and the variant's own luminance biases its mask, so a
+// seam follows clods and blades instead of fading in a straight line.
+vec3 matVariants(sampler2DArray t, vec2 uv, vec2 dx, vec2 dy, float k, float vB, float vC, float meanLum) {
+  vec3 a = noTileArr(t, uv, dx, dy, k);
+  if (uVariantAmt < 1.5) return a;
+  mat2 r1 = rot2(2.10);
+  vec2 s1 = uv * 1.09 + vec2(0.37, 0.11);
+  vec3 b = textureGrad(t, vec3(r1 * s1, 1.0), r1 * (dx * 1.09), r1 * (dy * 1.09)).rgb;
+  float t1 = clamp(uVariantAmt - 1.0, 0.0, 1.0) * smoothstep(0.30, 0.70, vB + (lum(b) - meanLum) * 0.55);
+  vec3 c = mix(a, b, t1);
+  if (uVariantAmt < 2.5) return c;
+  mat2 r2 = rot2(-1.23);
+  vec2 s2 = uv * 0.93 + vec2(0.71, 0.53);
+  vec3 d = textureGrad(t, vec3(r2 * s2, 2.0), r2 * (dx * 0.93), r2 * (dy * 0.93)).rgb;
+  float t2 = clamp(uVariantAmt - 2.0, 0.0, 1.0) * smoothstep(0.45, 0.82, vC + (lum(d) - meanLum) * 0.55);
+  return mix(c, d, t2);
+}
+
+// One function per material. Each keeps its own repeat scale + offset (from
+// the single-texture build) so the layers' repeats never coincide either.
+vec3 grassColor (vec2 uv, vec2 dx, vec2 dy, float k, float vB, float vC) {
+  return matVariants(uGrassArr,  uv,                    dx,                    dy,                    k, vB, vC, uLumA.x);
+}
+vec3 meadowColor(vec2 uv, vec2 dx, vec2 dy, float k, float vB, float vC) {
+  return matVariants(uMeadowArr, uv * 1.13 + 0.37,      dx * 1.13,             dy * 1.13,             k, vB, vC, uLumA.y);
+}
+vec3 dirtColor  (vec2 uv, vec2 dx, vec2 dy, float k, float vB, float vC) {
+  return matVariants(uDirtArr,   uv * 0.91 + 0.71,      dx * 0.91,             dy * 0.91,             k, vB, vC, uLumA.z);
+}
+vec3 rockColor  (vec2 uv, vec2 dx, vec2 dy, float k, float vB, float vC) {
+  return matVariants(uRockArr,   uv * 1.21 + 0.19,      dx * 1.21,             dy * 1.21,             k, vB, vC, uLumA.w);
+}
+vec3 sandColor  (vec2 uv, vec2 dx, vec2 dy, float k, float vB, float vC) {
+  return matVariants(uSandArr,   uv * 1.05 + 0.53,      dx * 1.05,             dy * 1.05,             k, vB, vC, 0.74);
 }
 
 // Clumpy dither threshold shared by every transition in this fragment (set in main).
@@ -124,12 +175,12 @@ void main() {
   float dSand  = F.a;   // - inside generator-marked SAND
 
   // -------------------------------------------------------------------------
-  // 2. Noise. Two fetches of one atlas, in ground (tile) space, seed-offset.
-  //    nLow: two independent low-frequency fields for the land blend.
-  //    nMid: rotated + rescaled copy → clump noise for dithers, index noise
-  //          for anti-repetition, fine noise for foam breakup.
+  // 2. Noise. One fetch of the atlas in ground (tile) space, seed-offset (the
+  //    low-frequency land-blend fields of the old build are gone: the ground
+  //    blend is terrain-driven now, see section 3).
+  //    clump ~2.5 tiles: dithers, rock edges, material-edge break-up.
+  //    fine ~0.5 tile: domain warp for the variant mask, foam breakup.
   // -------------------------------------------------------------------------
-  vec4 nLow = texture(uNoise, vTile * (1.0 / 64.0) + uSeedOff);
   vec2 rt   = vec2(vTile.x * 0.8 - vTile.y * 0.6, vTile.x * 0.6 + vTile.y * 0.8);
   vec4 nMid = texture(uNoise, rt * (1.0 / 48.0) + uSeedOff.yx * 1.7 + 0.31);
   float clump = nMid.b;
@@ -139,6 +190,16 @@ void main() {
   // Dither threshold = clumpy world-space noise + a little crisp grain.
   float grain = ign(floor(vWorld * uZoom));
   gDn = clamp(clump * 0.74 + 0.13 + (grain - 0.5) * 0.28, 0.0, 1.0);
+
+  // Variant mask for the three texture variants of every material: the clump
+  // field WARPED by the fine field and folded into ridges (1 - |2n-1|), then
+  // sharpened. Domain-warped ridged noise branches and wiggles; a threshold on
+  // a smooth field would be the round patch this ticket removes. vC (the
+  // crest) is nested inside vB (the band), so the three variants interleave.
+  float warped = clamp(clump + (fine - 0.5) * 0.6, 0.0, 1.0);
+  float ridged = 1.0 - abs(2.0 * warped - 1.0);
+  float vB = smoothstep(0.14, 0.58, ridged);
+  float vC = smoothstep(0.52, 0.90, ridged);
 
   // Is the nearest water a river? (rivers get a thin lip, not a beach)
   float distWater = dShore + 0.5;
@@ -169,46 +230,84 @@ void main() {
 
   // -------------------------------------------------------------------------
   // 3. Land (skipped for open water; the branch is spatially coherent).
+  //    The final land colour lives in ONE variable ("land") before the water
+  //    composite in section 5, so a colour grade can multiply it (LIGHT-1).
   // -------------------------------------------------------------------------
   vec3 land = vec3(0.0);
   if (dShore > -0.9) {
-    // 3a. Three-way ground blend from the two low-frequency fields.
-    float wMeadow = smoothstep(0.45, 0.65, nLow.r);
-    float wDirt   = smoothstep(0.62, 0.78, nLow.g) * (1.0 - wMeadow * 0.5);
-    float wGrass  = 1.0 - max(wMeadow, wDirt);
+    // 3a. Material weights come from the baked elevation/erosion field
+    //     (uGround, corner lattice), NOT from cloud noise:
+    //       slope    → dirt, then rock on the steepest faces
+    //       ridge    → dirt on crests and shoulders
+    //       hollow   → lusher meadow in dips
+    //       damp     → meadow near water and low ground
+    //       flow     → erosion streaks / drainage lines down the slopes
+    //       erosion  → bare, exposed ground on crests, sediment in hollows
+    vec4  GF     = texture(uGround, (vTile + 0.5) / uCornerSize);
+    float slope  = GF.r;                                  // 0 flat .. 1 cliff
+    float curv   = GF.g * 2.0 - 1.0;                      // + hollow, - ridge
+    float flow   = GF.b;                                  // drainage lines
+    float ero    = GF.a * 2.0 - 1.0;                      // + eroded, - sediment
+
+    float steep  = smoothstep(0.14, 0.52, slope);
+    float ridge  = smoothstep(0.08, 0.34, -curv);
+    float hollow = smoothstep(0.08, 0.34, curv);
+    float damp   = smoothstep(5.0, 0.5, distWater);
+    float drain  = smoothstep(0.30, 0.75, flow);
+    float bare   = smoothstep(0.25, 0.70, ero);
+    float sed    = smoothstep(0.25, 0.70, -ero);
+
+    // A ~2-tile break-up of the targets, so their edges follow the ground
+    // noise instead of drawing clean contour lines around every slope.
+    float nudge = (clump - 0.5) * 0.30;
+    // Scuffed bare ground on gentle, well-drained ground — the crest of the
+    // very same non-blobby ridged mask the variants use, never a cloud field.
+    // It is what keeps a map with no elevation at all from reading flat.
+    float scuff = smoothstep(0.62, 0.95, ridged) * (1.0 - steep) * (1.0 - hollow);
+    float tDirt = clamp(steep * 0.85 + ridge * 0.60 + bare * 0.70 + scuff * 0.40
+                        + drain * 0.35 * (1.0 - hollow) + nudge, 0.0, 1.0);
+    float tRock = clamp(smoothstep(0.35, 0.78, steep * 0.75 + ridge * 0.30
+                                   + drain * 0.25 + nudge * 0.6), 0.0, 1.0);
+    float tMeadow = clamp(hollow * 0.85 + damp * 0.60 * (1.0 - steep)
+                          + sed * 0.35 + drain * hollow * 0.6 - nudge, 0.0, 1.0);
+
+    float wDirt   = tDirt;
+    float wMeadow = tMeadow * (1.0 - wDirt);
+    float wGrass  = 1.0 - max(wDirt, wMeadow);
 
     // Height blend: each layer's local brightness (relative to its mean)
     // biases the competition, so boundaries follow tufts and clods instead
     // of fading linearly. Layers with ~zero weight are not even fetched.
     const float HB = 1.0;
-    vec3  grass  = noTile(uGrass, guv, gdx, gdy, k);
+    vec3  grass  = grassColor(guv, gdx, gdy, k, vB, vC);
     float hG     = wGrass + (lum(grass) - uLumA.x) * HB;
     vec3  meadow = vec3(0.0); float hM = -10.0;
     vec3  dirt   = vec3(0.0); float hD = -10.0;
     if (wMeadow > 0.003) {
-      meadow = noTile(uMeadow, guv * 1.13 + 0.37, gdx * 1.13, gdy * 1.13, k);
+      meadow = meadowColor(guv, gdx, gdy, k, vB, vC);
       hM = wMeadow + (lum(meadow) - uLumA.y) * HB;
     }
     if (wDirt > 0.003) {
-      dirt = noTile(uDirt, guv * 0.91 + 0.71, gdx * 0.91, gdy * 0.91, k);
+      dirt = dirtColor(guv, gdx, gdy, k, vB, vC);
       hD = wDirt + (lum(dirt) - uLumA.z) * HB;
     }
     float top = max(hG, max(hM, hD)) - 0.22;
     float bG = max(hG - top, 0.0), bM = max(hM - top, 0.0), bD = max(hD - top, 0.0);
     land = (grass * bG + meadow * bM + dirt * bD) / (bG + bM + bD);
 
-    // 3b. Rock: distance field of ROUGH tiles, edge perturbed by clump noise,
-    //     then shaped by the rock texture's own relief.
-    float rockT = smoothstep(0.9, -0.4, dRock + (clump - 0.5) * 1.6);
+    // 3b. Rock: the generator's ROUGH distance field (edge perturbed by clump
+    //     noise) merged with the slope target, so the steepest faces turn to
+    //     rock even where the generator stamped no ROUGH tile.
+    float rockT = max(smoothstep(0.9, -0.4, dRock + (clump - 0.5) * 1.6), tRock);
     if (rockT > 0.003) {
-      vec3 rock = noTile(uRock, guv * 1.21 + 0.19, gdx * 1.21, gdy * 1.21, k);
+      vec3 rock = rockColor(guv, gdx, gdy, k, vB, vC);
       float rockW = smoothstep(0.35, 0.65, rockT + (lum(rock) - uLumA.w) * 0.8);
       land = mix(land, rock, rockW);
     }
 
     // 3c. Beach: dithered sand patches creeping into the grass.
     if (sandM > 0.003) {
-      vec3 sand = noTile(uSand, guv * 1.05 + 0.53, gdx * 1.05, gdy * 1.05, k);
+      vec3 sand = sandColor(guv, gdx, gdy, k, vB, vC);
       land = mix(land, sand, sandM);
       // Wet sand right at the waterline: darker, cooler, a touch glossy.
       land = mix(land, land * vec3(0.62, 0.66, 0.72), wetM);
@@ -243,7 +342,8 @@ void main() {
     water = mix(water, SEA_ABYSS, smoothstep(3.0, 8.0, depth));
     water = mix(water, RIVER_TINT, riverness * 0.55);
     // very low-frequency tonal drift so the sea is a painting, not a fill
-    water *= 0.94 + 0.12 * nLow.g;
+    // (one graded fetch of the noise atlas' low field, only on water)
+    water *= 0.94 + 0.12 * textureGrad(uNoise, vTile * (1.0 / 64.0) + uSeedOff, tdx * (1.0 / 64.0), tdy * (1.0 / 64.0)).g;
     // faint seabed showing through the shallows
     water = mix(water, SEABED * 0.9, (1.0 - smoothstep(0.0, 1.2, depth)) * 0.30);
 
