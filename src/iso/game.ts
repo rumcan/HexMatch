@@ -3574,8 +3574,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!canPayBuild(p, RAIL_COSTS.platform)) {
       if (p.human) {
-        toast(`Not enough materials — a platform costs ${railCostLabel(RAIL_COSTS.platform)}.`, "bad");
-        flashAt(tx, ty, `Platform costs ${railCostLabel(RAIL_COSTS.platform)}`);
+        toast(`Not enough money — a platform costs $${moneyCostOf(RAIL_COSTS.platform)}.`, "bad");
+        flashAt(tx, ty, `Platform costs $${moneyCostOf(RAIL_COSTS.platform)}`);
       }
       return false;
     }
@@ -3651,8 +3651,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!canPayBuild(p, RAIL_COSTS.depot)) {
       if (p.human) {
-        toast(`Not enough materials — a train depot costs ${railCostLabel(RAIL_COSTS.depot)}.`, "bad");
-        flashAt(tx, ty, `Train depot costs ${railCostLabel(RAIL_COSTS.depot)}`);
+        toast(`Not enough money — a train depot costs $${moneyCostOf(RAIL_COSTS.depot)}.`, "bad");
+        flashAt(tx, ty, `Train depot costs $${moneyCostOf(RAIL_COSTS.depot)}`);
       }
       return false;
     }
@@ -3748,8 +3748,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!canPayBuild(p, DAM_COST)) {
       if (p.human) {
-        toast(`Not enough materials — a dam costs ${costLabel(DAM_COST)}.`, "bad");
-        flashAt(wx, wy, "Not enough materials");
+        toast(`Not enough money — a dam costs $${moneyCostOf(DAM_COST)}.`, "bad");
+        flashAt(wx, wy, "Not enough money");
       }
       return false;
     }
@@ -3820,7 +3820,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (Object.keys(res.cost).length && !spendBuild(p, res.cost)) {
       // Unreachable in practice (the preview refused unaffordable tiles); the
       // guard is what keeps the invariant true regardless.
-      toast("Not enough materials.", "bad");
+      toast("Not enough money.", "bad");
     }
     if (p.human && res.built.length) sfx.play("place", { step: res.built.length });
     for (const [bx, by] of res.built) {
@@ -3876,7 +3876,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // leaving a line with no locomotive on it.
       if (plan.line) rail.lines.splice(rail.lines.indexOf(plan.line), 1);
       if (plan.train) rail.trains.splice(rail.trains.indexOf(plan.train), 1);
-      if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+      if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
       return false;
     }
     spendBuild(p, RAIL_COSTS.train);
@@ -3902,7 +3902,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!canPayBuild(p, RAIL_COSTS.train)) {
-      if (p.human) toast(`Not enough materials — a train costs ${railCostLabel(RAIL_COSTS.train)}.`, "bad");
+      if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
       return false;
     }
     const bought = buyTrain(rail, p.i + 1, depotId, lineId);
@@ -5200,7 +5200,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!canPayBuild(p, PLANT_COST)) {
       if (p.human) {
-        toast(`Not enough materials — a processing plant costs ${plantCostLabel()}.`, "bad");
+        toast(`Not enough money — a processing plant costs $${moneyCostOf(PLANT_COST)}.`, "bad");
         flashAt(tx, ty, `Plant costs ${plantCostLabel()}`);
       }
       return false;
@@ -5253,7 +5253,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (Object.keys(pv.cost).length && !spendBuild(p, pv.cost)) {
       // Unreachable in practice (the preview refused unaffordable tiles);
       // the guard is what makes the invariant hold regardless.
-      toast("Not enough materials.", "bad");
+      toast("Not enough money.", "bad");
     }
     for (const [bx, by] of res.built) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -8760,7 +8760,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             : damRefusal(grid, eco.dams, p.i + 1, tx, ty, damSideAtSite(tx, ty, side));
           if (why !== "ok") echoed.push(DAM_REFUSAL_TEXT[why]);
           else if (!canPayBuild(p, DAM_COST))
-            echoed.push(`Not enough materials — a dam costs ${costLabel(DAM_COST)}.`);
+            echoed.push(`Not enough money — a dam costs $${moneyCostOf(DAM_COST)}.`);
           else placeDam(tx, ty, p, side);
         }
       } else if (!railAvailable && (what === "rail" || what === "platform" || what === "raildepot" || what === "railact")) {
@@ -12385,6 +12385,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get rivalSkill() { return skill(); },
     setRivalSkill: (key: SkillKey) => setRivalSkill(key, false),
     get purse() { return me.purse; },
+    /** ECON-1 (#421): the local seat's money — settable so a test can fund builds. */
+    get money() { return me.money; },
+    set money(v: number) { me.money = Math.max(0, v); },
     /**
      * L11 (#226): the bank's click path, exposed so a test can aim the LOCAL
      * seat at a locked rung without going through a select that refuses to
