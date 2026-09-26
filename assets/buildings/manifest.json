@@ -225,54 +225,6 @@
         304
       ]
     },
-    "town_cottage_arctic_1x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        33,
-        28
-      ],
-      "w": 66,
-      "h": 44,
-      "canvas": [
-        148,
-        100
-      ]
-    },
-    "town_flats_arctic_1x1_1": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        30,
-        78
-      ],
-      "w": 60,
-      "h": 92,
-      "canvas": [
-        152,
-        228
-      ]
-    },
-    "town_flats_arctic_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        22,
-        72
-      ],
-      "w": 44,
-      "h": 84,
-      "canvas": [
-        152,
-        276
-      ]
-    },
     "town_fountain_1x1": {
       "footprint": [
         1,
@@ -287,38 +239,6 @@
       "canvas": [
         148,
         100
-      ]
-    },
-    "town_house_arctic_1x1_5": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        40.5,
-        32
-      ],
-      "w": 82,
-      "h": 48,
-      "canvas": [
-        186,
-        112
-      ]
-    },
-    "town_shops_arctic_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        24,
-        48
-      ],
-      "w": 44,
-      "h": 58,
-      "canvas": [
-        160,
-        204
       ]
     },
     "town_small_flat_1x1_1": {
@@ -369,22 +289,6 @@
         128
       ]
     },
-    "town_small_house_arctic_1x1_2": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        40.5,
-        37
-      ],
-      "w": 82,
-      "h": 53,
-      "canvas": [
-        186,
-        122
-      ]
-    },
     "town_townhouse_garden_2": {
       "footprint": [
         1,
@@ -431,38 +335,6 @@
       "canvas": [
         346,
         319
-      ]
-    },
-    "town_flats_arctic_2x1_1": {
-      "footprint": [
-        2,
-        2
-      ],
-      "anchor": [
-        74,
-        58
-      ],
-      "w": 128,
-      "h": 90,
-      "canvas": [
-        320,
-        304
-      ]
-    },
-    "town_flats_arctic_2x1_2": {
-      "footprint": [
-        2,
-        2
-      ],
-      "anchor": [
-        56,
-        96
-      ],
-      "w": 94,
-      "h": 128,
-      "canvas": [
-        256,
-        256
       ]
     },
     "town_townhouse_3": {
@@ -753,38 +625,6 @@
         117
       ]
     },
-    "town_shop_small": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        32,
-        34
-      ],
-      "w": 52,
-      "h": 50,
-      "canvas": [
-        160,
-        152
-      ]
-    },
-    "town_house_swiss": {
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        40,
-        28
-      ],
-      "w": 80,
-      "h": 44,
-      "canvas": [
-        160,
-        152
-      ]
-    },
     "town_cottage_tall": {
       "footprint": [
         1,
@@ -863,22 +703,6 @@
       "canvas": [
         276,
         144
-      ]
-    },
-    "truck_depot_bottom_entrance": {
-      "footprint": [
-        2,
-        2
-      ],
-      "anchor": [
-        60,
-        52
-      ],
-      "w": 120,
-      "h": 84,
-      "canvas": [
-        240,
-        180
       ]
     },
     "wheat_field": {
