@@ -41,7 +41,7 @@ import { type CargoBag } from "../iso/purse";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, ROAD_TIERS, VICTORY, TUNING, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, ROAD_TIERS, VICTORY, TUNING, moneyValueOf, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -94,7 +94,7 @@ import { coarsePointer } from "../iso/touch";
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
 import {
-  HUD_ICONS, cargoIconHtml, costMarkup, depotButtonMarkup, soundIconHtml,
+  HUD_ICONS, cargoIconHtml, costMarkup, moneyMarkup, depotButtonMarkup, soundIconHtml,
 } from "./hud-icons";
 
 // ── NOIR: the painted mugshots ──────────────────────────────────────────────
@@ -241,9 +241,32 @@ export interface UiQuestPanel {
   items: UiQuestItem[];
 }
 
+/**
+ * ECON-1 (#421): one row of the Market tab's exchange — a good, what it
+ * fetches right now, where it has been and how much of it this seat holds.
+ * The GAME computes every number (src/iso/market.ts); the chrome only draws.
+ */
+export interface UiMarketRow {
+  cargo: Cargo;
+  /** Live unit price ($). */
+  price: number;
+  /** Change over the last minute, as a fraction (+0.07 = up 7%). */
+  trend: number;
+  /** A few minutes of price, oldest first — the sparkline. */
+  spark: number[];
+  /** How many units the seat holds (what Sell all would sell). */
+  held: number;
+}
+
 export interface UiState {
   players: UiPlayer[];
   purse: Partial<Record<Cargo, number>>;
+  /** ECON-1 (#421): the seat's MONEY ($) — every build is paid with it. */
+  money?: number;
+  /** ECON-1 (#421): the exchange's rows. Omitted = no market this match. */
+  market?: UiMarketRow[];
+  /** ECON-1 (#421): the demand event running right now, for the Market tab. */
+  marketEvent?: string | null;
   /**
    * L16 (#231): the per-resource storage cap the local seat plays under, or
    * undefined when no cap applies (the shipped loop, and dev mode's unlimited
@@ -541,6 +564,12 @@ export interface UiHooks {
    * balance itself.
    */
   onBank: (give: Cargo, want: Cargo) => "done" | "relayed" | "refused";
+  /**
+   * ECON-1 (#421): sell `n` units of a good on the exchange (`"all"` sells
+   * everything the seat holds). The GAME owns the price, the slippage and the
+   * purse; it answers with what the sale fetched ($), or a refusal in words.
+   */
+  onSell?: (cargo: Cargo, n: number | "all") => number | string;
   /**
    * TRADE (owner call, 2026-09): the offer board's doors. Each answers
    * "done" (applied here), "relayed" (a guest's request — the host's delta
@@ -1046,6 +1075,14 @@ export function createOriginalUi(
   const footer = h("footer", "resbar");
   const chips = h("div", "chipbar");
   chips.id = "iso-res";
+  // ECON-1 (#421): the MONEY chip — first in the purse, because money is what
+  // every build is paid with. Space Age: flat, square, lemon on charcoal.
+  const moneyChip = h("div", "chip chip-money");
+  moneyChip.dataset.f = "purse-money";
+  moneyChip.title = "Money — every build is paid for with $. Sell goods on the Market tab.";
+  moneyChip.innerHTML = '<span class="chip-ic">$</span><span class="chip-n">0</span>';
+  const moneyNum = moneyChip.querySelector(".chip-n") as HTMLElement;
+  chips.appendChild(moneyChip);
   footer.appendChild(chips);
   root.appendChild(footer);
   // UI Space Age (P4): on desktop the purse rides in the top bar (after the
@@ -2077,19 +2114,19 @@ export function createOriginalUi(
     { key: "select", label: "Select", sub: coarsePointer() ? "Point & inspect · tap reads a tile" : "Point & inspect · Q / right-click" },
     // L2 (#216): under true dirt is free — the button says so (`costMarkup({})`
     // renders "free"), instead of quoting a price the placement never charges.
-    { key: "dirt", label: "Dirt Road", sub: `${costMarkup({})} · 0★` },
+    { key: "dirt", label: "Dirt Road", sub: `${moneyMarkup({})} · 0★` },
     // L13 (#228): paving stopped scoring under the new loop — the ★ come from
     // depot types, tree rungs and city tiers now. A button that still promised
     // "+0.25★ paving dirt" would sell the player the one plan the scoreboard
     // no longer pays for. Road is still worth building (it is the fast
     // transport tier, `TRANSPORT.road.factor`), so the line says THAT instead.
-    { key: "street", label: "Street", sub: `${costMarkup(ROAD_TIERS.street.cost)} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
-    { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
-    { key: "highway", label: "Highway", sub: `${costMarkup(ROAD_TIERS.highway.cost)} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
+    { key: "street", label: "Street", sub: `${moneyMarkup(ROAD_TIERS.street.cost)} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
+    { key: "road", label: "Road", sub: `${moneyMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
+    { key: "highway", label: "Highway", sub: `${moneyMarkup(ROAD_TIERS.highway.cost)} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
     // ROADS-3 (#394): the only way on or off a Highway; a Road or Street
     // dragged ACROSS a Highway builds an overpass by itself.
     { key: "interchange", label: "Interchange", sub: "Diamond · 1 overpass + 4 ramps + new road · choose a straight Highway" },
-    { key: "ramp", label: "Ramp", sub: `${costMarkup(ROAD_TIERS.ramp.cost)} · ${ROAD_TIERS.ramp.blurb}` },
+    { key: "ramp", label: "Ramp", sub: `${moneyMarkup(ROAD_TIERS.ramp.cost)} · ${ROAD_TIERS.ramp.blurb}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down. L5 (#219): on the new loop the price is the
     // industry's own mix, so the line says "from …" rather than quoting the
@@ -2097,18 +2134,18 @@ export function createOriginalUi(
     { key: "harvester", label: "Depot", sub: depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0 }) },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
-    { key: "plant", label: "Processing Plant", sub: `${costMarkup(PLANT_COST)} · next to a town` },
+    { key: "plant", label: "Processing Plant", sub: `${moneyMarkup(PLANT_COST)} · next to a town` },
     // ── RAIL-04 (#178): the railway's four buttons ────────────────────────
     // The prices are read from the same table the placement charges
     // (`RAIL_COSTS`) and the point from the same constant the scoreboard pays
     // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
-    { key: "rail", label: "Rail", sub: `${costMarkup(RAIL_COSTS.rail)} a tile · 0★` },
-    { key: "platform", label: "Platform", sub: `${costMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★ · track beside it included · R turns` },
+    { key: "rail", label: "Rail", sub: `${moneyMarkup(RAIL_COSTS.rail)} a tile · 0★` },
+    { key: "platform", label: "Platform", sub: `${moneyMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★ · track beside it included · R turns` },
     // R3 (#270): the hydro dam. The price is read from the same row the
     // placement charges (`BUILD_COSTS.dam`) and the bonus from the same
     // constant the clock multiplies by (`DAM_BONUS`), so the button never
     // promises a price or a pay the rule does not make.
-    { key: "dam", label: "Dam", sub: `${costMarkup(DAM_COST)} · +${Math.round(DAM_BONUS * 100)}% output nearby · R turns` },
+    { key: "dam", label: "Dam", sub: `${moneyMarkup(DAM_COST)} · +${Math.round(DAM_BONUS * 100)}% output nearby · R turns` },
     { key: "demolish", label: "Demolish", sub: "Refund 50%" },
   ];
   // RAIL-05 (#182): with the flag down the four railway buttons do not exist
@@ -4225,7 +4262,116 @@ export function createOriginalUi(
     else toast(r, "danger");
     lastMarketSig = "";
   };
+  // ── ECON-1 (#421): THE EXCHANGE ─────────────────────────────────────────
+  // The Market tab's first section: sell goods for MONEY at a price that
+  // moves. One row per sellable good — price, trend over the last minute, a
+  // sparkline of the last few minutes and Sell 1 / 10 / all. Gold is absent:
+  // it stays the Black Market's currency (PP-08, and docs/economy-money.md).
+  // Space Age: flat, square, no gradients, dark text on lemon for the primary
+  // action — the theme's own `.sab-btn` / `.post-btn` vocabulary.
+  const exHead = h("div", "mine-head");
+  exHead.innerHTML = `<span>Exchange</span><span class="slot-count" data-f="market-money">$0</span>`;
+  const exEvent = h("div", "pane-note market-event hidden");
+  const exList = h("div", "market-list");
+  marketPane.append(exHead, exEvent, exList);
+  marketPane.appendChild(h("div", "pane-note",
+    "Prices drift, spike and come back. A big sale pushes the price down and it "
+    + `recovers over the next minute — sell in lots. ${cargoIconHtml("gold")} ${GOLD_RULE}`));
+  const exRows = new Map<Cargo, {
+    root: HTMLElement; price: HTMLElement; trend: HTMLElement;
+    spark: HTMLCanvasElement; held: HTMLElement; btns: HTMLButtonElement[];
+  }>();
+
+  /** Draw one sparkline — a flat polyline, theme aqua, no fill, no gradient. */
+  function drawSpark(cv: HTMLCanvasElement, pts: number[]): void {
+    const ctx = cv.getContext("2d");
+    if (!ctx || pts.length < 2) return;
+    const w = cv.width, hgt = cv.height;
+    ctx.clearRect(0, 0, w, hgt);
+    let lo = Infinity, hi = -Infinity;
+    for (const v of pts) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!(hi > lo)) { lo = hi - 1; hi += 1; }
+    ctx.strokeStyle = pts[pts.length - 1] >= pts[0] ? "#5fe3c0" : "#ff8a5a";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    pts.forEach((v, i) => {
+      const x = (i / (pts.length - 1)) * (w - 1) + 0.5;
+      const y = hgt - 1.5 - ((v - lo) / (hi - lo)) * (hgt - 3);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  /** Sell `n` (or everything) and say what it fetched. */
+  function doSell(cargo: Cargo, n: number | "all"): void {
+    const r = hooks.onSell?.(cargo, n) ?? "The exchange is closed here.";
+    if (typeof r === "string") { toast(r, "danger"); return; }
+    toast(`Sold ${CARGO[cargo].name} for $${Math.round(r).toLocaleString("en-US")}.`, "success");
+    lastExchangeSig = "";
+  }
+
+  function exchangeRow(cargo: Cargo) {
+    const root = h("div", "market-row");
+    root.dataset.market = cargo;
+    const head = h("div", "market-head");
+    head.innerHTML = `<span class="market-good">${cargoIconHtml(cargo)} ${CARGO[cargo].name}</span>`;
+    const price = h("span", "market-price", "$0");
+    const trend = h("span", "market-trend", "—");
+    head.append(price, trend);
+    const spark = h("canvas", "market-spark") as HTMLCanvasElement;
+    spark.width = 96; spark.height = 22;
+    const act = h("div", "market-act");
+    const held = h("span", "market-held", "0 held");
+    const btns: HTMLButtonElement[] = [];
+    for (const [label, n] of [["Sell 1", 1], ["Sell 10", 10], ["Sell all", "all"]] as [string, number | "all"][]) {
+      const b = h("button", "post-btn sell-btn", label) as HTMLButtonElement;
+      b.dataset.sell = `${cargo}:${n}`;
+      b.onclick = () => doSell(cargo, n);
+      btns.push(b);
+      act.appendChild(b);
+    }
+    act.insertBefore(held, act.firstChild);
+    root.append(head, spark, act);
+    exRows.set(cargo, { root, price, trend, spark, held, btns });
+    exList.appendChild(root);
+  }
+  for (const k of TRADE_GOODS) exchangeRow(k);
+
+  let lastExchangeSig = "";
+  /** Paint the exchange from the game's own numbers. */
+  function paintExchange(rows: UiState["market"], event: string | null | undefined, money: number | undefined): void {
+    const on = !!rows && !!hooks.onSell;
+    exHead.classList.toggle("hidden", !on);
+    exEvent.classList.toggle("hidden", !on || !event);
+    exList.classList.toggle("hidden", !on);
+    if (!on || !rows) return;
+    const sig = `${Math.round(money ?? 0)}|${event ?? ""}|`
+      + rows.map((r) => `${r.cargo}${r.price.toFixed(2)}${r.trend.toFixed(3)}${r.held}`).join(",");
+    if (sig === lastExchangeSig) return;
+    lastExchangeSig = sig;
+    const chip = exHead.querySelector<HTMLElement>('[data-f="market-money"]');
+    if (chip) chip.textContent = `$${Math.round(money ?? 0).toLocaleString("en-US")}`;
+    if (event) exEvent.textContent = event;
+    for (const row of rows) {
+      const el = exRows.get(row.cargo);
+      if (!el) continue;
+      el.price.textContent = `$${row.price.toFixed(row.price < 10 ? 2 : 0)}`;
+      const pct = Math.round(row.trend * 100);
+      el.trend.textContent = pct === 0 ? "→ 0%" : `${pct > 0 ? "▲" : "▼"} ${Math.abs(pct)}%`;
+      el.trend.classList.toggle("up", pct > 0);
+      el.trend.classList.toggle("down", pct < 0);
+      el.trend.title = "Change over the last minute";
+      el.held.textContent = `${row.held} held`;
+      for (const b of el.btns) {
+        const want = b.dataset.sell?.split(":")[1] ?? "1";
+        b.disabled = row.held <= 0 || (want !== "all" && row.held < Number(want));
+      }
+      drawSpark(el.spark, row.spark);
+    }
+  }
+
   offerForm.append(offerGiveRow, offerWantRow, offerPostBtn);
+  marketPane.appendChild(h("div", "mine-head", "Offers to the other seat"));
   marketPane.appendChild(offerForm);
   marketPane.appendChild(h("div", "pane-note",
     `Your goods are held in escrow while an offer is up, and come back if it expires (40s) or you cancel. `
@@ -4278,7 +4424,9 @@ export function createOriginalUi(
 
   /** Repaint the Market pane when the book (or a countdown second) changed. */
   function paintMarket(offers: UiState["offers"]): void {
-    const has = !!offers && !!(hooks.onOfferPost);
+    // ECON-1 (#421): the tab is the EXCHANGE first, the offer board second —
+    // it stays available whenever either half is wired.
+    const has = (!!offers && !!hooks.onOfferPost) || !!hooks.onSell;
     tabMarket.classList.toggle("hidden", !has);
     if (!offers) return;
     const now = offers.now;
@@ -4487,6 +4635,8 @@ export function createOriginalUi(
     paintTuningResult(state.tuningResult);
     paintTown(state.town);
     paintMarket(state.offers);
+    // ECON-1 (#421): the exchange rows and the money chip's number.
+    paintExchange(state.market, state.marketEvent, state.money);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.
@@ -4496,6 +4646,12 @@ export function createOriginalUi(
     hudFreeTrack = state.freeTrack;
     if (rivalWire.dataset.speaker === "you") {
       rivalWireFace.style.backgroundImage = `url(${rivalWirePlayerPortrait})`;
+    }
+    {
+      // ECON-1 (#421): the purse's first chip is the bank balance.
+      const txt = `$${Math.round(state.money ?? 0).toLocaleString("en-US")}`;
+      if (moneyNum.textContent !== txt) moneyNum.textContent = txt;
+      moneyChip.classList.toggle("hidden", state.money === undefined);
     }
     renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.incomeRates, state.storageCap);
 
@@ -4723,7 +4879,13 @@ export function createOriginalUi(
       // L2: under true dirt is free with or without the allowance.
       const free = tool === "harvester" ? state.freeDepots > 0
         : (tool === "dirt") && true;
-      button.disabled = !free && !Object.entries(cost).every(([k, v]) => (state.purse[k as Cargo] ?? 0) >= v);
+      // ECON-1 (#421): affordability is a MONEY question now — the same
+      // conversion the placement charges with (`moneyValueOf`). A state with
+      // no money field (a test harness, an older caller) keeps the resource
+      // rule, so nothing off the money path changes.
+      button.disabled = !free && (state.money === undefined
+        ? !Object.entries(cost).every(([k, v]) => (state.purse[k as Cargo] ?? 0) >= v)
+        : state.money < moneyValueOf(cost));
       button.classList.toggle("disabled", button.disabled);
     });
     buildList.querySelectorAll<HTMLElement>("[data-act]").forEach((b) => {

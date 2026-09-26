@@ -6,7 +6,7 @@
 // in src/assets/gems/; utility keys are stroke SVGs in currentColor so they
 // pick up the plate's brass and stay crisp at every button size.
 // ══════════════════════════════════════════════════════════════════════════
-import { CARGO, CARGOES, type Cargo } from "../iso/config";
+import { CARGO, CARGOES, moneyValueOf, type Cargo } from "../iso/config";
 import { DEPOT_COST, cheapestDepotType } from "../iso/construction";
 import { GEM_ART } from "./gem-art";
 import type { Purse } from "../iso/track";
@@ -153,6 +153,20 @@ export function costMarkup(cost: Purse): string {
 }
 
 /**
+ * ECON-1 (#421): a BUILD price, in MONEY. Every build in the game is paid for
+ * with `$` now (Dirt Road stays free) — the resource bill is converted with
+ * `moneyValueOf`, the same table `BUILD_COSTS_MONEY` is derived from, so the
+ * hover card, the refusal and the charge are one number.
+ *
+ * `costMarkup` above is still the RESOURCE renderer: city upgrades and the
+ * depot tree's rungs keep costing goods.
+ */
+export function moneyMarkup(cost: Purse): string {
+  const price = moneyValueOf(cost);
+  return price > 0 ? `<span class="cost-chip money">$${price.toLocaleString("en-US")}</span>` : "free";
+}
+
+/**
  * Depot Build-button sublabel, with gem badges once the allowance is spent.
  *
  * L5 (#219): on the new loop a Depot's price depends on the industry the site
@@ -168,10 +182,10 @@ export function depotButtonMarkup(
   if (opts.newLoop === true) {
     const cheap = cheapestDepotType(Math.max(0, Math.floor(opts.tier ?? 0)), true).cost;
     return freeDepots > 0
-      ? `free setup · then from ${costMarkup(cheap)}`
-      : `from ${costMarkup(cheap)} · by industry`;
+      ? `free setup · then from ${moneyMarkup(cheap)}`
+      : `from ${moneyMarkup(cheap)} · by industry`;
   }
   return freeDepots > 0
-    ? `free setup · then ${costMarkup(DEPOT_COST)}`
-    : `${costMarkup(DEPOT_COST)} · on industry`;
+    ? `free setup · then ${moneyMarkup(DEPOT_COST)}`
+    : `${moneyMarkup(DEPOT_COST)} · on industry`;
 }

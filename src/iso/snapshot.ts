@@ -193,6 +193,15 @@ export interface WirePlayer {
   depotTier?: number;
   townLevel?: number;
   townBonus?: number;
+  /**
+   * ECON-1 (#421): the seat's MONEY ($) — what every build is paid with — and,
+   * on the host's own record, the market clock and its slippage so the guest
+   * prices the same minute. Same additive-optional contract as the fields
+   * above: absent means "leave the seat alone", `0` is a VALUE (a broke seat).
+   */
+  money?: number;
+  marketMs?: number;
+  market?: { seed: number; impact?: Record<string, number>; impactAt?: number };
 }
 
 /**

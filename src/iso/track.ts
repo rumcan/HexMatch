@@ -24,7 +24,7 @@
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, type Cargo } from "./config";
+import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, moneyValueOf, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, heightAt as tileHeight, type Grid } from "./grid";
 import {
   BRIDGE_COST, HIGHWAY_BRIDGE_SPAN, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
@@ -1385,9 +1385,19 @@ export function previewDrag(
   network?: Set<number>, freeTiles = 0, structures?: Set<number>,
   newLoop = false, bridges: BridgeDragOptions = {},
   roadTier: RoadTierKey = "road",
+  // ECON-1 (#421): the seat's MONEY balance. When it is a number the drag is
+  // priced in money — the running resource bill is converted with
+  // `moneyValueOf` (the same table `BUILD_COSTS_MONEY` is derived from) and
+  // the affordable prefix is the one the purse of $ can pay for. `null` (the
+  // default, and every pure cost test) keeps the pre-money rule: the prefix
+  // the RESOURCE purse can pay for.
+  moneyBalance: number | null = null,
 ): DragPreview {
+  /** One affordability rule for the whole drag — resources, or money. */
+  const affords = (next: Purse): boolean =>
+    moneyBalance === null ? canAfford(purse, next) : moneyValueOf(next) <= moneyBalance;
   if (t.diagonalRoads) return previewDiagonalDrag(grid, t, kind, purse,
-    ax, ay, bx, by, xFirst, network, freeTiles, structures, newLoop, bridges, roadTier);
+    ax, ay, bx, by, xFirst, network, freeTiles, structures, newLoop, bridges, roadTier, moneyBalance);
   // ROADS-2 (#393): Street / Highway ride the paved layer at their own price.
   const tiered = kind === "road" && roadTier !== "road";
   const path = lPath(ax, ay, bx, by, xFirst);
@@ -1473,7 +1483,7 @@ export function previewDrag(
     if (deck && !tileAlreadyCarries(t, kind, x, y)) {
       const deckCost = { ...BRIDGE_COST };
       const next = addCost(cost, deckCost);
-      if (!canAfford(purse, next)) {
+      if (!affords(next)) {
         for (let j = i; j < path.length; j++) {
           const [ux, uy] = path[j];
           if (!bridgePlan.runs.has(j)
@@ -1522,7 +1532,7 @@ export function previewDrag(
       continue;
     }
     const next = addCost(cost, c);
-    if (!canAfford(purse, next)) {
+    if (!affords(next)) {
       for (let j = i; j < path.length; j++) {
         const [ux, uy] = path[j];
         if (!canBuildOn(grid, kind, ux, uy, growing)) { noteObstacle(j); break; }
@@ -1583,7 +1593,11 @@ function previewDiagonalDrag(
   ax: number, ay: number, bx: number, by: number, straightFirst: boolean,
   network: Set<number> | undefined, freeTiles: number, structures: Set<number> | undefined,
   newLoop: boolean, bridges: BridgeDragOptions, roadTier: RoadTierKey,
+  moneyBalance: number | null = null,
 ): DragPreview {
+  // ECON-1 (#421): with a money balance, the drag is priced in $.
+  const affordsD = (next: Purse): boolean =>
+    moneyBalance === null ? canAfford(purse, next) : moneyValueOf(next) <= moneyBalance;
   const path = octPath(ax, ay, bx, by, straightFirst);
   const planned = new Set(path.filter(([x, y]) => !structures?.has(tIdx(x, y))).map(([x, y]) => tIdx(x, y)));
   const bridgePlan = planBridges(grid, path,
@@ -1672,15 +1686,15 @@ function previewDiagonalDrag(
         if (j === deck.end + 1 && freeLeft > 0) continue; // dirt-only free bank
         crossingCost = addCost(crossingCost, priceAt(j));
       }
-      if (!canAfford(purse, crossingCost)) outOfBudget = true;
+      if (!affordsD(crossingCost)) outOfBudget = true;
     }
     if (roadRailOverpass(grid, kind, path, i, bridges)
-      && !canAfford(purse, addCost(addCost(result.cost, priceAt(i)), priceAt(i + 1)))) outOfBudget = true;
+      && !affordsD(addCost(addCost(result.cost, priceAt(i)), priceAt(i + 1)))) outOfBudget = true;
     const cost = priceAt(i);
     const charged = Object.keys(cost).length > 0;
     const free = charged && freeLeft > 0 && !deck;
     const total = free ? result.cost : addCost(result.cost, cost);
-    if (!canAfford(purse, total)) outOfBudget = true;
+    if (!affordsD(total)) outOfBudget = true;
     growing?.add(index);
     if (outOfBudget) { result.unaffordable.push([x, y]); continue; }
     result.tiles.push([x, y]); result.cost = total;
@@ -1894,7 +1908,7 @@ export interface InterchangePlan {
   cost: Purse;
   why: string | null;
 }
-export function planInterchange(grid: Grid, t: Track, owner: number, x: number, y: number, purse: Purse): InterchangePlan {
+export function planInterchange(grid: Grid, t: Track, owner: number, x: number, y: number, purse: Purse, moneyBalance: number | null = null): InterchangePlan {
   const plan: InterchangePlan = { tiles: [], cost: {}, why: null };
   const fail = (why: string) => { plan.why = why; return plan; };
   if (!inMapT(x, y) || !hasTrack(t, "road", x, y)) return fail("Choose a straight Highway tile.");
@@ -1940,11 +1954,13 @@ export function planInterchange(grid: Grid, t: Track, owner: number, x: number, 
       return fail("The diamond's side roads cannot replace another Highway.");
     plan.cost = addCost(plan.cost, want === ROAD_TIER.ramp ? tierTileCost(t, "ramp", tx, ty) : tileCost(t, "road", tx, ty));
   }
-  if (!canAfford(purse, plan.cost)) return fail("Not enough resources for the whole interchange.");
+  if (moneyBalance !== null) {
+    if (moneyValueOf(plan.cost) > moneyBalance) return fail("Not enough money for the whole interchange.");
+  } else if (!canAfford(purse, plan.cost)) return fail("Not enough resources for the whole interchange.");
   return plan;
 }
-export function buildInterchange(grid: Grid, t: Track, owner: number, x: number, y: number, purse: Purse): InterchangePlan {
-  const plan = planInterchange(grid, t, owner, x, y, purse);
+export function buildInterchange(grid: Grid, t: Track, owner: number, x: number, y: number, purse: Purse, moneyBalance: number | null = null): InterchangePlan {
+  const plan = planInterchange(grid, t, owner, x, y, purse, moneyBalance);
   if (plan.why) return plan;
   for (const [tx, ty, want] of plan.tiles) {
     if (!hasTrack(t, "road", tx, ty)) buildTile(t, "road", tx, ty, owner);
