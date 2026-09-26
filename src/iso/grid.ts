@@ -1197,55 +1197,11 @@ export function addTownRing(
   for (let x = x0 - 1; x <= x1 + 1; x++) { add(x, y0 - 1); add(x, y1 + 1); }
   for (let y = y0; y <= y1; y++) { add(x0 - 1, y); add(x1 + 1, y); }
 
-  // #444: no sealed pockets inside the ring. Instead of paving EVERY free tile
-  // inside the house box (which creates 2-tile thick roads when a house is
-  // missing due to industry buffer), we flood from outside the expanded box
-  // over free land that is not house nor road (including the new ring), and
-  // only pave interior tiles that are NOT reachable — i.e. would be sealed
-  // inside the closed loop. This keeps the town's streets 1-tile wide and
-  // avoids the double-width strip that appears when the ring plus an interior
-  // fill sit side by side.
-  const expanded = { x0: x0 - 1, y0: y0 - 1, x1: x1 + 1, y1: y1 + 1 };
-  const roadSet = new Set(out.map(([x, y]) => idx(x, y)));
-  const blocked = (x: number, y: number) => {
-    const i = idx(x, y);
-    return houseSet.has(i) || roadSet.has(i);
-  };
-  const visited = new Uint8Array(terrain.length);
-  const queue: number[] = [];
-  // seed flood from all free tiles outside the expanded box
-  for (let y = 0; y < MAP_H; y++) {
-    for (let x = 0; x < MAP_W; x++) {
-      if (x >= expanded.x0 && x <= expanded.x1 && y >= expanded.y0 && y <= expanded.y1) continue;
-      if (!free(x, y) || blocked(x, y)) continue;
-      const i = idx(x, y);
-      if (visited[i]) continue;
-      visited[i] = 1;
-      queue.push(i);
-    }
-  }
-  for (let head = 0; head < queue.length; head++) {
-    const cur = queue[head];
-    const cx = cur % MAP_W, cy = (cur / MAP_W) | 0;
-    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
-      const nx = cx + dx, ny = cy + dy;
-      if (!inBounds(nx, ny)) continue;
-      const ni = idx(nx, ny);
-      if (visited[ni]) continue;
-      if (!free(nx, ny) || blocked(nx, ny)) continue;
-      visited[ni] = 1;
-      queue.push(ni);
-    }
-  }
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const i = idx(x, y);
-      if (!free(x, y) || houseSet.has(i) || roadSet.has(i)) continue;
-      if (visited[i]) continue; // reachable from outside, not sealed
-      add(x, y);
-      roadSet.add(i);
-    }
-  }
+  // Owner (2026-09-26): empty tiles INSIDE the ring stay land (grass /
+  // garden lots). Paving every enclosed free tile turned a sparsely built
+  // quarter of a town into a solid block of road - the "parallel roads in
+  // towns". An enclosed lot is still reachable: the player lays a road from
+  // the ring or a street into it.
   return out;
 }
 
