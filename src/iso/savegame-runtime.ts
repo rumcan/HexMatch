@@ -138,6 +138,16 @@ function trackRestored(track: Track, w: SaveGamePayload["track"]): void {
 export const saveKeyFor = (storyChapterId?: string | null): string =>
   storyChapterId ? `${SAVE_KEY}:story:${storyChapterId}` : SAVE_KEY;
 
+/**
+ * PROG-1 (#475): a scenario match's own slot. Scenarios save beside the
+ * sandbox and the contracts — never inside either — so a scenario match can
+ * neither clobber nor resume another mode's game.
+ */
+export const SCENARIO_SAVE_KEY_PREFIX = `${SAVE_KEY}:scenario:`;
+
+export const scenarioSaveKey = (scenarioId: string): string =>
+  `${SCENARIO_SAVE_KEY_PREFIX}${scenarioId}`;
+
 export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
   try {
     const raw = localStorage.getItem(key);

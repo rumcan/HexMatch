@@ -445,6 +445,13 @@ export interface EndingScreenOptions {
   /** STORY-01: present adds a third door — back to the campaign menu with the
    *  contract recorded. Absent (every sandbox match) the ledger keeps its two. */
   onContinue?: () => void;
+  /**
+   * PROG-1 (#475): present adds a "Next contract ▸" door beside it — a won
+   * contract's straight line into the next one, without the list in between.
+   * Offered only on a victory with a next chapter; END-1 (#472) re-checks
+   * this door when the Summary page lands.
+   */
+  onNextContract?: () => void;
   /** The portrait selected on the start screen, reused whenever the player
    * answers Torvin's final wire. */
   playerPortrait?: "vex" | "you";
@@ -717,7 +724,15 @@ export function showEndingScreen(
     continueBtn.type = "button";
     continueBtn.dataset.sfx = "open";
   }
-  actions.append(review, ...(continueBtn ? [continueBtn] : []), restart);
+  // PROG-1 (#475): the straight line into the next contract (victory only).
+  const nextBtn = options.onNextContract
+    ? el("button", "ending-button ending-next", "Next contract ▸")
+    : null;
+  if (nextBtn) {
+    nextBtn.type = "button";
+    nextBtn.dataset.sfx = "open";
+  }
+  actions.append(review, ...(continueBtn ? [continueBtn] : []), ...(nextBtn ? [nextBtn] : []), restart);
   card.appendChild(actions);
   screen.appendChild(card);
 
@@ -743,10 +758,14 @@ export function showEndingScreen(
   if (continueBtn && options.onContinue) {
     continueBtn.addEventListener("click", options.onContinue);
   }
+  if (nextBtn && options.onNextContract) {
+    nextBtn.addEventListener("click", options.onNextContract);
+  }
   reopen.addEventListener("click", open);
   // The ledger's keyboard trap walks whatever doors this match actually has:
-  // two in a sandbox match, three inside a contract.
-  const doors = [review, ...(continueBtn ? [continueBtn] : []), restart];
+  // two in a sandbox match, three inside a contract, four on a won contract
+  // with a next one to walk into.
+  const doors = [review, ...(continueBtn ? [continueBtn] : []), ...(nextBtn ? [nextBtn] : []), restart];
   const onKey = (event: KeyboardEvent) => {
     if (screen.classList.contains("hidden")) return;
     if (event.key === "Escape") {

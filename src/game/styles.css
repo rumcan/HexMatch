@@ -4240,6 +4240,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   margin: 20px 0 0; color: #798183;
   font: 600 11px/1 var(--sans, sans-serif); letter-spacing: 2.4px; text-transform: uppercase;
 }
+/* PROG-1 (#475): the scenario shelf's line — the campaign line's quieter
+   sibling, seated under it when both stand. */
+.menu-scenarios {
+  margin: 8px 0 0; color: #798183;
+  font: 600 11px/1.6 var(--sans, sans-serif); letter-spacing: 2.4px; text-transform: uppercase;
+}
 /* ── LEADERBOARD on the front door — same ladder the StartScreen RANK-01
    panel reads, but seated under the menu card so the Top 10 is visible
    without leaving the menu. One felt plate with a brass crown, stacked
@@ -5591,6 +5597,7 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .start-screen.menu .menu-btn { min-height: 0; padding: 9px 14px 10px; font-size: 13px; letter-spacing: 2.2px; }
 .start-screen.menu .mb-tag { font-size: 10.5px; margin-top: 2px; }
 .start-screen.menu .menu-campaign { margin-top: 12px; }
+.start-screen.menu .menu-scenarios { margin-top: 6px; }
 .start-screen.menu > .menu-leaderboard { padding: 12px 14px; }
 
 /* ════════════════════════════════════════════════════════════════════
