@@ -18,29 +18,29 @@ not complete a TLS handshake to the stream hosts, so playback itself was
 
 | id | Station | Mood | Stream | Licence | Terms |
 | --- | --- | --- | --- | --- | --- |
-| `secret-agent` | SomaFM Secret Agent | 1960s spy and lounge | `https://ice1.somafm.com/secretagent-128-mp3` | SomaFM listener-supported stream | https://somafm.com/contact/tos.html |
+| `hexmatch-lofi` | HexMatch Lofi | Lofi beats | `/assets/music/lofi/*.mp3` (playlist, loops) | Original music made for HexMatch (generated for the game; no third-party licence) | — |
 | `radionos-lounge` | RadioNOS Lounge | 1950s-60s lounge, bossa, easy listening | `https://nos.radio.br:443/stream/13/;` | CC, public domain, or artist-authorized | https://radionos.com/site/sobre/ |
 | `radionos-jazz` | RadioNOS Jazz | Jazz | `https://nos.radio.br:443/stream/3/;` | CC, public domain, or artist-authorized | https://radionos.com/site/sobre/ |
 | `mdk-space` | MDK Space Radio | Space-age experimental | `https://radio.mdkband.com/stream.mp3` | CC BY 3.0 | https://creativecommons.org/licenses/by/3.0/ |
 | `dogmazic` | Radio Dogmazic | Free-licence mix | `https://radio.dogmazic.net:8001/stream.mp3` | Free licences, credit the artist | https://www.dogmazic.net/licences.php |
 
-Default station is SomaFM Secret Agent (the stream that was already in the
-game). The choice is stored under `hexmatch:radio-station`, separate from
+Default station is HexMatch Lofi (our own playlist). The choice is stored under `hexmatch:radio-station`, separate from
 the on/off, show and volume object at `hexmatch:radio`.
 
 ## Why these, and not others
 
-### SomaFM Secret Agent — kept, not extended
+### SomaFM — removed
 
-https://somafm.com/contact/tos.html forbids embedding SomaFM in any website,
-application or platform without prior written permission. Their direct-link
-pages say the URLs are for personal listening, not video games. The home
-page (https://somafm.com/home.html) says the same, including non-commercial
-apps and games.
+https://somafm.com/contact/tos.html forbids embedding SomaFM in any website, application or platform without prior written permission, and their direct-link pages say the URLs are not for video games. The owner removed Secret Agent (2026-09-26). The default station is now **HexMatch Lofi**: six original lofi tracks generated for the game (rundot), shipped in `assets/music/lofi/` and copied into the build beside `assets/voice/`. They play in turn and loop.
 
-#432 says this one stream stays, so Secret Agent is still on the dial.
-**No other SomaFM channel was added.** Illinois Street Lounge, Space Station
-Soma and the rest are the same terms.
+Tracks:
+
+- `/assets/music/lofi/lofi-01-main-street.mp3`
+- `/assets/music/lofi/lofi-02-rail-yard.mp3`
+- `/assets/music/lofi/lofi-03-harbour.mp3`
+- `/assets/music/lofi/lofi-04-night-shift.mp3`
+- `/assets/music/lofi/lofi-05-drive-in.mp3`
+- `/assets/music/lofi/lofi-06-sunday-plant.mp3`
 
 ### RadioNOS Lounge and Jazz
 

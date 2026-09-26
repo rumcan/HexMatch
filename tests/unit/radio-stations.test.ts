@@ -71,9 +71,16 @@ describe("RADIO-2 station list", () => {
     for (const s of RADIO_STATIONS) {
       expect(s.id).toMatch(/^[a-z0-9-]+$/);
       expect(s.name.trim().length).toBeGreaterThan(0);
-      expect(s.url).toMatch(/^https:\/\//);
+      // A stream is HTTPS with a terms page; our own playlist ships in the build.
+      if (s.playlist) {
+        expect(s.playlist.length).toBeGreaterThan(0);
+        for (const t of s.playlist) expect(t).toMatch(/assets\/music\/.+\.mp3$/);
+        expect(s.url).toBe(s.playlist[0]);
+      } else {
+        expect(s.url).toMatch(/^https:\/\//);
+        expect(s.termsUrl).toMatch(/^https:\/\//);
+      }
       expect(s.licence.trim().length).toBeGreaterThan(0);
-      expect(s.termsUrl).toMatch(/^https:\/\//);
       expect(s.genre.trim().length).toBeGreaterThan(0);
       expect(s.credit.trim().length).toBeGreaterThan(0);
       // Player-facing copy is scanned for developer comments. No URL in it.
@@ -85,9 +92,9 @@ describe("RADIO-2 station list", () => {
     }
     expect(ids.size).toBe(RADIO_STATIONS.length);
     // The shipped default is still the stream MUSIC-1 tests pin by name.
-    expect(RADIO_STATION_NAME).toBe("SomaFM Secret Agent");
+    expect(RADIO_STATION_NAME).toBe("HexMatch Lofi");
     expect(RADIO_STREAM_URL).toBe(RADIO_STATIONS[0].url);
-    expect(RADIO_STATIONS[0].id).toBe("secret-agent");
+    expect(RADIO_STATIONS[0].id).toBe("hexmatch-lofi");
   });
 
   it("records every terms URL in docs/RADIO.md", () => {

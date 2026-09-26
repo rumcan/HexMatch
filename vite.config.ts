@@ -100,10 +100,13 @@ function copyVoiceLines(): Plugin {
       srcDir = config.root;
     },
     closeBundle() {
-      const from = path.resolve(srcDir, "assets", "voice");
-      if (!existsSync(from)) return;
-      const to = path.resolve(srcDir, outDir, "assets", "voice");
-      cpSync(from, to, { recursive: true });
+      for (const dir of ["voice", "music"]) {
+        // assets/music: the radio's own lofi playlist ships the same way.
+        const from = path.resolve(srcDir, "assets", dir);
+        if (!existsSync(from)) continue;
+        const to = path.resolve(srcDir, outDir, "assets", dir);
+        cpSync(from, to, { recursive: true });
+      }
     },
   };
 }
