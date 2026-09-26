@@ -20,6 +20,7 @@
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.
 // ══════════════════════════════════════════════════════════════════════════
+import { resolveMapOptions, type MapOptions } from "./map-options";
 import { mountTerrainGl, terrainGlWanted, type TerrainGl } from "./terrain-gl-adapter";
 import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
@@ -798,28 +799,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // save / room is untouched; `?rivers=1` (or `opts.rivers`) turns it on for a
   // solo sandbox boot. Solo-only: a networked room regenerates from the seed
   // alone and rivers are not on the wire yet, so MP deliberately ignores it.
-  const riversParam = (() => { try { return new URLSearchParams(location.search).get("rivers"); } catch { return null; } })();
-  const riversOn = (opts.rivers ?? riversParam === "1") && isSolo() && !storyOn;
-  const elevationParam = (() => { try { return new URLSearchParams(location.search).get("elevation"); } catch { return null; } })();
-  const elevationOn = (opts.elevation ?? elevationParam === "1") && isSolo() && !storyOn;
-  // F4 (#275): the shapes map option. OFF by default so every existing seed,
-  // save and room keeps today's map byte for byte; `?shapes=1` (or
-  // `opts.shapes`) turns it on for a solo sandbox boot only — a networked
-  // room regenerates from the seed alone and shapes are not on the wire yet.
-  const shapesParam = (() => { try { return new URLSearchParams(location.search).get("shapes"); } catch { return null; } })();
-  const shapesOn = (opts.shapes ?? shapesParam === "1") && isSolo() && !storyOn;
   const freshLink = (() => { try { return new URLSearchParams(location.search).get("fresh") === "1"; } catch { return false; } })();
   // A rivers boot never reads or writes the save slot: resuming a rivers map
   // without the flag would regenerate a different (riverless) terrain under
   // the saved network, so rivers play is a fresh sandbox each time. Shapes
   // change the generated map the same way, so they get the same treatment.
-  const savesOff = isMp() || freshLink || riversOn || shapesOn || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  const savesOff = isMp() || freshLink || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  // MAP-1 (#412): a URL that names a map feature asks for a FRESH map with it —
+  // don't resume a save onto a different terrain (the save is still written).
+  const searchNow = (() => { try { return location.search; } catch { return ""; } })();
+  const mapParamsInUrl = /[?&](rivers|elevation|shapes)=/.test(searchNow);
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
   // line and lost on the first rescore.
   const saveKey = saveKeyFor(storyChapter?.id);
-  const foundSave = savesOff ? null : loadRecentSave(Date.now(), saveKey);
+  const foundSave = savesOff || mapParamsInUrl ? null : loadRecentSave(Date.now(), saveKey);
   // L15 (#230): old saves (v1 / snap 15) are from a different game — refuse
   // with a clear message and keep the slot untouched so the toast is honest.
   // The new loop is the only loop now, so no save needs a flag to open.
@@ -833,6 +828,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
   // carrying its own seed, as always.
   const seed = opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed();
+  // MAP-1 (#412): rivers + dams, elevation and shapes are ON for new games;
+  // see map-options.ts for who decides (save, room, story, URL, default).
+  const mapOptions: MapOptions = resolveMapOptions({
+    explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes },
+    search: searchNow,
+    save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
+    room: isMp() ? settings : null,
+    story: storyOn ? (storyChapter ?? {}) : null,
+  });
+  const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
   const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn });
   // F4 (#275): the Factory this map plays with. Shapes maps carry the long
   // `factory_2x4` span on the grid; every legacy map falls back to the
@@ -10607,7 +10612,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       v: SAVEGAME_VERSION,
       snapV: SNAPSHOT_VERSION, // track layers share the MP wire format
       savedAt: Date.now(),
-      seed, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
+      seed, map: mapOptions, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
       story: {
         playerSabotage,
         rivalSabotage: rivalSabotageHits,

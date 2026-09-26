@@ -29,6 +29,9 @@ import { say, narrate, title, type ScriptScene } from "./script";
 
 export interface StoryChapter {
   id: string;
+  /** MAP-1 (#412): map features this contract generates with. Absent = the
+   *  contract's tuned map as it shipped (all OFF). */
+  mapOptions?: Partial<import("../iso/map-options").MapOptions>;
   /** 0-based position in the campaign — the unlock order and the progress key. */
   index: number;
   /** "CONTRACT I · BLACKWOOD FREIGHT". */
