@@ -27,6 +27,7 @@ import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, inMapT, tIdx,
   roadDiagNeighbours, overpassJump, type Track,
 } from "./track";
+import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
 
@@ -581,6 +582,19 @@ export function planCars(
  * to find a new trip (host only). If not provided (e.g. old tests), only
  * existing driving cars advance and waiting cars simply count down.
  */
+/** A car's pace on the leg a->b: the tier throughput relative to Road (1). */
+function carTierPace(t: Track | ReadonlySet<number> | undefined, a: readonly number[], b: readonly number[]): number {
+  if (!t || t instanceof Set || !("road" in (t as object))) return 1;
+  const tr = t as Track;
+  const at = (x: number, y: number): number => {
+    const i = tIdx(x, y);
+    if (!tr.road[i]) return TRANSPORT.dirt.throughput / TRANSPORT.road.throughput;
+    const tier = tr.tier?.[i] ?? 0;
+    return (TIER_THROUGHPUT[tier & 7] ?? TRANSPORT.road.throughput) / TRANSPORT.road.throughput;
+  };
+  return (at(a[0], a[1]) + at(b[0], b[1])) / 2;
+}
+
 export function tickCars(
   state: CarState,
   dtMs: number,
@@ -685,7 +699,9 @@ export function tickCars(
             break;
           }
           const a = car.route[car.leg], b = car.route[car.leg + 1];
-          const speed = CAR_SPEED / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1);
+          // Owner: Dirt < Street < Road < Highway, relative to Road's pace.
+          const pace = carTierPace(trackOrBlocked, a, b);
+          const speed = CAR_SPEED * pace / (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1);
           const need = (1 - car.t) / speed;
           if (remaining < need) {
             car.t += remaining * speed;

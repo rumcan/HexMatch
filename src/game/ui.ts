@@ -2158,7 +2158,11 @@ export function createOriginalUi(
   // RAIL-05 (#182): with the flag down the four railway buttons do not exist
   // — a button the rules would refuse is a promise the HUD cannot keep.
   // R3 (#270): the Dam button goes with the rivers flag, the same rule.
+  // Owner (2026-09-26): Interchange and Ramp are hidden until they are
+  // rebuilt (the code stays; highway access still makes ramps itself).
+  const HIDDEN_TOOLS = new Set<string>(["interchange", "ramp"]);
   const visibleTools = TOOLS.filter((t) =>
+    !HIDDEN_TOOLS.has(t.key) &&
     (opts.rail !== false || !RAIL_TOOL_KEYS.has(t.key))
     && (opts.dams !== false || t.key !== "dam"));
   // UI Space Age (P5): the rail shows icon + name; the full name and the

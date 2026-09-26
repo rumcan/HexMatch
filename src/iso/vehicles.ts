@@ -39,6 +39,7 @@ import {
 } from "./economy";
 import { depotRate, distanceFactor } from "./loop";
 import { gradeOf, uphillSpeed } from "./slopes";
+import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import {
   NE, SE, SW, NW, tIdx,
 } from "./track";
@@ -100,6 +101,10 @@ export interface Truck {
    *  upgraded tile speeds its lorry up from the next dispatch. Old saves /
    *  pre-AI-02 call sites without it drive at the uniform dirt pace. */
   segFast?: boolean[];
+  /** Owner (2026-09-26): per-SEGMENT tier speed multiplier - Dirt < Street <
+   *  Road < Highway. Overrides the segFast x TRUCK_ROAD_MULT pace when set
+   *  (a guest's wire copy without it keeps the old paved/dirt pace). */
+  segMult?: number[];
   /**
    *  E4 (#268): per-SEGMENT grade — the SIGNED levels the drawn surface rises
    *  from route[k] to route[k+1] (`gradeOf` in slopes.ts). `tickTrucks` slows
@@ -210,6 +215,16 @@ export function planTrucks(eco: EconomyState): Truck[] {
     // public network also earns the bonus — same rule the economy scores by.
     const segFast = plan.route.slice(0, -1).map(
       (a, k) => paved(a) || paved(plan.route[k + 1]));
+    // The tier pace of each tile, averaged over the segment's two ends.
+    const tileMult = ([x, y]: [number, number]): number => {
+      const i = tIdx(x, y);
+      if (eco.track.road[i] === 0) return 1;                       // dirt
+      const tier = eco.track.tier?.[i] ?? 0;
+      const tp = TIER_THROUGHPUT[tier & 7] ?? TRANSPORT.road.throughput;
+      return TRUCK_ROAD_MULT * (tp / TRANSPORT.road.throughput);      // Road = x4
+    };
+    const segMult = plan.route.slice(0, -1).map(
+      (a, k) => (tileMult(a) + tileMult(plan.route[k + 1])) / 2);
     // E4 (#268): the grade of every segment, off the DRAWN surface (slopes.ts).
     const segClimb = plan.route.slice(0, -1).map(
       (a, k) => gradeOf(eco.grid, a, plan.route[k + 1]));
@@ -219,6 +234,7 @@ export function planTrucks(eco: EconomyState): Truck[] {
       factory: [plan.factory.tx, plan.factory.ty],
       route: plan.route,
       segFast,
+      segMult,
       segClimb,
       depot: [h.tx, h.ty],
       rateMult: depotRate(h, distanceFactor(eco, h)),
@@ -259,7 +275,8 @@ export function tickTrucks(state: TruckState, dtMs: number, blocked?: ReadonlySe
     // and the way down, so the same segment is slow one way and quick the other.
     const speed = (k: number, reverse: boolean): number => {
       const climb = truck.segClimb?.[k] ?? 0;
-      return TRUCK_SPEED * rate * (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1)
+      const pace = truck.segMult?.[k] ?? (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
+      return TRUCK_SPEED * rate * pace
         * uphillSpeed(reverse ? -climb : climb);
     };
     // AI-02: integrate SEGMENT BY SEGMENT at each segment's own pace — the

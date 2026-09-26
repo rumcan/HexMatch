@@ -42,11 +42,12 @@ describe("#296 town ring roads", () => {
         }
         // allow water-split fragments, but the big one holds almost everything
         expect(seen.size / roads.size, `town ${t.id} road network connected`).toBeGreaterThan(0.9);
-        // nothing free is sealed inside the house box
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-          const i = idx(x, y);
-          if (g.terrain[i] === WATER) continue;
-          expect(g.occupancy[i] !== -1, `(${x},${y}) free pocket inside town ${t.id}`).toBe(true);
+        // Owner (2026-09-26): empty lots inside the ring stay land. What must
+        // never appear is a PAVED BLOCK - a solid 2x2 of road inside the town
+        // (a clean street grid is one tile wide, so it has none).
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+          const sq = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
+          expect(sq.every((i) => roads.has(i)), `(${x},${y}) paved 2x2 block inside town ${t.id}`).toBe(false);
         }
       }
     });

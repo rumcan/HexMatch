@@ -42,7 +42,7 @@ export const CLOUD_VARIANTS = 4;
 /** The veil's alpha at the furthest zoom (the ticket wants about 0.25–0.45). */
 export const CLOUD_ALPHA_MAX = 0.36;
 /** The ground shadows stay a whisper — barely-there darkening. */
-export const CLOUD_SHADOW_ALPHA = 0.16;
+export const CLOUD_SHADOW_ALPHA = 0.24;
 /** Wind speed in world pixels per second: slow drift, ~10 min to cross. */
 export const CLOUD_WIND_MIN = 2;
 export const CLOUD_WIND_MAX = 4;

@@ -635,7 +635,9 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 /* the target is low on screen: the strip moves up so it never covers it */
 .guide-top .guide-strip { top: 64px; bottom: auto; }
 /* ── tool groups: Road Ways / Rail Ways drawers beside the rail ───────── */
-.tool-group { position: static; }
+/* the group wrapper must not shrink its button to the label: full rail width */
+.tool-group { position: static; display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+.tool-group > .group-btn { width: 100%; box-sizing: border-box; }
 .group-btn { position: relative; }
 /* a small corner mark, out of the centred icon + label's way */
 .group-caret { position: absolute; right: 0; bottom: 0; width: 0; height: 0; font-size: 0;
