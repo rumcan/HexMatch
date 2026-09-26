@@ -23,9 +23,10 @@
 // block boots with `newLoop` OFF and plays the always-on board it always was.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { seedWithFeature } from "./helpers/map-feature";
 import { southLotFree } from "./helpers/depot-lot";
 import { WATER, type Grid, type Industry } from "../../src/iso/grid";
-import { MAP_W, MAP_H, INDUSTRY_BY_KEY, TUNING, DIFFICULTY_RULES, type Cargo } from "../../src/iso/config";
+import { MAP_W, MAP_H, INDUSTRY_BY_KEY, TUNING, DIFFICULTY_RULES, depotYieldCap, type Cargo } from "../../src/iso/config";
 import { CARGO_TO_GEM, GEM_TO_CARGO } from "../../src/iso/quarry";
 import { buildTile, createTrack, type Track } from "../../src/iso/track";
 import { setRng, mulberry32 } from "../../src/game/config";
@@ -156,9 +157,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+let depotSeed: number | undefined;
 async function boot(opts: { newLoop?: boolean } = {}) {
+  depotSeed ??= seedWithFeature("south Depot corridors", (grid) => {
+    const first = depotSite(grid);
+    return !!first && !!depotSite(grid, first.ind.id);
+  });
   const { startIsoGame } = await import("../../src/iso/game");
-  dispose = startIsoGame(root, opts);
+  dispose = startIsoGame(root, { ...opts, ...(!localStorage.getItem(SAVE_KEY) ? { seed: depotSeed } : {}) });
   await settle();
   return hook();
 }
@@ -167,7 +173,7 @@ async function boot(opts: { newLoop?: boolean } = {}) {
 interface Site { hx: number; hy: number; fy: number; ind: Industry }
 
 /**
- * A Depot site on seed 1337: the tile below an industry's south edge, with
+ * A Depot site on the selected map: the tile below an industry's south edge, with
  * open ground for six tiles further south — the shape `iso-game.test.ts` uses.
  * The Depot really serves that industry, and `fy` is a Factory site a straight
  * road run can reach, so `connect()` below makes a live connection.
@@ -314,7 +320,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     const site = depotSite(h.grid);
-    expect(site, "seed 1337 keeps an industry with a legal south corridor").toBeTruthy();
+    expect(site, "the selected map keeps an industry with a legal south corridor").toBeTruthy();
 
     // No session yet — the Board is DOWN on the new loop.
     expect(h.tuning).toBeNull();
@@ -353,7 +359,7 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     h.finishSetup();
     const first = depotSite(h.grid)!;
     const second = depotSite(h.grid, first.ind.id);
-    expect(second, "two Depot sites are available on seed 1337").toBeTruthy();
+    expect(second, "two Depot sites are available on the selected map").toBeTruthy();
     for (const c of ["wood", "stone", "grain", "ore", "oil"] as const) h.purse[c] = 99;
 
     expect(h.placeDepot(first.hx, first.hy - 1)).toBe(true);
@@ -426,12 +432,12 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     h.tuningFinish(false);
     await settle();
     expect(h.tuning).toBeNull();
-    expect(h.depotYields.find((d) => d.id === depotId)!.yield).toBe(TUNING.maxYield);
+    expect(h.depotYields.find((d) => d.id === depotId)!.yield).toBe(depotYieldCap(1));
     expect(boardWrap().classList.contains("hidden"), "the board closed").toBe(true);
     expect(plate().classList.contains("idle")).toBe(true);
     // The level is on the record the L1b clock reads.
     const depot: Harvester = h.eco.harvesters.find((d) => d.id === depotId)!;
-    expect(depotYield(depot)).toBe(TUNING.maxYield);
+    expect(depotYield(depot)).toBe(depotYieldCap(1));
   });
 
   it("a better session measurably raises that Depot's tick rate (the L1b clock)", async () => {
@@ -458,14 +464,14 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(plain, "a connected Depot ticks at the baseline yield")
       .toBe(Math.floor(2 * perTick * TUNING.minYield));
 
-    // Tune it well, then the same two ticks pay `2 × perTick × 2.5`.
+    // Level 1 caps the settled yield at ×2 (the raw session can exceed it).
     h.board.onClear(TUNING.targetScore, 1);
     h.tuningFinish(false);
     before = { ...h.purse };
     h.econTick(now += 10_000);
     h.econTick(now += 10_000);
     const tuned = purseTotal(h.purse) - purseTotal(before);
-    expect(tuned).toBe(Math.floor(2 * perTick * TUNING.maxYield));
+    expect(tuned).toBe(Math.floor(2 * perTick * depotYieldCap(1)));
     expect(tuned).toBeGreaterThan(plain);
   });
 
@@ -528,17 +534,18 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     // Easy puts no obstacles on a board, so its number is the plain simulated
     // session — L6's rule that the rival is NOT handed the player's concession.
     const easy = h.depotYields.find((d) => d.id === 99)!.yield;
-    expect(easy).toBe(rivalTuningYield("easy", 0, DIFFICULTY_RULES.easy, 0));
-    expect(easy).toBe(rivalTuningYield("easy"));
+    expect(easy).toBe(Math.min(depotYieldCap(1), rivalTuningYield("easy", 0, DIFFICULTY_RULES.easy, 0)));
+    expect(easy).toBe(Math.min(depotYieldCap(1), rivalTuningYield("easy")));
 
     // …and the next Depot, under a harder chair, is tuned harder — but docked
     // by the frost and girders that difficulty puts on a board (L10 / #225).
-    // Both these Depots stand on open ground: tier 0, the thinned table.
+    // Both stand on open ground: cargo tier 0. Give the hard Depot level 2
+    // so its better session is not hidden by the shared level-1 yield cap.
     h.setRivalSkill("hard");
-    h.eco.harvesters.push({ id: 100, owner: "ai", ownerId: 2, tx: 30, ty: 30 });
+    h.eco.harvesters.push({ id: 100, owner: "ai", ownerId: 2, tx: 30, ty: 30, level: 2 });
     h.rivalTuning();
     const hard = h.depotYields.find((d) => d.id === 100)!.yield;
-    expect(hard).toBe(rivalTuningYield("hard", 0, DIFFICULTY_RULES.hard, 0));
+    expect(hard).toBe(Math.min(depotYieldCap(2), rivalTuningYield("hard", 0, DIFFICULTY_RULES.hard, 0)));
     expect(hard!).toBeGreaterThan(easy!);
 
     // An existing level is never re-rolled (set once, never drops).
