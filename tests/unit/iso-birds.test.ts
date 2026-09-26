@@ -594,6 +594,7 @@ describe("#438 airborne movement", () => {
 
   it.each([4242, 99])("moves every airborne bird for ten simulated minutes (seed %i)", (seed) => {
     const { grid, view, state } = pool(seed);
+    expect(state.birds.filter((b) => b.mode === "fly").length).toBeGreaterThan(0);
     const start = state.time;
     const steps = [0, 16, 33, 5000];
     let airborneChecks = 0;
@@ -637,11 +638,66 @@ describe("#438 airborne movement", () => {
     const { state, view } = pool();
     const b = state.birds.find((b) => b.mode === "fly")!;
     b.vx = velocity; b.vy = velocity;
+    const before = state.birds.map((bird) => [bird.x, bird.y]);
     fall(state, view, 1, 16);
+    state.birds.forEach((bird, i) => {
+      // Repair in place, not a NaN-triggered recycle/teleport of the flock.
+      expect(Math.hypot(bird.x - before[i][0], bird.y - before[i][1])).toBeLessThanOrEqual(2.6 * 0.016 + 1e-9);
+    });
     for (const bird of state.birds.filter((b) => b.mode !== "perch")) {
       expect([bird.x, bird.y, bird.vx, bird.vy].every(Number.isFinite)).toBe(true);
       expect(Math.hypot(bird.vx, bird.vy)).toBeGreaterThanOrEqual(BIRD_SPEED_MIN - 1e-9);
     }
+  });
+
+  it("recovers a heading cancelled exactly by steering", () => {
+    const { state, view } = pool();
+    const b = state.birds[0];
+    state.birds = [b];
+    b.mode = "fly"; b.percher = false;
+    b.x = (view.x0 + view.x1) / 2; b.y = (view.y0 + view.y1) / 2;
+    b.home = [b.x, b.y];
+    b.phase = 0; b.wander = 0;
+    // At the view/home centre there is only wander: cancel its next acceleration.
+    const wander = 0.1 * 0.9;
+    b.vx = -Math.sin(wander) * 0.5 * 0.1;
+    b.vy = -Math.cos(wander * 0.77) * 0.5 * 0.1;
+    const before = [b.x, b.y];
+    fall(state, view, 1, 100);
+    expect([b.x, b.y]).not.toEqual(before);
+    expect(Math.hypot(b.vx, b.vy)).toBeGreaterThanOrEqual(BIRD_SPEED_MIN);
+  });
+
+  it("hides a suspended pool and restarts safely after a long hidden-tab gap", () => {
+    const { state, view, grid } = pool();
+    const { ctx, bodies } = stubCtx();
+    const cam = { ...createCamera(1600, 900), zoom: BIRD_ZOOM };
+    fall(state, view, 1, 0, { suspended: true });
+    expect(state.active).toBe(false);
+    expect(state.birds).toHaveLength(0);
+    expect(paintBirds(ctx, cam, grid, state)).toBe(0);
+    expect(bodies).toHaveLength(0);
+    const time = state.time;
+    fall(state, view, 1, 60_000);
+    expect(state.time - time).toBe(100);
+    expect(state.birds.length).toBeGreaterThan(0);
+    const before = state.birds.map((b) => [b.x, b.y]);
+    fall(state, view, 1, 16);
+    state.birds.forEach((b, i) => {
+      if (b.mode !== "perch") expect([b.x, b.y]).not.toEqual(before[i]);
+    });
+  });
+
+  it("wires the cosmetic tick directly before every bird paint, outside the sim clock", () => {
+    const source = readFileSync(new URL("../../src/iso/game.ts", import.meta.url), "utf8");
+    const hook = source.slice(source.indexOf("renderer.aboveStructuresPainter ="));
+    const body = hook.slice(0, hook.indexOf("\n    };"));
+    expect(body).toContain("tickBirds(birds, birdDt,");
+    expect(body.indexOf("tickBirds(")).toBeLessThan(body.indexOf("paintBirds("));
+    expect(body).toContain("timeMs - lastBirdPaint");
+    expect(body).toContain("suspended: document.hidden");
+    expect(body).not.toMatch(/if\s*\(sim\)/);
+    expect(source.match(/tickBirds\(birds,/g)).toHaveLength(1);
   });
 
   it("takes off with a nonzero heading when clicked exactly on the bird", () => {
