@@ -10,6 +10,18 @@ import type { Grid } from "./grid";
 import { cornerHeight, elevationActive } from "./elevation";
 import { createTerrainRenderer, type TerrainCamera, type TerrainMapInput, type TerrainRenderer } from "./terrain-gl";
 
+import grassUrl from "../assets/terrain/grass_512.png";
+import meadowUrl from "../assets/terrain/meadow_512.png";
+import dirtUrl from "../assets/terrain/dirt_512.png";
+import rockUrl from "../assets/terrain/rock_512.png";
+import sandUrl from "../assets/terrain/sand_512.png";
+import detailUrl from "../assets/terrain/detail_256.png";
+
+/** Painted ground set (tools/terrain/make_seamless.py). grass = the shipped
+ *  grass texture, meadow = a lighter copy of it (owner call 2026-09-26);
+ *  the water normal map stays procedural. */
+const TEXTURES = { grass: grassUrl, meadow: meadowUrl, dirt: dirtUrl, rock: rockUrl, sand: sandUrl, detail: detailUrl };
+
 const STORE_KEY = "hexmatch:terrain-gl";
 
 /** Is the GL terrain asked for? URL wins over the stored choice. */
@@ -52,7 +64,7 @@ export function mountTerrainGl(host: HTMLElement, grid: Grid, seed: number, qual
   canvas.style.zIndex = "0";
   host.insertBefore(canvas, host.firstChild);
   let renderer: TerrainRenderer | null = null;
-  try { renderer = createTerrainRenderer(canvas, { quality }); } catch { renderer = null; }
+  try { renderer = createTerrainRenderer(canvas, { quality, textures: TEXTURES }); } catch { renderer = null; }
   if (!renderer) { canvas.remove(); return null; }
   renderer.setMap(terrainMapInput(grid, seed));
   const r = renderer;

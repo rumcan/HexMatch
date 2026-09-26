@@ -1,0 +1,5 @@
+Generating image... (00:00:00 elapsed)
+Generating image... (00:00:10 elapsed)
+Downloading generated image... (00:00:15 elapsed)
+Writing image metadata... (00:00:17 elapsed)
+{"generationId":"9246f146-eace-4d66-8760-31f971731734","filePath":"tools/art-src/terrain/dirt-raw.png","model":"gemini-3.1-flash-image-preview","credits":{"used":120,"remaining":115776}}

@@ -1,0 +1,5 @@
+Generating image... (00:00:00 elapsed)
+Generating image... (00:00:10 elapsed)
+Downloading generated image... (00:00:14 elapsed)
+Writing image metadata... (00:00:16 elapsed)
+{"generationId":"212b3a5f-97cd-4a6f-a5fa-02a7dc15f972","filePath":"tools/art-src/terrain/sand-raw.png","model":"gemini-3.1-flash-image-preview","credits":{"used":120,"remaining":115206}}
