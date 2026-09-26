@@ -10867,14 +10867,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * odd embed) motion simply stays on.
    */
   let motionQuery: MediaQueryList | null = null;
-  /**
-   * AMB-2 (#391): the same setting, for the bird wings. Reduced motion does
-   * not take the birds away — it takes the FLAPPING away: a bird holds the
-   * glide frame, exactly as the placement overlay holds its resting frame.
-   */
+  /** #438: reduced motion hides the pool, rather than holding birds in the air. */
   let reducedMotion = false;
   const readMotion = () => {
     reducedMotion = !!motionQuery?.matches;
+    // The painter can run before the next simulation tick after a media change.
+    birds.reducedMotion = reducedMotion;
     return reducedMotion;
   };
   const syncOverlayMotion = () => {

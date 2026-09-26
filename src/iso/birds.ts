@@ -58,11 +58,11 @@ export const BIRD_FADE_MS = 320;
 
 /**
  * Target opacity for the current zoom and mode: 1 at the closest step, 0
- * everywhere else and 0 in performance mode. Pure — the game's fade reads it
- * every frame, and the test pins the gate here rather than in a draw call.
+ * everywhere else and 0 in performance or reduced-motion mode. Pure — the
+ * game's fade reads it every frame, and the test pins the gate here.
  */
-export function birdTargetAlpha(zoom: number, performance: boolean): number {
-  return !performance && zoom >= BIRD_ZOOM ? 1 : 0;
+export function birdTargetAlpha(zoom: number, performance: boolean, reducedMotion = false): number {
+  return !performance && !reducedMotion && zoom >= BIRD_ZOOM ? 1 : 0;
 }
 
 /** Step a fade toward its target at `BIRD_FADE_MS`. Linear, clamped, pure. */
@@ -238,7 +238,7 @@ export interface BirdState {
   time: number;
   /** True while the pool is populated and simulating. */
   active: boolean;
-  /** prefers-reduced-motion: the wings hold their glide frame. */
+  /** prefers-reduced-motion: the pool is hidden, not held in mid-air. */
   reducedMotion: boolean;
   /** The seeded stream spawns draw from — the map seed, never the ambient RNG. */
   rng: () => number;
@@ -688,7 +688,7 @@ export interface BirdTickContext {
   view: TileRange;
   /** Performance mode: the pool fades out and stops. */
   performance?: boolean;
-  /** prefers-reduced-motion: the wings hold their glide frame. */
+  /** prefers-reduced-motion: hide the pool rather than freezing airborne birds. */
   reducedMotion?: boolean;
   /** Live traffic, for the scatter trigger. */
   vehicles?: readonly VehiclePoint[];
@@ -700,17 +700,20 @@ export interface BirdTickContext {
  * whole simulation is a dozen birds and a 12×12 neighbour loop.
  */
 export function tickBirds(state: BirdState, dtMs: number, ctx: BirdTickContext): void {
-  const target = birdTargetAlpha(ctx.zoom, !!ctx.performance);
-  state.alpha = stepBirdAlpha(state.alpha, target, dtMs);
   state.reducedMotion = !!ctx.reducedMotion;
   state.view = ctx.view;
+  // The game caps its frame dt after a hidden tab, and can pass 0 on the first
+  // frame (or on consecutive frames with the same timestamp). A painted flock
+  // must still advance on those frames; do not let a bad timestamp park it.
+  const dt = Number.isFinite(dtMs) ? Math.max(16, Math.min(100, dtMs)) : 16;
+  const target = birdTargetAlpha(ctx.zoom, !!ctx.performance, state.reducedMotion);
+  // Reduced motion is a visibility preference, not a request to freeze birds
+  // mid-flight. Hide and park immediately, including while a fade was active.
+  state.alpha = state.reducedMotion ? 0 : stepBirdAlpha(state.alpha, target, dt);
   if (target <= 0 && state.alpha <= 0) {
-    // Parked: nothing to simulate, nothing to draw, and the next fade-in
-    // re-populates the pool around whatever the view is then.
     if (state.active) { state.active = false; state.birds.length = 0; }
     return;
   }
-  const dt = Math.max(0, Math.min(100, dtMs));
   state.time += dt;
   if (!state.active || state.birds.length === 0) {
     if (state.time < state.nextRetry) return;
@@ -796,6 +799,10 @@ function simulate(state: BirdState, dt: number, ctx: BirdTickContext): void {
       b.alt = 0;
       continue;
     }
+    // Recover an invalid coordinate before steering can propagate NaN through
+    // the flock. This also keeps a bad state from evading the recycle check.
+    if (!Number.isFinite(b.x)) b.x = Number.isFinite(b.home[0]) ? b.home[0] : a.cx;
+    if (!Number.isFinite(b.y)) b.y = Number.isFinite(b.home[1]) ? b.home[1] : a.cy;
     let ax = 0, ay = 0;
     const bsep = SEPARATION_R;
     for (let j = 0; j < birds.length; j++) {
@@ -851,7 +858,16 @@ function simulate(state: BirdState, dt: number, ctx: BirdTickContext): void {
     }
     b.vx += ax * s;
     b.vy += ay * s;
-    const sp = Math.hypot(b.vx, b.vy) || 1e-6;
+    let sp = Math.hypot(b.vx, b.vy);
+    if (!Number.isFinite(sp) || sp < 1e-6) {
+      // Scaling a zero vector by the minimum speed still yields (0, 0).
+      // Use the bird's own seeded phase as a deterministic recovery heading;
+      // neither the spawn RNG nor a neighbour's trajectory is disturbed.
+      const heading = b.wander + b.phase;
+      b.vx = Math.cos(heading) * BIRD_SPEED_MIN;
+      b.vy = Math.sin(heading) * BIRD_SPEED_MIN;
+      sp = BIRD_SPEED_MIN;
+    }
     const want = BIRD_SPEED;
     if (sp < BIRD_SPEED_MIN || sp > BIRD_SPEED_MAX) {
       const k = (sp < BIRD_SPEED_MIN ? BIRD_SPEED_MIN : BIRD_SPEED_MAX) / sp;
@@ -861,6 +877,7 @@ function simulate(state: BirdState, dt: number, ctx: BirdTickContext): void {
       const k = 1 + (want / sp - 1) * Math.min(1, s * 1.5);
       b.vx *= k; b.vy *= k;
     }
+    const oldX = b.x, oldY = b.y;
     b.x += b.vx * s;
     b.y += b.vy * s;
     // The map edge is a wall, not a wrap: a bird that reaches it turns back.
@@ -869,6 +886,16 @@ function simulate(state: BirdState, dt: number, ctx: BirdTickContext): void {
     if (b.y < 0.5) { b.y = 0.5; b.vy = Math.abs(b.vy); }
     if (b.x > w) { b.x = w; b.vx = -Math.abs(b.vx); }
     if (b.y > h) { b.y = h; b.vy = -Math.abs(b.vy); }
+    if (b.x === oldX && b.y === oldY) {
+      // Both axes can be clipped at a corner on the same frame. Turn inward
+      // now rather than drawing a stationary airborne bird for another tick.
+      const dx = ctx.grid.w / 2 - b.x, dy = ctx.grid.h / 2 - b.y;
+      const len = Math.hypot(dx, dy) || 1;
+      b.vx = dx / len * BIRD_SPEED_MIN;
+      b.vy = dy / len * BIRD_SPEED_MIN;
+      b.x += b.vx * s;
+      b.y += b.vy * s;
+    }
     // Altitude: take-off and landing are the same ease, at different targets.
     const altTarget = b.mode === "land" ? 0 : BIRD_ALTITUDE;
     const step = (BIRD_CLIMB * s);
@@ -1048,7 +1075,7 @@ export function paintBirds(
   state: BirdState,
 ): number {
   const alpha = Math.max(0, Math.min(1, state.alpha));
-  if (!ctx || alpha <= 0 || state.birds.length === 0) return 0;
+  if (!ctx || state.reducedMotion || alpha <= 0 || state.birds.length === 0) return 0;
   const z = cam.zoom;
   const m = 24 * z;                                    // off-screen margin, device px
   const vw = cam.vw, vh = cam.vh;
@@ -1075,11 +1102,10 @@ export function paintBirds(
     }
     ctx.globalAlpha = prev;
   }
-  const flap = state.reducedMotion ? 0 : Math.floor(state.time / FLAP_MS) % 2;
+  const flap = Math.floor(state.time / FLAP_MS) % 2;
   for (const s0 of shown) {
     const b = s0.b;
-    // A perched bird bobs on its phase; a flying one flaps (unless the player
-    // asked for reduced motion, when the wings hold the glide frame).
+    // A perched bird bobs on its phase; a flying one flaps.
     const peck = b.mode === "perch"
       ? Math.max(0, Math.sin((state.time + b.phase * 900) / PECK_MS * Math.PI * 2)) : 0;
     const bob = peck * 1.5 * z;
