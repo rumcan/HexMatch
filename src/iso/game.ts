@@ -1868,6 +1868,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         : guideAnchorBox(target);
       return box ? guideTileRect(box) : null;
     },
+    already: (sectionId, stepId) => {
+      const k = `${sectionId}:${stepId}`;
+      const mine = me.i + 1;
+      const hasFactory = eco.factories.some((f) => f.ownerId === mine);
+      const hasDepot = eco.harvesters.some((h) => h.ownerId === mine);
+      if (k === "factory:place" || k === "factory:rotate") return hasFactory;
+      if (k === "depots:place") return hasDepot;
+      if (k === "logistics:connect" || k === "logistics:income") return voicedIncome;
+      return false;
+    },
     assist: (a) => {
       // Every assist goes through a door the player already has: the tool
       // BUTTON (not the internal arming), the drawer tab, the phone sheet.

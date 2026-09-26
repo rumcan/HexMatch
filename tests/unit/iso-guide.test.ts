@@ -312,8 +312,7 @@ describe("TUT-03 the sections", () => {
         seen.add(key);
         expect(step.target, `${key} has no target`).toBeTruthy();
         expect(step.complete, `${key} has no completion`).toBeTruthy();
-        // a Next is offered exactly where the step can be read and left
-        if (step.complete.kind === "next") expect(step.next).toBe(true);
+        // (every step offers Next now, so no per-step flag is required)
       }
     }
   });

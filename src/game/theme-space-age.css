@@ -625,6 +625,8 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .ui-root[data-phone="1"] .guide-strip { bottom: 62px; width: calc(100vw - 16px); }
 /* the target is low on screen: the strip moves up so it never covers it */
 .guide-top .guide-strip { top: 64px; bottom: auto; }
+/* one voice at a time: the objective banner and hint hide while the guide runs */
+.guide-on #iso-objective, .guide-on .iso-hint { display: none !important; }
 .guide-head { display: flex; align-items: center; gap: 8px; }
 .guide-kicker {
   font-family: var(--display); font-weight: 500; font-size: 11px;
