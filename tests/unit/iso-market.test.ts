@@ -153,11 +153,12 @@ describe("ECON-1 market > demand events", () => {
     const { seed, ev } = seedWithEvent();
     const mid = (ev.startMs + ev.endMs) / 2;
     expect(eventMult(seed, ev.cargo, mid)).not.toBeCloseTo(1, 3);
-    // the event moves the price away from the pure walk, in its direction
+    // the price is the walk times EVERY event running on that cargo (two can
+    // overlap — a boom on top of a glut is a legal, and interesting, market)
     const withEv = cleanPrice(seed, ev.cargo, mid);
     const walkOnly = BASE_PRICE[ev.cargo] * Math.exp(walkAt(seed, ev.cargo, mid));
-    if (ev.mult > 1) expect(withEv).toBeGreaterThan(walkOnly);
-    else expect(withEv).toBeLessThan(walkOnly);
+    expect(withEv).toBeCloseTo(walkOnly * eventMult(seed, ev.cargo, mid), 6);
+    expect(withEv).not.toBeCloseTo(walkOnly, 3);
     // and it is gone the moment it expires
     expect(eventsAt(seed, ev.endMs).some((e) => e.id === ev.id)).toBe(false);
     expect(eventsAt(seed, ev.endMs - 1).some((e) => e.id === ev.id)).toBe(true);
@@ -241,7 +242,7 @@ describe("ECON-1 > the rival's sell rule", () => {
     const m = createMarket(2026);
     let sold = 0; let held = 0;
     for (let t = 0; t < 30 * MIN; t += 15_000) {
-      const lot = rivalSellLot(m, "ore", 100, 0, t);
+      const lot = rivalSellLot(m, "ore", 30, 0, t);
       const avg = movingAverage(m.seed, "ore", t);
       if (lot > 0) { sold++; expect(priceOf(m, "ore", t)).toBeGreaterThan(avg); }
       else held++;
@@ -252,13 +253,18 @@ describe("ECON-1 > the rival's sell rule", () => {
 
   it("keeps its city-upgrade reserve back", () => {
     const m = createMarket(2026);
-    // a clock where it wants to sell
+    // a clock where the PRICE rule fires (a small pile, so the dump floor is
+    // not what is selling it)
     let t = 0;
-    while (t < 60 * MIN && rivalSellLot(m, "ore", 100, 0, t) === 0) t += 5_000;
-    expect(rivalSellLot(m, "ore", 100, 0, t)).toBeGreaterThan(0);
-    expect(rivalSellLot(m, "ore", 100, 100, t)).toBe(0);
-    expect(rivalSellLot(m, "ore", 100, 95, t)).toBe(5);
-    expect(rivalSellLot(m, "gold", 100, 0, t)).toBe(0);
+    while (t < 60 * MIN && rivalSellLot(m, "ore", 30, 0, t) === 0) t += 5_000;
+    expect(rivalSellLot(m, "ore", 30, 0, t)).toBeGreaterThan(0);
+    expect(rivalSellLot(m, "ore", 30, 30, t)).toBe(0);
+    expect(rivalSellLot(m, "ore", 30, 25, t)).toBe(5);
+    expect(rivalSellLot(m, "gold", 30, 0, t)).toBe(0);
+    // and a warehouse full of stock cashes out whatever the price is doing
+    let dumps = 0;
+    for (let k = 0; k < 40 * MIN; k += 30_000) if (rivalSellLot(m, "ore", 500, 0, k) > 0) dumps++;
+    expect(dumps).toBe(80);
   });
 
   it("never dumps more than a lot at a time", () => {

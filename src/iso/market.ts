@@ -64,6 +64,8 @@ export const EVENT_SLOT_MS = 60_000;
 export const EVENT_CHANCE = 0.34;
 /** How long a demand event runs (ms). */
 export const EVENT_MS = 120_000;
+/** Above this much spare stock the rival sells regardless of the price. */
+export const DUMP_FLOOR = 40;
 /** The trend arrow compares against the price this long ago. */
 export const TREND_WINDOW_MS = 60_000;
 
@@ -82,6 +84,11 @@ function hash(...parts: (number | string)[]): number {
       h = Math.imul(h, 0x01000193) >>> 0;
     }
   }
+  // Final avalanche (xorshift-multiply): FNV alone leaves neighbouring inputs
+  // correlated, which showed up as whole seeds with no demand events at all.
+  h ^= h >>> 16; h = Math.imul(h, 0x7feb352d) >>> 0;
+  h ^= h >>> 15; h = Math.imul(h, 0x846ca68b) >>> 0;
+  h ^= h >>> 16;
   return h >>> 0;
 }
 /** Uniform [0,1) from a hash. */
@@ -341,11 +348,17 @@ export function rivalSellLot(
   if (!sellable(cargo)) return 0;
   const spare = Math.floor(held) - Math.max(0, Math.floor(reserve));
   if (spare <= 0) return 0;
-  const edge = opts.edge ?? 0.04;            // needs to be 4% over the average
-  const avg = movingAverage(m.seed, cargo, clockMs);
-  if (priceOf(m, cargo, clockMs) < avg * (1 + edge)) return 0;
+  const maxLot = opts.maxLot ?? 10;
+  // A pile this big is money the rival is not using: it cashes some out at
+  // whatever the market pays rather than hoarding a warehouse it cannot spend
+  // (city upgrades only ever want the reserve above).
+  if (spare < DUMP_FLOOR) {
+    const edge = opts.edge ?? 0.02;          // 2% over its own recent average
+    const avg = movingAverage(m.seed, cargo, clockMs);
+    if (priceOf(m, cargo, clockMs) < avg * (1 + edge)) return 0;
+  }
   // Never dump: a lot is capped so slippage stays modest (≈ 12% at 10 units).
-  return Math.max(1, Math.min(spare, opts.maxLot ?? 10));
+  return Math.max(1, Math.min(spare, maxLot));
 }
 
 /** Price change over the trend window, as a fraction (+0.07 = up 7%). */
