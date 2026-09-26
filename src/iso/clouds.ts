@@ -239,13 +239,19 @@ function paintSprite(puffs: Puff[], shadow: boolean): HTMLCanvasElement | Offscr
     ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
   };
   if (shadow) {
+    // Owner: a shadow has a HARD edge. One solid union of the puffs (so
+    // overlaps never stack darker), anti-aliased only by the canvas itself;
+    // its strength is the blit's CLOUD_SHADOW_ALPHA. Every circle is kept
+    // inside the sprite so no edge is clipped flat by the rect.
+    ctx.fillStyle = "rgb(0,0,0)"; // owner: black, made see-through by the blit alpha
+    ctx.beginPath();
     for (const p of puffs) {
-      blob(p.cx, p.cy, p.r, [
-        [0, "rgba(46,58,80,0.62)"],
-        [0.55, "rgba(46,58,80,0.30)"],
-        [1, "rgba(46,58,80,0)"],
-      ]);
+      const r = Math.max(2, Math.min(p.r * 0.9, p.cx - 2, W - p.cx - 2, p.cy - 2, H - p.cy - 2));
+      ctx.moveTo(p.cx + r, p.cy);
+      ctx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
     }
+    ctx.fill("nonzero");
+    return surf;
   } else {
     // The shade first (low, cool, faint), then the lit puffs over it.
     for (const p of puffs) {
