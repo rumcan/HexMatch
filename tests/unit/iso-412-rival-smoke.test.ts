@@ -153,7 +153,7 @@ describe("MAP-1 rival smoke test on all-ON maps", () => {
       window.history.replaceState(null, "", `/?seed=${seed}`);
       setRng(mulberry32(seed));
       localStorage.setItem("hexmatch:rival-skill", "normal");
-      await boot({ newLoop: true, rivers: true, elevation: true, shapes: true });
+      await boot({ newLoop: true, rivers: true, elevation: true, shapes: true, rings: true });
       const h = hook() as RivalClockHook & {
         placementPlan: (kind: string, tx: number, ty: number) => { valid: boolean } | null;
         factories: unknown[];

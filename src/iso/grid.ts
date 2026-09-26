@@ -158,6 +158,12 @@ export interface MapGenOptions {
    * tile moves.
    */
   shapes?: boolean;
+  /**
+   * #296: a one-tile RING ROAD around every town, joined to its streets, so a
+   * Factory has a clean edge to stand against. OFF (default) keeps every seed
+   * byte-identical; MAP-1 turns it on for new games.
+   */
+  rings?: boolean;
 }
 
 /**
@@ -1159,6 +1165,43 @@ export function townLayout(
 }
 
 /**
+ * #296: a one-tile road loop around the town, one tile outside its houses.
+ *
+ * The street grid's lanes already run to that line (the exit lanes overhang
+ * the last house by one), so the ring joins the streets wherever a lane meets
+ * it. Only free land becomes ring (water / an industry / another town leaves
+ * a gap). A closed loop could seal free pockets inside it (the reason
+ * TOWN-GRID dropped the old ring), so every free tile inside the house box
+ * that is neither house nor street is paved as a small square: nothing is
+ * left enclosed. Deterministic, no RNG.
+ */
+export function addTownRing(
+  houses: [number, number][], roads: [number, number][],
+  terrain: Uint8Array, occ: Int16Array,
+): [number, number][] {
+  if (!houses.length) return roads;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of houses) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  const houseSet = new Set(houses.map(([x, y]) => idx(x, y)));
+  const seen = new Set(roads.map(([x, y]) => idx(x, y)));
+  const out = roads.slice();
+  const free = (x: number, y: number) =>
+    inBounds(x, y) && terrain[idx(x, y)] !== WATER && occ[idx(x, y)] === -1;
+  const add = (x: number, y: number) => {
+    const i = idx(x, y);
+    if (!free(x, y) || houseSet.has(i) || seen.has(i)) return;
+    seen.add(i);
+    out.push([x, y]);
+  };
+  // the loop, one tile outside the house box
+  for (let x = x0 - 1; x <= x1 + 1; x++) { add(x, y0 - 1); add(x, y1 + 1); }
+  for (let y = y0; y <= y1; y++) { add(x0 - 1, y); add(x1 + 1, y); }
+  // no sealed pockets inside it
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) add(x, y);
+  return out;
+}
+
+/**
  * F4 (#275): the MERGED BLOCKS that let a town hold the long shapes.
  *
  * A town block is `TOWN_BLOCK - 1` = 2 tiles square, so nothing wider than
@@ -1864,7 +1907,7 @@ export function publicRoadTiles(
 
 function placeTowns(
   terrain: Uint8Array, occ: Int16Array, industries: Industry[], rng: () => number,
-  shapes = false,
+  shapes = false, rings = false,
 ): Town[] {
   const towns: Town[] = [];
 
@@ -2015,6 +2058,8 @@ function placeTowns(
         // so every later check (house minimum, reachability, enclaves, the
         // occupancy stamp) sees the final layout.
         if (shapes) ({ houses, roads } = mergeTownBlocks(cx, cy, houses, roads, rng));
+        // #296: the ring road (no RNG draw, so it never shifts later towns).
+        if (rings) roads = addTownRing(houses, roads, terrain, occ);
         if (houses.length < TOWN_HOUSES_MIN) continue;
 
         // Reachability check: the PROPOSED TOWN tiles must not strand any
@@ -2192,7 +2237,7 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // TOWN-1: towns are placed AFTER industries (sequencing), using the same
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
   // TOWN_OCC in the occupancy array so roads/other structures route around.
-  const towns = placeTowns(terrain, occ, list, rng, opts.shapes === true);
+  const towns = placeTowns(terrain, occ, list, rng, opts.shapes === true, opts.rings === true);
   // PP-13: highways between the towns, derived from the towns that were
   // actually placed. No RNG draws, so the seeded stream the rest of the map
   // depends on is untouched — and the highway is a pure function of the seed.
@@ -2257,6 +2302,16 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
     }
   }
   fillCoastalHoles(terrain, MAP_W, MAP_H, WATER, SAND);
+  // #296: the towns' rings once more, now that every industry has settled —
+  // an industry relocated after the towns were laid (PP-14) can leave free
+  // ground inside a ring or on its line. No RNG.
+  if (opts.rings) {
+    for (const town of towns) {
+      const before = new Set(town.roads.map(([x, y]) => idx(x, y)));
+      town.roads = addTownRing(town.houses, town.roads, terrain, occ);
+      for (const [x, y] of town.roads) if (!before.has(idx(x, y))) occ[idx(x, y)] = TOWN_OCC;
+    }
+  }
   // Elevation is intentionally computed after all map placement. Thus every
   // generated industry and town footprint can be flat without changing the
   // placement RNG stream. Option-off still returns a flat compatibility map.

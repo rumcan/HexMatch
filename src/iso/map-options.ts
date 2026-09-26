@@ -21,7 +21,7 @@ import {
 export { MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions };
 export type { MapOptions };
 
-const KEYS = ["rivers", "elevation", "shapes"] as const;
+const KEYS = ["rivers", "elevation", "shapes", "rings"] as const;
 
 export interface MapOptionSources {
   explicit?: Partial<MapOptions>;
