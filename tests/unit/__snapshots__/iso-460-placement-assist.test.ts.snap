@@ -1,0 +1,46 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`#460 cost clarity on the build cards > every build card quotes $ and the town upgrade quotes cargo icons 1`] = `
+[
+  {
+    "sub": "Point & inspect · Q / right-click",
+    "tool": "select",
+  },
+  {
+    "sub": "free · 0★",
+    "tool": "dirt",
+  },
+  {
+    "sub": "$52 · cheap town lane · slow · ×1.2",
+    "tool": "street",
+  },
+  {
+    "sub": "$126 · faster hauling · 0★",
+    "tool": "road",
+  },
+  {
+    "sub": "$262 · fast long haul · gentle grades · ×2.3",
+    "tool": "highway",
+  },
+  {
+    "sub": "free setup · then from $108",
+    "tool": "harvester",
+  },
+  {
+    "sub": "$15 a tile · 0★",
+    "tool": "rail",
+  },
+  {
+    "sub": "$480 · +1★ · track beside it included · R turns",
+    "tool": "platform",
+  },
+  {
+    "sub": "$168 · next to a town",
+    "tool": "plant",
+  },
+  {
+    "sub": "Refund 50%",
+    "tool": "demolish",
+  },
+]
+`;
