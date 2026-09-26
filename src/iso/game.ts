@@ -178,8 +178,12 @@ import {
   RIVAL_SKILLS, resolveSkillKey, skillKeyFromUrl, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
 } from "./skill";
 import {
-  depotPreviewSprite, planDepotPlacement, planFactoryPlacement, type PlacementPlan,
+  depotPreviewSprite, placementReasonText, planDepotPlacement, planFactoryPlacement, type PlacementPlan,
 } from "./placement";
+import {
+  assistText, depotAssistFor, DEPOT_ASSIST, legalDepotSpots, legalPlantSpots, legalPlatformSpots,
+  MONEY_ASSIST, PLANT_ASSIST, RAIL_ASSIST, moneyFix, type AssistCopy,
+} from "./placement-assist";
 import type { GhostSpec } from "./overlay-art";
 import {
   PLANT_COST, PLANT_REFUSAL_TEXT, addPlant, adjacentTown, buildingAt,
@@ -249,7 +253,7 @@ import {
   TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningOutcome, type TuningSession, type TuningStars,
 } from "./tuning";
 import {
-  FREE_SETUP_DEPOTS, costCompact, costLabel, depotTypeLabel, DEPOT_UPGRADE_COST, DEPOT_RETUNE_COST,
+  FREE_SETUP_DEPOTS, costLabel, depotTypeLabel, DEPOT_UPGRADE_COST, DEPOT_RETUNE_COST,
   priceDepot, priceTownUpgrade, rungLabel, shortfallLabel, storageCapFor,
 } from "./construction";
 // L11 (#226): the bank — the one exchange left, and the rung gate it obeys.
@@ -304,7 +308,7 @@ import {
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
-  rotateView, trainOccupies, trainBasedAt, railPanelRows, costEntries, resaleValue, demolishStructure, PLATFORM_VP,
+  rotateView, trainOccupies, trainBasedAt, railPanelRows, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
@@ -312,7 +316,7 @@ import {
 import { loadRailwaySprites } from "./rail-art";
 import { loadRiverSprites } from "./rivers-art";
 import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
-import { HUD_ICONS, cargoIconHtml, costMarkup } from "../game/hud-icons";
+import { HUD_ICONS, cargoIconHtml, moneyMarkup } from "../game/hud-icons";
 // #302: the six board-gem tokens, pre-decoded behind the loading screen.
 import { GEM_ART } from "../game/gem-art";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
@@ -1845,6 +1849,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       requestBoardSwap(r1, c1, r2, c2);
     },
     onReset: () => resetPlant(),
+    // BUILD-1 (#460): the Undo chip's click — the same door Ctrl/Cmd+Z opens.
+    onUndo: () => {
+      const why = requestUndo();
+      if (why) toast(`Can't undo — ${why}.`, "info");
+    },
     onBlackAction: (key) => buyBlack(key),
     // MOBILE-02: the phone chrome grows the plant (more columns/rows at a
     // smaller cell) so the match table FILLS the window instead of cropping.
@@ -3748,6 +3757,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       id: 0, townId: adjacentTown(grid, tx, ty, rot)?.id ?? null,
       rot: rot & 3,
     });
+    noteWorldBuild();      // BUILD-1 (#460): the opening Factory is a build
     // SFX-01: a heavy crate set down and latched. The rival's own factory
     // appears in the same instant as the player's, so only the human's click
     // gets the sound — one thunk per gesture, whoever else moved.
@@ -3928,9 +3938,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!spendBuild(p, RAIL_COSTS.platform)) return false;
+    // BUILD-1 (#460): snapshot the rail the platform's build is about to
+    // touch — its footprint plus the three stopping tiles — so an undo can
+    // hand the ground back exactly as it was.
+    const [pw, ph] = footprintFor("platform", view);
+    const before: [number, number][] = [];
+    for (let dy = 0; dy < ph; dy++) for (let dx = 0; dx < pw; dx++) before.push([tx + dx, ty + dy]);
+    const railBytes = snapshotRailBytes([...before, ...platformTrackAt(tx, ty, view)]);
     const built = placePlatform(rail, p.id, ownerId, tx, ty, view, anchor);
     layPlatformTrack(grid, track, rail, built);
     const depot = adoptPlatformDepot(built, p);
+    recordUndo({
+      kind: "platform", structureId: built.id, depotRecordId: depot?.id,
+      money: moneyCostOf(RAIL_COSTS.platform), freeDepotsSpent: false, railBytes,
+    }, p);
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();       // RAIL-02: the platform's ★ rides the same rescore
@@ -3998,7 +4019,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!spendBuild(p, RAIL_COSTS.depot)) return false;
+    // BUILD-1 (#460): the shed's lane autotiles into its neighbours — the
+    // snapshot ring covers them, so the undo restores the whole patch.
+    const railBytes = snapshotRailBytes([
+      [tx, ty], [tx + 1, ty], [tx, ty + 1], [tx + 1, ty + 1],
+    ]);
     const built = placeDepot(rail, p.id, ownerId, tx, ty, view);
+    recordUndo({
+      kind: "raildepot", structureId: built.id,
+      money: moneyCostOf(RAIL_COSTS.depot), freeDepotsSpent: false, railBytes,
+    }, p);
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();
@@ -4006,9 +4036,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return !!built;
   }
 
-  /** The rail drag's price, in the same voice as every other price label. */
+  /**
+   * BUILD-1 (#460): one currency story — rail prices (trains, refunds, the
+   * panel hints) are quoted in $, the same `moneyValueOf` the charges run
+   * through. Cargo icons belong to the city upgrade, never a build.
+   */
   const railCostLabel = (cost: Purse): string =>
-    costEntries(cost).map(([cargo, n]) => `${n} ${CARGO[cargo].name}`).join(" + ");
+    `$${moneyValueOf(cost).toLocaleString("en-US")}`;
 
   // ── R3 (#270): the hydro dam ─────────────────────────────────────────────
   let nextDamId = 1;
@@ -4097,6 +4131,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!spendBuild(p, DAM_COST)) return false;
     const dam: Dam = { id: nextDamId++, owner: p.id, ownerId, wx, wy, axis: river.axis, side };
     eco.dams.push(dam);
+    noteWorldBuild();      // BUILD-1 (#460): a build closes the undo window
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();
@@ -4130,9 +4165,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ECON-1 (#421): a demolish refunds MONEY — the build was paid in money.
     if (Object.keys(refund).length) refundBuild(p, refund);
     if (p.human) sfx.play("demolish");
+    noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
     syncWorld();
     rescoreNow();
-    toast(`Hydro dam removed${Object.keys(refund).length ? ` — ${costLabel(refund)} salvaged` : ""}.`, "info");
+    toast(`Hydro dam removed${moneyValueOf(refund) > 0 ? ` — $${moneyValueOf(refund).toLocaleString("en-US")} salvaged` : ""}.`, "info");
     return true;
   }
 
@@ -4141,6 +4177,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (plan.why) { if (p.human) toast(plan.why, "bad"); return false; }
     chargeBuild(p, plan.cost); // same synchronous all-or-nothing affordability check
     for (const [x, y] of plan.tiles) renderer?.invalidateTile(x, y);
+    noteWorldBuild();      // BUILD-1 (#460): a build closes the undo window
     syncWorld(); rescoreNow();
     if (p.human) { sfx.play("build"); toast("Diamond interchange built.", "good"); }
     return true;
@@ -4154,6 +4191,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function commitRailDrag(p: PlayerState, pv: DragPreview & { why?: string | null }) {
     const res = buildRail(grid, track, rail, p.i + 1, pv.tiles, true);
+    // BUILD-1 (#460): rail can join a fresh platform's lane — laying it
+    // closes the undo window.
+    if (res.built.length) noteWorldBuild();
     if (!Object.keys(res.cost).length && !res.built.length) {
       if (p.human) toast(res.why === "ok" ? "Can't build rail there." : RAIL_REFUSAL_TEXT[res.why as never], "bad");
       return;
@@ -4197,6 +4237,239 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     commitRailDrag(me, pv);
     return pv;
   };
+
+  // ══════════════════════════════════════════════════════════════════════
+  // BUILD-1 (#460) — the 8-second UNDO.
+  //
+  // For 8 seconds after a Depot, a Processing Plant, a Platform or a Train
+  // Depot goes down, its builder may take it back: a 100% money refund and
+  // the tiles exactly as they were. The window is deliberately narrow and the
+  // rule deliberately strict — it is a misclick rescue, not a strategy tool:
+  //
+  //   • only the LATEST build of its seat (a newer build replaces the chip);
+  //   • only while NOTHING depends on it: no cargo moved through it, no
+  //     tuning settled on it, no line or train on it, no depot feeding the
+  //     plant — and no build or demolish anywhere since (any of those could
+  //     have attached to it, so the chip greys out with the reason);
+  //   • the rival never undoes — only human seats ever get a record;
+  //   • in a room the undo is a HOST INTENT: the host keeps the records for
+  //     both seats, the guest's chip sends `{ do: "undo" }` and the host
+  //     validates and applies it against the guest's seat.
+  //
+  // Records live only in memory — an 8-second window never crosses a save.
+  // ══════════════════════════════════════════════════════════════════════
+  const UNDO_WINDOW_MS = 8000;
+  type UndoKind = "harvester" | "plant" | "platform" | "raildepot";
+  interface UndoRailByte { idx: number; tile: number; owner: number }
+  interface UndoRecord {
+    kind: UndoKind;
+    /** The builder's seat — the record belongs to them alone. */
+    seatId: string;
+    /** `performance.now()` when the build landed. */
+    at: number;
+    /** The build counter at the moment of the build (see `buildSeq`). */
+    seqAt: number;
+    /** The $ actually charged (0 while the setup allowance paid). */
+    money: number;
+    /** The free-setup Depot allowance was spent — undo gives it back. */
+    freeDepotsSpent: boolean;
+    harvesterId?: number;
+    /** Platform: the Depot record it adopted (the cargo-moved flag reads it). */
+    depotRecordId?: number;
+    factoryId?: number;
+    structureId?: number;
+    /** Rail bytes the structure's placement touched — restored verbatim. */
+    railBytes?: UndoRailByte[];
+    /** Set by the economy clock / lorry deliveries once cargo moves on it. */
+    cargoMoved?: boolean;
+  }
+  /**
+   * Counts every build and demolish, whoever did it. An undo is only legal
+   * while this still reads what it read at the build — any world edit since
+   * could have attached to the new thing, so the chip greys out instead of
+   * guessing.
+   */
+  let buildSeq = 0;
+  const noteWorldBuild = () => { buildSeq++; };
+  /** One undoable build per seat — the newest replaces whatever stood before. */
+  const undoRecs = new Map<string, UndoRecord>();
+
+  /**
+   * The rail bytes a structure's placement will touch — its footprint, its
+   * lane and one ring beyond (autotiling reaches the neighbours) — snapshotted
+   * BEFORE the build so the undo restores them verbatim.
+   */
+  function snapshotRailBytes(tiles: readonly [number, number][]): UndoRailByte[] {
+    const idxs = new Set<number>();
+    for (const [x, y] of tiles) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < MAP_W && ny < MAP_H) idxs.add(tIdx(nx, ny));
+        }
+      }
+    }
+    return [...idxs].map((i) => ({ idx: i, tile: rail.rail.tile[i], owner: rail.rail.owner[i] }));
+  }
+
+  /**
+   * File the undo record for a build that just succeeded. `noteWorldBuild`
+   * runs for EVERY seat (the rival's builds close windows too); a record is
+   * kept only for humans — the rival never undoes.
+   */
+  function recordUndo(rec: Omit<UndoRecord, "at" | "seqAt" | "seatId">, p: PlayerState): void {
+    noteWorldBuild();
+    // Only HUMAN seats keep records — the rival never undoes. Seat 1 reads
+    // `human: false` even when a real guest holds it (the flag marks the AI),
+    // so the room check stands in for the guest's humanity on the host.
+    const humanSeat = p.human || (net !== null && p.i === 1);
+    if (!humanSeat) return;
+    undoRecs.set(p.id, { ...rec, seatId: p.id, at: performance.now(), seqAt: buildSeq });
+  }
+
+  /** The economy clock / the lorries report cargo moving through a Depot. */
+  const flagUndoCargoMoved = (depotId: number): void => {
+    for (const rec of undoRecs.values()) {
+      if (rec.cargoMoved) continue;
+      if (rec.harvesterId === depotId || rec.depotRecordId === depotId) rec.cargoMoved = true;
+    }
+  };
+
+  /** Why this undo is refused right now, or null when it would go through. */
+  function undoBlockReason(rec: UndoRecord, now: number): string | null {
+    if (now - rec.at > UNDO_WINDOW_MS) return "the 8 seconds are over";
+    if (buildSeq !== rec.seqAt) return "something else was built or demolished since";
+    if (rec.cargoMoved) return "cargo already moved through it";
+    if (rec.kind === "harvester") {
+      const h = eco.harvesters.find((x) => x.id === rec.harvesterId);
+      if (!h) return "the depot is already gone";
+      if (h.closed) return "a battle closed this depot";
+      if (h.tuneTier !== undefined) return "its yield is already tuned";
+      if ((h.level ?? 1) > 1) return "it is already upgraded";
+      if (tuning && tuning.depotId === rec.harvesterId && tuning.used > 0) {
+        return "the tuning session already made moves";
+      }
+    } else if (rec.kind === "plant") {
+      const f = eco.factories.find((x) => x.id === rec.factoryId);
+      if (!f) return "the plant is already gone";
+      if (plantsOf(eco, rec.seatId).length <= 1) return "your last plant cannot be undone";
+      // A Depot already routed to this plant depends on it — the connection
+      // question is the same one the clock and the scoreboard ask.
+      const comp = buildAllComponents(eco.track, ownerIdOf(eco, rec.seatId));
+      for (const h of eco.harvesters) {
+        if (h.owner !== rec.seatId) continue;
+        const conn = resolveConnection(eco, comp, h);
+        if (conn.factory === f) return "your depots already feed this plant";
+      }
+    } else {
+      const s = rail.structures.find((x) => x.id === rec.structureId);
+      if (!s) return "it is already gone";
+      if (rail.lines.some((l) => l.source === s.id || l.dest === s.id)) {
+        return "a line already runs through it";
+      }
+      if (trainBasedAt(rail, s.id)) return "a train is based at it";
+      for (const [x, y] of footprintTiles(s)) {
+        if (trainOccupies(rail, x, y)) return "a train is standing on it";
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Apply one undo for seat `p`. Answers the refusal in words, or null when
+   * the build came back: the record removed, the rail bytes restored, the
+   * money refunded in full, the free allowance returned.
+   */
+  function applyUndo(p: PlayerState, rec: UndoRecord, now: number): string | null {
+    const blocked = undoBlockReason(rec, now);
+    if (blocked) return blocked;
+    if (rec.kind === "harvester") {
+      const i = eco.harvesters.findIndex((h) => h.id === rec.harvesterId);
+      if (i < 0) return "the depot is already gone";
+      // The build opened this session; the undo closes it — BEFORE the record
+      // dies, so the settle never writes a yield onto a ghost.
+      if (tuning && tuning.depotId === rec.harvesterId) {
+        closeTuningSession(true, "Build undone — the tuning session closed with it.");
+      }
+      const [gone] = eco.harvesters.splice(i, 1);
+      if (gone) loopCarry.delete(gone.id);
+    } else if (rec.kind === "plant") {
+      const i = eco.factories.findIndex((f) => f.id === rec.factoryId);
+      if (i < 0) return "the plant is already gone";
+      eco.factories.splice(i, 1);
+    } else {
+      const i = rail.structures.findIndex((s) => s.id === rec.structureId);
+      if (i < 0) return "it is already gone";
+      rail.structures.splice(i, 1);
+      if (rec.kind === "platform") dropPlatformDepot(rec.structureId!);
+      for (const b of rec.railBytes ?? []) {
+        rail.rail.tile[b.idx] = b.tile;
+        rail.rail.owner[b.idx] = b.owner;
+      }
+      rail.rail.revision++;
+    }
+    if (rec.freeDepotsSpent) p.freeDepots += 1;
+    if (rec.money > 0) p.money += rec.money;   // the 100% refund
+    undoRecs.delete(p.id);
+    syncWorld();
+    rescoreNow();
+    return null;
+  }
+
+  /**
+   * The undo the local seat asks for. Solo/host apply it on the spot; a
+   * guest sends the intent and the host answers (the delta lands the undone
+   * world, a refusal lands as a notice). Answers the refusal in words, null
+   * on success, "nothing" when there is simply nothing to undo.
+   */
+  function requestUndo(now = performance.now()): string | null {
+    if (isGuest()) {
+      // The HOST holds the record — the guest forwards the request and hears
+      // the verdict as the host's echo. Only an optimistic chip that is
+      // visibly EXPIRED short-circuits locally.
+      if (guestUndoChip && guestUndoChip.untilMs <= now) return "nothing to undo";
+      net?.sendIntent("build", { do: "undo" });
+      return null;
+    }
+    const rec = undoRecs.get(me.id);
+    if (!rec || now - rec.at > UNDO_WINDOW_MS) {
+      if (rec) undoRecs.delete(me.id);
+      return "nothing to undo";
+    }
+    const why = applyUndo(me, rec, now);
+    if (why) return why;
+    sfx.play("demolish");
+    paintOverlayNow();
+    return null;
+  }
+
+  /**
+   * The chip's state for the HUD paint: what it counts down to, and the
+   * reason it is grey when it is grey. A guest's chip is OPTIMISTIC — the
+   * host owns the record, so the guest shows the build it just asked for and
+   * lets the intent carry the validation.
+   */
+  interface UndoChipState { untilMs: number; blocked: string | null; kind: UndoKind }
+  let guestUndoChip: UndoChipState | null = null;
+  /**
+   * BUILD-1 (#460): a guest's chip is optimistic — the record lives on the
+   * host, so the guest shows the build it just ASKED for and lets the intent
+   * carry the validation. Called from the guest's click sites, right next to
+   * the `sendIntent` that asked for the build.
+   */
+  function noteGuestBuild(kind: UndoKind, now = performance.now()): void {
+    guestUndoChip = { untilMs: now + UNDO_WINDOW_MS, blocked: null, kind };
+  }
+  function undoChipState(now: number): UndoChipState | null {
+    if (isGuest()) {
+      if (guestUndoChip && guestUndoChip.untilMs <= now) guestUndoChip = null;
+      return guestUndoChip;
+    }
+    const rec = undoRecs.get(me.id);
+    if (!rec) return null;
+    if (now - rec.at > UNDO_WINDOW_MS) { undoRecs.delete(me.id); return null; }
+    return { untilMs: rec.at + UNDO_WINDOW_MS, blocked: undoBlockReason(rec, now), kind: rec.kind };
+  }
 
   /**
    * RAIL-04 (#178): buy a locomotive and one wagon and put them on a line —
@@ -5020,6 +5293,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           recordEvent(matchHistory, { kind: "town", seat: 0, townId: -1, level: lvl, t });
         } catch {}
       }
+      noteWorldBuild();      // BUILD-1 (#460): the upgrade lands — a build
       // L17 (#245): the town on the map takes the step with the seat — the
       // one the buyer's Factory touches — with the growth moment (art swap,
       // tile invalidation, float) on top. With no Factory standing there is
@@ -5238,7 +5512,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // 2026-09: a retune is open any time, and costs half a Depot.
     if (!spendBuild(me, DEPOT_RETUNE_COST)) {
-      toast(`A retune costs ${costLabel(DEPOT_RETUNE_COST)}.`, "bad");
+      // BUILD-1 (#460): the retune is charged in money like every build.
+      toast(`Not enough money — a retune costs $${moneyValueOf(DEPOT_RETUNE_COST)}.`, "bad");
       return false;
     }
     openTuningSession(head.depot, true);
@@ -5258,7 +5533,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const lvl = d.level ?? 1;
     if (lvl >= DEPOT_LEVELS.max) { toast("That Depot is already at the top level.", "info"); return false; }
     if (!spendBuild(me, DEPOT_UPGRADE_COST)) {
-      toast(`A Depot upgrade costs ${costLabel(DEPOT_UPGRADE_COST)}.`, "bad");
+      // BUILD-1 (#460): the upgrade is charged in money like every build.
+      toast(`Not enough money — a Depot upgrade costs $${moneyValueOf(DEPOT_UPGRADE_COST)}.`, "bad");
       return false;
     }
     d.level = lvl + 1;
@@ -5415,8 +5691,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       yieldNow: depotYield(d),
       cap: depotYieldCap(lvl),
       nextCap: lvl < DEPOT_LEVELS.max ? depotYieldCap(lvl + 1) : null,
-      upgradeCost: costLabel(DEPOT_UPGRADE_COST),
-      retuneCost: costLabel(DEPOT_RETUNE_COST),
+      // BUILD-1 (#460): one currency story — the card quotes the $ its
+      // clicks charge (`spendBuild`), never a resource mix.
+      upgradeCost: `$${moneyValueOf(DEPOT_UPGRADE_COST)}`,
+      retuneCost: `$${moneyValueOf(DEPOT_RETUNE_COST)}`,
       busy: !!tuning,
       statsLine: routeLedgerHtml(d, performance.now()),
       damLine: damC.dam > 0 ? `dam: ×${1 + damC.dam} — hydro dam nearby` : null,
@@ -5618,8 +5896,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!price.affordable) {
       const label = depotTypeLabel(price.type);
-      toast(`A ${label} costs ${costLabel(price.cost)} — you need ${shortfallLabel(price.missing, price.cost)}.`, "bad");
-      if (p.human) flashAt(tx, ty, `Needs ${costCompact(price.cost)}`);
+      // BUILD-1 (#460): one currency story — the refusal quotes the $ the
+      // build charges and how much is short, never a resource mix.
+      const priceUsd = moneyCostOf(price.cost);
+      toast(`Not enough money — a ${label} costs $${priceUsd}, ${moneyFix(priceUsd, p.money)}.`, "bad");
+      if (p.human) flashAt(tx, ty, `Not enough money — ${moneyFix(priceUsd, p.money)}`);
       return false;
     }
     if (!spendBuild(p, price.cost)) return false; // guard; `price.affordable` holds
@@ -5636,6 +5917,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (newLoop) h.yield = birthYieldFor(difficultyRules());
     // G5: harvesters seed the network; they no longer need existing track.
     eco.harvesters.push(h);
+    // BUILD-1 (#460): the misclick rescue — the record carries exactly what
+    // the build took ($ charged, free allowance spent) so the undo returns it.
+    recordUndo({
+      kind: "harvester", harvesterId: h.id,
+      money: moneyCostOf(price.cost), freeDepotsSpent: price.free,
+    }, p);
     if (p.human) sfx.play("build");      // SFX-01
     // VO-1: the opening depot is the player's line; a later claim is the rival's.
     if (firstDepot) voiceCue("player:first-depot");
@@ -5701,6 +5988,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       earn(p, PLANT_COST);
       return false;
     }
+    // BUILD-1 (#460): undoable like every other building — the record keeps
+    // the $ it cost; the tiles come back because the footprint is derived.
+    recordUndo({
+      kind: "plant", factoryId: plant.id,
+      money: moneyCostOf(PLANT_COST), freeDepotsSpent: false,
+    }, p);
     // SFX-01: the crate, then — because a plant is a Victory Point — the
     // star bell from `rescoreNow` a few lines below. Thunk, then chime.
     if (p.human) sfx.play("build");
@@ -5857,6 +6150,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // W2: every tile the drag lays is stamped with the builder's owner id,
     // so the committed road is exactly the tiles that join `p`'s network.
     const res = commitDrag(track, kind, pv, p.i + 1, kind === "road" ? tier : "road");
+    // BUILD-1 (#460): road tiles are builds too — they can attach to a fresh
+    // Depot's entrance, so laying them closes the undo window.
+    if (res.built.length) noteWorldBuild();
     // The first human track on the map retires the "connect your depot to
     // your Factory" guidance banner — the guidance is done, and a banner
     // over the map after the first road reads as a popup blocking the game.
@@ -5960,9 +6256,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // demolishStructure has already dropped any line that lost a platform —
       // and a depot can no longer come down under its train (that refusal is
       // the `based` branch above), so no train is ever deleted by demolition.
+      noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld();
       rescoreNow();
       toast(`${railKindName(rs.kind)} removed${Object.keys(refund).length ? ` — ${railCostLabel(refund)} salvaged` : ""}.`, "info");
+
       return;
     }
     if (hasRail(rail.rail, tx, ty)) {
@@ -5980,6 +6278,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // A rail tile is 1 Stone, so floor(50%) is nothing — said out loud so
       // the refund line is never a mystery.
       if (p.human) sfx.play("demolish", { gain: 0.6 });
+      noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld();
       rescoreNow();
       toast("Rail lifted.", "info");
@@ -6002,6 +6301,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         closeTuningSession(false, "The tuned Depot was removed — tuning session closed.");
       }
       if (p.human) sfx.play("demolish");   // SFX-01
+      noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld(); rescoreNow();
       toast("Depot removed.", "info");
       return;
@@ -6018,6 +6318,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       eco.factories.splice(pi, 1);
       if (p.human) sfx.play("demolish");   // SFX-01
+      noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld(); rescoreNow();
       toast("Processing plant demolished.", "info");
       return;
@@ -6029,6 +6330,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       clearedFields.add(field.id);
       stampFields();
       if (p.human) sfx.play("demolish");
+      noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld(); rescoreNow();
       toast(field.sprite === "trees" ? "Trees felled — the ground is clear." : "Wheat field cleared.", "info");
       return;
@@ -6071,6 +6373,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const x = tx + dx, y = ty + dy;
       if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
     }
+    noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
     syncWorld();
     rescoreNow();
   }
@@ -7959,6 +8262,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const whole = Math.floor(total);
           loopCarry.set(depot.id, total - whole);
           if (whole > 0) {
+            // BUILD-1 (#460): cargo just moved through this depot — the undo
+            // on its build (if one is still open) dies now.
+            flagUndoCargoMoved(depot.id);
             // A depot normally holds one industry/cargo; use the first cargo
             // for the integer credit and retain any sub-unit remainder per
             // depot (one map serves both seats: depot ids are unique).
@@ -8362,6 +8668,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       });
       syncSeatCities(rival);
     }
+    noteWorldBuild();        // BUILD-1 (#460): the rival's upgrade is a build
     // L17 (#245): the rival's investment shows on the map too — its town
     // takes the same growth step, with the same moment, as the player's.
     const grownRival = rivalCity ? growCity(rivalCity, rival) : growTownForSeat(rival);
@@ -8907,6 +9214,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rivalDamStep()) acted = true;
 
     if (acted) {
+      noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
       syncWorld();
       invalidateRailLaid(rail.laid);
       rescoreNow();
@@ -9096,6 +9404,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rail.acted) acted = true;
 
     if (acted) {
+      noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
       syncWorld();
       invalidateRailLaid(rail.laid);
       rescoreNow();
@@ -9113,6 +9422,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
       // L4 (#218): the retry path raises a Depot too — tune it like any other.
       applyRivalTuning();
+      noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
       syncWorld();
       rescoreNow();
       return;
@@ -9933,6 +10243,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // `repair` is answered rather than obeyed — and charged nothing.
           buyBlackFor(p, key);
         }
+      } else if (what === "undo") {
+        // BUILD-1 (#460): a guest's undo rides through the host — the host
+        // owns the record, runs the SAME window + dependency checks, and the
+        // echo tells the guest the outcome (its chip is optimistic).
+        const rec = undoRecs.get(p.id);
+        if (!rec) echoed.push("nothing to undo");
+        else {
+          const why = applyUndo(p, rec, performance.now());
+          if (why) echoed.push(why);
+          else echoed.push("Undo — the build was refunded.");
+        }
       } else {
         const tx = int(payload.tx), ty = int(payload.ty);
         const rot = int((payload as any).rot ?? (payload as any).view ?? 0) ?? 0;
@@ -10158,6 +10479,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     facing: depotView,
   });
   const depotLocks = () => depotLocksFor(me.id);
+
+  // ── BUILD-1 (#460): the legal-spot highlight ─────────────────────────────
+  // Arming Depot, Factory/Processing Plant or Platform washes every LEGAL
+  // anchor in the tool's own rule with a soft aqua tint. The set is computed
+  // ONCE per tool arm and per network change (never per frame) and reused by
+  // every paint until something the rules read has moved — `netVersion`
+  // bumps on every build/demolish, `rail.rail.revision` on every rail edit,
+  // and the rotations change the shape a site is judged in.
+  let legalSpotCache: { key: string; items: OverlayItem[] } | null = null;
+  /** The legal anchors the armed placement tool paints, cached per arm/network. */
+  const legalSpotItems = (): OverlayItem[] => {
+    const assistTool = phase === "setup-factory" ? "plant" : tool;
+    if (assistTool !== "harvester" && assistTool !== "plant" && assistTool !== "platform") {
+      legalSpotCache = null;
+      return [];
+    }
+    const rotKey = assistTool === "harvester" ? depotView ?? ""
+      : assistTool === "plant" ? factoryView : railView;
+    const key = `${assistTool}:${rotKey}:${netVersion}:${rail.rail.revision}:${phase}`;
+    if (!legalSpotCache || legalSpotCache.key !== key) {
+      let spots: [number, number][] = [];
+      if (assistTool === "harvester") {
+        spots = legalDepotSpots(grid, eco.harvesters, depotLocks());
+      } else if (assistTool === "plant") {
+        spots = legalPlantSpots(grid, track, eco, factoryView);
+      } else {
+        spots = legalPlatformSpots(grid, rail, railPlants(), me.i + 1, railView,
+          lockedIndustryIdsFor(eco, me.id));
+      }
+      legalSpotCache = {
+        key,
+        items: spots.map(([tx, ty]) => ({ sprite: "highlight_legal", tx, ty })),
+      };
+    }
+    // "Every legal anchor IN VIEW": the set is whole-map (one compute per arm
+    // and per network change), the paint is culled to the camera each frame.
+    const view = visibleTileRange(cam, 4);
+    return legalSpotCache.items.filter((i) =>
+      i.tx >= view.x0 && i.tx <= view.x1 && i.ty >= view.y0 && i.ty <= view.y1);
+  };
 
   /** The lot a wire lorry belongs to — the wire carries only its depot id. */
   const truckLot = (depotId: number): [number, number] | undefined => {
@@ -10408,7 +10769,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (ok) items.push({ sprite: "node_mark", tx: hover.tx, ty: hover.ty });
       return { items, ghost: null };
     }
-    if (!hover) return { items: [], ghost: null };
+    if (!hover) return { items: legalSpotItems(), ghost: null };
     // Every placement tool — the opening Factory, a Depot, and (since the
     // overlay was unified) the mid-game plant — paints from its placement
     // plan, so all three get the same footprint/reach/node read AND the same
@@ -10416,7 +10777,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // (PP-06) which tinted a refused footprint faintly instead of red; the
     // plan it now shares marks each blocking tile individually, matching both
     // the click and the test twin.
-    return overlayPlanAt(hover.tx, hover.ty);
+    const frame = overlayPlanAt(hover.tx, hover.ty);
+    // BUILD-1 (#460): the legal-spot wash rides under the hover's own verdict
+    // — the painter keeps the hovered tile green/red, never washed.
+    const legal = legalSpotItems();
+    return legal.length
+      ? { items: [...legal, ...frame.items], ghost: frame.ghost }
+      : frame;
   };
 
   /**
@@ -10431,6 +10798,86 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let objectiveTarget: NextStep["target"] = null;
   let objectiveTool: AdvisorTool | null = null;
   let incomeRates: Partial<Record<Cargo, number>> | undefined;
+
+  /**
+   * BUILD-1 (#460): the cursor card's refusal — a short REASON plus the FIX
+   * for the tile under the pointer, from the SAME rule the click enforces.
+   * Money refusals are included: a site the rules accept but the purse cannot
+   * pay answers "Not enough money — $N more", because that IS the refusal
+   * the click would voice. Null when the hover is buildable and payable.
+   */
+  function hoverAssist(atTile?: { tx: number; ty: number } | null): AssistCopy | null {
+    const tile = atTile ?? hover;
+    if (!tile) return null;
+    const { tx, ty } = tile;
+    if (phase === "setup-factory") {
+      // BUILD-1 (#460): the opening Factory gets the same reason+fix voice as
+      // every later build — its own rule, same cursor card.
+      const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track, rot: factoryView });
+      if (plan.valid) return null;
+      if (plan.code === "not-near-town")
+        return { reason: "Must touch a town", fix: "pick a lot whose edge meets a town tile" };
+      return { reason: "Can't build here", fix: placementReasonText(plan.code) ?? "pick open flat ground" };
+    }
+    if (tool === "harvester" || phase === "setup-harvester") {
+      // BUILD-1 (#460): the new loop tunes one Depot at a time — while a
+      // session is open, every lot is refused for THAT reason, so say it.
+      if (newLoop && tuning) {
+        return { reason: "Tuning in progress", fix: "finish or abandon the open session first" };
+      }
+      const plan = planDepotPlacement(grid, eco.harvesters, tx, ty, depotLocks());
+      if (!plan.valid) {
+        // "Taken by the rival" only when it IS the rival's network holding
+        // every industry beside the lot — the seat's own hold gets the
+        // neutral voice.
+        let rivalHolds = false;
+        if (plan.code === "industry-taken" && plan.served.length) {
+          const locks = industryLocks(eco);
+          rivalHolds = plan.served.every((ind) => {
+            const holder = locks.get(ind.id);
+            return holder !== undefined && holder.owner !== me.id;
+          });
+        }
+        return depotAssistFor(plan.code ?? "", rivalHolds);
+      }
+      const cargo = newLoop
+        ? depotCargo(eco, { id: -1, owner: me.id, ownerId: me.i + 1, tx, ty })
+        : null;
+      const price = priceDepot(buildPurse(me), me.freeDepots, { cargo, tier: me.depotTier, newLoop });
+      if (price.locked && price.type) {
+        return { reason: "Rung locked", fix: `tune a Depot to open rung ${price.tier + 1}` };
+      }
+      if (!price.affordable) return MONEY_ASSIST(moneyCostOf(price.cost), me.money);
+      return null;
+    }
+    if (tool === "plant") {
+      const why = plantRefusal(grid, track, eco, tx, ty, factoryView);
+      if (why !== null) return PLANT_ASSIST[why];
+      if (!canPayBuild(me, PLANT_COST)) return MONEY_ASSIST(moneyCostOf(PLANT_COST), me.money);
+      return null;
+    }
+    if (tool === "platform" || tool === "raildepot") {
+      const why = tool === "platform"
+        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id), rail.rail)
+        : depotRefusal(grid, rail, me.i + 1, tx, ty, railView);
+      if (why !== "ok") {
+        if (why === "industry-taken" && tool === "platform") {
+          // The voice follows the holder, like the Depot's: the seat's own
+          // network holding the anchor is "already claimed", not the rival's.
+          const anchor = resolveAnchor(grid, railPlants(), me.i + 1, tx, ty, railView);
+          if (anchor?.kind === "industry") {
+            const holder = industryLocks(eco).get(anchor.id);
+            if (holder && holder.owner === me.id) return DEPOT_ASSIST["industry-taken"];
+          }
+        }
+        return RAIL_ASSIST[why];
+      }
+      const cost = tool === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot;
+      if (!canPayBuild(me, cost)) return MONEY_ASSIST(moneyCostOf(cost), me.money);
+      return null;
+    }
+    return null;
+  }
 
   function paintUi(now: number) {
     // AI-03: what your ★ total is MADE OF, surfaced as the native hover
@@ -10519,12 +10966,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const hintLine = (verdict: string, buys = ""): string =>
       `<span class="mb-txt">${verdict}</span>` +
       (buys ? `<span class="mb-cost">${buys}</span>` : "");
-    /** What THIS purse is short of, as a price of its own (empty = it isn't). */
-    const shortfallOf = (cost: Purse): Purse => {
-      const out: Purse = {};
-      for (const c of CARGOES) if ((cost[c] ?? 0) > (me.purse[c] ?? 0)) out[c] = cost[c];
-      return out;
-    };
+    // BUILD-1 (#460): one currency story — every build the cursor prices is
+    // quoted in $ (`moneyMarkup`); cargo icons belong to the city upgrade.
     if (preview) {
       // W1: the drag's OWN numbers — `preview.cost` is exactly what the commit
       // charges, and a per-tile price on a button cannot say what a nine-tile
@@ -10537,7 +10980,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ? (paved > 0 ? `+${fmtVp(paveVp(paved))}★ · paves ${paved}` : "+0★ · pave your dirt for points")
         : "+0★ · dirt scores nothing";
       const owed = Object.keys(preview.cost).length
-        ? costMarkup(preview.cost)
+        ? moneyMarkup(preview.cost)
         : (preview.free > 0 ? `${preview.free} free` : "free");
       costInfo = hintLine(
         `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated
@@ -10570,20 +11013,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     } else if (tool === "interchange" && hover) {
       const plan = planInterchange(grid, track, me.i + 1, hover.tx, hover.ty, me.purse, me.money);
       costInfo = hintLine(plan.why ? `<i>${plan.why}</i>` : "Diamond interchange · ready",
-        `1 overpass + 4 ramps + new road · ${costMarkup(plan.cost)}`);
+        `1 overpass + 4 ramps + new road · ${moneyMarkup(plan.cost)}`);
     } else if (tool === "plant" && hover) {
       // PP-06: the refusal reason is PREVIEWED from the same rule the click
       // enforces, so a click is never a surprise — and this hint is the only
       // place it is spelled out before the click (the inspector's plan
       // verdicts cover the setup Factory and the Depot, not a mid-game plant).
       // VP-01: the ★ a plant is worth rides along, since no button states it.
-      const why = plantRefusal(grid, track, eco, hover.tx, hover.ty);
-      const short = shortfallOf(PLANT_COST);
-      costInfo = why !== null
-        ? hintLine(`<i>${PLANT_REFUSAL_TEXT[why]}</i>`)
-        : Object.keys(short).length
-          ? hintLine(`<i>needs ${costMarkup(short)}</i>`)
-          : hintLine("ready to raise", `+${fmtVp(VICTORY.plant)}★`);
+      // BUILD-1 (#460): a refused tile says the REASON and the FIX; a legal
+      // one the purse cannot pay says how much money is short.
+      const assist = hoverAssist();
+      if (assist) costInfo = hintLine(`<i>${assistText(assist)}</i>`);
+      else costInfo = hintLine("ready to raise", `+${fmtVp(VICTORY.plant)}★ · ${moneyMarkup(PLANT_COST)}`);
+    } else if (tool === "platform" || tool === "raildepot") {
+      // BUILD-1 (#460): the railway structures had no cursor verdict of their
+      // own — a refused tile was just red. The reason + fix come from the
+      // same refusal the click runs; a legal tile quotes its $ price.
+      const assist = hoverAssist();
+      if (assist) costInfo = hintLine(`<i>${assistText(assist)}</i>`);
+      else {
+        const name = tool === "platform" ? "Platform" : "Train depot";
+        const price = moneyValueOf(tool === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot);
+        costInfo = hintLine(`${name} · ready`, `$${price.toLocaleString("en-US")}`);
+      }
     } else if (tool === "harvester" || phase === "setup-harvester") {
       // PP-05: "show the complete cost before placement" — the Build button
       // states the complete price from the same `priceDepot` the click will
@@ -10595,21 +11047,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // is over — its cargo decides the mix and its rung decides whether the
       // seat may build it at all — so the hint quotes the tile, and names the
       // progression refusal in its own words when that is the blocker.
+      //
+      // BUILD-1 (#460): a refused tile leads with its reason + fix (the
+      // money refusal included — "$N more", never a resource list).
+      const assist = hoverAssist();
       const cargo = newLoop && hover
         ? depotCargo(eco, { id: -1, owner: me.id, ownerId: me.i + 1, tx: hover.tx, ty: hover.ty })
         : null;
       const price = priceDepot(buildPurse(me), me.freeDepots, { cargo, tier: me.depotTier, newLoop });
       const label = price.type ? price.type.name : "Depot";
-      if (price.locked && price.type) {
+      if (assist) {
+        costInfo = hintLine(`<i>${assistText(assist)}</i>`);
+      } else if (price.locked && price.type) {
         costInfo = hintLine(`<i>${label} — rung ${price.tier + 1} locked · ${rungLabel(price.unlocked)}</i>`);
       } else if (price.affordable) {
         costInfo = hintLine(
           newLoop && price.type
-            ? `place it inside an industry's catchment · ${label} ${costCompact(price.cost)}`
+            ? `place it inside an industry's catchment · ${label} ${moneyMarkup(price.cost)}`
             : "place it inside an industry's catchment",
         );
       } else {
-        costInfo = hintLine(`<i>needs ${costMarkup(shortfallOf(price.cost))}</i>`);
+        costInfo = hintLine(`<i>${assistText(MONEY_ASSIST(moneyCostOf(price.cost), me.money))}</i>`);
       }
     }
 
@@ -10781,7 +11239,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             (pavedHere && owner === me.i + 1
               ? `<b>+${fmtVp(VICTORY.upgrade)}★</b> — this tile was paved over your Dirt Road`
               : canPave
-                ? `pave it for <b>+${fmtVp(VICTORY.upgrade)}★</b> (${costCompact(UPGRADE_COST)})`
+                ? `pave it for <b>+${fmtVp(VICTORY.upgrade)}★</b> ($${moneyValueOf(UPGRADE_COST)})`
                 : hasDirt
                   ? `rough ground — a paved Road can't be laid here`
                   : `${who === "yours" ? `laid new — scores nothing; upgrade your gravel instead` : `not yours to score`}`);
@@ -10940,6 +11398,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // paint from the pure price model — no cached prices to go stale, and
       // the same numbers a sale is charged at.
       money: me.money,
+      // BUILD-1 (#460): the Undo chip's countdown. The record and its window
+      // live with the game; the chrome only counts it down and greys it when
+      // blocked. Null = no open build to undo.
+      undo: (() => {
+        const now = performance.now();
+        const u = undoChipState(now);
+        if (!u) return null;
+        return { leftMs: Math.max(0, u.untilMs - now), blocked: u.blocked, kind: u.kind };
+      })(),
       market: marketRows(),
       marketEvent: eventsAt(seed, marketMs).map((e) => e.label).join(" · ") || null,
       // L16 (#231): the storage cap the resource bar prints its "amount / cap"
@@ -11712,6 +12179,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // PP-05: the setup Depot is free because `me.freeDepots` is still 1 —
           // the allowance is data on the player record, not this phase.
           if (isGuest()) {
+            noteGuestBuild("harvester");   // BUILD-1 (#460): optimistic undo chip
             net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
           } else if (placeHarvester(p.tx, p.ty, me)) {
             phase = "play";
@@ -11730,17 +12198,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (pendingProtest) placeProtest(p.tx, p.ty);
           // PP-05: every Depot after the setup allowance pays DEPOT_COST.
           else if (tool === "harvester") {
-            if (isGuest()) net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
-            else placeHarvester(p.tx, p.ty, me);
+            if (isGuest()) {
+              noteGuestBuild("harvester");   // BUILD-1 (#460): optimistic undo chip
+              net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
+            } else placeHarvester(p.tx, p.ty, me);
           } else if (tool === "plant") {
-            if (isGuest()) net?.sendIntent("build", { do: "plant", tx: p.tx, ty: p.ty });
-            else placePlant(p.tx, p.ty, me);
+            if (isGuest()) {
+              noteGuestBuild("plant");       // BUILD-1 (#460): optimistic undo chip
+              net?.sendIntent("build", { do: "plant", tx: p.tx, ty: p.ty });
+            } else placePlant(p.tx, p.ty, me);
           } else if (tool === "platform" || tool === "raildepot") {
             // RAIL-02 (#176): the two railway structures. On a guest the click
             // is an intent like every other build; the host runs the same rule
             // function against the guest's seat (and the same heading, which
             // the guest sends with it).
             if (isGuest()) {
+              noteGuestBuild(tool);          // BUILD-1 (#460): optimistic undo chip
               net?.sendIntent("build", { do: tool === "platform" ? "platform" : "raildepot", tx: p.tx, ty: p.ty, view: railView });
             } else if (tool === "platform") placeRailPlatform(p.tx, p.ty, me);
             else placeRailDepot(p.tx, p.ty, me);
@@ -11835,6 +12308,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       if (!e.repeat) toggleNetworkView();
+    }
+    // BUILD-1 (#460): Ctrl/Cmd+Z is the desktop twin of the Undo chip. It
+    // only fires when a build is actually inside its 8-second window; the
+    // browser's native undo is never ours, so we take the key.
+    if (!isTypingTarget(e) && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+        && e.key.toLowerCase() === "z" && phase === "play") {
+      e.preventDefault();
+      const why = requestUndo();
+      if (why) toast(`Can't undo — ${why}.`, "info");
+      return;
     }
     // RAIL-02: R turns the platform/depot heading a quarter turn — the same
     // four headings the art and the footprints are authored in, in the same
@@ -12069,6 +12552,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       seenDeliveries.set(truck.depotId, truck.deliveries);
       if (truck.deliveries <= seen) continue;
       const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
+      // BUILD-1 (#460): a lorry-load landed from this depot — cargo moved, so
+      // an open undo on its build dies (shipped loop; the new loop flags the
+      // same thing from its clock in `economyTick`).
+      flagUndoCargoMoved(truck.depotId);
       if (truck.ownerId === mine) {
         // L1c (#234): under the new loop your lorries are ANIMATION — the
         // frame keeps driving them (they leave, arrive and turn around exactly
@@ -13627,6 +14114,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** ECON-1 (#421): every seat's money, and a setter so a test can fund a seat. */
     get moneys() { return players.map((p) => p.money); },
     setSeatMoney: (i: number, v: number) => { const p = players[i]; if (p) p.money = Math.max(0, v); },
+    /**
+     * BUILD-1 (#460): the placement assist. `legalSpots` returns the WHOLE-MAP
+     * set the armed tool paints (before the per-frame camera cull), so a test
+     * can compare it field-for-field against the placement acceptance over a
+     * seed. `assistAt` runs the same cursor-card reason+fix logic for any
+     * tile. `undoInfo`/`undoBuild` drive the 8-second undo from a harness.
+     */
+    legalSpots: (kind: "harvester" | "plant" | "platform") => {
+      if (kind === "harvester") return legalDepotSpots(grid, eco.harvesters, depotLocks());
+      if (kind === "plant") return legalPlantSpots(grid, track, eco, factoryView);
+      return legalPlatformSpots(grid, rail, railPlants(), me.i + 1, railView,
+        lockedIndustryIdsFor(eco, me.id));
+    },
+    assistAt: (tx: number, ty: number) => hoverAssist({ tx, ty }),
+    undoInfo: (now = performance.now(), seat = 0) => {
+      const p = players[seat] ?? me;
+      const rec = undoRecs.get(p.id);
+      if (!rec) return null;
+      return {
+        kind: rec.kind, seat: p.i,
+        leftMs: Math.max(0, rec.at + UNDO_WINDOW_MS - now),
+        blocked: undoBlockReason(rec, now),
+      };
+    },
+    undoBuild: (now = performance.now()) => requestUndo(now),
     /**
      * #186: the seats, as the game holds them — id, name, whether a person is
      * on it, its purse and its ★. The two-seat purse check ("host and guest

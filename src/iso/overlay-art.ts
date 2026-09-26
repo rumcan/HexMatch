@@ -48,13 +48,16 @@ export type Tile = readonly [number, number];
  * multiplayer-free debug surface all speak them); this table is the one place
  * that translates a name into a role, so the art and the rules stay decoupled.
  */
-export type OverlayRole = "footprint" | "blocked" | "reach" | "node";
+export type OverlayRole = "footprint" | "blocked" | "reach" | "node" | "legal";
 
 export const OVERLAY_ROLE_BY_SPRITE: Readonly<Record<string, OverlayRole>> = {
   highlight: "footprint",
   highlight_bad: "blocked",
   highlight_soft: "reach",
   node_mark: "node",
+  // BUILD-1 (#460): the placement assist's legal-spot tint — a soft aqua wash
+  // on every anchor the armed tool's own rule accepts.
+  highlight_legal: "legal",
 };
 
 /** The role an overlay sprite name paints as, or null when it is not one. */
@@ -94,6 +97,8 @@ export interface OverlayStyle {
   /** Refusal hatch: line alpha and spacing in world pixels. */
   hatchAlpha: number;
   hatchGap: number;
+  /** BUILD-1 (#460): the legal-spot wash's fill alpha (soft, never an edge). */
+  legalFill: number;
   /** Ghost: body alpha, the bob amplitude in world pixels, and the pool's peak alpha. */
   ghostAlpha: number;
   ghostBob: number;
@@ -119,6 +124,7 @@ export const DEFAULT_OVERLAY_STYLE: OverlayStyle = {
   nodeInk: 0.78,
   hatchAlpha: 0.16,
   hatchGap: 7,
+  legalFill: 0.16,
   ghostAlpha: 0.52,
   ghostBob: 1.8,
   poolAlpha: 0.30,
@@ -281,6 +287,8 @@ export interface OverlayScene {
   blocked: Tile[];
   reach: Tile[];
   nodes: Tile[];
+  /** BUILD-1 (#460): the placement assist's legal anchors. */
+  legal: Tile[];
 }
 
 /**
@@ -297,10 +305,10 @@ export interface GhostSpec {
 }
 
 export const emptyScene = (): OverlayScene =>
-  ({ footprint: [], blocked: [], reach: [], nodes: [] });
+  ({ footprint: [], blocked: [], reach: [], nodes: [], legal: [] });
 
-const SCENE_KEY: Record<OverlayRole, "footprint" | "blocked" | "reach" | "nodes"> = {
-  footprint: "footprint", blocked: "blocked", reach: "reach", node: "nodes",
+const SCENE_KEY: Record<OverlayRole, "footprint" | "blocked" | "reach" | "nodes" | "legal"> = {
+  footprint: "footprint", blocked: "blocked", reach: "reach", node: "nodes", legal: "legal",
 };
 
 /**
@@ -316,7 +324,7 @@ export function sceneFromItems(items: readonly DrawItem[]): {
   const scene = emptyScene();
   const rest: DrawItem[] = [];
   const seen: Record<OverlayRole, Set<string>> = {
-    footprint: new Set(), blocked: new Set(), reach: new Set(), node: new Set(),
+    footprint: new Set(), blocked: new Set(), reach: new Set(), node: new Set(), legal: new Set(),
   };
   for (const item of items) {
     const role = overlayRoleOf(item.sprite);
@@ -344,6 +352,8 @@ export interface OverlayStats {
   blocked: number;
   reach: number;
   nodes: number;
+  /** BUILD-1 (#460): legal-anchor tiles washed this frame. */
+  legal: number;
   /** Boundary loops stroked (1 for a rectangular footprint, however many tiles). */
   loops: number;
   /** The ghost sprite name, or null when no building preview was armed. */
@@ -424,11 +434,27 @@ export class PlacementOverlay {
     const blocked = scene.blocked;
     const reach = subtract(scene.reach, [...solid, ...blocked]);
     const nodes = scene.nodes;
+    // BUILD-1 (#460): the assist's legal anchors stay UNDER the hover verdict
+    // — the tile the pointer is judging reads as its own green/red, never as
+    // a wash.
+    const legal = subtract(scene.legal, [...solid, ...blocked]);
 
     const solidLoops = boundaryLoops(solid);
     const blockedLoops = boundaryLoops(blocked);
     const reachLoops = boundaryLoops(reach);
+    const legalLoops = boundaryLoops(legal);
 
+    // 0. BUILD-1 (#460): the legal-spot wash — a soft aqua tint on every
+    //    anchor the armed tool accepts. Fainter than the reach band, no
+    //    outline: it is ground that says "here", not a site under judgment.
+    if (legalLoops.length) {
+      ctx.save();
+      ctx.beginPath();
+      this.trace(ctx, cam, legalLoops);
+      ctx.fillStyle = rgba(this.style.valid.fill, this.style.legalFill);
+      ctx.fill();
+      ctx.restore();
+    }
     // 1. The reach band: the informational area (a Depot's catchment, a
     //    Factory's town-adjacency ring). Faintest thing on the layer, and the
     //    only dashed one — dashes read as "extent", a solid line reads as "edge".
@@ -452,7 +478,8 @@ export class PlacementOverlay {
       mode: "vector",
       footprint: solid.length, blocked: blocked.length,
       reach: reach.length, nodes: nodes.length,
-      loops: solidLoops.length + blockedLoops.length + reachLoops.length,
+      legal: legal.length,
+      loops: solidLoops.length + blockedLoops.length + reachLoops.length + legalLoops.length,
       ghost: ghost?.sprite ?? null,
       ghostDrawn,
     };
