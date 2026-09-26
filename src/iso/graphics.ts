@@ -25,10 +25,13 @@
 // read, so a toggle moves terrain art, water animation, decals, the backing
 // DPR and the post pass together — and back, atomically.
 //
+// `clouds` (AMB-1 #390) is the drifting-clouds veil at the far zooms: a look,
+// like miniature, default ON, suppressed while performance mode stands.
+//
 // URL flags, same rules as `?sound=0`: `?quality=low|medium|high`,
-// `?miniature=1|0` and `?performance=1|0` override what is READ at boot
-// without writing to storage, so e2e runs and a bookmarked "always
-// miniature" link beat a stranger's saved preference predictably.
+// `?miniature=1|0`, `?performance=1|0` and `?clouds=1|0` override what is
+// READ at boot without writing to storage, so e2e runs and a bookmarked
+// "always miniature" link beat a stranger's saved preference predictably.
 // ══════════════════════════════════════════════════════════════════════════
 import { ZOOM_STEPS, type Zoom } from "../game/config";
 
@@ -58,6 +61,9 @@ export const QUALITY_NOTE: Record<Quality, string> = {
 /** One-line copy for the settings panel (PERF-01). */
 export const PERFORMANCE_NOTE = "Hides grass details and single trees for smoother play — ground textures and water stay.";
 
+/** One-line copy for the settings panel (AMB-1 #390). */
+export const CLOUDS_NOTE = "Soft clouds drift over the island at the far zooms, with faint shadows on the ground.";
+
 export interface GraphicsSettings {
   quality: Quality;
   /** Tilt-shift "miniature" post pass (src/iso/miniature.ts). */
@@ -70,10 +76,16 @@ export interface GraphicsSettings {
    * step).
    */
   performance: boolean;
+  /**
+   * AMB-1 (#390): the drifting clouds at the far zooms. Default ON (a stored
+   * blob without the key simply means ON, so old preferences migrate without
+   * a step). Suppressed while performance mode stands, like miniature.
+   */
+  clouds: boolean;
 }
 
 /** The shipped look: everything loaded, no post pass, full-detail terrain. */
-export const DEFAULT_SETTINGS: GraphicsSettings = { quality: "high", miniature: false, performance: false };
+export const DEFAULT_SETTINGS: GraphicsSettings = { quality: "high", miniature: false, performance: false, clouds: true };
 
 // ── PERF-01: the effective render policy ───────────────────────────────────
 /**
@@ -105,6 +117,11 @@ export interface RenderPolicy {
    * performance restores it).
    */
   readonly miniature: boolean;
+  /**
+   * AMB-1 (#390): the clouds as they EFFECTIVELY run — the stored choice,
+   * suppressed while performance mode stands, exactly like miniature.
+   */
+  readonly clouds: boolean;
   /** Backing canvas device-pixel-ratio cap (1 in performance mode). */
   readonly dprCap: number;
 }
@@ -120,6 +137,7 @@ export function renderPolicy(s: GraphicsSettings): RenderPolicy {
     decals: !s.performance,
     singleTrees: !s.performance,
     miniature: s.miniature && !s.performance,
+    clouds: s.clouds && !s.performance,
     dprCap: s.performance ? 1 : 2,
   };
 }
@@ -143,14 +161,15 @@ function parseFlag(v: string | null): boolean | null {
   return null;
 }
 
-/** `?quality=` / `?miniature=` / `?performance=` overrides; absent or garbage → null. */
+/** `?quality=` / `?miniature=` / `?performance=` / `?clouds=` overrides; absent or garbage → null. */
 export function urlOverrides(
   search: string | undefined,
-): { quality: Quality | null; miniature: boolean | null; performance: boolean | null } {
+): { quality: Quality | null; miniature: boolean | null; performance: boolean | null; clouds: boolean | null } {
   const out = {
     quality: null as Quality | null,
     miniature: null as boolean | null,
     performance: null as boolean | null,
+    clouds: null as boolean | null,
   };
   if (!search) return out;
   try {
@@ -158,6 +177,7 @@ export function urlOverrides(
     out.quality = parseQuality(q.get("quality"));
     out.miniature = parseFlag(q.get("miniature"));
     out.performance = parseFlag(q.get("performance"));
+    out.clouds = parseFlag(q.get("clouds"));
   } catch {
     /* a malformed query is simply no override */
   }
@@ -180,7 +200,7 @@ const locationSearch = (): string | undefined =>
  */
 export function parseSettings(
   raw: string | null,
-  overrides: { quality: Quality | null; miniature: boolean | null; performance: boolean | null },
+  overrides: { quality: Quality | null; miniature: boolean | null; performance: boolean | null; clouds: boolean | null },
 ): GraphicsSettings {
   const s: GraphicsSettings = { ...DEFAULT_SETTINGS };
   if (raw) {
@@ -192,6 +212,8 @@ export function parseSettings(
       // PERF-01 migration: a blob written before the key existed simply
       // keeps the default (OFF) — no rewrite of the stored choice needed.
       if (typeof parsed.performance === "boolean") s.performance = parsed.performance;
+      // AMB-1 (#390) migration: same idea, but the default is ON.
+      if (typeof parsed.clouds === "boolean") s.clouds = parsed.clouds;
     } catch {
       /* unreadable blob: the defaults stand */
     }
@@ -199,6 +221,7 @@ export function parseSettings(
   if (overrides.quality) s.quality = overrides.quality;
   if (overrides.miniature !== null) s.miniature = overrides.miniature;
   if (overrides.performance !== null) s.performance = overrides.performance;
+  if (overrides.clouds !== null) s.clouds = overrides.clouds;
   return s;
 }
 
@@ -239,8 +262,9 @@ export function setGraphics(patch: Partial<GraphicsSettings>): GraphicsSettings 
   const quality = patch.quality !== undefined ? (parseQuality(patch.quality) ?? s.quality) : s.quality;
   const miniature = patch.miniature !== undefined ? !!patch.miniature : s.miniature;
   const performance = patch.performance !== undefined ? !!patch.performance : s.performance;
-  const next = { quality, miniature, performance };
-  if (next.quality === s.quality && next.miniature === s.miniature && next.performance === s.performance) {
+  const clouds = patch.clouds !== undefined ? !!patch.clouds : s.clouds;
+  const next = { quality, miniature, performance, clouds };
+  if (next.quality === s.quality && next.miniature === s.miniature && next.performance === s.performance && next.clouds === s.clouds) {
     return { ...s };
   }
   settings = next;

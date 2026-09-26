@@ -18,6 +18,8 @@
 //   · Performance mode — PERF-01's cheaper rendering policy: hides grass
 //     decals and single trees, caps backing DPR, and suppresses the miniature
 //     pass for the duration (its own choice is preserved and restored);
+//   · Clouds — AMB-1's drifting veil at the far zooms (see clouds.ts),
+//     suppressed by performance mode exactly like miniature;
 //   · Sound — the SFX-01 mix, reachable here too because the main menu has
 //     no 🔊 plate of its own and a player muting from the door must be able
 //     to.
@@ -29,7 +31,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   currentGraphics, setGraphics, subscribeGraphics,
-  QUALITY_KEYS, QUALITY_LABEL, QUALITY_NOTE, PERFORMANCE_NOTE, type GraphicsSettings,
+  QUALITY_KEYS, QUALITY_LABEL, QUALITY_NOTE, PERFORMANCE_NOTE, CLOUDS_NOTE, type GraphicsSettings,
 } from "./graphics";
 import { registerSoundPainter, sfx } from "../audio/sfx";
 // VO-1: voice has its own mute and volume, and still bows to the Sound switch.
@@ -41,7 +43,8 @@ import { radio } from "../audio/radio";
 /** The miniature row's copy, live: the full description, or the reason it is
  *  unreachable while performance mode stands (PERF-01). */
 const MINIATURE_NOTE = "Tilt-shift — a sharp band across the middle, the rest softly blurred, colours popped. The island reads as a tiny model.";
-const MINIATURE_UNAVAILABLE = "Unavailable while Performance mode is on.";
+// Shared by every look the performance policy suppresses (miniature, clouds).
+const SUPPRESSED_BY_PERF = "Unavailable while Performance mode is on.";
 /** MUSIC-1 (#377): the Radio row's copy, live — what off actually does. */
 const RADIO_NOTE = "SomaFM Secret Agent, in the little player at the top right. Off stops the stream and releases the connection.";
 const RADIO_OFF_NOTE = "Off — the stream is stopped and the player is disconnected. Your volume is remembered.";
@@ -79,6 +82,10 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
         <button type="button" class="gfx-switch" role="switch" aria-label="Performance mode" data-gfx="performance" data-sfx="click">OFF</button>
       </div>
       <div class="gfx-row">
+        <div class="gfx-copy"><h3>Clouds</h3><p class="gfx-cloud-note">${CLOUDS_NOTE}</p></div>
+        <button type="button" class="gfx-switch" role="switch" aria-label="Clouds" data-gfx="clouds" data-sfx="click">ON</button>
+      </div>
+      <div class="gfx-row">
         <div class="gfx-copy"><h3>Sound</h3><p>Brass, felt and paper — every click, coin and cascade (the top bar&rsquo;s 🔊 keeps the same time).</p></div>
         <button type="button" class="gfx-switch" role="switch" data-gfx="sound" data-sfx="click">ON</button>
       </div>
@@ -112,6 +119,8 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const miniBtn = root.querySelector("[data-gfx=\"miniature\"]") as HTMLButtonElement;
   const miniNote = root.querySelector(".gfx-mini-note") as HTMLElement;
   const perfBtn = root.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
+  const cloudBtn = root.querySelector("[data-gfx=\"clouds\"]") as HTMLButtonElement;
+  const cloudNote = root.querySelector(".gfx-cloud-note") as HTMLElement;
   const soundBtn = root.querySelector("[data-gfx=\"sound\"]") as HTMLButtonElement;
   const voiceBtn = root.querySelector("[data-gfx=\"voice\"]") as HTMLButtonElement;
   const voiceVol = root.querySelector("[data-gfx=\"voice-volume\"]") as HTMLInputElement;
@@ -134,6 +143,7 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   }
   miniBtn.onclick = () => { setGraphics({ miniature: !currentGraphics().miniature }); };
   perfBtn.onclick = () => { setGraphics({ performance: !currentGraphics().performance }); };
+  cloudBtn.onclick = () => { setGraphics({ clouds: !currentGraphics().clouds }); };
   soundBtn.onclick = () => { sfx.setEnabled(!sfx.isEnabled()); };
   voiceBtn.onclick = () => { voice.setEnabled(!voice.enabled); };
   voiceVol.oninput = () => { voice.setVolume(Number(voiceVol.value)); };
@@ -153,16 +163,23 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     // PERF-01: performance mode SUPPRESSES the miniature pass without
     // touching the stored choice — the switch dims and its row says why,
     // and turning performance mode off restores the preference as it was.
+    // AMB-1 (#390): the Clouds switch is suppressed the same way.
     const miniSuppressed = g.performance;
     miniBtn.textContent = g.miniature ? "ON" : "OFF";
     miniBtn.classList.toggle("on", g.miniature && !miniSuppressed);
     miniBtn.setAttribute("aria-checked", String(g.miniature));
     miniBtn.disabled = miniSuppressed;
     miniBtn.setAttribute("aria-disabled", String(miniSuppressed));
-    miniNote.textContent = miniSuppressed ? MINIATURE_UNAVAILABLE : MINIATURE_NOTE;
+    miniNote.textContent = miniSuppressed ? SUPPRESSED_BY_PERF : MINIATURE_NOTE;
     perfBtn.textContent = g.performance ? "ON" : "OFF";
     perfBtn.classList.toggle("on", g.performance);
     perfBtn.setAttribute("aria-checked", String(g.performance));
+    cloudBtn.textContent = g.clouds ? "ON" : "OFF";
+    cloudBtn.classList.toggle("on", g.clouds && !miniSuppressed);
+    cloudBtn.setAttribute("aria-checked", String(g.clouds));
+    cloudBtn.disabled = miniSuppressed;
+    cloudBtn.setAttribute("aria-disabled", String(miniSuppressed));
+    cloudNote.textContent = miniSuppressed ? SUPPRESSED_BY_PERF : CLOUDS_NOTE;
   };
   const unsubGfx = subscribeGraphics(paint);
   const unsubSound = registerSoundPainter((enabled) => {
