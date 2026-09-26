@@ -260,7 +260,11 @@ void main() {
     // A ~2-tile break-up of the targets, so their edges follow the ground
     // noise instead of drawing clean contour lines around every slope.
     float nudge = (clump - 0.5) * 0.30;
-    float tDirt = clamp(steep * 0.85 + ridge * 0.60 + bare * 0.70
+    // Scuffed bare ground on gentle, well-drained ground — the crest of the
+    // very same non-blobby ridged mask the variants use, never a cloud field.
+    // It is what keeps a map with no elevation at all from reading flat.
+    float scuff = smoothstep(0.62, 0.95, ridged) * (1.0 - steep) * (1.0 - hollow);
+    float tDirt = clamp(steep * 0.85 + ridge * 0.60 + bare * 0.70 + scuff * 0.40
                         + drain * 0.35 * (1.0 - hollow) + nudge, 0.0, 1.0);
     float tRock = clamp(smoothstep(0.35, 0.78, steep * 0.75 + ridge * 0.30
                                    + drain * 0.25 + nudge * 0.6), 0.0, 1.0);
