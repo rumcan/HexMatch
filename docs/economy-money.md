@@ -148,7 +148,11 @@ player-to-player offers sit below it under their own heading. It costs nothing
 to keep, it is the only trade surface in multiplayer, and it is already tested
 (`tests/unit/iso-offers.test.ts`).
 
-## 7. Known gaps / follow-ups
+## 7. BAL-1 measurement note (2026-09-26)
+
+No economy prices or money knobs were changed for BAL-1. The new calibration harness currently values the simulated resource purse at `BASE_PRICE` as a stock-value proxy; it does not run the shipped market or money ledger. Do not interpret that proxy as money income or use it to tune build prices. See [BALANCE.md](BALANCE.md) for target status and limitations.
+
+## 8. Known gaps / follow-ups
 
 * **Buying is modelled but not wired.** `quoteBuy` / `buyPrice` exist and are
   tested; the Market tab shows no Buy button yet.
