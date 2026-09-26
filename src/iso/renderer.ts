@@ -38,6 +38,7 @@
 // inside drawImage — the atlases ship pre-rendered at 0.5×/1×/2×.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
+import { tileToScreenAt } from "./camera";
 import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
@@ -492,6 +493,9 @@ export class IsoRenderer {
    * production — nothing else ever writes to the overlay context.
    */
   debugPainter: ((ctx: CanvasRenderingContext2D, cam: Camera) => void) | null = null;
+
+  /** #462: precomputed routes only; no pathfinding in the draw pass. */
+  routeLines: { tiles: [number, number][]; colors?: string[]; label: string }[] = [];
 
   /**
    * Game-owned overlay pass, drawn LAST — above every preview glow and debug
@@ -1618,7 +1622,35 @@ export class IsoRenderer {
     for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
     // C5: the debug marks are drawn last so they sit above every preview glow.
     if (this.debugPainter) this.debugPainter(ctx, cam);
-    // Protests go above even those — the crowd is the thing on the road.
+    // Route geometry is supplied by the game cache, never searched here.
+    ctx.save();
+    ctx.lineWidth = 1.5;
+    ctx.font = "12px sans-serif";
+    for (const route of this.routeLines) {
+      const points = route.tiles.map(([x, y]) => {
+        const [sx, sy] = tileToScreenAt(cam, x, y);
+        return [sx, sy - surfaceHeight(this.world.grid, x, y) * LEVEL_PX * cam.zoom];
+      });
+      let color = "";
+      for (let i = 1; i < points.length; i++) {
+        const next = route.colors?.[i - 1] ?? "#4fb3bf";
+        if (color !== next) {
+          if (color) ctx.stroke();
+          color = next; ctx.strokeStyle = color; ctx.beginPath();
+          ctx.moveTo(points[i - 1][0], points[i - 1][1]);
+        }
+        ctx.lineTo(points[i][0], points[i][1]);
+      }
+      if (color) ctx.stroke();
+      if (points.length) {
+        const [x, y] = points[0];
+        ctx.fillStyle = "#1f2427";
+        ctx.fillRect(x, y - 19, ctx.measureText(route.label).width + 8, 18);
+        ctx.fillStyle = "#eee6d4"; ctx.fillText(route.label, x + 4, y - 5);
+      }
+    }
+    ctx.restore();
+    // Protests stay above routes and previews.
     if (this.overlayPainter) this.overlayPainter(ctx, cam, timeMs);
   }
 

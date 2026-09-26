@@ -532,6 +532,7 @@ export interface UiTuningResult {
 
 export interface UiHooks {
   onTool: (tool: UiTool) => void;
+  onNetworkView?: () => boolean;
   /**
    * RAIL-04: the Railway panel's buttons. `id` is the row's rail id (a
    * platform, a depot or a train — the action says which table), and `assign`
@@ -2288,6 +2289,15 @@ export function createOriginalUi(
       buildList.appendChild(cityBtn);
     }
   }
+  const networkButton = h("button", "build-btn") as HTMLButtonElement;
+  networkButton.textContent = "Network view (N)";
+  networkButton.dataset.act = "network-view";
+  networkButton.title = "Your routes: Dirt brown · Street bone · Road aqua · Highway lemon · Ramp/Overpass orange";
+  networkButton.setAttribute("aria-pressed", "false");
+  networkButton.onclick = () => {
+    networkButton.setAttribute("aria-pressed", String(hooks.onNetworkView?.() ?? false));
+  };
+  groupEls.get("roads")?.fly.appendChild(networkButton);
   // Rail Ways sits directly under Road Ways (owner, 2026-09-26).
   { const r = groupEls.get("roads"), l = groupEls.get("rails"); if (r && l) r.wrap.after(l.wrap); }
   // ── Black Market ──────────────────────────────────────────────────────────
