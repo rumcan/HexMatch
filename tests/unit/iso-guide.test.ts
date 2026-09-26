@@ -117,15 +117,17 @@ describe("TUT-03 the engine", () => {
     expect(g.run("dams" as never)).toBe(false);
   });
 
-  it("advances on Next where the step offers one — and refuses where it does not", () => {
+  it("advances on Next from ANY step — a gesture step can be read and left too", () => {
     const g = boot();
     g.run("factory");
-    g.next();                                   // the look step offers one
-    expect(g.view().step?.id).toBe("do");
-    g.next();                                   // the gesture step does not
+    g.next();                                   // the look step
     expect(g.view().step?.id).toBe("do");
     g.back();
     expect(g.view().step?.id).toBe("look");
+    g.next();
+    g.next();                                   // the gesture step: Next finishes it
+    expect(g.view().running).toBe(false);
+    g.run("factory");
     g.back();                                   // step one has nowhere to go
     expect(g.view().step?.id).toBe("look");
     expect(g.view().stepNumber).toBe(1);
@@ -223,7 +225,7 @@ describe("TUT-03 the engine", () => {
   it("answers the completion rule as one pure function", () => {
     const [look, doStep] = toy()![0].steps;
     expect(stepSatisfied(look, { kind: "next" })).toBe(true);
-    expect(stepSatisfied(doStep, { kind: "next" })).toBe(false);
+    expect(stepSatisfied(doStep, { kind: "next" })).toBe(true);    // Next always works
     expect(stepSatisfied(doStep, { kind: "build", what: "road" })).toBe(true);
     expect(stepSatisfied(doStep, { kind: "build", what: "rail" })).toBe(false);
     // selectors match on their own text, whitespace and all
@@ -446,7 +448,7 @@ describe("TUT-03 the spotlight", () => {
     expect(g.view().outcome).toBe("skipped");
   });
 
-  it("offers Next only where the step offers one, and Back only after step one", () => {
+  it("offers Next on every step, and Back only after step one", () => {
     const g = boot();
     g.run("factory");
     standing(g);
@@ -457,7 +459,7 @@ describe("TUT-03 the spotlight", () => {
     next().click();
     expect(g.view().step?.id).toBe("do");
     expect(back().classList.contains("hidden")).toBe(false);
-    expect(next().classList.contains("hidden")).toBe(true);      // gesture step
+    expect(next().classList.contains("hidden")).toBe(false);     // gesture step too
   });
 
   it("learns a click on the target without taking it", () => {

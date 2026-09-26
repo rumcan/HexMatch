@@ -242,8 +242,8 @@ export function createGuideRenderer(hooks: GuideRendererHooks): GuideRenderer {
           hint.classList.toggle("hidden", !step.hint);
         }
         if (nextBtn) {
-          const offered = step.complete.kind === "next" || step.next === true;
-          nextBtn.classList.toggle("hidden", !offered);
+          // Every step offers Next (the action still advances on its own).
+          nextBtn.classList.remove("hidden");
           nextBtn.textContent = next.stepNumber === next.stepCount ? "Done →" : "Next →";
         }
         if (backBtn) {
