@@ -115,7 +115,7 @@ import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
-  dirtyTiles, plantFootprintTiles,
+  dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -808,7 +808,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MAP-1 (#412): a URL that names a map feature asks for a FRESH map with it —
   // don't resume a save onto a different terrain (the save is still written).
   const searchNow = (() => { try { return location.search; } catch { return ""; } })();
-  const mapParamsInUrl = /[?&](rivers|elevation|shapes)=/.test(searchNow);
+  const mapParamsInUrl = /[?&](rivers|elevation|shapes|rings)=/.test(searchNow);
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
@@ -831,14 +831,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MAP-1 (#412): rivers + dams, elevation and shapes are ON for new games;
   // see map-options.ts for who decides (save, room, story, URL, default).
   const mapOptions: MapOptions = resolveMapOptions({
-    explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes },
+    explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes, rings: (opts as { rings?: boolean }).rings },
     search: searchNow,
     save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
     room: isMp() ? settings : null,
     story: storyOn ? (storyChapter ?? {}) : null,
   });
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
-  const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn });
+  const grid: Grid = generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings });
   // F4 (#275): the Factory this map plays with. Shapes maps carry the long
   // `factory_2x4` span on the grid; every legacy map falls back to the
   // constant. Drawn from the grid (not re-derived) so the boot, the rules and
@@ -4054,6 +4054,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const [hx, hy] of t.houses) note(hx, hy);
     for (const [rx, ry] of t.roads) note(rx, ry);
     const R = ext + townGrownRings(Math.max(townTier(t), 1)) * TOWN_BLOCK + 1;
+    // #296: the ring road grows with the town. A grown town (tier 2+) gets a
+    // public road loop just outside its grown districts, on FREE ground only:
+    // water, occupied tiles, anything already carrying track or rail and any
+    // player building are skipped (the loop simply has a gap there — nothing
+    // a player built is ever removed). Idempotent: a restored save re-runs
+    // this and finds the loop already paved.
+    let grewRing = false;
+    if (mapOptions.rings && townGrownRings(Math.max(townTier(t), 1)) > 0) {
+      for (let y = t.ty - R; y <= t.ty + R; y++) {
+        for (let x = t.tx - R; x <= t.tx + R; x++) {
+          if (Math.max(Math.abs(x - t.tx), Math.abs(y - t.ty)) !== R) continue;
+          if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+          const i = y * MAP_W + x;
+          if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) continue;
+          if (hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y) || hasRail(rail.rail, x, y)) continue;
+          if (grid.builtAt?.(x, y)) continue;
+          buildTile(track, "road", x, y, PUBLIC_OWNER);
+          grewRing = true;
+        }
+      }
+      if (grewRing) syncWorld();
+    }
     for (let y = t.ty - R; y <= t.ty + R; y++) {
       for (let x = t.tx - R; x <= t.tx + R; x++) {
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);

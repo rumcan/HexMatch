@@ -23,9 +23,9 @@ describe("MAP-1 resolveMapOptions", () => {
   it("URL params turn single features on or off for a new game", () => {
     vi.stubEnv("MODE", "production");
     try {
-      expect(resolveMapOptions({ search: "?rivers=0" })).toEqual({ rivers: false, elevation: true, shapes: true });
+      expect(resolveMapOptions({ search: "?rivers=0" })).toEqual({ rivers: false, elevation: true, shapes: true, rings: true });
     } finally { vi.unstubAllEnvs(); }
-    expect(resolveMapOptions({ search: "?elevation=1" })).toEqual({ rivers: false, elevation: true, shapes: false });
+    expect(resolveMapOptions({ search: "?elevation=1" })).toEqual({ rivers: false, elevation: true, shapes: false, rings: false });
   });
 
   it("explicit options beat everything", () => {
@@ -34,7 +34,7 @@ describe("MAP-1 resolveMapOptions", () => {
 
   it("a save resumes with its recorded options; a pre-MAP-1 save resumes all OFF", () => {
     expect(resolveMapOptions({ save: { map: { rivers: true, elevation: false, shapes: true } } }))
-      .toEqual({ rivers: true, elevation: false, shapes: true });
+      .toEqual({ rivers: true, elevation: false, shapes: true, rings: false });
     expect(resolveMapOptions({ save: {} })).toEqual(MAP_OPTIONS_OFF);
     // a URL param never re-terrains a resumed save
     expect(resolveMapOptions({ save: {}, search: "?rivers=1" })).toEqual(MAP_OPTIONS_OFF);
@@ -60,7 +60,7 @@ describe("MAP-1 resolveMapOptions", () => {
 describe("MAP-1 room settings carry the map", () => {
   it("normalize keeps a valid map and drops a malformed one", () => {
     const s = normalizeMatchSettings({ ...DEFAULT_MATCH_SETTINGS, map: { rivers: true, elevation: true, shapes: false } })!;
-    expect(s.map).toEqual({ rivers: true, elevation: true, shapes: false });
+    expect(s.map).toEqual({ rivers: true, elevation: true, shapes: false, rings: false });
     // malformed or absent → no field (the boot uses the defaults)
     expect(normalizeMatchSettings({ winTarget: 10, map: { rivers: 3 } })!.map).toBeUndefined();
     expect(normalizeMatchSettings({ winTarget: 10 })!.map).toBeUndefined();

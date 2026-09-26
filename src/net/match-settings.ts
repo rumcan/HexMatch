@@ -53,10 +53,12 @@ export interface MapOptions {
   rivers: boolean;
   elevation: boolean;
   shapes: boolean;
+  /** #296: ring roads around towns. */
+  rings: boolean;
 }
-export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false });
-export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true });
-const MAP_KEYS = ["rivers", "elevation", "shapes"] as const;
+export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false, rings: false });
+export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true, rings: true });
+export const MAP_KEYS = ["rivers", "elevation", "shapes", "rings"] as const;
 /** The default for a NEW game: all ON (all OFF under the unit-test runner,
  *  so the seed-pinned tests about other things keep their maps). */
 export function defaultMapOptions(): MapOptions {
