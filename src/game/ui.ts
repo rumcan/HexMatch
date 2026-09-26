@@ -142,6 +142,11 @@ export interface DepotCardInfo {
    * The card prints it on its own line, beside the yield the clock pays.
    */
   damLine?: string | null;
+  /**
+   * #462: cargo/min, $/min, the slowest segment and the lorry's trips/min —
+   * the same line the hover ledger prints, so select and hover cannot disagree.
+   */
+  statsLine?: string | null;
   onUpgrade: () => boolean;
   onRetune: () => boolean;
 }
@@ -350,6 +355,8 @@ export interface UiState {
    * top-bar Names button paints its pressed state from this.
    */
   showNames?: boolean;
+  /** #462: Road Ways "Network" — every route at once, coloured by speed. */
+  networkView?: boolean;
   /**
    * RAIL-04 (#178): the Railway panel — one row per platform, depot and train,
    * each carrying the actions a player may take on it. Optional: a state that
@@ -546,6 +553,8 @@ export interface UiHooks {
    * look from `UiState.showNames` on the next paint.
    */
   onNames?: () => void;
+  /** #462: the Road Ways Network button (and the N key, which the game owns). */
+  onNetworkView?: () => void;
   /** NAMES: the boot state, so the button opens in the right pressed look. */
   names?: boolean;
   onRecenter: () => void;
@@ -2206,6 +2215,8 @@ export function createOriginalUi(
   ];
   const groupOf = (key: string) => TOOL_GROUPS.find((g) => g.keys.includes(key)) ?? null;
   const groupEls = new Map<string, { wrap: HTMLElement; btn: HTMLButtonElement; fly: HTMLElement }>();
+  /** #462: the Network toggle lives in the Road Ways drawer, not in the tool list. */
+  let networkBtn: HTMLButtonElement | null = null;
   let openGroup: string | null = null;
   function setGroupOpen(id: string | null): void {
     openGroup = id;
@@ -2286,6 +2297,27 @@ export function createOriginalUi(
       wireToolCard(cityBtn);
       cityBtn.onclick = () => hooks.onTownUpgrade?.();
       buildList.appendChild(cityBtn);
+    }
+  }
+  // #462: Network view — every route at once, coloured by speed, with a cargo/min
+  // label per Depot. Not a build tool (no data-tool), so arming a road does
+  // not light it and a click does not put a tool in the hand. N is the key.
+  {
+    const roads = groupEls.get("roads");
+    if (roads && hooks.onNetworkView) {
+      const b = h("button", "build-btn bg-road") as HTMLButtonElement;
+      b.dataset.act = "network-view";
+      b.type = "button";
+      b.setAttribute("aria-pressed", "false");
+      b.title = "Show every route, coloured by speed (N)";
+      b.innerHTML = `<span class="bb-ico">${toolIconSvg("road")}</span><div class="bb-mid"><b>Network</b><small>N · every route, by speed</small></div>`;
+      wireToolCard(b);
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        hooks.onNetworkView?.();
+      };
+      roads.fly.appendChild(b);
+      networkBtn = b;
     }
   }
   // Rail Ways sits directly under Road Ways (owner, 2026-09-26).
@@ -4628,6 +4660,7 @@ export function createOriginalUi(
         `Yield <b>×${o.yieldNow}</b> of cap <b>×${o.cap}</b>${full ? " — full; score past it pays Gold" : ""}`,
         // R3 (#270): the dam's bonus, when it reaches this Depot — the same
         // gate the hover inspector's `damLine` prints, so the two cards agree.
+        ...(o.statsLine ? [o.statsLine] : []),
         ...(o.damLine ? [o.damLine] : []),
       ],
       actions: [
@@ -4789,6 +4822,11 @@ export function createOriginalUi(
       b.classList.toggle("active", b.dataset.tool === toolState);
       b.classList.toggle("locked", depotOwed && b.dataset.tool !== "harvester" && b.dataset.tool !== "select");
     });
+    if (networkBtn) {
+      const on = !!state.networkView;
+      networkBtn.classList.toggle("active", on);
+      networkBtn.setAttribute("aria-pressed", String(on));
+    }
     // #187: what a Build button's re-tap means this frame. The button is its
     // own toggle — re-tapping the armed tool puts it down, the same gesture as
     // the hint's ✕, Esc and the right button — except while the phase still
