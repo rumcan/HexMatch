@@ -50,7 +50,7 @@ import {
 } from "./ground";
 import { ShadowStamps, paintBuildingShadows } from "./building-shadow";
 import {
-  LEVEL_PX, elevationActive, elevationLiftPx, surfaceHeight, worldToGround, pickTile,
+  LEVEL_PX, elevationActive, elevationLiftPx, surfaceHeight, worldToGround, elevatedWorld, pickTile,
 } from "./elevation";
 import {
   FOREST_FOOTPRINT, TREE_SPRITES, paintDecals,
@@ -479,6 +479,129 @@ export type OverlayDiagnostics =
   | OverlayStats
   | { mode: "sprites"; painted: number };
 
+/**
+ * #462: one route the overlay pass strokes. Network view colours each segment
+ * by its speed tier; a hovered or selected Depot is a thin aqua line on top.
+ * Paths are tile lists the game cached — the painter only projects them, so
+ * turning the view on does not pathfind per frame.
+ */
+export interface RouteOverlayPath {
+  tiles: readonly (readonly [number, number])[];
+  /** Pace name per tile (Dirt, Street, Road, Highway, Ramp, Overpass). */
+  pace?: readonly string[];
+  label?: { tx: number; ty: number; text: string };
+  /** The Depot under the pointer or the selected Depot — aqua, above the network. */
+  focus?: boolean;
+}
+
+/** Space Age palette: dirt bone-grey, Street lemon, Road orange, Highway aqua. */
+export const TIER_LINE_COLOUR: Record<string, string> = {
+  Dirt: "#9a9284",
+  Street: "#f2d64b",
+  Road: "#f08a24",
+  Highway: "#4fb3bf",
+  Ramp: "#e0a45a",
+  Overpass: "#7ec8ce",
+};
+export const FOCUS_LINE_COLOUR = "#4fb3bf";
+
+export const paceLineColour = (name: string): string => TIER_LINE_COLOUR[name] ?? TIER_LINE_COLOUR.Road;
+
+/**
+ * Network view off draws nothing from `network`. A focus path (hover or
+ * select) is drawn either way. Pure, so the on/off rule is a unit test.
+ */
+export function composeRouteOverlay(
+  networkOn: boolean,
+  network: readonly RouteOverlayPath[],
+  focus: RouteOverlayPath | null,
+): RouteOverlayPath[] {
+  const out: RouteOverlayPath[] = [];
+  if (networkOn) for (const p of network) if (p.tiles.length >= 2) out.push(p);
+  if (focus && focus.tiles.length >= 2) out.push({ ...focus, focus: true });
+  return out;
+}
+
+function tileCentre(cam: Camera, grid: Grid | null, tx: number, ty: number): [number, number] {
+  const [wx, wy] = grid
+    ? elevatedWorld(grid, tx + 0.5, ty + 0.5)
+    : [(tx - ty) * HW, (tx + ty) * HH + HH];
+  return worldToScreen(cam, wx, wy);
+}
+
+function strokePolyline(
+  ctx: CanvasRenderingContext2D,
+  pts: readonly [number, number][],
+  colour: string,
+  width: number,
+): void {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.strokeStyle = "rgba(31,36,39,0.55)";
+  ctx.lineWidth = width + 1.25;
+  ctx.stroke();
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
+
+/**
+ * Overlay pass: thin route lines and the cargo/min label per Depot.
+ * Called from `drawOverlay` after the placement glow and before protests, so
+ * the line sits on the road and a crowd still stands on top of it.
+ */
+export function paintRouteOverlay(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  grid: Grid | null,
+  paths: readonly RouteOverlayPath[],
+): void {
+  if (!paths.length) return;
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  const ordered = paths.filter((p) => !p.focus).concat(paths.filter((p) => p.focus));
+  for (const path of ordered) {
+    if (path.tiles.length < 2) continue;
+    const pts = path.tiles.map(([tx, ty]) => tileCentre(cam, grid, tx, ty));
+    const width = path.focus
+      ? Math.max(1.5, 2.25 * cam.zoom)
+      : Math.max(1.25, 1.6 * cam.zoom);
+    if (path.focus || !path.pace) {
+      strokePolyline(ctx, pts, FOCUS_LINE_COLOUR, width);
+    } else {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = path.pace[i] ?? "Road";
+        const b = path.pace[i + 1] ?? a;
+        const slow = (TIER_RANK_OF[a] ?? 1) <= (TIER_RANK_OF[b] ?? 1) ? a : b;
+        strokePolyline(ctx, [pts[i], pts[i + 1]], paceLineColour(slow), width);
+      }
+    }
+    if (path.label && !path.focus) {
+      const [sx, sy] = tileCentre(cam, grid, path.label.tx, path.label.ty);
+      if (sx < -48 || sy < -24 || sx > cam.vw + 48 || sy > cam.vh + 24) continue;
+      const px = Math.max(10, Math.round(11 * cam.zoom));
+      ctx.font = `500 ${px}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#1f2427";
+      ctx.fillStyle = "#eee6d4";
+      const ly = sy - 10 * cam.zoom;
+      ctx.strokeText(path.label.text, sx, ly);
+      ctx.fillText(path.label.text, sx, ly);
+    }
+  }
+  ctx.restore();
+}
+
+/** Lower number = slower, so a mixed segment is painted in the bottleneck's colour. */
+const TIER_RANK_OF: Record<string, number> = {
+  Dirt: 0, Street: 1, Road: 2, Ramp: 2, Highway: 3, Overpass: 3,
+};
+
 export class IsoRenderer {
   readonly atlas: Atlas;
   cam: Camera;
@@ -500,6 +623,13 @@ export class IsoRenderer {
    * tests and the demo, which stage no protests.
    */
   overlayPainter: ((ctx: CanvasRenderingContext2D, cam: Camera, timeMs: number) => void) | null = null;
+
+  /**
+   * #462: route lines for the overlay pass. The game fills this each frame
+   * from a cache keyed by the network version — the painter does not search.
+   * Null (tests, the demo) draws nothing.
+   */
+  routeOverlay: readonly RouteOverlayPath[] | null = null;
 
   /**
    * AMB-1 (#390) / AMB-2 (#391) — the ONE shared "above the structures" pass
@@ -1616,6 +1746,11 @@ export class IsoRenderer {
     this.overlayBlits = rest.length;
     const placed = rest.map((i) => place(this.atlas, i, this.world.grid)).filter(Boolean) as Placed[];
     for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
+    // #462: route lines sit on the road, above the placement glow, under debug
+    // marks and the protest crowd.
+    if (this.routeOverlay && this.routeOverlay.length) {
+      paintRouteOverlay(ctx, cam, this.world.grid, this.routeOverlay);
+    }
     // C5: the debug marks are drawn last so they sit above every preview glow.
     if (this.debugPainter) this.debugPainter(ctx, cam);
     // Protests go above even those — the crowd is the thing on the road.
