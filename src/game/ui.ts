@@ -1383,7 +1383,7 @@ export function createOriginalUi(
     el.setAttribute("aria-label", `${count} ${label}`);
   }
   function tabVisible(t: TabName): boolean {
-    return currentTab === t && (isPhoneViewport()
+    return !rightAside.inert && currentTab === t && (isPhoneViewport()
       ? root.dataset.view === "trade" : !railRightCollapsed);
   }
   function acknowledgeTab(): void {
@@ -4517,7 +4517,9 @@ export function createOriginalUi(
   /** Paint the exchange from the game's own numbers. */
   function paintExchange(rows: UiState["market"], event: string | null | undefined, money: number | undefined): void {
     const on = !!rows && !!hooks.onSell;
-    marketAlert = on ? event ?? null : null;
+    const nextAlert = on ? event ?? null : null;
+    if (nextAlert !== marketAlert) marketSeen = null;
+    marketAlert = nextAlert;
     acknowledgeTab();
     exHead.classList.toggle("hidden", !on);
     exEvent.classList.toggle("hidden", !on || !event);
