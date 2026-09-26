@@ -11963,16 +11963,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // is installed — a half-textured road network would look like a bug — but
     // nothing waits on them, and a failure keeps the flat palette, which is a
     // complete look rather than an error state.
-    void loading.track("roads", Promise.all([load(asphaltTex), load(dirtTex)]).then(([asphalt, dirt]) => {
+    // #437: the town blocks take the GROUND's grass texture, not the roads'
+    // earth — a town lot is a lawn, so it has to grain like the meadow it is
+    // cut out of. It loads on this promise because it belongs to the road
+    // style; a failure keeps the flat green fallback, which is still grass.
+    void loading.track("roads", Promise.all([
+      load(asphaltTex), load(dirtTex), load(groundTextureUrls(cap0).grass),
+    ]).then(([asphalt, dirt, grass]) => {
       if (disposed) return;
       renderer?.setRoadStyle({
         ...DEFAULT_ROAD_STYLE,
         paved: { ...DEFAULT_ROAD_STYLE.paved, image: asphalt },
         dirt: { ...DEFAULT_ROAD_STYLE.dirt, image: dirt },
-        // #159: a town's blocks borrow the earth texture and are washed to the
-        // town's own grey-brown by the painter, so the yards grain like made
-        // ground beside the asphalt instead of looking like a second road.
-        town: { ...DEFAULT_ROAD_STYLE.town, image: dirt },
+        // #159/#437: a town's blocks borrow the GRASS texture and are glazed
+        // to a mown green by the painter, so an empty lot reads as a kept
+        // lawn instead of the bare brown yard #437 reported.
+        town: { ...DEFAULT_ROAD_STYLE.town, image: grass },
       });
     }).catch((err) => {
       console.warn("[roads] material textures failed to load:", err);

@@ -22,12 +22,26 @@ export const LEVEL_PX = 8;
 /** Distance fields are clamped to ±FIELD_RANGE tiles and packed into 8 bits. */
 export const FIELD_RANGE = 8;
 
+/**
+ * #437 — how many tiles the tended-ground mask fades out over, beyond the
+ * settled tiles themselves. This falloff IS the apron: the worked ground that
+ * rings a town block or an industry, which used to render as a flat brown
+ * stain and now stays grass.
+ */
+export const LAWN_FEATHER = 3;
+
 export interface TerrainMapInput {
   w: number;
   h: number;
   terrain: Uint8Array;
   rivers?: Uint8Array;
   heights?: Uint8Array;
+  /**
+   * #437 — per tile, 1 where the ground is SETTLED: town blocks and industry
+   * footprints (`settledGroundBytes` in `grid.ts`). Optional: a map without it
+   * is all wild ground and renders exactly as it did before the flag existed.
+   */
+  settled?: Uint8Array;
   seed: number;
 }
 
@@ -285,6 +299,12 @@ export interface TerrainFields {
   rgba: Uint8Array;
   /** R8, w*h: bits 0-1 terrain code, bit 7 river flag. */
   codes: Uint8Array;
+  /**
+   * #437 — R8, w*h: the TENDED GROUND mask. 255 on a settled tile, falling to
+   * 0 over `LAWN_FEATHER` tiles outside it. Sampled LINEAR, so the apron is a
+   * smooth band rather than a staircase of tiles.
+   */
+  lawn: Uint8Array;
   shore: Float32Array;
   rough: Float32Array;
   river: Float32Array;
@@ -294,6 +314,17 @@ export interface TerrainFields {
 export function encodeField(d: number): number {
   const c = d < -FIELD_RANGE ? -FIELD_RANGE : d > FIELD_RANGE ? FIELD_RANGE : d;
   return Math.round((c / (2 * FIELD_RANGE) + 0.5) * 255);
+}
+
+/**
+ * #437 — signed distance (tiles, negative inside the settled set) → the 0..255
+ * tended-ground weight. 255 everywhere inside, and everywhere within half a
+ * tile of the boundary, so a settled TILE is always fully tended; then a
+ * linear ramp to 0 at `LAWN_FEATHER` tiles out.
+ */
+export function encodeLawn(d: number): number {
+  const t = 1 - d / LAWN_FEATHER;
+  return Math.round((t < 0 ? 0 : t > 1 ? 1 : t) * 255);
 }
 
 export function isWaterTile(map: TerrainMapInput, idx: number): boolean {
@@ -312,6 +343,7 @@ export function buildFields(map: TerrainMapInput): TerrainFields {
   const rough = new Uint8Array(n);
   const sand = new Uint8Array(n);
   const codes = new Uint8Array(n);
+  const settled = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const isRiver = map.rivers !== undefined && map.rivers[i] !== 0;
     const isWater = isWaterTile(map, i);
@@ -320,6 +352,9 @@ export function buildFields(map: TerrainMapInput): TerrainFields {
     rough[i] = map.terrain[i] === TERRAIN_ROUGH ? 1 : 0;
     sand[i] = map.terrain[i] === TERRAIN_SAND ? 1 : 0;
     codes[i] = (map.terrain[i] & 3) | (isRiver ? 0x80 : 0);
+    // #437: water is never tended ground, so a settled tile that later sank
+    // (or a mask that overreaches) cannot paint lawn onto the sea.
+    settled[i] = map.settled !== undefined && map.settled[i] !== 0 && !isWater ? 1 : 0;
   }
   const shoreF = signedDistance(w, h, water);
   const roughF = signedDistance(w, h, rough);
@@ -332,7 +367,14 @@ export function buildFields(map: TerrainMapInput): TerrainFields {
     rgba[i * 4 + 2] = encodeField(riverF[i]);
     rgba[i * 4 + 3] = encodeField(sandF[i]);
   }
-  return { rgba, codes, shore: shoreF, rough: roughF, river: riverF, sand: sandF };
+  // #437: the tended-ground mask. All-zero (one cheap pass, no EDT) when the
+  // map carries no settled tiles at all.
+  const lawn = new Uint8Array(n);
+  if (map.settled !== undefined) {
+    const lawnF = signedDistance(w, h, settled);
+    for (let i = 0; i < n; i++) lawn[i] = encodeLawn(lawnF[i]);
+  }
+  return { rgba, codes, lawn, shore: shoreF, rough: roughF, river: riverF, sand: sandF };
 }
 
 /**
@@ -369,6 +411,11 @@ export function updateFieldsRegion(
   const roughF = signedDistance(sw, sh, roughM);
   const riverF = signedDistance(sw, sh, riverM);
   const sandF = signedDistance(sw, sh, sandM);
+  // #437: the tended-ground mask rides the same window. LAWN_FEATHER is well
+  // inside `pad`, so the padded source window already holds everything a cell
+  // in the written window can depend on.
+  const lawnF = map.settled === undefined ? null : signedDistance(sw, sh,
+    sub((i) => map.settled![i] !== 0 && !isWaterTile(map, i)));
 
   for (let y = wy0; y <= wy1; y++) {
     for (let x = wx0; x <= wx1; x++) {
@@ -384,6 +431,7 @@ export function updateFieldsRegion(
       fields.rgba[gi * 4 + 3] = encodeField(sandF[li]);
       const isRiver = map.rivers !== undefined && map.rivers[gi] !== 0;
       fields.codes[gi] = (map.terrain[gi] & 3) | (isRiver ? 0x80 : 0);
+      if (lawnF) fields.lawn[gi] = encodeLawn(lawnF[li]);
     }
   }
   return { x0: wx0, y0: wy0, x1: wx1, y1: wy1 };

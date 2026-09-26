@@ -105,11 +105,16 @@ export interface RoadStyle {
   paved: RoadMaterialStyle;
   dirt: RoadMaterialStyle;
   /**
-   * #159: the surface a town's BLOCKS are paved with — the yards the houses
-   * stand on, between the streets. Its own material rather than a reuse of
-   * `dirt`, because a settlement's ground is its own thing: compacted,
-   * trodden, greyer than a rural track's earth, and it has to read as made
-   * ground beside both the asphalt and the grass.
+   * #159 / #437: the surface a town's BLOCKS carry — the ground the houses
+   * stand on, between the streets.
+   *
+   * #437 changed what that surface IS. It used to be the dirt texture under a
+   * grey-brown wash, on the theory that a settlement's ground is compacted and
+   * trodden; on the map it read as mud, and every lot a house did not cover
+   * was a flat brown stain. It is now a TENDED LAWN: the grass/meadow ground
+   * art, mown — a shade darker and a shade greener than the wild meadow
+   * around it. Its own material rather than a reuse of `dirt` precisely so the
+   * two can never drift back together.
    */
   town: RoadMaterialStyle;
   /** Worn, low-saturation marking colour. */
@@ -126,10 +131,13 @@ export interface RoadStyle {
 export const DEFAULT_ROAD_STYLE: RoadStyle = {
   paved: { flat: "#3c3b38", shoulder: "#2a2926", image: null, repeat: 2.6 },
   dirt: { flat: "#7b6443", shoulder: "#574631", image: null, repeat: 2.6 },
-  // Dark grey-brown, and deliberately within a shade or two of the asphalt:
-  // a town's ground is the same made surface as its streets, one step softer
-  // and browner, which is what makes the two read as one streetscape.
-  town: { flat: "#4b463d", shoulder: "#4b463d", image: null, repeat: 2.6 },
+  // #437: a town block is GRASS — a mown lawn, not made ground. The fallback
+  // colour sits between the grass texture's own mean (#354312) and the
+  // meadow's (#4a5618): unmistakably green, and a touch darker than the wild
+  // meadow so the block still reads as kept rather than as a gap in the town.
+  // The repeat is longer than the roads' so the lawn's grain matches the
+  // ground textures it abuts instead of looking like a second, finer surface.
+  town: { flat: "#3e4a1a", shoulder: "#364116", image: null, repeat: 5 },
   // Road markings: near-white and only lightly worn. The first pass used a
   // dim parchment tone at half opacity, which at 1x simply did not read as a
   // painted line.
@@ -162,15 +170,20 @@ const EDGE_SHADE: [number, string, number][] = [
 ];
 
 /**
- * #159: the wash laid over a town block's paving.
+ * #159 / #437: the wash laid over a town block's ground.
  *
- * TRANSLUCENT INK OVER WHATEVER TEXTURE THE YARD HAS, rather than a tint baked
- * into an asset, so the yard can borrow the road materials' own grain and
- * still read as the town's own surface: dark, desaturated, grey-brown. The
- * wash is what makes the same texture read as a rural track outside the
- * limits and as a trodden town yard inside them.
+ * TRANSLUCENT INK OVER WHATEVER TEXTURE THE BLOCK HAS, rather than a tint
+ * baked into an asset, so the block borrows the ground art's own grain and
+ * still reads as the town's own surface. #437 turned that surface from made
+ * ground into a lawn, so the ink turned with it: a thin, dark GREEN glaze —
+ * enough that the same grass texture reads as mown inside the limits and wild
+ * outside them, nowhere near enough to flatten it into a colour.
+ *
+ * Over the grass texture (mean #354312) this lands at roughly #2f3d12: a
+ * shade darker and a shade cooler than the meadow, which is what a kept lawn
+ * looks like beside a field.
  */
-const TOWN_GROUND_WASH = "rgba(38,37,33,0.42)";
+export const TOWN_GROUND_WASH = "rgba(30,44,16,0.26)";
 
 /**
  * Opacity of the shoulder pass. The shoulder is a darkening of the ground
@@ -615,13 +628,18 @@ export function makeMatrix(): DOMMatrix {
 type RoadFills = Record<"paved" | "dirt", string | CanvasPattern>;
 
 /**
- * #159 — the paved yards of a town's blocks, under everything else.
+ * #159 / #437 — the LAWNS of a town's blocks, under everything else.
  *
- * One path, one fill, one wash: the whole town's ground costs two canvas
+ * One path, one fill, one glaze: the whole town's ground costs two canvas
  * operations per chunk however many blocks it has. It goes down FIRST, before
  * the shoulders, the sidewalks and the asphalt, because it is the ground the
  * other three sit on — and because the kerbs have to be painted over the band
- * the paving reaches under them, not beside it.
+ * it reaches under them, not beside it.
+ *
+ * #437: the fill is opaque on purpose. It is the one pass that owns a town
+ * block's ground, so whatever the terrain underneath happens to have blended
+ * there — including the bare-earth material — cannot show through an empty
+ * lot. The grass art plus the glaze IS the lot's surface.
  */
 function paintTownGround(
   ctx: Ctx2D, quads: GroundPoint[][], fill: string | CanvasPattern,
@@ -797,7 +815,7 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * Pass order is bottom-up and deliberate, and #159 slots the town-street work
  * into it rather than beside it:
  *
- *   0. town ground  — the paved blocks a town's houses stand on;
+ *   0. town ground  — the lawns a town's houses stand on (#437);
  *   1. shoulders    — ground disturbed at the road's edge, under the core;
  *   1b. sidewalks   — the walkways, over the shoulders and UNDER the asphalt,
  *                     which is what trims them at every junction for free;
@@ -813,8 +831,8 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * diagonal. The lamp is the one exception, drawn in projected pixels like the
  * sprite art it stands among.
  *
- * `townGround` is the block paving to lay down first, in the same ground
- * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
+ * `townGround` is the block ground to lay down first, in the same ground
+ * coordinates — one quad per town-block tile, from `townGroundQuadsIn`.
  */
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
@@ -851,9 +869,9 @@ export function paintRoadTiles(
   // 0. R2 (#266) Bridge decks, under everything: the water texture has to go.
   paintBridgeDecks(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
 
-  // 0b. #159 Town ground: the paved yards the houses stand on, under everything
+  // 0b. #159/#437 Town ground: the LAWNS the houses stand on, under everything
   //    a road paints. Absent a `town` material the passes below still draw the
-  //    streets; only the blocks between them stay grass.
+  //    streets; only the blocks between them fall back to the raw terrain.
   if (townFill) paintTownGround(ctx, townGround, townFill, elev);
 
   // D3: join homogeneous legs across shared ports and stroke each material /
