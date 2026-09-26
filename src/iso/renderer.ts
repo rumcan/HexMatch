@@ -65,6 +65,10 @@ import {
   PlacementOverlay, sceneFromItems,
   type GhostSpec, type OverlayStats,
 } from "./overlay-art";
+import {
+  CLOUD_COUNT, cloudAlphaForZoom, createCloudField, makeCloudSprites, paintCloudLayer,
+  type CloudField, type CloudSprites,
+} from "./clouds";
 
 /**
  * Which placement-overlay implementation is live. Same A/B seam the roads
@@ -456,6 +460,17 @@ export interface RenderDiagnostics {
     /** Full terrain redraws since boot. */
     redraws: number;
   };
+  /**
+   * AMB-1 (#390): the drifting clouds — the effective enable the game set,
+   * the zoom fade in force, and what the last frame painted.
+   */
+  clouds: {
+    enabled: boolean;
+    motion: boolean;
+    fade: number;
+    blits: number;
+    shadowBlits: number;
+  };
   warnings: string[];
 }
 
@@ -588,6 +603,28 @@ export class IsoRenderer {
    * `setWorld` is a few field copies).
    */
   private roadWorld: RoadWorld = {};
+  // ── AMB-1 (#390): the drifting clouds ────────────────────────────────────
+  /**
+   * The sky for the live map's seed — derived once per map, read every frame.
+   * The clouds are painted straight onto the terrain/overlay canvases and
+   * never join the draw list, so `pick` cannot see them by construction.
+   */
+  private cloudField: CloudField;
+  /** The positions scratch `paintCloudLayer` writes into — one, forever. */
+  private readonly cloudScratch = new Float32Array(CLOUD_COUNT * 2);
+  /** The effective enable from the game (the Clouds setting, perf-gated). */
+  private cloudsOn = true;
+  /** False while the OS asks to reduce motion: the sky freezes at t=0. */
+  private cloudMotion = true;
+  /**
+   * Baked placeholder sprites, or the override `setCloudSprites` installed
+   * (tests, and later the lead's rundot art). `undefined` means "not baked
+   * yet"; null means "no canvas API here — draw nothing".
+   */
+  private cloudAuto: CloudSprites | null | undefined = undefined;
+  private cloudOverride: CloudSprites | undefined = undefined;
+  private cloudBlits = 0;
+  private cloudShadowBlits = 0;
 
   /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
   get drawOrder(): Placed[] { return this.lastOrder; }
@@ -609,6 +646,7 @@ export class IsoRenderer {
     this.atlas = atlas;
     this.cam = cam;
     this.world = world;
+    this.cloudField = createCloudField(world.grid.seed ?? 0);
     this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits, roadTiers: world.roadTiers };
     this.pad = cullPad(atlas);
     const g = (el: HTMLCanvasElement, smooth: boolean) => {
@@ -702,6 +740,8 @@ export class IsoRenderer {
       this.roadShadow = null;
       this.railShadow = null;
       this.railRevision = -1;
+      // AMB-1 (#390): a new map is a new sky — same seed, same clouds.
+      this.cloudField = createCloudField(this.world.grid.seed ?? 0);
     }
     this.roadWorld = {
       grid: this.world.grid,
@@ -871,6 +911,80 @@ export class IsoRenderer {
   }
 
   get detailCap(): number { return this.atlas.detailCap; }
+
+  // ── AMB-1 (#390): the drifting clouds ────────────────────────────────────
+  /**
+   * The effective cloud enable — the game calls this with the render policy's
+   * `clouds` (the Clouds setting, suppressed in performance mode) at boot and
+   * on every settings change. Renderer state only, like the A/B switches:
+   * never persisted, never on the wire.
+   */
+  setCloudsEnabled(on: boolean): void {
+    this.cloudsOn = on;
+  }
+
+  /** The effective enable, for `__iso.rendering()` and the settings layer. */
+  get cloudsEnabled(): boolean { return this.cloudsOn; }
+
+  /**
+   * QoL: freeze the sky for players who ask the OS to reduce motion — the
+   * same freeze the placement overlay uses (time pinned to 0, positions and
+   * fade untouched).
+   */
+  setCloudMotion(on: boolean): void {
+    this.cloudMotion = on;
+  }
+
+  get cloudMotionOn(): boolean { return this.cloudMotion; }
+
+  /**
+   * Install real cloud art: `null` goes back to the baked procedural
+   * placeholders. The lead's rundot set (clouds + matching shadow masks)
+   * arrives through here; tests inject stub surfaces the same way.
+   */
+  setCloudSprites(sprites: CloudSprites | null): void {
+    this.cloudOverride = sprites ?? undefined;
+  }
+
+  /** The live sky (tests read the seed back through it). */
+  get cloudSky(): CloudField { return this.cloudField; }
+
+  /** What the cloud passes painted last frame, for `__iso.rendering()`. */
+  cloudDiagnostics(): RenderDiagnostics["clouds"] {
+    return {
+      enabled: this.cloudsOn,
+      motion: this.cloudMotion,
+      fade: this.cloudsOn ? cloudAlphaForZoom(this.cam.zoom) : 0,
+      blits: this.cloudBlits,
+      shadowBlits: this.cloudShadowBlits,
+    };
+  }
+
+  private paintClouds(timeMs: number): void {
+    if (!this.cloudsOn) { this.cloudBlits = 0; return; }
+    const fade = cloudAlphaForZoom(this.cam.zoom);
+    if (!(fade > 0)) { this.cloudBlits = 0; return; }
+    this.cloudBlits = paintCloudLayer(
+      this.ctxO, this.cam, this.cloudField, this.cloudSprites(),
+      fade, this.cloudMotion ? timeMs : 0, this.cloudScratch, false,
+    );
+  }
+
+  private paintCloudShadows(timeMs: number): void {
+    if (!this.cloudsOn) { this.cloudShadowBlits = 0; return; }
+    const fade = cloudAlphaForZoom(this.cam.zoom);
+    if (!(fade > 0)) { this.cloudShadowBlits = 0; return; }
+    this.cloudShadowBlits = paintCloudLayer(
+      this.ctxT, this.cam, this.cloudField, this.cloudSprites(),
+      fade, this.cloudMotion ? timeMs : 0, this.cloudScratch, true,
+    );
+  }
+
+  private cloudSprites(): CloudSprites | null {
+    if (this.cloudOverride) return this.cloudOverride;
+    if (this.cloudAuto === undefined) this.cloudAuto = makeCloudSprites();
+    return this.cloudAuto;
+  }
 
   /** Overlay mode + last frame's paint facts, for `__iso.rendering()`. */
   overlayDiagnostics(): OverlayDiagnostics {
@@ -1160,6 +1274,9 @@ export class IsoRenderer {
   drawTerrain(timeMs = 0, rebuildIsland = true) {
     if (this.externalGround) {
       this.ctxT.clearRect(0, 0, this.cam.vw, this.cam.vh);
+      // AMB-1 (#390): the WebGL2 ground owns the pixels underneath — the
+      // faint cloud shadows still ride this cleared canvas, over the GL.
+      this.paintCloudShadows(timeMs);
       return;
     }
     // PERF-01 new policy: performance mode keeps textured ground and animated
@@ -1246,6 +1363,8 @@ export class IsoRenderer {
     }
     // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, timeMs);
+    // 5. AMB-1 (#390): the faint cloud shadows, over ground and surf alike.
+    this.paintCloudShadows(timeMs);
     if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
@@ -1411,6 +1530,10 @@ export class IsoRenderer {
   drawOverlay(items: DrawItem[] = [], timeMs = 0, ghost: GhostSpec | null = null) {
     const ctx = this.ctxO, cam = this.cam;
     ctx.clearRect(0, 0, cam.vw, cam.vh);
+    // AMB-1 (#390): the clouds go down FIRST — above the structures, below
+    // every preview glow, debug mark and protest crowd, so building feedback
+    // always stays crisp while the sky drifts behind it.
+    this.paintClouds(timeMs);
     const vector = this.highlightMode === "vector";
     const { scene, rest } = vector
       ? sceneFromItems(items)
@@ -1607,6 +1730,7 @@ export class IsoRenderer {
       depthCycles: this.lastCycles,
       structures,
       sourceRect,
+      clouds: this.cloudDiagnostics(),
       warnings,
     };
   }

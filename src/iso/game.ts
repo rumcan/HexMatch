@@ -10491,10 +10491,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   // ── reduced motion ─────────────────────────────────────────────────────
   /**
-   * Mirror the OS "reduce motion" setting onto the placement overlay, live:
-   * the media query is listened to, not read once, because the setting can
-   * change while a game is open and the canvas has no stylesheet to fall back
-   * on. Absent `matchMedia` (tests, an odd embed) motion simply stays on.
+   * Mirror the OS "reduce motion" setting onto the placement overlay AND the
+   * drifting clouds (AMB-1 #390), live: the media query is listened to, not
+   * read once, because the setting can change while a game is open and the
+   * canvas has no stylesheet to fall back on. Absent `matchMedia` (tests, an
+   * odd embed) motion simply stays on.
    */
   let motionQuery: MediaQueryList | null = null;
   const syncOverlayMotion = () => {
@@ -10503,9 +10504,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
       motionQuery.addEventListener?.("change", () => {
         renderer?.setOverlayMotion(!motionQuery!.matches);
+        renderer?.setCloudMotion(!motionQuery!.matches);
       });
     }
     renderer?.setOverlayMotion(!motionQuery.matches);
+    renderer?.setCloudMotion(!motionQuery.matches);
   };
 
   // ── resize ─────────────────────────────────────────────────────────────
@@ -11393,6 +11396,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     mini.setEnabled(p.miniature);         // effective: suppressed under performance mode
     resize();                             // unified boot + runtime DPR policy
     renderer?.setPerformanceMode(p.performance);
+    renderer?.setCloudsEnabled(p.clouds); // AMB-1 (#390): same suppression rule
     void applyRenderPolicy(p);
   });
   mini.setEnabled(renderPolicy(currentGraphics()).miniature);
@@ -11643,6 +11647,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // starts believing the same state, so a later quality-only change diffs
     // against boot rather than re-applying the performance leg.
     renderer.setPerformanceMode(policy0.performance);
+    renderer.setCloudsEnabled(policy0.clouds);   // AMB-1 (#390): the boot sky
     appliedPerf = policy0.performance;
     renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
     // QoL: the placement overlay animates (a breathing outline, a marching
@@ -11971,15 +11976,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     get artLoad() { return { active: loading.active, ready: loading.ready, ...loading.progress }; },
     /**
-     * GFX-01 / PERF-01: the video settings. `__iso.graphics()` reads them;
-     * `__iso.graphics("medium")` / `__iso.graphics(undefined, true)` (the
-     * second argument is the miniature tilt-shift) / `__iso.graphics(undefined,
-     * undefined, true)` (the third is performance mode) apply them live
-     * through the SAME store the ⚙ panel uses — persistence, the DPR
-     * re-size and the repaint included.
+     * GFX-01 / PERF-01 / AMB-1: the video settings. `__iso.graphics()` reads
+     * them; `__iso.graphics("medium")` / `__iso.graphics(undefined, true)`
+     * (the second argument is the miniature tilt-shift) /
+     * `__iso.graphics(undefined, undefined, true)` (the third is performance
+     * mode) / `__iso.graphics(undefined, undefined, undefined, false)` (the
+     * fourth is the AMB-1 clouds) apply them live through the SAME store the
+     * ⚙ panel uses — persistence, the DPR re-size and the repaint included.
      */
-    graphics: (q?: Quality, miniature?: boolean, performance?: boolean) =>
-      setGraphics({ quality: q, miniature, performance }),
+    graphics: (q?: Quality, miniature?: boolean, performance?: boolean, clouds?: boolean) =>
+      setGraphics({ quality: q, miniature, performance, clouds }),
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
