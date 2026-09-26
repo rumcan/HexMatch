@@ -821,12 +821,18 @@ export function roadDiagonalRefusal(
 /** Join two already paid-for tiles. A diagonal costs the same per TILE as an
  * axis run (tileCost / tierTileCost), never an extra charge for the link.
  * No auto-diagonal neighbours: adjacency alone must not invent X crossings.
- * D2 must call this after building and stamping the endpoint tiers. */
+ * Drag commits use the same mutation after validating projected endpoint tiers. */
 export function buildRoadDiagonal(
   grid: Grid, t: Track, ax: number, ay: number, bx: number, by: number, owner = 0,
 ): AutotileResult | null {
   if (!trackOpenTo(t, owner, ax, ay) || !trackOpenTo(t, owner, bx, by)) return null;
   if (roadDiagonalRefusal(grid, t, ax, ay, bx, by)) return null;
+  return stampRoadDiagonal(t, ax, ay, bx, by);
+}
+
+/** Internal mutation: callers either validate the link or consume a validated
+ * preview. No grid dependency is needed at commit time. */
+function stampRoadDiagonal(t: Track, ax: number, ay: number, bx: number, by: number): AutotileResult | null {
   const { i, bit } = roadDiagSlot(ax, ay, bx, by);
   const layer = (t.road[i] & PRESENT) ? t.road : t.dirt;
   if (layer[i] & bit) return null;
@@ -1122,7 +1128,7 @@ function sideBranch(t: Track, path: [number, number][], x: number, y: number): b
     if (!inMapT(nx, ny) || on.has(tIdx(nx, ny))) continue;
     if (hasTrack(t, "road", nx, ny) || hasTrack(t, "dirt", nx, ny)) return true;
   }
-  return false;
+  return roadDiagNeighbours(t, x, y).some(([nx, ny]) => !on.has(tIdx(nx, ny)));
 }
 
 /** ROADS-3 (#394): what an overpass costs (one crossing tile). */
@@ -1176,6 +1182,28 @@ export function lPath(
   return out;
 }
 
+/**
+ * The octilinear drag: a straight run and a diagonal run joined at ONE 45°
+ * bend, so a single drag never draws a corner a train cannot take.
+ * `straightFirst` picks which half leads (the old L-drag's toggle).
+ */
+export function octPath(
+  ax: number, ay: number, bx: number, by: number, straightFirst = true,
+): [number, number][] {
+  const dx = bx - ax, dy = by - ay;
+  const sx = Math.sign(dx), sy = Math.sign(dy);
+  const n = Math.min(Math.abs(dx), Math.abs(dy));
+  const rest = Math.max(Math.abs(dx), Math.abs(dy)) - n;
+  const st: [number, number] = Math.abs(dx) >= Math.abs(dy) ? [sx, 0] : [0, sy];
+  const out: [number, number][] = [[ax, ay]];
+  let x = ax, y = ay;
+  const walk = (k: number, s: [number, number]) => {
+    for (let i = 0; i < k; i++) { x += s[0]; y += s[1]; out.push([x, y]); }
+  };
+  if (straightFirst) { walk(rest, st); walk(n, [sx, sy]); } else { walk(n, [sx, sy]); walk(rest, st); }
+  return out;
+}
+
 export interface DragPreview {
   /** Tiles that will actually be built, in order. */
   tiles: [number, number][];
@@ -1211,6 +1239,14 @@ export interface DragPreview {
   blocked: [number, number][];
   /** True when an obstacle cut the path short. */
   truncated: boolean;
+  /** D2: reason for the first blocked tile (not an HTML string). */
+  why?: string | null;
+  /** D2: validated mutations for the affordable prefix, not a second path.
+   * Local preview data only; guests send endpoints/order/tier to the host. */
+  roadPlan?: {
+    tiers: [number, number, RoadTier][];
+    links: [number, number, number, number][];
+  };
 }
 
 /**
@@ -1259,6 +1295,8 @@ export function previewDrag(
   newLoop = false, bridges: BridgeDragOptions = {},
   roadTier: RoadTierKey = "road",
 ): DragPreview {
+  if (t.diagonalRoads) return previewDiagonalDrag(grid, t, kind, purse,
+    ax, ay, bx, by, xFirst, network, freeTiles, structures, newLoop, bridges, roadTier);
   // ROADS-2 (#393): Street / Highway ride the paved layer at their own price.
   const tiered = kind === "road" && roadTier !== "road";
   const path = lPath(ax, ay, bx, by, xFirst);
@@ -1402,6 +1440,143 @@ export function previewDrag(
   return { tiles, cost, upgrades, free: allowance - freeLeft, bridges: decks, unaffordable, blocked, truncated };
 }
 
+/** Static wording only: safe to include in the HUD's cost markup. */
+export function roadDragRefusalText(why: string | null | undefined): string {
+  const text: Record<string, string> = {
+    "diagonal-highway": "A diagonal road cannot cross a Highway — cross straight at right angles or join through a Ramp.",
+    "road-tier": "Highways join roads only through Ramps; Overpasses stay axis-only.",
+    "corner-cut": "A diagonal cannot cut between two blocked corners.",
+    "diagonal-crossing": "Two diagonal roads cannot cross in an X.",
+    "too-steep": "Too steep — Highways need level ground; roads climb at most one level.",
+    "water": "No road here — bridges need a straight crossing with land at both ends.",
+    "bridge-junction": "A bridge stays straight — nothing can join its side.",
+    "rail": "Cross rail straight at right angles, not diagonally.",
+    "occupied": "A building or structure blocks this road.",
+    "field": "Clear this field before building a road.",
+    "rough": "Paved roads need smoother ground.",
+    "not-adjacent": "Extend the road from your network.",
+    "out-of-bounds": "The road must stay on the map.",
+  };
+  return text[why ?? ""] ?? "Can't build there.";
+}
+
+/** D2: preview the shared octPath. The OFF path above is deliberately intact.
+ * Project only the current prefix onto a PRIVATE track copy, never invoking
+ * journalled builders. This makes tier changes visible to D1's step rules
+ * without changing the live world, revision, purse or dirty-tile journal.
+ * Copies are once per changed gesture, NOT per tile (the UI caches previews).
+ */
+function previewDiagonalDrag(
+  grid: Grid, t: Track, kind: TrackKind, purse: Purse,
+  ax: number, ay: number, bx: number, by: number, straightFirst: boolean,
+  network: Set<number> | undefined, freeTiles: number, structures: Set<number> | undefined,
+  newLoop: boolean, bridges: BridgeDragOptions, roadTier: RoadTierKey,
+): DragPreview {
+  const path = octPath(ax, ay, bx, by, straightFirst);
+  const planned = new Set(path.filter(([x, y]) => !structures?.has(tIdx(x, y))).map(([x, y]) => tIdx(x, y)));
+  const bridgePlan = planBridges(grid, path,
+    (x, y) => inMapT(x, y) && (mergedPresent(t, x, y) || planned.has(tIdx(x, y))),
+    (x, y) => inMapT(x, y) && (bridges.railAt?.(x, y) ?? false),
+    kind === "road" && roadTier === "highway" ? HIGHWAY_BRIDGE_SPAN : undefined);
+  const projected: Track = { ...t, dirt: t.dirt.slice(), road: t.road.slice(),
+    tier: t.tier?.slice() ?? new Uint8Array(t.road.length) };
+  const growing = network ? new Set(network) : undefined;
+  const allowance = freeAllowanceCovers(kind, newLoop) ? Math.max(0, freeTiles) : 0;
+  let freeLeft = allowance, outOfBudget = false;
+  const result: DragPreview = { tiles: [], cost: {}, upgrades: 0, free: 0, bridges: 0,
+    blocked: [], unaffordable: [], truncated: false, roadPlan: { tiers: [], links: [] } };
+  const crossingAt = (i: number) => kind === "road" && (roadTier === "road" || roadTier === "street")
+    && overpassCrossing(t, ...path[i], passAxis(path, i));
+  const priceAt = (i: number): Purse => {
+    const [x, y] = path[i];
+    if (structures?.has(tIdx(x, y))) return {};
+    if (bridgePlan.runs.has(i) && !tileAlreadyCarries(t, kind, x, y)) return { ...BRIDGE_COST };
+    if (crossingAt(i)) return tileAlreadyOverpass(t, x, y) ? {} : { ...OVERPASS_COST };
+    return kind === "road" && roadTier !== "road" ? tierTileCost(t, roadTier, x, y)
+      : tileCost(t, kind, x, y, newLoop);
+  };
+  const tierAt = (i: number): RoadTier => {
+    const [x, y] = path[i], stored = roadTierAt(t, x, y);
+    if (crossingAt(i)) return passAxis(path, i) === "x" ? OVERPASS_Y : OVERPASS_X;
+    if (roadTier === "road") return hasTrack(t, "road", x, y) ? stored : ROAD_TIER.road;
+    if (roadTier === "ramp") return stored === 0 || stored === 1 ? ROAD_TIER.ramp : stored;
+    if (hasTrack(t, "road", x, y) && RANK_OF_STORED[stored] >= TIER_RANK[roadTier]) return stored;
+    return roadTier === "highway" && sideBranch(t, path, x, y) ? ROAD_TIER.ramp : ROAD_TIER[roadTier];
+  };
+  for (let i = 0; i < path.length; i++) {
+    const [x, y] = path[i], index = tIdx(x, y);
+    if (structures?.has(index)) continue; // own floors are neither charged nor linked across
+    const prev = path[i - 1], next = path[i + 1];
+    const from = prev && !structures?.has(tIdx(...prev)) ? prev : undefined;
+    const diagonalIn = !!from && isRoadDiagonal(...from, x, y);
+    const diagonalOut = !!next && isRoadDiagonal(x, y, ...next);
+    const deck = bridgePlan.runs.get(i);
+    const tier = tierAt(i);
+    if (inMapT(x, y)) {
+      if (kind === "road") {
+        projected.road[index] |= PRESENT | (projected.dirt[index] & ROAD_DIAG);
+        projected.dirt[index] = 0;
+        projected.tier![index] = tier;
+      } else if (!hasTrack(projected, "road", x, y)) projected.dirt[index] |= PRESENT;
+    }
+    // Plain road cannot enter/cross a highway diagonally (including a bend
+    // departing it diagonally). A Ramp/Highway gesture may JOIN diagonally;
+    // Overpass endpoint rules are still enforced by D1 on the projected tier.
+    const high = linkClass(t, x, y);
+    let why: string | null = (high === "H" || high === "OX" || high === "OY")
+      && (kind === "dirt" || roadTier === "road" || roadTier === "street")
+      && (diagonalIn || diagonalOut || roadDiagNeighbours(t, x, y).length > 0)
+      ? "diagonal-highway" : null;
+    why ??= buildRefusal(grid, kind, x, y, growing, passAxis(path, i), projected, from);
+    // A valid bridge plan alone permits water. Never mask another refusal.
+    if (why === "water" && deck) why = null;
+    if (!why && kind === "road" && roadTier === "highway" && from
+      && !deck && !bridgePlan.runs.has(i - 1)
+      && tileHeight(grid, x, y) !== tileHeight(grid, ...from)) why = "too-steep";
+    if (why) {
+      result.why = why; result.truncated = true; result.blocked.push([x, y]); break;
+    }
+    // Keep the projected axis masks current for bridge/slope/side-join rules.
+    for (const k of ["road", "dirt"] as const) {
+      recomputeMask(projected, k, x, y);
+      for (const d of DIRS) {
+        const nx = x + DIR[d][0], ny = y + DIR[d][1];
+        if (inMapT(nx, ny)) recomputeMask(projected, k, nx, ny);
+      }
+    }
+    if (diagonalIn) {
+      const { i: slot, bit } = roadDiagSlot(...from!, x, y);
+      (projected.road[slot] & PRESENT ? projected.road : projected.dirt)[slot] |= bit;
+    }
+    // A paid crossing must reach its far bank; do not strand an affordable
+    // half-deck if the next deck/bank costs more than the remaining purse.
+    if (!outOfBudget && deck && i === deck.start) {
+      let crossingCost = result.cost;
+      for (let j = deck.start; j <= deck.end + 1; j++) {
+        if (j === deck.end + 1 && freeLeft > 0) continue; // dirt-only free bank
+        crossingCost = addCost(crossingCost, priceAt(j));
+      }
+      if (!canAfford(purse, crossingCost)) outOfBudget = true;
+    }
+    const cost = priceAt(i);
+    const charged = Object.keys(cost).length > 0;
+    const free = charged && freeLeft > 0 && !deck;
+    const total = free ? result.cost : addCost(result.cost, cost);
+    if (!canAfford(purse, total)) outOfBudget = true;
+    growing?.add(index);
+    if (outOfBudget) { result.unaffordable.push([x, y]); continue; }
+    result.tiles.push([x, y]); result.cost = total;
+    if (free) { freeLeft--; result.free++; }
+    if (deck && !tileAlreadyCarries(t, kind, x, y)) result.bridges++;
+    if (kind === "road") {
+      result.roadPlan!.tiers.push([x, y, tier]);
+      if (hasTrack(t, "dirt", x, y)) result.upgrades++;
+    }
+    if (diagonalIn) result.roadPlan!.links.push([...from!, x, y]);
+  }
+  return result;
+}
+
 export interface CommitResult {
   built: [number, number][];
   cost: Purse;
@@ -1423,6 +1598,20 @@ export function commitDrag(
     // drag built by player 1 is player 1's network, full stop.
     const r = buildTile(t, kind, x, y, owner);
     if (r) for (const c of r.chunks) chunks.add(c);
+  }
+  if (t.diagonalRoads && preview.roadPlan) {
+    for (const [x, y, tier] of preview.roadPlan.tiers) {
+      setRoadTier(t, x, y, tier);
+      chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
+    }
+    for (const [ax, ay, bx, by] of preview.roadPlan.links) {
+      // Do not let a preview link through another owner's already-paved tile
+      // when a dirt build there is a no-op. The public-road rule still applies.
+      if (!trackOpenTo(t, owner, ax, ay) || !trackOpenTo(t, owner, bx, by)) continue;
+      const linked = stampRoadDiagonal(t, ax, ay, bx, by);
+      if (linked) for (const c of linked.chunks) chunks.add(c);
+    }
+    return { built: preview.tiles, cost: preview.cost, chunks: [...chunks] };
   }
   // ROADS-3 (#394): a Road/Street drag that crosses a Highway at right angles
   // turns that tile into an OVERPASS (the highway keeps its axis).

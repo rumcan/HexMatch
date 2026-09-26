@@ -43,7 +43,7 @@ import { MAP_W } from "../game/config";
 import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
-  addCost, mergedPresent, type DragPreview, type Purse, type Track,
+  addCost, mergedPresent, octPath, type DragPreview, type Purse, type Track,
 } from "./track";
 import { FIELD_OCC, GRASS, ROUGH, SAND, factoryFootprintOf, idx, type Grid } from "./grid";
 import {
@@ -302,27 +302,8 @@ export function diagNeighbours(rail: Rail, x: number, y: number): [number, numbe
   return out;
 }
 
-/**
- * The octilinear drag: a straight run and a diagonal run joined at ONE 45°
- * bend, so a single drag never draws a corner a train cannot take.
- * `straightFirst` picks which half leads (the old L-drag's toggle).
- */
-export function octPath(
-  ax: number, ay: number, bx: number, by: number, straightFirst = true,
-): [number, number][] {
-  const dx = bx - ax, dy = by - ay;
-  const sx = Math.sign(dx), sy = Math.sign(dy);
-  const n = Math.min(Math.abs(dx), Math.abs(dy));
-  const rest = Math.max(Math.abs(dx), Math.abs(dy)) - n;
-  const st: [number, number] = Math.abs(dx) >= Math.abs(dy) ? [sx, 0] : [0, sy];
-  const out: [number, number][] = [[ax, ay]];
-  let x = ax, y = ay;
-  const walk = (k: number, s: [number, number]) => {
-    for (let i = 0; i < k; i++) { x += s[0]; y += s[1]; out.push([x, y]); }
-  };
-  if (straightFirst) { walk(rest, st); walk(n, [sx, sy]); } else { walk(n, [sx, sy]); walk(rest, st); }
-  return out;
-}
+// D2: roads share the existing octilinear path algorithm (now in track.ts).
+export { octPath } from "./track";
 
 // ── ground rules ──────────────────────────────────────────────────────────
 /**
