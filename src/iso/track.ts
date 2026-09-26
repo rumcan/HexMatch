@@ -2,7 +2,9 @@
 // E5 — Road tiers (dirt & paved): the tile model, autotiling, drag-to-build.
 //
 // Two parallel Uint8Array(MAP_W*MAP_H) layers hold a 4-bit direction mask per
-// tile (OpenTTD's RoadBits model). The two tiers are `dirt` (basic gravel) and
+// tile (OpenTTD's RoadBits model), PRESENT=16, and optional one-sided diagonal
+// links in bits 32/64 (D1, DEV-only). No wider bytes or format migration.
+// The two tiers are `dirt` (basic gravel) and
 // `road` (premium paved, which also carries the map's paved public/town
 // roads). Paving a Road over a Dirt Road replaces it — a tile carries at most
 // ONE layer, so there is no level-crossing overlay any more.
@@ -24,43 +26,43 @@
 import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, heightAt as tileHeight, type Grid } from "./grid";
-// Keep the model independent of renderer → road-geometry → track. The renderer
-// uses 8-tile chunks; a D1 guard test pins this invalidation contract. Moving
-// the renderer's constants into a leaf module is a separate renderer cleanup.
-const CHUNK = 8;
-const chunksX = Math.ceil(MAP_W / CHUNK);
 import {
   BRIDGE_COST, HIGHWAY_BRIDGE_SPAN, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
 // E4 (#268): the slope rules — the step the drag walked and the flanks it joins.
 import { roadJoinSlopeRefusal, roadStepRefusal } from "./slopes";
 
+// Keep the model independent of renderer → road-geometry → track. The renderer
+// uses 8-tile chunks; a D1 guard test pins this invalidation contract. Moving
+// the renderer's constants into a leaf module is a separate renderer cleanup.
+const CHUNK = 8;
+const chunksX = Math.ceil(MAP_W / CHUNK);
+
 // ── directions ────────────────────────────────────────────────────────────
 export const NE = 1, SE = 2, SW = 4, NW = 8;
 export const DIRS = [NE, SE, SW, NW] as const;
 export type Dir = typeof DIRS[number];
+
+/** Explicit, one-sided diagonal storage, exactly like RAIL_DE / RAIL_DS.
+ * These are NOT reciprocal direction bits: the lower-x endpoint owns the bit. */
+export const ROAD_DE = 32, ROAD_DS = 64;
+export const ROAD_DIAG = ROAD_DE | ROAD_DS;
+/** The reverse directions are logical IDs only, NEVER stored in tile bytes. */
+export const ROAD_DW = 128, ROAD_DN = 256;
+export const DIAGONAL_DIRS = [ROAD_DE, ROAD_DS, ROAD_DW, ROAD_DN] as const;
 
 export const DIR: Record<number, [number, number]> = {
   [NE]: [0, -1],
   [SE]: [1, 0],
   [SW]: [0, 1],
   [NW]: [-1, 0],
+  [ROAD_DE]: [1, -1], [ROAD_DS]: [1, 1], [ROAD_DW]: [-1, 1], [ROAD_DN]: [-1, -1],
 };
 
 export const OPPOSITE: Record<number, number> = {
   [NE]: SW, [SE]: NW, [SW]: NE, [NW]: SE,
+  [ROAD_DE]: ROAD_DW, [ROAD_DS]: ROAD_DN, [ROAD_DW]: ROAD_DE, [ROAD_DN]: ROAD_DS,
 };
-
-/** Explicit, one-sided diagonal storage, exactly like RAIL_DE / RAIL_DS.
- * These are NOT reciprocal direction bits: the lower-x endpoint owns the bit. */
-export const ROAD_DE = 32, ROAD_DS = 64;
-export const ROAD_DIAG = ROAD_DE | ROAD_DS;
-/** Logical directions only (never written as an eight-bit reciprocal mask). */
-export const DIAGONAL_DIRS = [ROAD_DE, ROAD_DS, 128, 256] as const;
-Object.assign(DIR, {
-  [ROAD_DE]: [1, -1], [ROAD_DS]: [1, 1], [128]: [-1, 1], [256]: [-1, -1],
-});
-Object.assign(OPPOSITE, { [ROAD_DE]: 128, [ROAD_DS]: 256, [128]: ROAD_DE, [256]: ROAD_DS });
 
 /** D1 is a local development experiment, not a save/wire format field. */
 export function resolveDiagonalRoads(
@@ -73,7 +75,7 @@ export function resolveDiagonalRoads(
 export type TrackKind = "dirt" | "road";
 
 /**
- * Two tiers of ROAD (the game is de-railwayed — no literal tracks remain):
+ * Two road layers (rail has its own separate model in rail.ts):
  *   `dirt` = the cheap basic gravel road (player-built "Dirt Road");
  *   `road` = the premium paved road (player-built "Road", and the map's
  *            paved public/town roads — both render as tar).
@@ -219,7 +221,8 @@ export function setRoadTier(t: Track, tx: number, ty: number, tier: RoadTier): v
   dirtyTiles.mark(i);
   // ROADS-3 (#394): links depend on the tier (highway access rules), so the
   // tile and its neighbours re-autotile on both layers.
-  autotileAroundBoth(t, "road", tx, ty);
+  const changed = autotileAroundBoth(t, "road", tx, ty);
+  if (t.diagonalRoads) dirtyTiles.markAll(changed.tiles);
   t.revision++;
 }
 
@@ -535,8 +538,7 @@ export function buildRefusal(
   // The premium paved Road additionally needs flat ground (TRANSPORT.onRough);
   // the basic Dirt Road builds on rough.
   if (terrain === ROUGH && !TRANSPORT[kind].onRough) return "rough";
-  if (from && isRoadDiagonal(...from, tx, ty)) {
-    if (!track) return "diagonals-disabled";
+  if (track?.diagonalRoads && from && isRoadDiagonal(...from, tx, ty)) {
     const refusal = roadDiagonalRefusal(grid, track, ...from, tx, ty);
     if (refusal) return refusal;
   }
@@ -887,6 +889,10 @@ export function autotileAround(t: Track, kind: TrackKind, tx: number, ty: number
   };
   touch(tx, ty);
   for (const d of DIRS) touch(tx + DIR[d][0], ty + DIR[d][1]);
+  for (const d of DIAGONAL_DIRS) {
+    const nx = tx + DIR[d][0], ny = ty + DIR[d][1];
+    if (storedRoadDiagonal(t, tx, ty, nx, ny)) touch(nx, ny);
+  }
   return { tiles, chunks: [...chunks] };
 }
 
@@ -982,6 +988,8 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
   if (!inMapT(tx, ty)) return null;
   const i = tIdx(tx, ty);
   const removed = hasTrack(t, kind, tx, ty);
+  const diagonalEnds = DIAGONAL_DIRS.map((d) => [tx + DIR[d][0], ty + DIR[d][1]])
+    .filter(([nx, ny]) => removed && storedRoadDiagonal(t, tx, ty, nx, ny));
   layerOf(t, kind)[i] = 0;
   // VP-01: provenance dies with the pavement. Tearing up a paved tile takes
   // its 0.25★ back with it (the scoreboard diffs against this layer), so a
@@ -1004,6 +1012,12 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
       torn.chunks.push(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
     }
   }
+  for (const [x, y] of diagonalEnds) {
+    torn.tiles.push(tIdx(x, y));
+    torn.chunks.push(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
+  }
+  torn.tiles = [...new Set(torn.tiles)];
+  torn.chunks = [...new Set(torn.chunks)];
   dirtyTiles.markAll(torn.tiles);
   t.revision++;
   return torn;

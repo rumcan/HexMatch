@@ -559,8 +559,9 @@ export function resolveConnection(
  * the multi-plant edge case, where the lorry serves `resolveConnection`'s
  * tier-preferred plant and this measures the NEAREST one (the spec's rule:
  * "path length in tiles from depot to the nearest owned factory/plant").
- * One BFS with every owned plant's shoulders as goals, so "nearest" is one
- * flood, not one per plant.
+ * One multi-source search with every owned plant's shoulders as goals, so
+ * "nearest" is one flood, not one per plant. D1 uses weighted steps (sqrt(2)
+ * diagonals) when the local diagonalRoads flag is enabled.
  *
  * E4 (#268): the number is the route's TILE COUNT PLUS ITS CLIMB — the extra
  * distance `slopes.ts` charges for every level the route climbs or drops
