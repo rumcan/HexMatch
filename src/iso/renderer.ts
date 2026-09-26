@@ -501,6 +501,35 @@ export class IsoRenderer {
    */
   overlayPainter: ((ctx: CanvasRenderingContext2D, cam: Camera, timeMs: number) => void) | null = null;
 
+  /**
+   * AMB-1 (#390) / AMB-2 (#391) — the ONE shared "above the structures" pass
+   * for ambient, cosmetic world content: the bird pool (AMB-2) and the cloud
+   * layer (AMB-1) both need the same two properties, so they share one hook
+   * rather than each growing their own.
+   *
+   * It is called at the top of `drawOverlay`, i.e. on the OVERLAY canvas,
+   * immediately after that layer is cleared and BEFORE the placement
+   * highlight, the ghost, the debug marks and the protest crowd. Three things
+   * fall out of that placement, and each one is the reason for it:
+   *
+   *   1. ABOVE THE STRUCTURES, SECOND TO THE UI. The overlay layer is drawn
+   *      over the structures layer, so anything painted here is over every
+   *      building — and still under the placement feedback, which must never
+   *      be hidden by a bird or a cloud.
+   *   2. SAFE FOR PER-FRAME MOTION. The overlay is cleared and fully repainted
+   *      every frame, unlike the structures layer, which patches damage
+   *      rectangles when only traffic moved. A moving bird painted into the
+   *      structures layer would smear at the edges of those patches.
+   *   3. INVISIBLE TO PICKING. `pick` walks `lastOrder`, the depth-sorted
+   *      draw list, which this pass never touches — so a bird can never be
+   *      clicked, hovered, or stand in the way of a build. Same for the HUD:
+   *      the canvases carry no pointer events of their own.
+   *
+   * Null in tests and the demo. Both modules keep their own state, their own
+   * seeding and their own switches; this is only the seam.
+   */
+  aboveStructuresPainter: ((ctx: CanvasRenderingContext2D, cam: Camera, timeMs: number) => void) | null = null;
+
   /** Pre-blurred building shadow stamps, one per footprint size per zoom. */
   private readonly shadowStamps = new ShadowStamps();
 
@@ -1534,6 +1563,10 @@ export class IsoRenderer {
     // every preview glow, debug mark and protest crowd, so building feedback
     // always stays crisp while the sky drifts behind it.
     this.paintClouds(timeMs);
+    // AMB-1 / AMB-2: the shared above-the-structures pass (see the field's
+    // documentation) — birds, clouds, and whatever else is ambient, over the
+    // buildings and under the placement feedback.
+    if (this.aboveStructuresPainter) this.aboveStructuresPainter(ctx, cam, timeMs);
     const vector = this.highlightMode === "vector";
     const { scene, rest } = vector
       ? sceneFromItems(items)
