@@ -64,6 +64,8 @@ const BITS = 0b1111;
 
 /** How many water tiles one bridge may span. The ticket's "narrow river". */
 export const MAX_BRIDGE_SPAN = 2;
+/** ROADS-3 (#394): a Highway bridge may span this many water tiles. */
+export const HIGHWAY_BRIDGE_SPAN = 4;
 
 /**
  * The direction bits as THIS module declares them — the same four numbers
@@ -257,6 +259,7 @@ function probeRun(
   grid: Grid, path: readonly (readonly [number, number])[], index: number,
   layerAt: (x: number, y: number) => boolean,
   otherAt: (x: number, y: number) => boolean,
+  maxSpan: number = MAX_BRIDGE_SPAN,
 ): RunProbe {
   const [x, y] = path[index];
   if (!bridgeWaterAt(grid, x, y)) return { run: null, why: null, start: index };
@@ -264,7 +267,7 @@ function probeRun(
   while (start > 0 && bridgeWaterAt(grid, path[start - 1][0], path[start - 1][1])) start--;
   let end = index;
   while (end < path.length - 1 && bridgeWaterAt(grid, path[end + 1][0], path[end + 1][1])) end++;
-  if (end - start + 1 > MAX_BRIDGE_SPAN) return { run: null, why: "span", start };
+  if (end - start + 1 > maxSpan) return { run: null, why: "span", start };
   // Both banks must be inside this drag, and dry.
   if (start === 0 || end === path.length - 1) return { run: null, why: "ends", start };
   const before = path[start - 1], after = path[end + 1];
@@ -325,13 +328,14 @@ export function planBridges(
   grid: Grid, path: readonly (readonly [number, number])[],
   layerAt: (x: number, y: number) => boolean,
   otherAt: (x: number, y: number) => boolean,
+  maxSpan: number = MAX_BRIDGE_SPAN,
 ): BridgePlan {
   const runs = new Map<number, BridgeRun>();
   const deckTiles = new Set<number>();
   let refusal: { index: number; why: BridgeRefusal } | null = null;
   for (let i = 0; i < path.length; i++) {
     if (runs.has(i) || !bridgeWaterAt(grid, path[i][0], path[i][1])) continue;
-    const probe = probeRun(grid, path, i, layerAt, otherAt);
+    const probe = probeRun(grid, path, i, layerAt, otherAt, maxSpan);
     if (probe.run) {
       for (let j = probe.run.start; j <= probe.run.end; j++) {
         runs.set(j, probe.run);

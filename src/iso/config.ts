@@ -1137,15 +1137,22 @@ export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {
  * (its numbers ARE TRANSPORT.road's); Highway is the fast, dear long-haul
  * carriageway (2 tiles wide in the art, gentle grades only — see slopes).
  */
-export const ROAD_TIERS: Record<"street" | "road" | "highway", {
+export const ROAD_TIERS: Record<"street" | "road" | "highway" | "ramp", {
   name: string; throughput: number; cost: Partial<Record<Cargo, number>>; blurb: string;
 }> = {
   street: { name: "Street", throughput: 1.2, cost: { wood: 2, stone: 2, ore: 4 }, blurb: "cheap town lane · slow" },
   road: { name: "Road", throughput: TRANSPORT.road.throughput, cost: BUILD_COSTS.road, blurb: "faster hauling" },
   highway: { name: "Highway", throughput: 2.3, cost: { wood: 4, stone: 10, ore: 24 }, blurb: "fast long haul · gentle grades" },
+  // ROADS-3 (#394): the only way on or off a Highway.
+  ramp: { name: "Ramp", throughput: 1.6, cost: { wood: 3, stone: 6, ore: 10 }, blurb: "joins a Highway to your roads" },
 };
 /** Throughput by the numeric tier stored on the track (0 Road, 1 Street, 2 Highway). */
-export const TIER_THROUGHPUT: readonly number[] = [ROAD_TIERS.road.throughput, ROAD_TIERS.street.throughput, ROAD_TIERS.highway.throughput];
+export const TIER_THROUGHPUT: readonly number[] = [
+  ROAD_TIERS.road.throughput, ROAD_TIERS.street.throughput, ROAD_TIERS.highway.throughput,
+  ROAD_TIERS.ramp.throughput,
+  // ROADS-3 (#394): an overpass tile is highway along its axis
+  ROAD_TIERS.highway.throughput, ROAD_TIERS.highway.throughput,
+];
 
 // Dirt→road upgrade pays only the difference (settled: yes, pave in place).
 //

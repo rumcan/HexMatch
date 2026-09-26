@@ -1,6 +1,6 @@
 import { MAP_W } from "../game/config";
 import {
-  DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles,
+  DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles, overpassJump,
   type Track, type TrackKind,
 } from "./track";
 import { DEFAULT_FACING, depotEntranceTiles, type DepotFacing } from "./depot";
@@ -58,6 +58,17 @@ export function roadPath(
       if (!trackOpenTo(track, owner, nx, ny)) continue;        // W2 + PP-13
       parent.set(ni, cur);
       queue.push(ni);
+    }
+    // ROADS-3 (#394): straight over an overpass (no turn onto the highway).
+    if (track.tier) {
+      for (const d of DIRS) {
+        const j = overpassJump(track, x, y, d);
+        if (!j) continue;
+        const ji = tIdx(j[0], j[1]);
+        if (parent.has(ji) || !trackOpenTo(track, owner, j[0], j[1])) continue;
+        parent.set(ji, cur);
+        queue.push(ji);
+      }
     }
   }
   return null;
