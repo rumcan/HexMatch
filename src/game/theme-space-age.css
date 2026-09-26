@@ -704,3 +704,23 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 }
 .guide-menu-foot small { font-family: var(--sans); font-weight: 500; font-size: 11px; color: var(--sa-bone-mute); flex: 1 1 200px; }
 
+/* ── BUILD-1 (#460): the Undo chip — 8 seconds after a build ────────────── */
+/* One small flat chip above the modebar: charcoal ground, orange border,   */
+/* aqua countdown text. Blocked it goes grey (no reason to invite a click), */
+/* and the reason string carries the "why". Space Age: flat, square, ≤500.  */
+.undo-chip {
+  position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%);
+  z-index: 60; display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; max-width: min(420px, calc(100vw - 32px));
+  background: var(--sa-panel); border: 1px solid var(--sa-orange); border-radius: 0;
+  color: var(--sa-aqua); font-family: var(--display); font-weight: 500;
+  font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.undo-chip:hover { border-color: var(--sa-orange-hi); color: var(--sa-aqua-hi); background: var(--sa-panel-2); }
+.undo-chip.blocked {
+  border-color: var(--sa-line-hi); color: var(--sa-bone-mute);
+  background: var(--sa-panel-2); cursor: not-allowed; text-transform: none;
+  letter-spacing: .03em; font-family: var(--sans); font-size: 11.5px;
+}
+.undo-chip.hidden { display: none; }
