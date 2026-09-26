@@ -1196,8 +1196,56 @@ export function addTownRing(
   // the loop, one tile outside the house box
   for (let x = x0 - 1; x <= x1 + 1; x++) { add(x, y0 - 1); add(x, y1 + 1); }
   for (let y = y0; y <= y1; y++) { add(x0 - 1, y); add(x1 + 1, y); }
-  // no sealed pockets inside it
-  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) add(x, y);
+
+  // #444: no sealed pockets inside the ring. Instead of paving EVERY free tile
+  // inside the house box (which creates 2-tile thick roads when a house is
+  // missing due to industry buffer), we flood from outside the expanded box
+  // over free land that is not house nor road (including the new ring), and
+  // only pave interior tiles that are NOT reachable — i.e. would be sealed
+  // inside the closed loop. This keeps the town's streets 1-tile wide and
+  // avoids the double-width strip that appears when the ring plus an interior
+  // fill sit side by side.
+  const expanded = { x0: x0 - 1, y0: y0 - 1, x1: x1 + 1, y1: y1 + 1 };
+  const roadSet = new Set(out.map(([x, y]) => idx(x, y)));
+  const blocked = (x: number, y: number) => {
+    const i = idx(x, y);
+    return houseSet.has(i) || roadSet.has(i);
+  };
+  const visited = new Uint8Array(terrain.length);
+  const queue: number[] = [];
+  // seed flood from all free tiles outside the expanded box
+  for (let y = 0; y < MAP_H; y++) {
+    for (let x = 0; x < MAP_W; x++) {
+      if (x >= expanded.x0 && x <= expanded.x1 && y >= expanded.y0 && y <= expanded.y1) continue;
+      if (!free(x, y) || blocked(x, y)) continue;
+      const i = idx(x, y);
+      if (visited[i]) continue;
+      visited[i] = 1;
+      queue.push(i);
+    }
+  }
+  for (let head = 0; head < queue.length; head++) {
+    const cur = queue[head];
+    const cx = cur % MAP_W, cy = (cur / MAP_W) | 0;
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+      const nx = cx + dx, ny = cy + dy;
+      if (!inBounds(nx, ny)) continue;
+      const ni = idx(nx, ny);
+      if (visited[ni]) continue;
+      if (!free(nx, ny) || blocked(nx, ny)) continue;
+      visited[ni] = 1;
+      queue.push(ni);
+    }
+  }
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const i = idx(x, y);
+      if (!free(x, y) || houseSet.has(i) || roadSet.has(i)) continue;
+      if (visited[i]) continue; // reachable from outside, not sealed
+      add(x, y);
+      roadSet.add(i);
+    }
+  }
   return out;
 }
 
@@ -1792,15 +1840,22 @@ export function publicRoadTiles(
   };
 
   /** Shortest drivable route between two road-network components. */
-  const link = (aTiles: number[], bTiles: number[]): [number, number][] => {
-    const targets = new Set<number>(bTiles);
+  /** #444: link from an entire NETWORK (all tiles already in the tree plus
+   *  built highways) to a target component, avoiding parallel adjacency.
+   *  Deterministic: DIR4 order, FIFO, sorted sources. */
+  const linkFromNetwork = (
+    sourceSet: Set<number>, targetTiles: number[],
+    highwaySet: Set<number>, pavedSet: Set<number>,
+  ): [number, number][] => {
+    const targets = new Set<number>(targetTiles);
     const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
     const seen = new Uint8Array(MAP_W * MAP_H);
     const queue: number[] = [];
-    for (const si of aTiles) {
+    const orderedSources = [...sourceSet].sort((a, b) => a - b);
+    for (const si of orderedSources) {
       if (seen[si]) continue;
       seen[si] = 1;
-      prev[si] = si;                 // a source is its own parent: "walk back stops"
+      prev[si] = si;
       queue.push(si);
     }
     let found = -1;
@@ -1812,13 +1867,26 @@ export function publicRoadTiles(
         if (!passable(nx, ny)) continue;
         const ni = idx(nx, ny);
         if (seen[ni]) continue;
+        if (!targets.has(ni)) {
+          let forbidden = false;
+          for (const [adx, ady] of DIR4) {
+            const ax = nx + adx, ay = ny + ady;
+            if (!inBounds(ax, ay)) continue;
+            const ai = idx(ax, ay);
+            if (ai === cur) continue;
+            if (targets.has(ai)) continue;
+            if (sourceSet.has(ai) || highwaySet.has(ai)) { forbidden = true; break; }
+            if (pavedSet.has(ai) && !sourceSet.has(ai)) { forbidden = true; break; }
+          }
+          if (forbidden) continue;
+        }
         seen[ni] = 1;
         prev[ni] = cur;
         if (targets.has(ni)) { found = ni; break; }
         queue.push(ni);
       }
     }
-    if (found === -1) return [];     // walled off — this leg simply does not exist
+    if (found === -1) return [];
     const path: [number, number][] = [];
     for (let cur = found; ; cur = prev[cur]) {
       path.push([cur % MAP_W, (cur / MAP_W) | 0]);
@@ -1866,41 +1934,54 @@ export function publicRoadTiles(
     comps.push(comp);
   }
 
-  /** A component's centroid tile, for the cheap MST distance. */
-  const centreOf = (comp: number[]): [number, number] => {
-    let sx = 0, sy = 0;
-    for (const i of comp) { sx += i % MAP_W; sy += (i / MAP_W) | 0; }
-    return [Math.round(sx / comp.length), Math.round(sy / comp.length)];
-  };
-  const centres = comps.map(centreOf);
-  const cheb = (a: number, b: number) => Math.max(
-    Math.abs(centres[a][0] - centres[b][0]), Math.abs(centres[a][1] - centres[b][1]));
-
+  // #444: incremental Prim that grows the highway network, reusing existing
+  // trunk instead of laying parallel roads. At each step the shortest path
+  // from the ENTIRE current network (all in-tree town tiles + built highways)
+  // to each outside component is measured, and the closest component is linked.
+  // The BFS inside linkFromNetwork also forbids intermediate tiles that are
+  // 4-adjacent to existing network (other than predecessor / target), which is
+  // what creates the double-width strip when two highways leave the same side
+  // of a town from adjacent ring tiles.
   const inTree = [0];
   const rest = comps.map((_, i) => i).slice(1);
-  const legs: [number, number][] = [];
-  while (rest.length) {
-    let bestI = 0, bestFrom = inTree[0], bestD = Infinity;
-    for (let i = 0; i < rest.length; i++) {
-      for (const c of inTree) {
-        const d = cheb(rest[i], c);
-        if (d < bestD) { bestD = d; bestI = i; bestFrom = c; }
-      }
-    }
-    legs.push([bestFrom, rest[bestI]]);
-    inTree.push(rest[bestI]);
-    rest.splice(bestI, 1);
-  }
-
   const out: [number, number][] = [];
   const added = new Set<number>();
-  for (const [a, b] of legs) {
-    for (const [tx, ty] of link(comps[a], comps[b])) {
-      const i = idx(tx, ty);
-      if (paved.has(i) || added.has(i)) continue;
-      added.add(i);
+  const highwaySet = new Set<number>();
+  const networkSet = new Set<number>(comps[0]);
+
+  while (rest.length) {
+    let bestI = -1;
+    let bestPath: [number, number][] = [];
+    let bestLen = Infinity;
+    for (let i = 0; i < rest.length; i++) {
+      const compIdx = rest[i];
+      const path = linkFromNetwork(networkSet, comps[compIdx], highwaySet, paved);
+      if (!path.length) continue;
+      // path length is number of tiles; shorter is better, tie-break by comp index
+      const len = path.length;
+      if (len < bestLen || (len === bestLen && compIdx < (rest[bestI] ?? Infinity))) {
+        bestLen = len;
+        bestI = i;
+        bestPath = path;
+      }
+    }
+    if (bestI === -1) {
+      // No reachable outside component (walled off) — stop, same as before
+      break;
+    }
+    const compIdx = rest[bestI];
+    for (const [tx, ty] of bestPath) {
+      const id = idx(tx, ty);
+      if (paved.has(id) || added.has(id)) continue;
+      added.add(id);
+      highwaySet.add(id);
+      networkSet.add(id);
       out.push([tx, ty]);
     }
+    // The newly connected component's own tiles become part of the network
+    for (const id of comps[compIdx]) networkSet.add(id);
+    inTree.push(compIdx);
+    rest.splice(bestI, 1);
   }
   return out;
 }
