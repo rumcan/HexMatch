@@ -2173,6 +2173,9 @@ export function createOriginalUi(
     toolCard.innerHTML = `<b>${name}</b>${sub ? `<small>${sub}</small>` : ""}`;
     const r = b.getBoundingClientRect();
     toolCard.style.top = `${Math.round(r.top)}px`;
+    // Beside the button itself - a tool inside a Road/Rail Ways drawer sits
+    // further right than the rail, and the card must not cover the drawer.
+    toolCard.style.left = `${Math.round(r.right + 6)}px`;
     toolCard.classList.remove("hidden");
   };
   const hideToolCard = () => toolCard.classList.add("hidden");
@@ -2185,6 +2188,46 @@ export function createOriginalUi(
   let depotSub: HTMLElement | null = null;
   let cityBtn: HTMLButtonElement | null = null;
   let lastDepotSub = "\u0000";
+  // ── Tool groups (owner, 2026-09-26) ─────────────────────────────────────
+  // Road Ways and Rail Ways fold their tools into a drawer that slides out
+  // beside the rail; everything else stays a single button. The tool
+  // buttons keep their data-tool and live INSIDE buildList, so the active
+  // paint, hotkeys, the guide and the tests find them exactly as before.
+  // On a phone the Build sheet shows the groups flat (CSS).
+  const TOOL_GROUPS: { id: string; label: string; icon: string; sub: string; keys: readonly string[] }[] = [
+    { id: "roads", label: "Road Ways", icon: "road", sub: "Dirt road to highway, ramps and depots",
+      keys: ["dirt", "street", "road", "highway", "interchange", "ramp", "harvester"] },
+    { id: "rails", label: "Rail Ways", icon: "rail", sub: "Track and platforms",
+      keys: ["rail", "platform"] },
+  ];
+  const groupOf = (key: string) => TOOL_GROUPS.find((g) => g.keys.includes(key)) ?? null;
+  const groupEls = new Map<string, { wrap: HTMLElement; btn: HTMLButtonElement; fly: HTMLElement }>();
+  let openGroup: string | null = null;
+  function setGroupOpen(id: string | null): void {
+    openGroup = id;
+    hideToolCard();
+    for (const [gid, g] of groupEls) {
+      const on = gid === id;
+      g.fly.classList.toggle("open", on);
+      g.btn.setAttribute("aria-expanded", String(on));
+      if (on) {
+        const r = g.btn.getBoundingClientRect();
+        const rail = g.btn.closest(".aside")?.getBoundingClientRect();
+        g.fly.style.left = `${Math.round((rail?.right ?? r.right))}px`;
+        // Keep the drawer on screen: slide it up if it would run off the bottom.
+        const h = g.fly.offsetHeight || 0;
+        const top = Math.min(r.top, Math.max(8, window.innerHeight - h - 8));
+        g.fly.style.top = `${Math.round(top)}px`;
+      }
+    }
+  }
+  document.addEventListener("pointerdown", (e) => {
+    if (!openGroup) return;
+    const t = e.target as Element | null;
+    if (t && typeof t.closest === "function" && t.closest(".tool-group")) return;
+    setGroupOpen(null);
+  }, true);
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape" && openGroup) setGroupOpen(null); });
   for (const t of visibleTools) {
     // V5: each tool gets its own banner artwork class (bg-dirt / bg-road /
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
@@ -2202,7 +2245,33 @@ export function createOriginalUi(
       hooks.onTool(t.key);
     };
     if (t.key === "harvester") depotSub = b.querySelector("small");
-    buildList.appendChild(b);
+    const grp = groupOf(t.key);
+    if (grp) {
+      let g = groupEls.get(grp.id);
+      if (!g) {
+        const wrap = h("div", "tool-group");
+        wrap.dataset.group = grp.id;
+        const btn = h("button", "build-btn group-btn bg-group-" + grp.id) as HTMLButtonElement;
+        btn.dataset.group = grp.id;
+        btn.setAttribute("aria-haspopup", "true");
+        btn.setAttribute("aria-expanded", "false");
+        btn.innerHTML = `<span class="bb-ico">${toolIconSvg(grp.icon)}</span><div class="bb-mid"><b>${grp.label}</b><small>${grp.sub}</small></div><span class="group-caret" aria-hidden="true">›</span>`;
+        wireToolCard(btn);
+        btn.onclick = () => setGroupOpen(openGroup === grp.id ? null : grp.id);
+        const fly = h("div", "tool-flyout");
+        fly.dataset.flyout = grp.id;
+        const head = h("div", "tool-flyout-head");
+        head.textContent = grp.label;
+        fly.appendChild(head);
+        wrap.append(btn, fly);
+        buildList.appendChild(wrap);
+        g = { wrap, btn, fly };
+        groupEls.set(grp.id, g);
+      }
+      // Picking a tool from the drawer arms it and folds the drawer away.
+      b.addEventListener("click", () => setGroupOpen(null));
+      g.fly.appendChild(b);
+    } else buildList.appendChild(b);
     // The city upgrade sits right under the Processing Plant — the other thing
     // a town is for. Same action as clicking your town's centre on the map;
     // `paintTown` keeps its price, bonus and state current.
@@ -4706,6 +4775,10 @@ export function createOriginalUi(
     // While the opening Depot is owed, every other build is locked out (the
     // game refuses them too) — greyed so the menu never promises a plant.
     const depotOwed = state.phase === "setup-harvester";
+    for (const [gid, g] of groupEls) {
+      const grp = TOOL_GROUPS.find((x) => x.id === gid)!;
+      g.btn.classList.toggle("active", grp.keys.includes(String(toolState)));
+    }
     buildList.querySelectorAll<HTMLElement>("[data-tool]").forEach((b) => {
       b.classList.toggle("active", b.dataset.tool === toolState);
       b.classList.toggle("locked", depotOwed && b.dataset.tool !== "harvester" && b.dataset.tool !== "select");
