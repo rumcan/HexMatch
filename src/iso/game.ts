@@ -93,9 +93,12 @@ import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
-  bootZoomFor, tapSlop,
+  bootZoomFor, tapSlop, visibleTileRange,
   type Camera, type GestureState,
 } from "./camera";
+// AMB-2 (#391): the bird pool — cosmetic, seeded from the map seed, drawn at
+// the closest zoom through the renderer's shared above-structures hook.
+import { createBirds, paintBirds, scareBirds, tickBirds, BIRD_VIEW_PAD, type BirdState } from "./birds";
 import { LEVEL_PX, elevationActive, tileSurfaceHeight } from "./elevation";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { IsoRenderer, type World } from "./renderer";
@@ -851,6 +854,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // it reads `grid.occupancy`/`grid.publicRoads`, both of which `generateMap`
   // has already filled; nothing in `track` affects it.
   const scenery: Scenery = scatterScenery(grid);
+  // AMB-2 (#391): the bird pool. Built once per map from the map seed, like
+  // the scenery — the species a tile belongs to is read off the terrain,
+  // rivers, town tiles and the wheat fields beside the farms, so the pool
+  // costs one derivation per map and NOTHING per frame until the camera
+  // reaches the closest zoom. Cosmetic through and through: no save field, no
+  // wire message, no draw-list entry, nothing for `renderer.pick` to find.
+  const birds: BirdState = createBirds(
+    grid, scenery.fields.filter((f) => f.sprite === "wheat_field"),
+  );
   // RES-FIELDS: the wheat fields / tree blocks beside the resources stand on
   // the grid as obstacles (FIELD_OCC) until demolished. Their layout is seeded;
   // only which ones were cleared is state (saved, and sent to a guest).
@@ -10057,6 +10069,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     const p = pickForAction(x, y);
     if (!p) return;
+    // AMB-2 (#391): a click near perched birds puts them up. Purely cosmetic
+    // and read-only — it changes nothing about what the click then does, and
+    // it is a no-op whenever the bird pool is parked (any zoom but the
+    // closest, and every performance-mode frame).
+    scareBirds(birds, p.tx + 0.5, p.ty + 0.5);
     const isTrackTool = tool === "road" || tool === "dirt" || tool === "rail";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
@@ -10555,6 +10572,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * odd embed) motion simply stays on.
    */
   let motionQuery: MediaQueryList | null = null;
+  /**
+   * AMB-2 (#391): the same setting, for the bird wings. Reduced motion does
+   * not take the birds away — it takes the FLAPPING away: a bird holds the
+   * glide frame, exactly as the placement overlay holds its resting frame.
+   */
+  let reducedMotion = false;
+  const readMotion = () => {
+    reducedMotion = !!motionQuery?.matches;
+    return reducedMotion;
+  };
   const syncOverlayMotion = () => {
     if (typeof window.matchMedia !== "function") return;
     if (!motionQuery) {
@@ -10562,10 +10589,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       motionQuery.addEventListener?.("change", () => {
         renderer?.setOverlayMotion(!motionQuery!.matches);
         renderer?.setCloudMotion(!motionQuery!.matches);
+        readMotion();
       });
     }
     renderer?.setOverlayMotion(!motionQuery.matches);
     renderer?.setCloudMotion(!motionQuery.matches);
+    readMotion();
   };
 
   // ── resize ─────────────────────────────────────────────────────────────
@@ -11707,6 +11736,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     renderer.setCloudsEnabled(policy0.clouds);   // AMB-1 (#390): the boot sky
     appliedPerf = policy0.performance;
     renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
+    // AMB-2 (#391): the birds go through the renderer's shared
+    // ABOVE-STRUCTURES hook — over the buildings, under the placement
+    // feedback, on the overlay layer (which is repainted every frame, so a
+    // moving bird can never smear in a damage-patched structures frame), and
+    // invisible to `renderer.pick`. The painter is a no-op until the fade has
+    // run, which only happens at the closest zoom.
+    renderer.aboveStructuresPainter = (ctx, c) => { paintBirds(ctx, c, grid, birds); };
     // QoL: the placement overlay animates (a breathing outline, a marching
     // reach band, a ghost that floats). A player who asks the OS to reduce
     // motion gets the identical overlay frozen at its resting frame — the
@@ -11867,6 +11903,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       world.vehicles = carItems(cars)
         .concat(truckItems(trucks, atlasRef ?? undefined))
         .concat(trainItems(rail, atlasRef ?? undefined));
+      // AMB-2 (#391): the birds. Cosmetic, seeded from the map seed, and a
+      // no-op unless the camera is at the closest zoom — the fade parks the
+      // whole pool the moment it is not. The view is the tile rect the pool
+      // lives in (a bird that drifts out of it is re-seeded inside, which is
+      // what keeps a dozen birds near the player on a 144×144 map), and the
+      // vehicle list is what startles the ones on the ground.
+      tickBirds(birds, dt, {
+        grid,
+        zoom: cam.zoom,
+        view: visibleTileRange(cam, BIRD_VIEW_PAD),
+        performance: currentGraphics().performance,
+        reducedMotion,
+        vehicles: world.vehicles,
+      });
       const { items, ghost } = overlayFrame();
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
