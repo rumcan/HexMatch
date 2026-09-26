@@ -55,18 +55,32 @@ export interface MapOptions {
   shapes: boolean;
   /** #296: ring roads around towns. */
   rings: boolean;
+  /**
+   * #440: 45° (diagonal) roads.
+   *
+   * It rides here — beside the features that DO change the terrain — because
+   * it needs exactly the same chain of custody: a new game's default, a
+   * resumed save's own record, and ONE value both seats of a room agree on.
+   * Unlike its neighbours it generates nothing; it only says whether a road
+   * drag may leave the grid axis, so a room that changes it re-terrains
+   * nothing and a save that changes it keeps every tile it had.
+   */
+  diag: boolean;
 }
-export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false, rings: false });
-export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true, rings: true });
-export const MAP_KEYS = ["rivers", "elevation", "shapes", "rings"] as const;
+export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false, rings: false, diag: false });
+export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true, rings: true, diag: true });
+export const MAP_KEYS = ["rivers", "elevation", "shapes", "rings", "diag"] as const;
 /** The default for a NEW game: all ON (all OFF under the unit-test runner,
- *  so the seed-pinned tests about other things keep their maps). */
+ *  so the seed-pinned tests about other things keep their maps — and the
+ *  axis-only suites keep their axis-only roads, #440). */
 export function defaultMapOptions(): MapOptions {
   let mode: string | undefined;
   try { mode = import.meta.env?.MODE; } catch { mode = undefined; }
   return { ...(mode === "test" ? MAP_OPTIONS_OFF : MAP_OPTIONS_ON) };
 }
-/** Read a stored / wire value; anything malformed → null. Missing keys read OFF. */
+/** Read a stored / wire value; anything malformed → null. Missing keys read
+ *  OFF — which is what keeps a pre-#440 save axis-only and a pre-MAP-1 save
+ *  featureless, without a migration or a version bump. */
 export function readMapOptions(raw: unknown): MapOptions | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
@@ -168,8 +182,11 @@ export interface MatchSettings {
   winTarget: number;
   /** What every seat starts with. */
   startPurse: StartPurse;
-  /** MAP-1 (#412): the map features the room generates with. Absent = the
-   *  defaults (every seat runs the same build, so they agree). */
+  /** MAP-1 (#412): the map features the room generates with — and, since
+   *  #440, the road rule both seats build under (`map.diag`). Absent = the
+   *  defaults (every seat runs the same build, so they agree). This is why
+   *  the HOST decides: the record is the room's, and a guest reads the same
+   *  one it was handed rather than its own URL. */
   map?: MapOptions;
 }
 
