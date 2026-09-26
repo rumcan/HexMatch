@@ -212,6 +212,20 @@ describe("#420 refusal, legacy and persistence contracts", () => {
     expect(buildRail(grid, axisRoad, rails, 1, diagonal, true).ok).toBe(true);
     expect(rails.rail.tile[tIdx(20, 20)] & RAIL_OVERPASS).toBe(0);
   });
+  it("does not stack a new rail deck on a Highway interchange overpass", () => {
+    const grid = flat(), t = createTrack(false), state = createRailState(); road(t, run("x"), ROAD_TIER.highway);
+    setRoadTier(t, 20, 20, OVERPASS_X);
+    const pv = railPreview(grid, t, state, 1, rich, 20, 18, 20, 22, true, true);
+    expect(pv.tiles).not.toContainEqual([20, 20]); expect(pv.why).toBe("crossing-curve");
+    expect(state.rail.tile[tIdx(20, 20)]).toBe(0);
+  });
+  it.each([false, true])("will not add road/rail deck metadata to a Highway overpass (DEV %s)", (diag) => {
+    const grid = flat(), t = createTrack(diag); road(t, run("x"), ROAD_TIER.highway); setRoadTier(t, 20, 20, OVERPASS_X);
+    grid.builtAt = (x, y) => x === 20 && y === 20 ? "rail-y" : null;
+    const pv = previewDrag(grid, t, "road", rich, 18, 20, 22, 20, true, undefined, 0, undefined, false, { gradeSeparated: true });
+    expect(pv.tiles).not.toContainEqual([20, 20]); expect(pv.why).toBe("overpass-stack");
+    expect(roadRailDeckAxis(t.tier![tIdx(20, 20)])).toBeNull();
+  });
   it("rejects a platform stop on a rail deck instead of creating an unreachable stop", () => {
     const grid = flat(), state = createRailState();
     const row = platformTrackAt(20, 20, "ne"), [x, y] = row[1];

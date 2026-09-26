@@ -43,7 +43,7 @@ import { MAP_W } from "../game/config";
 import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
-  OVERPASS_COST, roadRailDeckAxis, addCost, mergedPresent, octPath, crossingMasksOk, roadConnectionMask, roadDiagLinked,
+  OVERPASS_COST, OVERPASS_X, OVERPASS_Y, roadTierAt, roadRailDeckAxis, addCost, mergedPresent, octPath, crossingMasksOk, roadConnectionMask, roadDiagLinked,
   DIAGONAL_DIRS, straightTrackDirection, type DragPreview, type Purse, type Track,
 } from "./track";
 import { heightAt, WATER, FIELD_OCC, GRASS, ROUGH, SAND, factoryFootprintOf, idx, type Grid } from "./grid";
@@ -1098,8 +1098,10 @@ export function buildRail(
     revision: state.rail.revision };
   let candidate = tiles, why: RailRefusal = "ok";
   if (gradeSeparated) {
-    const bad = tiles.findIndex((_, n) => railGradeCrossing(track, tiles, n) && !railGradeFlat(grid, tiles, n));
-    if (bad >= 0) { candidate = tiles.slice(0, bad); why = "too-steep"; }
+    const stacked = ([x, y]: [number, number]) => [OVERPASS_X, OVERPASS_Y].includes(roadTierAt(track, x, y));
+    const bad = tiles.findIndex((tile, n) => !(original.tile[tIdx(...tile)] & RAIL_PRESENT)
+      && (stacked(tile) || (railGradeCrossing(track, tiles, n) && !railGradeFlat(grid, tiles, n))));
+    if (bad >= 0) { candidate = tiles.slice(0, bad); why = stacked(tiles[bad]) ? "crossing-curve" : "too-steep"; }
   }
   for (;;) {
     const result = buildRailAttempt(grid, track, state, ownerId, candidate);

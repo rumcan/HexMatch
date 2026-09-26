@@ -1305,9 +1305,10 @@ export interface DragPreview {
   truncated: boolean;
   /** D2: reason for the first blocked tile (not an HTML string). */
   why?: string | null;
+  /** #420: road-deck metadata for the validated, affordable prefix only. */
+  railOverpasses?: [number, number, "x" | "y"][];
   /** D2: validated mutations for the affordable prefix, not a second path.
    * Local preview data only; guests send endpoints/order/tier to the host. */
-  railOverpasses?: [number, number, "x" | "y"][];
   roadPlan?: {
     tiers: [number, number, RoadTier][];
     links: [number, number, number, number][];
@@ -1446,7 +1447,10 @@ export function previewDrag(
     // crossing it was planned with.
     const deck = bridgePlan.runs.get(i);
     const railDeck = roadRailOverpass(grid, kind, path, i, bridges);
-    if (railDeck && !flatDeck(grid, path, i)) { why = "overpass-ground"; truncated = true; blocked.push([x, y]); break; }
+    if (railDeck && (tileAlreadyOverpass(t, x, y) || !flatDeck(grid, path, i))) {
+      why = tileAlreadyOverpass(t, x, y) ? "overpass-stack" : "overpass-ground";
+      truncated = true; blocked.push([x, y]); break;
+    }
     // E4 (#268): the drag knows the tile it came from, so the one-level road
     // rule is enforced on the step — a steeper step truncates the drag exactly
     // like an unaffordable tile does, and the prefix stands.
@@ -1549,6 +1553,7 @@ export function previewDrag(
 /** Static wording only: safe to include in the HUD's cost markup. */
 export function roadDragRefusalText(why: string | null | undefined): string {
   const text: Record<string, string> = {
+    "overpass-stack": "An overpass already occupies this crossing; move the new deck to another tile.",
     "overpass-ground": "Overpasses need flat, dry approaches on both sides; no slopes or bridge decks.",
     "diagonal-highway": "A diagonal road cannot cross a Highway — cross straight at right angles or join through a Ramp.",
     "road-tier": "Highways join roads only through Ramps; Overpasses stay axis-only.",
@@ -1634,7 +1639,10 @@ function previewDiagonalDrag(
       && (kind === "dirt" || roadTier === "road" || roadTier === "street")
       && (diagonalIn || diagonalOut || roadDiagNeighbours(t, x, y).length > 0)
       ? "diagonal-highway" : null;
-    if (roadRailOverpass(grid, kind, path, i, bridges) && !flatDeck(grid, path, i)) why ??= "overpass-ground";
+    if (roadRailOverpass(grid, kind, path, i, bridges)) {
+      if (tileAlreadyOverpass(t, x, y)) why ??= "overpass-stack";
+      else if (!flatDeck(grid, path, i)) why ??= "overpass-ground";
+    }
     why ??= buildRefusal(grid, kind, x, y, growing, passAxis(path, i), projected, from);
     // A valid bridge plan alone permits water. Never mask another refusal.
     if (why === "water" && deck) why = null;
