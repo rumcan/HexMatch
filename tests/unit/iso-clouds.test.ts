@@ -294,13 +294,13 @@ describe("AMB-1 renderer plumbing", () => {
     expect(cloudPositions(renderer.cloudSky, 10_000)).not.toEqual(before);
   });
 
-  it("paints clouds over structures and shadows on the terrain at far zoom", () => {
+  it("paints shadows then clouds over the structures at far zoom (nothing under roads)", () => {
     const { renderer, ctxO, ctxT } = setupRenderer(7, 0.5);
     renderer.drawOverlay([], 20_000);
-    expect(ctxO.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT);
-    // the shadow pass is private — reach it the way the suite reaches trace()
-    (renderer as unknown as { paintCloudShadows: (t: number) => void }).paintCloudShadows(20_000);
-    expect(ctxT.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT);
+    // owner: shadows fall on roads and towns too - both passes are above the
+    // structures now (shadows first, then the veils); the ground gets none.
+    expect(ctxO.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT * 2);
+    expect(ctxT.drawImage).not.toHaveBeenCalled();
     expect(renderer.cloudDiagnostics()).toMatchObject({
       enabled: true, motion: true, fade: 1, blits: CLOUD_COUNT, shadowBlits: CLOUD_COUNT,
     });
@@ -314,21 +314,21 @@ describe("AMB-1 renderer plumbing", () => {
     expect(ctxO.drawImage).not.toHaveBeenCalled();
     expect(ctxT.drawImage).not.toHaveBeenCalled();
     expect(renderer.cloudDiagnostics()).toMatchObject({ enabled: false, fade: 0, blits: 0, shadowBlits: 0 });
-    // …and back on again without a re-seed
+    // …and back on again without a re-seed (shadows + veils)
     renderer.setCloudsEnabled(true);
     renderer.drawOverlay([], 20_000);
-    expect(ctxO.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT);
+    expect(ctxO.drawImage).toHaveBeenCalledTimes(CLOUD_COUNT * 2);
   });
 
   it("paints no veils at the medium or closest zoom (fade 0)", () => {
     const near = setupRenderer(7, 2);
     near.renderer.drawOverlay([], 20_000);
-    expect(near.ctxO.drawImage).not.toHaveBeenCalled();
     expect(near.renderer.cloudDiagnostics()).toMatchObject({ fade: 0, blits: 0 });
     const mid = setupRenderer(7, 1);
     mid.renderer.drawOverlay([], 20_000);
-    expect(mid.ctxO.drawImage).not.toHaveBeenCalled();
-    expect(mid.renderer.cloudDiagnostics().fade).toBe(0);
+    // no veils at medium zoom - only the ground shadows are drawn there
+    expect(mid.renderer.cloudDiagnostics()).toMatchObject({ fade: 0, blits: 0 });
+    expect(mid.renderer.cloudDiagnostics().shadowBlits).toBeGreaterThan(0);
   });
 
   it("freezes the sky when reduced motion asks (same draws at any time)", () => {
