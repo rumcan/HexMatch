@@ -823,11 +823,30 @@ export function tickCars(
           }
           const a = car.route[car.leg], b = car.route[car.leg + 1];
           const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          // Density cap: refuse to enter the NEXT segment if it is already
+          // saturated, to prevent pile-ups from snowballing across tiles.
+          if (car.t >= 0.99 && car.leg + 1 < n - 1) {
+            const na = car.route[car.leg + 1], nb = car.route[car.leg + 2];
+            const nextKey = segKey(na[0], na[1], nb[0], nb[1]);
+            let occupants = 0;
+            const myCanonFwd = tIdx(na[0], na[1]) < tIdx(nb[0], nb[1]);
+            for (const mate of hash.segmentMates(nextKey)) {
+              if (mate.id === car.name) continue;
+              const other = mate.v as Car;
+              if (other.state !== "driving" && other.state !== "arriving") continue;
+              const ok = Math.min(other.leg, other.route.length - 2);
+              const oa = other.route[ok], ob = other.route[Math.min(ok + 1, other.route.length - 1)];
+              if (segKey(oa[0], oa[1], ob[0], ob[1]) !== nextKey) continue;
+              const oFwd = tIdx(oa[0], oa[1]) < tIdx(ob[0], ob[1]);
+              if (oFwd === myCanonFwd) occupants++;
+            }
+            if (occupants >= 4) { car._lastSpeed = 0; break; }
+          }
           // Tier pace: Dirt < Street < Road < Highway, relative to Road's pace.
           const pace = carTierPace(trackOrBlocked, a, b);
           const baseSpeed = CAR_SPEED * pace / segLen;
-          const ahead = distAhead(car);
-          const effSpeed = followSpeed(baseSpeed, ahead);
+          const aheadDist = distAhead(car);
+          const effSpeed = followSpeed(baseSpeed, aheadDist);
           const need = (1 - car.t) / (effSpeed || 1e-9);
           if (effSpeed <= 1e-9) {
             // Blocked by car ahead — hold position
