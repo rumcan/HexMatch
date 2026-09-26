@@ -332,6 +332,15 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(h.placeDepot(site!.hx, site!.hy - 1)).toBe(true);
     await settle();
 
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     const cargo = INDUSTRY_BY_KEY[site!.ind.type].cargo;
     expect(h.tuning).not.toBeNull();
     expect(h.tuning!.cargo).toBe(cargo);
@@ -397,6 +406,15 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
 
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     const mv = h.board.findMove();
     expect(mv, "the session board has a move").toBeTruthy();
     h.swap(...mv!);
@@ -422,6 +440,16 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const site = depotSite(h.grid)!;
     expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
+
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     const depotId = h.tuning!.depotId;
 
     // A played session (the board's own clear hook is what scores a cascade).
@@ -481,6 +509,16 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const site = depotSite(h.grid)!;
     expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
+
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     const depotId = h.tuning!.depotId;
     h.board.onClear(30, 1);                       // a real score, thrown away
     h.tuningFinish(true);
@@ -495,6 +533,16 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     for (const c of ["wood", "stone", "grain", "ore", "oil"] as const) h.purse[c] = 99;
     expect(h.placeDepot(second.hx, second.hy - 1)).toBe(true);
     await settle();
+
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     expect(h.tuning!.movesLeft).toBe(TUNING.moves);
     const dud = dudSwap(h.board)!;
     for (let i = 0; i < TUNING.moves; i++) h.swap(...dud);
@@ -515,6 +563,16 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const site = depotSite(h.grid)!;
     expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
+
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     expect(h.tuning).not.toBeNull();
     h.demolish(site.hx, site.hy);
     await settle();
@@ -639,6 +697,16 @@ describe.skip("L4 the level travels, and the shipped loop is untouched", () => {
     const site = depotSite(h.grid)!;
     expect(h.placeDepot(site.hx, site.hy - 1)).toBe(true);
     await settle();
+
+    // #461: target card may be up — start it so board is live.
+    {
+      const tc = root.querySelector("#iso-target-card") as HTMLElement | null;
+      if (tc && !tc.classList.contains("hidden")) {
+        (tc.querySelector(".tc-start") as HTMLButtonElement)?.click();
+        await settle();
+      }
+    }
+
     const toasts = root.querySelector(".toasts")!.textContent ?? "";
     expect(toasts).toMatch(/Tuning session/i);
     expect(toasts).not.toMatch(/match the tokened gems/i);
