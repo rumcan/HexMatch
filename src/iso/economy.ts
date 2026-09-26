@@ -35,7 +35,7 @@ import { MAP_W, MAP_H } from "../game/config";
 import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
-  DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump, roadDiagNeighbours,
+  commitDrag, dirtyTiles, type RoadTierKey, type DragPreview, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump, roadDiagNeighbours,
   plantFootprintTiles, type Track, type TrackKind,
 } from "./track";
 // RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
@@ -972,3 +972,36 @@ export function pickBlockadeTarget(
 // anything, so nothing here needs a `ScoreState`. What the tiles and the plants
 // are worth is `victory.ts`'s business, and `game.ts` calls `rescore` there on
 // exactly the same build/demolish beats it calls `syncWorld` on.
+
+/** #462: sustained output before storage clipping / integer carry. The caller
+ * supplies the clock's yield, distance, city and dam factor, not a UI estimate. */
+export function routeIncome(yields: Yield, factor: number, tickMs: number,
+  price: (cargo: Cargo) => number): { cargoPerMinute: number; moneyPerMinute: number } {
+  const entries = Object.entries(yields) as [Cargo, number][];
+  const cargoPerMinute = entries.reduce((n, [, amount]) => n + amount, 0) * factor * 60_000 / tickMs;
+  // The clock credits the first cargo when a Depot holds multiple industries.
+  return { cargoPerMinute, moneyPerMinute: cargoPerMinute * (entries[0] && entries[0][0] !== "gold" ? price(entries[0][0]) : 0) };
+}
+
+/** Evaluate the exact accepted build on detached track buffers. */
+export function routeUpgradeGain(state: EconomyState, h: Harvester, now: number,
+  preview: DragPreview, tier: RoadTierKey,
+  factor: (state: EconomyState, connection: Connection) => number = () => 1): number {
+  const track = { ...state.track };
+  for (const key of Object.keys(track) as (keyof Track)[]) {
+    const value = track[key];
+    if (ArrayBuffer.isView(value)) (track as unknown as Record<string, unknown>)[key] = (value as Uint8Array).slice();
+  }
+  const total = (s: EconomyState) => {
+    const result = harvesterYield(s, buildAllComponents(s.track, h.ownerId), industryLocks(s), h, now);
+    return Object.values(result.yields).reduce((n, v) => n + (v ?? 0), 0) * factor(s, result.connection);
+  };
+  const before = total(state);
+  // Builders journal rendering/network dirt globally. A speculative build must
+  // leave that journal exactly as it found it, including pending live edits.
+  const pending = dirtyTiles.drain();
+  try { commitDrag(track, "road", preview, h.ownerId, tier); }
+  finally { dirtyTiles.clear(); dirtyTiles.markAll(pending); }
+  const after = total({ ...state, track });
+  return before > 0 ? (after / before - 1) * 100 : 0;
+}
