@@ -70,10 +70,15 @@ export const BATTLE_SKILLS: Record<SkillKey, SkillPolicy> = {
   easy:   { depth: 0, pBest: 0.55, cast: "obvious", challengeEveryMs: 600_000 },
   normal: { depth: 1, pBest: 0.82, cast: "value", challengeEveryMs: 360_000 },
   hard:   { depth: 2, pBest: 0.97, cast: "value+", challengeEveryMs: 210_000 },
+  // FTUE-1 (#464): the trainee never CALLS a fight (`RivalSkill.challenges`
+  // is its flag); the Infinity clock is the belt to that braces — even a
+  // caller that forgets to ask arms no challenge clock for it. It still
+  // DEFENDS (a shallow hand) when the player starts one.
+  trainee: { depth: 0, pBest: 0.5, cast: "obvious", challengeEveryMs: Infinity },
 };
 
 const SKILL_SALT: Record<SkillKey, number> = {
-  easy: 0x1a2b3c4d, normal: 0x2c3d4e5f, hard: 0x3e4f5a6b,
+  easy: 0x1a2b3c4d, normal: 0x2c3d4e5f, hard: 0x3e4f5a6b, trainee: 0x4f5a6b7c,
 };
 
 const emptyW = (): Record<Cargo, number> =>
