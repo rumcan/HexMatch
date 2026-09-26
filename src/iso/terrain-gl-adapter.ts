@@ -8,19 +8,52 @@
 import { MAP_H, MAP_W } from "../game/config";
 import type { Grid } from "./grid";
 import { cornerHeight, elevationActive } from "./elevation";
-import { createTerrainRenderer, type TerrainCamera, type TerrainMapInput, type TerrainRenderer } from "./terrain-gl";
+import { createTerrainRenderer, type TerrainCamera, type TerrainMapInput, type TerrainRenderer, type TerrainTextureUrls } from "./terrain-gl";
 
-import grassUrl from "../assets/terrain/grass_512.png";
-import meadowUrl from "../assets/terrain/meadow_512.png";
-import dirtUrl from "../assets/terrain/dirt_512.png";
-import rockUrl from "../assets/terrain/rock_512.png";
-import sandUrl from "../assets/terrain/sand_512.png";
-import detailUrl from "../assets/terrain/detail_256.png";
+/** Every PNG in the ground-art folder, keyed by path. A glob (not static
+ *  imports) means the #451 variant files — grass_b_512.png and friends — are
+ *  picked up the moment the lead drops them in, with no build error while a
+ *  file is still missing. */
+const TERRAIN_FILES = import.meta.glob("../assets/terrain/*.png", {
+  eager: true, query: "?url", import: "default",
+}) as Record<string, string>;
+
+const fileUrl = (name: string): string | undefined => {
+  for (const key of Object.keys(TERRAIN_FILES)) if (key.endsWith(`/${name}`)) return TERRAIN_FILES[key];
+  return undefined;
+};
 
 /** Painted ground set (tools/terrain/make_seamless.py). grass = the shipped
- *  grass texture, meadow = a lighter copy of it (owner call 2026-09-26);
- *  the water normal map stays procedural. */
-const TEXTURES = { grass: grassUrl, meadow: meadowUrl, dirt: dirtUrl, rock: rockUrl, sand: sandUrl, detail: detailUrl };
+ *  grass texture, meadow = a lighter copy of it (owner call 2026-09-26); the
+ *  water normal map stays procedural.
+ *
+ *  #451: each material has three variant slots. `_a_` is variant A, and today's
+ *  `<material>_512.png` is used as A when the `_a_` file does not exist yet;
+ *  variants B and C come from `<material>_b_512.png` / `_c_512.png`. A missing
+ *  variant (the current art) falls back to a placeholder the renderer derives
+ *  from variant A — rotated, hue/value shifted. Files the artist still owes:
+ *    terrain/grass_{a,b,c}_512.png, terrain/meadow_{a,b,c}_512.png,
+ *    terrain/dirt_{a,b,c}_512.png, terrain/rock_{a,b,c}_512.png,
+ *    terrain/sand_{a,b,c}_512.png
+ *  (all seamless, 512², same painterly style as the `_512.png` files). */
+const TEXTURES: TerrainTextureUrls = {
+  grass: fileUrl("grass_a_512.png") ?? fileUrl("grass_512.png"),
+  grassB: fileUrl("grass_b_512.png"),
+  grassC: fileUrl("grass_c_512.png"),
+  meadow: fileUrl("meadow_a_512.png") ?? fileUrl("meadow_512.png"),
+  meadowB: fileUrl("meadow_b_512.png"),
+  meadowC: fileUrl("meadow_c_512.png"),
+  dirt: fileUrl("dirt_a_512.png") ?? fileUrl("dirt_512.png"),
+  dirtB: fileUrl("dirt_b_512.png"),
+  dirtC: fileUrl("dirt_c_512.png"),
+  rock: fileUrl("rock_a_512.png") ?? fileUrl("rock_512.png"),
+  rockB: fileUrl("rock_b_512.png"),
+  rockC: fileUrl("rock_c_512.png"),
+  sand: fileUrl("sand_a_512.png") ?? fileUrl("sand_512.png"),
+  sandB: fileUrl("sand_b_512.png"),
+  sandC: fileUrl("sand_c_512.png"),
+  detail: fileUrl("detail_256.png"),
+};
 
 const STORE_KEY = "hexmatch:terrain-gl";
 
