@@ -2117,6 +2117,28 @@ function makeElevation(
     flatten(tiles);
   }
   for (const town of towns) flatten([...town.houses, ...town.roads, [town.tx, town.ty]]);
+  // MAP-1 (#412): a flat APRON around every town. The per-tile jitter above
+  // makes open land bumpy everywhere, and a Factory (up to 2×4 with shapes)
+  // needs a level footprint that shares an edge with the town — without an
+  // apron the opening move (first-run coach: "place your Factory beside a
+  // town") often had no legal site. The apron takes the town's own level;
+  // water, rivers and industry footprints keep theirs (already fixed).
+  const APRON = 6;
+  for (const town of towns) {
+    const pts = [...town.houses, ...town.roads, [town.tx, town.ty] as [number, number]];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const level = height[idx(town.tx, town.ty)];
+    for (let y = y0 - APRON; y <= y1 + APRON; y++) {
+      for (let x = x0 - APRON; x <= x1 + APRON; x++) {
+        if (!inBounds(x, y)) continue;
+        const i = idx(x, y);
+        if (fixed[i]) continue;                       // water, rivers, industries, the town itself
+        height[i] = level;
+        fixed[i] = 1;
+      }
+    }
+  }
 
   // Repeatedly project each unfixed tile into the intersection of the
   // one-level bands around its neighbours. Fixed footprints and water are

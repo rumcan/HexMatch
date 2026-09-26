@@ -46,6 +46,42 @@
  * `tests/unit/net-match-settings.test.ts`, which fails if `iso/skill.ts` grows
  * or renames a preset.
  */
+// ── MAP-1 (#412): map features a room generates with ────────────────────
+// Declared HERE (this file is the protocol's import-free leaf); the game
+// reads them through iso/map-options.ts, which re-exports these.
+export interface MapOptions {
+  rivers: boolean;
+  elevation: boolean;
+  shapes: boolean;
+}
+export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false });
+export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true });
+const MAP_KEYS = ["rivers", "elevation", "shapes"] as const;
+/** The default for a NEW game: all ON (all OFF under the unit-test runner,
+ *  so the seed-pinned tests about other things keep their maps). */
+export function defaultMapOptions(): MapOptions {
+  let mode: string | undefined;
+  try { mode = import.meta.env?.MODE; } catch { mode = undefined; }
+  return { ...(mode === "test" ? MAP_OPTIONS_OFF : MAP_OPTIONS_ON) };
+}
+/** Read a stored / wire value; anything malformed → null. Missing keys read OFF. */
+export function readMapOptions(raw: unknown): MapOptions | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const out = { ...MAP_OPTIONS_OFF } as MapOptions;
+  for (const k of MAP_KEYS) {
+    if (o[k] === undefined) continue;
+    if (typeof o[k] !== "boolean") return null;
+    out[k] = o[k] as boolean;
+  }
+  return out;
+}
+/** Equality; an absent value means the defaults (see `MatchSettings.map`). */
+export function mapOptionsEqual(a: MapOptions | null | undefined, b: MapOptions | null | undefined): boolean {
+  const x = a ?? defaultMapOptions(), y = b ?? defaultMapOptions();
+  return MAP_KEYS.every((k) => x[k] === y[k]);
+}
+
 export const AI_SKILL_KEYS = ["easy", "normal", "hard"] as const;
 
 /** One AI seat's difficulty. */
@@ -130,6 +166,9 @@ export interface MatchSettings {
   winTarget: number;
   /** What every seat starts with. */
   startPurse: StartPurse;
+  /** MAP-1 (#412): the map features the room generates with. Absent = the
+   *  defaults (every seat runs the same build, so they agree). */
+  map?: MapOptions;
 }
 
 /** The rules a host who touches nothing plays by — today's game, verbatim. */
@@ -240,7 +279,11 @@ export function normalizeMatchSettings(raw: unknown): MatchSettings | null {
     }
   }
 
-  return { aiSeats, winTarget, startPurse };
+  // ── map features (MAP-1 #412) — kept only when the host set them; absent
+  //    or malformed means the defaults (read at boot, see map-options.ts) ──
+  const map = o.map === undefined ? null : readMapOptions(o.map);
+
+  return map ? { aiSeats, winTarget, startPurse, map } : { aiSeats, winTarget, startPurse };
 }
 
 /**
@@ -287,7 +330,8 @@ export function matchSettingsEqual(a: MatchSettings, b: MatchSettings): boolean 
     a.winTarget === b.winTarget &&
     a.aiSeats.length === b.aiSeats.length &&
     a.aiSeats.every((seat, i) => seat === b.aiSeats[i]) &&
-    START_PURSE_KEYS.every((key) => a.startPurse[key] === b.startPurse[key])
+    START_PURSE_KEYS.every((key) => a.startPurse[key] === b.startPurse[key]) &&
+    mapOptionsEqual(a.map, b.map)
   );
 }
 

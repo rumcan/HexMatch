@@ -40,6 +40,9 @@ export interface SaveGamePayload {
   snapV: number;
   savedAt: number;
   seed: number;
+  /** MAP-1 (#412): the map features this save was generated with. Absent in
+   *  saves made before MAP-1 (those maps were all-OFF). */
+  map?: { rivers: boolean; elevation: boolean; shapes: boolean };
   skillKey: string;
   phase: string;
   winnerId: string | null;
