@@ -222,9 +222,11 @@ void main() {
 
     // 3e. Elevation lighting from the baked per-vertex factor (1 = flat).
     //     Lit faces warm up, shaded faces cool down, both subtly.
+    // Owner: the level changes must READ at a glance - slopes away from the
+    // upper-left sun go clearly dark and cool, sunlit ones warm and bright.
     vec3 tint = vShade >= 1.0
-      ? mix(vec3(1.0), vec3(1.17, 1.11, 0.98), clamp(vShade - 1.0, 0.0, 1.0))
-      : mix(vec3(0.70, 0.75, 0.88), vec3(1.0), vShade);
+      ? mix(vec3(1.0), vec3(1.30, 1.22, 1.02), clamp((vShade - 1.0) * 1.6, 0.0, 1.0))
+      : mix(vec3(0.34, 0.40, 0.56), vec3(1.0), pow(clamp(vShade, 0.0, 1.0), 1.8));
     land *= tint;
   }
 
