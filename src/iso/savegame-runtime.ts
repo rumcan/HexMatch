@@ -75,6 +75,14 @@ export interface SaveGamePayload {
   track: { dirt: string; road: string; owner: string; upgraded: string; tier?: string };
   rail?: RailWire;
   /**
+   * #456 Level Ground — the edited heights, the way map options ride: flat
+   * `[x, y, level]` triples for every tile that differs from the seed-derived
+   * map (the map regenerates from `seed`; only the terraforming travels).
+   * Absent in a pre-#456 save — the loader then reads the unlevelled island,
+   * which is exactly what that save was taken from.
+   */
+  heightEdits?: number[];
+  /**
    * R3 (#270): the standing hydro dams, in the snapshot's own wire shape
    * (the map regenerates the sites from the seed; ownership + bank lean
    * travel). Absent from a pre-dam save — the loader reads an undammed map,

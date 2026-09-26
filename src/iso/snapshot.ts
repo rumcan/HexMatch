@@ -427,6 +427,16 @@ export interface Snapshot {
    * `SNAPSHOT_VERSION` bump.
    */
   dams?: DamWire[];
+  /**
+   * #456 Level Ground — the EDITED heights: flat `[x, y, level]` triples for
+   * every tile that differs from the seed-derived map (a save's `heightEdits`
+   * rule, "the way map options are" carried). Terrain is regenerated from the
+   * seed and never sent; these are the tiles the players levelled, so a guest
+   * draws the same hills the host plays on. Absent (or empty) means "no
+   * terraforming" — an old guest ignores the field, a new guest reading an
+   * old snapshot finds none, and no version bump is needed.
+   */
+  heightEdits?: number[];
 }
 
 export interface SnapshotSource {
@@ -450,6 +460,8 @@ export interface SnapshotSource {
   clearedFields?: number[];
   /** R3 (#270): the standing dams (the wire shape — the host's own form). */
   dams?: DamWire[];
+  /** #456: the edited heights (flat `[x, y, level]` triples). */
+  heightEdits?: number[];
 }
 
 /** Copy the duel for the wire (`saved` is a fresh `Battle.save()` each call). */
@@ -521,6 +533,8 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
     // R3 (#270): a world with no dam pays nothing for the field, like the
     // railway and the offer book.
     ...(src.dams?.length ? { dams: src.dams.map((d) => ({ ...d })) } : {}),
+    // #456: a world the players never levelled pays nothing for the field.
+    ...(src.heightEdits?.length ? { heightEdits: [...src.heightEdits] } : {}),
   };
 }
 
@@ -751,6 +765,8 @@ export interface AppliedSnapshot {
   clearedFields: number[];
   /** R3 (#270): the standing dams, validated row by row. */
   dams: DamWire[];
+  /** #456: the edited heights (flat `[x, y, level]` triples; empty = none). */
+  heightEdits: number[];
 }
 
 /**
@@ -804,6 +820,9 @@ export function applySnapshot(s: unknown, localSeed?: number): AppliedSnapshot {
     // R3 (#270): the dam rows, copied (a shared reference would let a late
     // mutation on the wire object rewrite the applied world).
     dams: ((o as Snapshot).dams ?? []).map((x) => ({ ...x })),
+    // #456: the edited heights ride the same additive-optional way — empty
+    // means "the seed-derived heights stand".
+    heightEdits: [...((o as Snapshot).heightEdits ?? [])],
   };
 }
 

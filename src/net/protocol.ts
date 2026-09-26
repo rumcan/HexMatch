@@ -247,6 +247,14 @@ export interface DeltaMsg {
   winner?: Snapshot["winner"];
   /** RES-FIELDS: ids of the demolished wheat fields / tree blocks (whole list). */
   clearedFields?: Snapshot["clearedFields"];
+  /**
+   * #456 Level Ground: the EDITED heights (whole diff from the seed map,
+   * flat `[x, y, level]` triples — the `clearedFields` rule, not the rail
+   * "absent = unchanged" rule). A guest that levels through the host has its
+   * own intent applied and mirrored by the forced publish; this field is how
+   * EVERY delta keeps the guest's hills equal to the host's.
+   */
+  heightEdits?: Snapshot["heightEdits"];
   /** B6 + TRADE: the battle layer and the offer book ride every delta. */
   battle?: Snapshot["battle"];
   offers?: Snapshot["offers"];
