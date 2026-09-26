@@ -261,6 +261,40 @@ export function makeNoiseAtlas(size: number): RawTexture {
   return t;
 }
 
+/**
+ * Placeholder VARIANT of a ground texture (the artist's <material>_b/_c_512.png
+ * before it exists): an exact 90° / 180° rotation of the base pixels plus a
+ * small hue/value shift. Rotations and integer rolls keep a seamless texture
+ * seamless, so the placeholder tiles exactly like the base while its repeat
+ * lands somewhere else — which is the whole point of the variant slots.
+ */
+export function variantFromBase(base: RawTexture, index: 1 | 2): RawTexture {
+  const w = base.width, h = base.height;
+  const data = base.data;
+  const out = new Uint8Array(w * h * 4);
+  const gain: RGB = index === 1 ? [1.06, 1.02, 0.95] : [0.95, 1.00, 1.07];
+  const add = index === 1 ? 5 : -4;
+  const ox = index === 1 ? Math.floor(w / 3) : Math.floor(w / 5); // integer roll: seamless
+  const oy = index === 1 ? Math.floor(h / 5) : Math.floor(h / 3);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // rotate 90° (variant B) or 180° (variant C), then roll
+      const sx = index === 1 ? (y + ox) % w : (w - 1 - x + ox) % w;
+      const sy = index === 1 ? (w - 1 - x + oy) % h : (h - 1 - y + oy) % h;
+      const si = (sy * w + sx) * 4, di = (y * w + x) * 4;
+      out[di]     = clampByte(data[si]     * gain[0] + add);
+      out[di + 1] = clampByte(data[si + 1] * gain[1] + add);
+      out[di + 2] = clampByte(data[si + 2] * gain[2] + add);
+      out[di + 3] = 255;
+    }
+  }
+  return { width: w, height: h, data: out };
+}
+
+function clampByte(v: number): number {
+  return v < 0 ? 0 : v > 255 ? 255 : Math.round(v);
+}
+
 export type TextureSlot = "grass" | "meadow" | "dirt" | "rock" | "sand" | "detail" | "waterNormal";
 
 export const TEXTURE_SLOTS: readonly TextureSlot[] = ["grass", "meadow", "dirt", "rock", "sand", "detail", "waterNormal"];
