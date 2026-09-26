@@ -22,8 +22,8 @@
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, type Cargo } from "./config";
-import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, type Grid } from "./grid";
+import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, type Cargo } from "./config";
+import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, heightAt as tileHeight, type Grid } from "./grid";
 import { CHUNK, chunksX } from "./renderer";
 import {
   BRIDGE_COST, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
@@ -91,6 +91,13 @@ export interface Track {
   owner: Uint8Array;
   /** VP-01: `PRESENT` where the paved Road here replaced a Dirt Road. */
   upgraded: Uint8Array;
+  /**
+   * ROADS-2 (#393): the paved layer's TIER per tile — 0 Road (the default),
+   * 1 Street, 2 Highway. Meaningful only where `road` is present; cleared with
+   * the pavement. Optional so hand-built test tracks and old saves (all Road)
+   * keep working; `roadTierAt` reads a missing array as all Road.
+   */
+  tier?: Uint8Array;
   /** TRAFFIC-02: monotonically increments on every road mutation, so ambient
    *  traffic can cache adjacency by revision without rescanning the whole map
    *  every render frame. */
@@ -102,8 +109,30 @@ export const createTrack = (): Track => ({
   road: new Uint8Array(MAP_W * MAP_H),
   owner: new Uint8Array(MAP_W * MAP_H),
   upgraded: new Uint8Array(MAP_W * MAP_H),
+  tier: new Uint8Array(MAP_W * MAP_H),
   revision: 0,
 });
+
+// ── ROADS-2 (#393): road tiers ──────────────────────────────────────────────
+export const ROAD_TIER = { road: 0, street: 1, highway: 2 } as const;
+export type RoadTierKey = keyof typeof ROAD_TIER;
+export type RoadTier = (typeof ROAD_TIER)[RoadTierKey];
+export const ROAD_TIER_KEYS: readonly RoadTierKey[] = ["road", "street", "highway"];
+
+/** The paved tier at a tile (Road when the track predates tiers). */
+export const roadTierAt = (t: Track, tx: number, ty: number): RoadTier =>
+  (t.tier?.[tIdx(tx, ty)] ?? 0) as RoadTier;
+
+/** Stamp a paved tile's tier (no-op off the map or without pavement). */
+export function setRoadTier(t: Track, tx: number, ty: number, tier: RoadTier): void {
+  if (!inMapT(tx, ty)) return;
+  const i = tIdx(tx, ty);
+  if (!t.tier) t.tier = new Uint8Array(MAP_W * MAP_H);
+  if ((t.road[i] & PRESENT) === 0 || t.tier[i] === tier) return;
+  t.tier[i] = tier;
+  dirtyTiles.mark(i);
+  t.revision++;
+}
 
 // ── dirty-tile journal (MP-04) ────────────────────────────────────────────
 /**
@@ -745,7 +774,7 @@ export function demolishTile(t: Track, kind: TrackKind, tx: number, ty: number):
   // VP-01: provenance dies with the pavement. Tearing up a paved tile takes
   // its 0.25★ back with it (the scoreboard diffs against this layer), so a
   // point can never be farmed by paving and re-paving the same ground.
-  if (kind === "road") t.upgraded[i] = 0;
+  if (kind === "road") { t.upgraded[i] = 0; if (t.tier) t.tier[i] = 0; }
   if (!hasTrack(t, "road", tx, ty) && !hasTrack(t, "dirt", tx, ty)) t.owner[i] = 0;
   // Also re-tile the OTHER layer around the gap: a paved neighbour that was
   // facing this tile (any-tier masks) must stop now that nothing is here.
@@ -810,6 +839,34 @@ export const freeAllowanceCovers = (kind: TrackKind, newLoop = false): boolean =
  * over gravel. The adjacency rule (build off your own network) is untouched;
  * `BUILD_COSTS.dirt` keeps its old-loop price and the old loop reads it.
  */
+/** ROADS-2 (#393): a tier's rank — Street < Road < Highway. */
+export const TIER_RANK: Record<RoadTierKey, number> = { street: 0, road: 1, highway: 2 };
+const RANK_OF_STORED = [1, 0, 2];                     // stored tier 0 Road, 1 Street, 2 Highway
+/** Per-cargo difference `a − b`, floored at zero (an upgrade pays the gap). */
+const costGap = (a: Purse, b: Purse): Purse => {
+  const out: Purse = {};
+  for (const [k, v] of Object.entries(a) as [Cargo, number][]) {
+    const d = v - (b[k] ?? 0);
+    if (d > 0) out[k] = d;
+  }
+  return out;
+};
+/**
+ * ROADS-2 (#393): what one tile of a TIERED paved drag costs. New ground pays
+ * the tier; pavement already at this rank or higher pays nothing (and is not
+ * downgraded); lower pavement pays the difference; gravel pays the tier.
+ */
+export function tierTileCost(t: Track, tier: RoadTierKey, tx: number, ty: number): Purse {
+  const want = ROAD_TIERS[tier].cost;
+  if (hasTrack(t, "road", tx, ty)) {
+    const cur = RANK_OF_STORED[roadTierAt(t, tx, ty)];
+    if (cur >= TIER_RANK[tier]) return {};
+    const curKey = ROAD_TIER_KEYS.find((k) => TIER_RANK[k] === cur) ?? "road";
+    return costGap(want, ROAD_TIERS[curKey].cost);
+  }
+  return { ...want };
+}
+
 export function tileCost(t: Track, kind: TrackKind, tx: number, ty: number, newLoop = false): Purse {
   if (kind === "dirt" && newLoop) return {};   // L2: free dirt under the new loop
   if (hasTrack(t, kind, tx, ty)) return {};
@@ -922,7 +979,10 @@ export function previewDrag(
   ax: number, ay: number, bx: number, by: number, xFirst = true,
   network?: Set<number>, freeTiles = 0, structures?: Set<number>,
   newLoop = false, bridges: BridgeDragOptions = {},
+  roadTier: RoadTierKey = "road",
 ): DragPreview {
+  // ROADS-2 (#393): Street / Highway ride the paved layer at their own price.
+  const tiered = kind === "road" && roadTier !== "road";
   const path = lPath(ax, ay, bx, by, xFirst);
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
@@ -1014,7 +1074,13 @@ export function previewDrag(
       growing?.add(tIdx(x, y));
       continue;
     }
-    const c = tileCost(t, kind, x, y, newLoop);
+    // ROADS-2 (#393): a Highway needs gentle grades — no level change between
+    // two consecutive tiles (a deck is the bridge's own ramp, handled above).
+    if (tiered && roadTier === "highway" && i > 0
+      && tileHeight(grid, x, y) !== tileHeight(grid, path[i - 1][0], path[i - 1][1])) {
+      noteObstacle(i); break;
+    }
+    const c = tiered ? tierTileCost(t, roadTier, x, y) : tileCost(t, kind, x, y, newLoop);
     const paves = kind === "road" && hasTrack(t, "dirt", x, y);
     // VP-01: Free tiles are charged nothing; the allowance covers them first.
     // A tile that costs nothing (dragging over your own track) consumes no
@@ -1063,13 +1129,26 @@ export interface CommitResult {
  * allowance already subtracted) — never a recomputation. Committing builds
  * exactly `preview.tiles` and nothing more.
  */
-export function commitDrag(t: Track, kind: TrackKind, preview: DragPreview, owner = 0): CommitResult {
+export function commitDrag(
+  t: Track, kind: TrackKind, preview: DragPreview, owner = 0, roadTier: RoadTierKey = "road",
+): CommitResult {
   const chunks = new Set<number>();
   for (const [x, y] of preview.tiles) {
     // W2: the builder's track-owner id is stamped on every tile laid — a
     // drag built by player 1 is player 1's network, full stop.
     const r = buildTile(t, kind, x, y, owner);
     if (r) for (const c of r.chunks) chunks.add(c);
+  }
+  // ROADS-2 (#393): stamp the tier on every paved tile of the drag whose rank
+  // is below it (never downgrade). Plain Road drags leave tiers untouched.
+  if (kind === "road" && roadTier !== "road") {
+    const want = ROAD_TIER[roadTier];
+    for (const [x, y] of preview.tiles) {
+      if (!hasTrack(t, "road", x, y)) continue;
+      if (RANK_OF_STORED[roadTierAt(t, x, y)] >= TIER_RANK[roadTier]) continue;
+      setRoadTier(t, x, y, want);
+      chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
+    }
   }
   return { built: preview.tiles, cost: preview.cost, chunks: [...chunks] };
 }

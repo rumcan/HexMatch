@@ -41,7 +41,7 @@ import { type CargoBag } from "../iso/purse";
 // constant and the engine's own `VP_TARGET` were two numbers with one name,
 // and the HUD was already showing "/10" while the game was winning at 12 — the
 // scoreboard now has exactly one source, `VICTORY` in src/iso/config.ts.
-import { CARGO, CARGOES, TRANSPORT, VICTORY, TUNING, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
+import { CARGO, CARGOES, TRANSPORT, ROAD_TIERS, VICTORY, TUNING, type Cargo, type Portrait , DEPOT_RUNG_GATE} from "../iso/config";
 import { DEPOT_COST } from "../iso/construction";
 import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -173,6 +173,8 @@ type TabName = "market" | "bank" | "black" | "plant" | "feed" | "quests";
 
 export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
+  // ROADS-2 (#393): the paved tiers — the game arms "road" at that tier.
+  | "street" | "highway"
   // RAIL-04 (#178): the railway's tools. `rail` drags track, `platform` and
   // `raildepot` place one structure in the current heading (R turns it), and
   // `railway` holds the panel: the lines, the trains and the buy/recall/sell
@@ -2081,7 +2083,9 @@ export function createOriginalUi(
     // "+0.25★ paving dirt" would sell the player the one plan the scoreboard
     // no longer pays for. Road is still worth building (it is the fast
     // transport tier, `TRANSPORT.road.factor`), so the line says THAT instead.
+    { key: "street", label: "Street", sub: `${costMarkup(ROAD_TIERS.street.cost)} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
     { key: "road", label: "Road", sub: `${costMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
+    { key: "highway", label: "Highway", sub: `${costMarkup(ROAD_TIERS.highway.cost)} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down. L5 (#219): on the new loop the price is the
     // industry's own mix, so the line says "from …" rather than quoting the

@@ -1130,6 +1130,23 @@ export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {
   },
 };
 
+/**
+ * ROADS-2 (#393): the paved layer's three tiers. `throughput` is the per-tile
+ * haul speed a route averages over (Dirt is 1.0 for reference), and `cost` is
+ * per tile. Street is the cheap, slow town lane; Road is today's paved road
+ * (its numbers ARE TRANSPORT.road's); Highway is the fast, dear long-haul
+ * carriageway (2 tiles wide in the art, gentle grades only — see slopes).
+ */
+export const ROAD_TIERS: Record<"street" | "road" | "highway", {
+  name: string; throughput: number; cost: Partial<Record<Cargo, number>>; blurb: string;
+}> = {
+  street: { name: "Street", throughput: 1.2, cost: { wood: 2, stone: 2, ore: 4 }, blurb: "cheap town lane · slow" },
+  road: { name: "Road", throughput: TRANSPORT.road.throughput, cost: BUILD_COSTS.road, blurb: "faster hauling" },
+  highway: { name: "Highway", throughput: 2.3, cost: { wood: 4, stone: 10, ore: 24 }, blurb: "fast long haul · gentle grades" },
+};
+/** Throughput by the numeric tier stored on the track (0 Road, 1 Street, 2 Highway). */
+export const TIER_THROUGHPUT: readonly number[] = [ROAD_TIERS.road.throughput, ROAD_TIERS.street.throughput, ROAD_TIERS.highway.throughput];
+
 // Dirt→road upgrade pays only the difference (settled: yes, pave in place).
 //
 // W9: neither this nor TRANSPORT.road.cost can ever be paid with the free

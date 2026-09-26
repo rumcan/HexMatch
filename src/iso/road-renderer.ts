@@ -327,7 +327,8 @@ export function tilesForRect(
     if (v > v1) v1 = v;
   }
   // A tile's road can reach out of the tile by half a width plus a shoulder.
-  const reach = Math.max(ROAD_WIDTH.dirt, ROAD_WIDTH.paved) / 2 + SHOULDER_WIDTH + 0.01;
+  // ROADS-2 (#393): a Highway is 1.6× the paved width.
+  const reach = Math.max(ROAD_WIDTH.dirt, ROAD_WIDTH.paved * 1.6) / 2 + SHOULDER_WIDTH + 0.01;
   return {
     tx0: Math.max(0, Math.floor(u0 - reach) - 1),
     ty0: Math.max(0, Math.floor(v0 - reach) - 1),
@@ -346,6 +347,8 @@ export function tilesForRect(
 export interface RoadWorld {
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;
+  /** ROADS-2 (#393): the paved tier per tile (0 Road, 1 Street, 2 Highway). */
+  roadTiers?: Uint8Array;
   /**
    * #159: the map, for its TOWN LIMITS. A tile stamped `TOWN_OCC` in
    * `occupancy` is town ground — the same test `isTownTile` makes — and a
@@ -435,7 +438,14 @@ export function roadTilesIn(
       const town = isTownStreet(world, tx, ty);
       // A tile carries at most one tier; paved wins if both bytes are set,
       // matching the simulation's "paving replaces dirt" rule.
-      if (hasRoad(road)) out.push(roadTile(tx, ty, road, "paved", paved, town));
+      if (hasRoad(road)) {
+        // ROADS-2 (#393): a Street is kerbed like a town street; a Highway
+        // is wider with a solid centre line (see paintRoadTiles).
+        const tier = world.roadTiers?.[ty * MAP_W + tx] ?? 0;
+        const tile = roadTile(tx, ty, road, "paved", paved, town || tier === 1);
+        if (tier) tile.tier = tier;
+        out.push(tile);
+      }
       else if (hasRoad(dirt)) out.push(roadTile(tx, ty, dirt, "dirt", paved, town));
     }
   }
@@ -762,6 +772,13 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * `townGround` is the block paving to lay down first, in the same ground
  * coordinates — one quad per paved tile, from `townGroundQuadsIn`.
  */
+/** ROADS-2 (#393): a tile's carriageway width — Street narrower, Highway wider. */
+const widthOf = (t: RoadTile): number =>
+  t.material !== "paved" ? ROAD_WIDTH[t.material]
+    : t.tier === 2 ? ROAD_WIDTH.paved * 1.6
+      : t.tier === 1 ? ROAD_WIDTH.paved * 0.8
+        : ROAD_WIDTH.paved;
+
 export function paintRoadTiles(
   ctx: Ctx2D, tiles: RoadTile[], style: RoadStyle, townGround: GroundPoint[][] = [],
   /**
@@ -807,7 +824,7 @@ export function paintRoadTiles(
   ctx.globalAlpha = SHOULDER_ALPHA;
   for (const t of tiles) {
     ctx.strokeStyle = style[t.material].shoulder;
-    ctx.lineWidth = ROAD_WIDTH[t.material] + SHOULDER_WIDTH * 2;
+    ctx.lineWidth = widthOf(t) + SHOULDER_WIDTH * 2;
     for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
   }
   ctx.globalAlpha = 1;
@@ -827,7 +844,7 @@ export function paintRoadTiles(
   // 2. The opaque material core.
   for (const t of tiles) {
     ctx.strokeStyle = fills[t.material];
-    ctx.lineWidth = ROAD_WIDTH[t.material];
+    ctx.lineWidth = widthOf(t);
     for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
   }
 
@@ -852,7 +869,7 @@ export function paintRoadTiles(
   //     and appears nowhere across the road.
   ctx.lineCap = "butt";
   for (const t of tiles) {
-    const w = ROAD_WIDTH[t.material];
+    const w = widthOf(t);
     for (const [frac, colour, alpha] of EDGE_SHADE) {
       ctx.globalAlpha = alpha;
       ctx.strokeStyle = colour;
@@ -905,7 +922,17 @@ export function paintRoadTiles(
   ctx.lineCap = "butt";
   for (const t of tiles) {
     if (t.material !== "paved") continue;
+    if (t.tier === 1) continue;                 // ROADS-2: a Street has no centre line
     for (const f of paintFigures(t.tx, t.ty, t.mask)) {
+      // ROADS-2 (#393): a Highway's centre is a solid divider, twice as heavy.
+      if (t.tier === 2) {
+        ctx.setLineDash([]);
+        ctx.lineWidth = PAINT_WIDTH * 2.2;
+        trace(ctx, f, elev);
+        ctx.stroke();
+        ctx.lineWidth = PAINT_WIDTH;
+        continue;
+      }
       ctx.setLineDash([DASH_ON, DASH_OFF]);
       // The dash phase stays anchored on the FLAT figure: the lattice it is
       // pinned to is a property of the world's tile grid, and a slope changes a

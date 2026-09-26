@@ -32,7 +32,7 @@
 import { roadPath, depotShoulders, plantShoulders } from "./road-routing";
 import { DEFAULT_FACING, depotEntranceTiles, industriesTouchingDepot, type DepotFacing } from "./depot";
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, INDUSTRY_BY_KEY, type Cargo } from "./config";
+import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER,
@@ -457,6 +457,33 @@ export const NO_CONNECTION: Connection = {
  * `buildAllComponents(track, h.ownerId)`) — a harvester may only ride its own
  * player's track, and may only connect to its own player's Factory.
  */
+/**
+ * ROADS-2 (#393): a paved route's haul speed — the tier throughput averaged
+ * over the tiles the lorry actually drives (a Highway leg pays more, a town
+ * Street leg less). A map with no tiers set (every pre-#393 map, every test
+ * track) short-cuts to exactly `TRANSPORT.road.throughput`, so nothing that
+ * existed before changes by a hair.
+ */
+/** ROADS-2 (#393): the tiles a lorry drives from Depot `h` to plant `f`. */
+export function depotRouteTiles(state: EconomyState, h: Harvester, f: Factory): [number, number][] | null {
+  return roadPath(state.track, h.ownerId,
+    depotShoulders(state.track, h.ownerId, h),
+    new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid)).map(([x, y]) => tIdx(x, y))));
+}
+
+function pavedRouteThroughput(state: EconomyState, h: Harvester, f: Factory): number {
+  const tier = state.track.tier;
+  if (!tier || !tier.some((v) => v !== 0)) return TRANSPORT.road.throughput;
+  const route = depotRouteTiles(state, h, f);
+  if (!route || route.length === 0) return TRANSPORT.road.throughput;
+  let sum = 0;
+  for (const [x, y] of route) {
+    const i = tIdx(x, y);
+    sum += (state.track.road[i] & PRESENT) !== 0 ? (TIER_THROUGHPUT[tier[i]] ?? TRANSPORT.road.throughput) : TRANSPORT.dirt.throughput;
+  }
+  return Math.round((sum / route.length) * 100) / 100;
+}
+
 export function resolveConnection(
   state: EconomyState, comp: Components, h: Harvester,
 ): Connection {
@@ -482,7 +509,7 @@ export function resolveConnection(
       if (comp.roadComp[c]) {
         // a paved component is the ceiling — nothing beats it, stop looking
         return {
-          kind: "road", multiplier: TRANSPORT.road.throughput, factory: f,
+          kind: "road", multiplier: pavedRouteThroughput(state, h, f), factory: f,
         };
       }
     }

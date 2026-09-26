@@ -142,6 +142,8 @@ export function terrainSprite(grid: Grid, tx: number, ty: number): string {
 export interface World {
   grid: Grid;
   roadBits?: Uint8Array;   // E5 — the premium paved layer (drawn with road_XXXX tar)
+  /** ROADS-2 (#393): the paved tier per tile (0 Road, 1 Street, 2 Highway). */
+  roadTiers?: Uint8Array;
   dirtBits?: Uint8Array;   // E5 — the basic gravel layer (drawn with dirt_XXXX)
   extra?: DrawItem[];      // stations, previews owned by the caller
   /**
@@ -607,7 +609,7 @@ export class IsoRenderer {
     this.atlas = atlas;
     this.cam = cam;
     this.world = world;
-    this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits };
+    this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits, roadTiers: world.roadTiers };
     this.pad = cullPad(atlas);
     const g = (el: HTMLCanvasElement, smooth: boolean) => {
       const ctx = el.getContext("2d") as Ctx2D;
@@ -705,6 +707,7 @@ export class IsoRenderer {
       grid: this.world.grid,
       roadBits: this.world.roadBits,
       dirtBits: this.world.dirtBits,
+      roadTiers: this.world.roadTiers,
       rail: this.world.rail,
     };
     this.syncRoadCache();

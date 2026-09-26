@@ -69,7 +69,7 @@ export interface SaveGamePayload {
     siteRights?: [number, { rights: string[]; streak: { playerId: string; wins: number } | null }][];
     townHolds?: [number, { holder: string; wins: number; locked: boolean }][];
   };
-  track: { dirt: string; road: string; owner: string; upgraded: string };
+  track: { dirt: string; road: string; owner: string; upgraded: string; tier?: string };
   rail?: RailWire;
   /**
    * R3 (#270): the standing hydro dams, in the snapshot's own wire shape
@@ -118,6 +118,8 @@ export interface SaveGamePayload {
 const trackSave = (track: Track): SaveGamePayload["track"] => ({
   dirt: bytesToBase64(track.dirt), road: bytesToBase64(track.road),
   owner: bytesToBase64(track.owner), upgraded: bytesToBase64(track.upgraded),
+  // ROADS-2 (#393): road tiers (absent in older saves → all Road).
+  ...(track.tier && track.tier.some((v) => v !== 0) ? { tier: bytesToBase64(track.tier) } : {}),
 });
 
 function trackRestored(track: Track, w: SaveGamePayload["track"]): void {
@@ -125,6 +127,9 @@ function trackRestored(track: Track, w: SaveGamePayload["track"]): void {
   track.road.set(base64ToBytes(w.road));
   track.owner.set(base64ToBytes(w.owner));
   track.upgraded.set(base64ToBytes(w.upgraded));
+  if (!track.tier) track.tier = new Uint8Array(track.road.length);
+  track.tier.fill(0);
+  if (w.tier) track.tier.set(base64ToBytes(w.tier));
   track.revision++;
 }
 

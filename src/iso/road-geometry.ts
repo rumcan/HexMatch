@@ -193,6 +193,8 @@ export const TRANSITION_BLEND = 0.2;
 export interface RoadTile {
   tx: number;
   ty: number;
+  /** ROADS-2 (#393): paved tier (absent/0 Road, 1 Street, 2 Highway). */
+  tier?: number;
   material: RoadMaterial;
   mask: number;
   figures: RoadFigure[];

@@ -2,6 +2,8 @@
 // Path data from Tabler Icons (https://tabler.io/icons), MIT License,
 // Copyright (c) 2020-2024 Paweł Kuna. Stroke is currentColor.
 const ICON_BODY: Record<string, string> = {
+  street: `<path d="M3 21l18 0" /> <path d="M4 21v-11l2.5 -4.5l5.5 -2.5l5.5 2.5l2.5 4.5v11" /> <path d="M10 9a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /> <path d="M9 21v-5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v5" />`,
+  highway: `<path d="M5 17a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /> <path d="M15 17a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /> <path d="M5 17h-2v-6l2 -5h9l4 5h1a2 2 0 0 1 2 2v4h-2m-4 0h-6m-6 -6h15m-6 0v-5" />`,
   select: `<path d="M7.904 17.563a1.2 1.2 0 0 0 2.228 .308l2.09 -3.093l4.907 4.907a1.067 1.067 0 0 0 1.509 0l1.047 -1.047a1.067 1.067 0 0 0 0 -1.509l-4.907 -4.907l3.113 -2.09a1.2 1.2 0 0 0 -.309 -2.228l-13.582 -3.904l3.904 13.563" />`,
   dirt: `<path d="M3 19a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /> <path d="M19 7a2 2 0 1 0 0 -4a2 2 0 0 0 0 4" /> <path d="M11 19h5.5a3.5 3.5 0 0 0 0 -7h-8a3.5 3.5 0 0 1 0 -7h4.5" />`,
   road: `<path d="M4 19l4 -14" /> <path d="M16 5l4 14" /> <path d="M12 8v-2" /> <path d="M12 13v-2" /> <path d="M12 18v-2" />`,

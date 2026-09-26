@@ -115,7 +115,8 @@ import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
-  dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER,
+  dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER, type RoadTierKey,
+  tierTileCost, setRoadTier, ROAD_TIER, addCost,
   type Track, type TrackKind, type Purse, type DragPreview,
 } from "./track";
 import {
@@ -125,6 +126,7 @@ import {
   depotCargo, depotRoutePaved, isServiced, isRailDepot,
   pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
+  depotRouteTiles,
 } from "./economy";
 // VP-01: the scoreboard lives in its own module now, because what it counts
 // changed from "connections a player has made" to "tiles and plants a player
@@ -902,6 +904,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // track.road), so the first frame already shows settled towns with roads.
   // Neutral ownership: the town roads are never part of a player's network.
   seedTownRoads(track, grid);
+  // ROADS-2 (#393): on new maps a town's own streets are STREETS (slow,
+  // kerbed) — freight through a town centre costs speed. Rides with the
+  // town-roads map option (#296 \`rings\`), so older maps and saves keep Road.
+  if (mapOptions.rings) {
+    for (const town of grid.towns) for (const [x, y] of town.roads) setRoadTier(track, x, y, ROAD_TIER.street);
+  }
   // PP-13: the inter-town highways go on next, stamped PUBLIC_OWNER — every
   // player's network may route over them, which is what makes them worth
   // having on the map at all. Order matters: a highway tile a town already
@@ -1138,6 +1146,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
   let phase: Phase = "setup-factory";
   let tool: Tool = "dirt";
+  /** ROADS-2 (#393): the paved tier the Road tool lays (the rail's Street /
+   *  Road / Highway buttons all arm "road" with one of these). */
+  let roadTier: RoadTierKey = "road";
   /**
    * NAMES: the top-bar "Names" button shows/hides the tags that float over
    * resources, towns, plants and depots while you pan. ON by default (a
@@ -1507,8 +1518,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // painted that no pointerup will ever commit (and `costInfo`, derived
     // from `tool`/`preview` below, follows them away on the next frame).
     onTool: (t) => {
-      if (t === "select") cancelPlacement();
-      else armTool(t as Tool);
+      if (t === "select") { cancelPlacement(); return; }
+      // ROADS-2 (#393): Street / Highway are the Road tool at another tier.
+      const key = t as string;
+      if (key === "street" || key === "highway" || key === "road") {
+        roadTier = key;
+        armTool("road");
+        return;
+      }
+      armTool(t as Tool);
     },
     /**
      * RAIL-04 (#178): the Railway panel's three verbs. `assign` finds the
@@ -1981,6 +1999,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     grid,
     roadBits: drawBits(track, "road"),
     dirtBits: drawBits(track, "dirt"),
+    roadTiers: track.tier,
     extra: [],
     trees: scenery.trees,
     forests: scenery.forests,
@@ -5024,10 +5043,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  function commitTrackDrag(p: PlayerState, pv: DragPreview, kind: TrackKind) {
+  function commitTrackDrag(p: PlayerState, pv: DragPreview, kind: TrackKind, tier: RoadTierKey = "road") {
     // W2: every tile the drag lays is stamped with the builder's owner id,
     // so the committed road is exactly the tiles that join `p`'s network.
-    const res = commitDrag(track, kind, pv, p.i + 1);
+    const res = commitDrag(track, kind, pv, p.i + 1, kind === "road" ? tier : "road");
     // The first human track on the map retires the "connect your depot to
     // your Factory" guidance banner — the guidance is done, and a banner
     // over the map after the first road reads as a popup blocking the game.
@@ -7297,6 +7316,48 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * that exists only to send a seat with no ore of its own after a mine so it
    * can buy a point. Nothing else in the new loop reaches for ★.
    */
+  /**
+   * ROADS-2 (#393): the rival builds a Highway only where it pays — a LONG,
+   * already-paved, level Road route from one of its Depots to its plant
+   * (≥ HIGHWAY_MIN_ROUTE tiles), and only while it can afford the upgrade twice
+   * over (so a highway never starves its next Depot). One route per turn.
+   */
+  function rivalHighwayPass(): boolean {
+    const HIGHWAY_MIN_ROUTE = 24;
+    const mine = eco.factories.filter((f) => f.owner === rival.id && !f.closed);
+    if (!mine.length) return false;
+    for (const h of eco.harvesters) {
+      if (h.owner !== rival.id || h.closed) continue;
+      for (const f of mine) {
+        const route = depotRouteTiles(eco, h, f);
+        if (!route || route.length < HIGHWAY_MIN_ROUTE) continue;
+        let ok = true, anyLow = false;
+        let cost: Purse = {};
+        for (let k = 0; k < route.length && ok; k++) {
+          const [x, y] = route[k];
+          if (!hasTrack(track, "road", x, y)) { ok = false; break; }
+          if (k > 0 && heightAt(grid, x, y) !== heightAt(grid, route[k - 1][0], route[k - 1][1])) { ok = false; break; }
+          const c = tierTileCost(track, "highway", x, y);
+          if (Object.keys(c).length) { anyLow = true; cost = addCost(cost, c); }
+        }
+        if (!ok || !anyLow) continue;
+        if (!canAfford(rival.purse, addCost(cost, cost))) continue;
+        if (!spend(rival, cost)) continue;
+        for (const [x, y] of route) {
+          if (tierTileCost(track, "highway", x, y) && Object.keys(tierTileCost(track, "highway", x, y)).length) {
+            setRoadTier(track, x, y, ROAD_TIER.highway);
+            renderer?.invalidateTile(x, y);
+          }
+        }
+        ui.feed(`Rival builds a ${route.length}-tile Highway`, rival.name);
+        syncWorld();
+        rescoreNow();
+        return true;
+      }
+    }
+    return false;
+  }
+
   function rivalPavePass(): boolean {
     const plan = planUpgrades(eco, {
       owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
@@ -7665,6 +7726,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     // ── 5. pave — the ★ seam #228 removes (see the note above) ─────────────
     if (rivalPavePass()) acted = true;
+    if (rivalHighwayPass()) acted = true;
 
     // ── 6. railway (RAIL-05) — shared with the shipped turn ────────────────
     const rail = rivalRailStep(f, now);
@@ -9549,7 +9611,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // there; `?unlimited=0` brings it back for real-economy playtests).
       storageCap: newLoop && !devUnlimited ? storageCapFor(me.townLevel) : undefined,
       phase,
-      tool: tool as any,
+      tool: (tool === "road" && roadTier !== "road" ? roadTier : tool) as any,
       // STORY-01: the contract's rival wears their painted sheet on the
       // dossier card; a sandbox match sends nothing and keeps the mugshots.
       ...(storyOn ? { rivalFace: faceOf(rivalCast, "calm") } : {}),
@@ -9734,13 +9796,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       me.freeTrack, structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
       // R2 (#266): the drag sees the railway, because a deck is never shared —
       // a road may not span water the railway already bridges.
-      { railAt: (x, y) => hasRail(rail.rail, x, y) });
+      { railAt: (x, y) => hasRail(rail.rail, x, y) }, kind === "road" ? roadTier : "road");
     if (pv.tiles.length === 0) return null;
     if (isGuest()) {
       net?.sendIntent("build", { do: "track", kind, ax, ay, bx, by, xFirst });
       return pv;
     }
-    commitTrackDrag(me, pv, kind);
+    commitTrackDrag(me, pv, kind, roadTier);
     return pv;
   };
 
@@ -10102,7 +10164,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // tile, the network (netVersion), the purse or the free allowance.
         // Sub-tile pointer motion reuses the plan it already has.
         const purseKey = CARGOES.map((c) => me.purse[c] ?? 0).join(",");
-        const key = `${kind}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
+        const key = `${kind}:${roadTier}:${drag.ax},${drag.ay}:${p.tx},${p.ty}:${netVersion}:${me.freeTrack}:${purseKey}`;
         if (!preview || key !== previewKey) {
           // Roads anywhere (main): no network adjacency requirement, so the
           // preview is allowed to start anywhere and grow without a seed.
@@ -10111,7 +10173,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             drag.ax, drag.ay, p.tx, p.ty, true, undefined, me.freeTrack,
             structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
             // R2 (#266): see `requestTrackBuild` — never a deck over rail.
-            { railAt: (x, y) => hasRail(rail.rail, x, y) });
+            { railAt: (x, y) => hasRail(rail.rail, x, y) }, kind === "road" ? roadTier : "road");
           previewKey = key;
           changed = true;
         }

@@ -43,6 +43,9 @@ export interface TileChange {
   road: number;
   owner: number;
   upgraded: number;
+  /** ROADS-2 (#393): the paved tier (0 Road, 1 Street, 2 Highway). Optional:
+   *  an older host never sends it and a guest keeps its value. */
+  tier?: number;
 }
 
 /**
@@ -58,7 +61,8 @@ export function diffTrack(prev: Track, next: Track): TileChange[] {
       prev.dirt[i] !== next.dirt[i] ||
       prev.road[i] !== next.road[i] ||
       prev.owner[i] !== next.owner[i] ||
-      prev.upgraded[i] !== next.upgraded[i]
+      prev.upgraded[i] !== next.upgraded[i] ||
+      (prev.tier?.[i] ?? 0) !== (next.tier?.[i] ?? 0)
     ) {
       out.push({
         i,
@@ -66,6 +70,7 @@ export function diffTrack(prev: Track, next: Track): TileChange[] {
         road: next.road[i],
         owner: next.owner[i],
         upgraded: next.upgraded[i],
+        ...(next.tier ? { tier: next.tier[i] } : {}),
       });
     }
   }
@@ -89,6 +94,7 @@ export function readTiles(track: Track, indices: Iterable<number>): TileChange[]
       road: track.road[i],
       owner: track.owner[i],
       upgraded: track.upgraded[i],
+      ...(track.tier ? { tier: track.tier[i] } : {}),
     });
   }
   return out;
@@ -118,7 +124,13 @@ export function applyTrackDelta(track: Track, tiles: DeltaMsg["tiles"]): void {
     setByte(track.road, i, c.road);
     setByte(track.owner, i, c.owner);
     setByte(track.upgraded, i, c.upgraded);
-    if (track.dirt[i] !== beforeD || track.road[i] !== beforeR || track.owner[i] !== beforeO || track.upgraded[i] !== beforeU) changed = true;
+    const beforeT = track.tier?.[i] ?? 0;
+    if (c.tier !== undefined) {
+      if (!track.tier) track.tier = new Uint8Array(n);
+      setByte(track.tier, i, c.tier);
+    }
+    if (track.dirt[i] !== beforeD || track.road[i] !== beforeR || track.owner[i] !== beforeO || track.upgraded[i] !== beforeU
+      || (track.tier?.[i] ?? 0) !== beforeT) changed = true;
   }
   if (changed) track.revision++;
 }
