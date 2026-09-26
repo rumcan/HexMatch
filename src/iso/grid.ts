@@ -15,7 +15,7 @@ import { fillCoastalHoles } from "./coastline";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
-  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS,
+  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
 } from "./config";
@@ -1494,7 +1494,35 @@ export interface TownBuildingsOptions {
   shapes?: boolean;
 }
 
+/**
+ * Owner (2026-09-26): parks only on a SINGLE open tile, and not many - at most
+ * one per block. A park tile touching another park tile (a whole empty block,
+ * a strip) is dropped and stays open land.
+ */
 export function townBuildings(
+  t: Town,
+  footprintOf: (sprite: string) => [number, number],
+  opts: TownBuildingsOptions = {},
+): TownBuilding[] {
+  const out = townBuildingsLaid(t, footprintOf, opts);
+  const parks = new Set<string>(TOWN_PARK_VARIANTS);
+  const at = new Set(out.filter((b) => parks.has(b.sprite)).map((b) => idx(b.tx, b.ty)));
+  const blockOf = (v: number, c: number) => Math.floor((v - c) / TOWN_BLOCK);
+  const usedBlock = new Set<string>();
+  // A lawn lot where a park would repeat: the tile keeps a (quiet) draw item.
+  const lawn = buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : null;
+  const res: TownBuilding[] = [];
+  for (const b of out) {
+    if (!parks.has(b.sprite)) { res.push(b); continue; }
+    const lonely = [[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => !at.has(idx(b.tx + dx, b.ty + dy)));
+    const key = `${blockOf(b.tx, t.tx)},${blockOf(b.ty, t.ty)}`;
+    if (lonely && !usedBlock.has(key)) { usedBlock.add(key); res.push(b); continue; }
+    if (lawn) res.push({ ...b, sprite: lawn });
+  }
+  return res;
+}
+
+function townBuildingsLaid(
   t: Town,
   footprintOf: (sprite: string) => [number, number],
   opts: TownBuildingsOptions = {},

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { generateMap, townBuildings } from "../../src/iso/grid";
-import { TOWN_PARK_VARIANTS, buildingFootprint } from "../../src/iso/config";
+import { TOWN_PARK_VARIANTS, TOWN_LAWN, buildingFootprint } from "../../src/iso/config";
 
 const footprintOf = (s: string): [number, number] => buildingFootprint(s) ?? [1, 1];
 
@@ -12,7 +12,7 @@ describe("owner 2026-09-26: upgraded towns draw no 1×1 buildings", () => {
         for (const b of townBuildings(t, footprintOf, { tier, grid, shapes })) {
           const [fw, fh] = footprintOf(b.sprite);
           if (fw === 1 && fh === 1) {
-            expect(TOWN_PARK_VARIANTS as readonly string[], `${b.sprite} (seed ${seed}, tier ${tier})`).toContain(b.sprite);
+            expect([...TOWN_PARK_VARIANTS, TOWN_LAWN] as readonly string[], `${b.sprite} (seed ${seed}, tier ${tier})`).toContain(b.sprite);
           }
         }
       }

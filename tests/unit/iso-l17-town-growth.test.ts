@@ -1,3 +1,4 @@
+import { TOWN_LAWN } from "../../src/iso/config";
 // ══════════════════════════════════════════════════════════════════════════
 // L17 (#245) — towns grow visually: village → town → city.
 //
@@ -61,6 +62,7 @@ describe("L17 tier art — village (0)", () => {
       const [fw, fh] = footprintOf(b.sprite);
       if (b.tx === town.tx && b.ty === town.ty) continue;   // the centre block
       expect([fw, fh], `${b.sprite} must be 1×1 in a village`).toEqual([1, 1]);
+      if (b.sprite === TOWN_LAWN) continue;   // a lawn lot where a park would repeat
       expect(TOWN_VILLAGE_VARIANTS as readonly string[], `${b.sprite} is not a village home`)
         .toContain(b.sprite);
     }
