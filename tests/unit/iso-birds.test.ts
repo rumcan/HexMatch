@@ -303,6 +303,60 @@ describe("AMB-2 spawn determinism", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+describe("#438 airborne motion", () => {
+  it("moves every airborne bird over ten simulated minutes, including zero and huge dt", () => {
+    const grid = generateMap(4242);
+    const view = viewAround(grid.towns[0].tx, grid.towns[0].ty, 16);
+    const state = createBirds(grid);
+    let elapsed = 0, frames = 0, checked = 0;
+    while (elapsed < 600_000) {
+      const dt = frames % 997 === 0 ? 5000 : frames % 97 === 0 ? 0 : frames % 3 === 0 ? 33 : 16;
+      // Copy coordinates: the pool reuses bird objects on a recycle.
+      const before = state.birds.map((b) => ({ b, x: b.x, y: b.y, mode: b.mode }));
+      tickBirds(state, dt, { grid, zoom: BIRD_ZOOM, view });
+      for (const old of before) {
+        const b = old.b;
+        expect([b.x, b.y, b.vx, b.vy, b.alt].every(Number.isFinite), `frame ${frames}`).toBe(true);
+        if (old.mode === "perch" || b.mode === "perch") continue;
+        expect(b.x !== old.x || b.y !== old.y, `airborne bird stalled on frame ${frames} (dt=${dt})`).toBe(true);
+        checked++;
+      }
+      elapsed += Math.max(16, Math.min(100, dt));
+      frames++;
+    }
+    expect(elapsed).toBeGreaterThanOrEqual(600_000);
+    expect(checked).toBeGreaterThan(100_000);
+  });
+
+  it("recovers a cancelled or invalid heading, even against a map corner", () => {
+    const grid = generateMap(7);
+    const view = viewAround(grid.towns[0].tx, grid.towns[0].ty, 16);
+    const state = createBirds(grid);
+    fall(state, view, 5);
+    const b = state.birds.find((bird) => !bird.percher)!;
+    b.vx = b.vy = 0;
+    let x = b.x, y = b.y;
+    tickBirds(state, 0, { grid, zoom: BIRD_ZOOM, view });
+    expect(b.x !== x || b.y !== y).toBe(true);
+    expect(Math.hypot(b.vx, b.vy)).toBeGreaterThan(0);
+    b.vx = NaN; b.vy = NaN;
+    b.x = NaN;
+    tickBirds(state, 33, { grid, zoom: BIRD_ZOOM, view });
+    expect([b.x, b.y, b.vx, b.vy].every(Number.isFinite)).toBe(true);
+    b.x = b.y = 0.5;
+    b.vx = b.vy = -2;
+    x = b.x; y = b.y;
+    tickBirds(state, 16, { grid, zoom: BIRD_ZOOM, view });
+    expect(b.x !== x || b.y !== y).toBe(true);
+    x = b.x; y = b.y;
+    tickBirds(state, -10, { grid, zoom: BIRD_ZOOM, view });
+    expect(b.x !== x || b.y !== y).toBe(true);
+    tickBirds(state, Infinity, { grid, zoom: BIRD_ZOOM, view });
+    expect([b.x, b.y, b.vx, b.vy].every(Number.isFinite)).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 describe("AMB-2 scatter", () => {
   /** A pool, settled, with at least one bird on the ground. */
   function settledView(): { state: BirdState; view: TileRange; grid: Grid } {
@@ -388,6 +442,7 @@ describe("AMB-2 the zoom gate", () => {
     expect(birdTargetAlpha(2, false)).toBe(1);
     expect(birdTargetAlpha(2, true)).toBe(0);
     expect(birdTargetAlpha(1, true)).toBe(0);
+    expect(birdTargetAlpha(2, false, true)).toBe(0);
   });
 
   it("fades linearly over BIRD_FADE_MS", () => {
@@ -433,21 +488,32 @@ describe("AMB-2 the zoom gate", () => {
     expect(state.birds.length).toBe(0);
   });
 
-  it("holds the wings still under reduced motion (motion is not removed)", () => {
+  it("hides reduced-motion birds immediately, even mid-fade, and respawns on return", () => {
     const grid = generateMap(4242);
     const view = viewAround(grid.towns[0].tx, grid.towns[0].ty, 16);
     const state = createBirds(grid);
-    fall(state, view, 5, 100, { grid, reducedMotion: true });
-    expect(state.reducedMotion).toBe(true);
-    expect(state.birds.length).toBeGreaterThan(0);
-    // The pool is alive and moving…
-    const before = state.birds.map((b) => [b.x, b.y]);
-    fall(state, view, 5, 100, { grid, reducedMotion: true });
-    expect(state.birds.map((b) => [b.x, b.y])).not.toEqual(before);
-    // …and one of them is airborne, at the flapping altitude, for the painter
-    // to hold at its glide frame.
+    fall(state, view, 5, 100, { grid });
     expect(state.birds.some((b) => b.alt > 0)).toBe(true);
-    expect(BIRD_ALTITUDE).toBeGreaterThan(0);
+    const cam = createCamera(1600, 900);
+    const [wx, wy] = tileToScreen(grid.towns[0].tx, grid.towns[0].ty);
+    cam.zoom = BIRD_ZOOM;
+    cam.x = cam.vw / 2 - wx * cam.zoom;
+    cam.y = cam.vh / 2 - wy * cam.zoom;
+    expect(paintBirds(stubCtx().ctx, cam, grid, state)).toBeGreaterThan(0);
+    // A media-query change can arrive between the last tick and the next paint.
+    state.reducedMotion = true;
+    expect(paintBirds(stubCtx().ctx, cam, grid, state)).toBe(0);
+    tickBirds(state, 0, { grid, zoom: BIRD_ZOOM, view, reducedMotion: true });
+    expect(state.reducedMotion).toBe(true);
+    expect(state.alpha).toBe(0);
+    expect(state.active).toBe(false);
+    expect(state.birds).toHaveLength(0);
+    expect(paintBirds(stubCtx().ctx, cam, grid, state)).toBe(0);
+    fall(state, view, 10, 16, { grid, reducedMotion: true });
+    expect(state.birds).toHaveLength(0);
+    fall(state, view, 5, 100, { grid });
+    expect(state.birds.some((b) => b.alt > 0)).toBe(true);
+    expect(state.alpha).toBeGreaterThan(0);
   });
 });
 
@@ -571,5 +637,3 @@ describe("AMB-2 painting", () => {
     expect(view.x1).toBeGreaterThan(view.x0);
   });
 });
-
-// SCRATCH (temporary) — dynamics sanity, removed before the commit.
