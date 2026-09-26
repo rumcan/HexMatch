@@ -1281,12 +1281,20 @@ export const FACTORY_FOOTPRINT_SHAPES: [number, number] =
   buildingFootprint(FACTORY_SPRITE_SHAPES) ?? FACTORY_FOOTPRINT;
 
 /** The Factory footprint a map runs with: shapes option on → the 2×4 art. */
+/**
+ * Owner (2026-09-26): the long factory_2x4 art is drawn about two tiles
+ * longer than its 2x4 footprint, so the Plant visibly sits on the road beside
+ * it. Until that art is redrawn to fit, every map uses the square Factory
+ * (3x3 art on a 3x3 footprint, which fits). Flip to true to bring it back.
+ */
+export const FACTORY_LONG_ART = false;
+
 export const factoryFootprintFor = (shapes: boolean): [number, number] =>
-  shapes ? [...FACTORY_FOOTPRINT_SHAPES] : [...FACTORY_FOOTPRINT];
+  shapes && FACTORY_LONG_ART ? [...FACTORY_FOOTPRINT_SHAPES] : [...FACTORY_FOOTPRINT];
 
 /** The Factory sprite a map draws, in the given #274 rotation. */
 export const factorySpriteFor = (shapes: boolean, quarterTurns = 0): string =>
-  !shapes ? FACTORY_SPRITE
+  !shapes || !FACTORY_LONG_ART ? FACTORY_SPRITE
     : (((quarterTurns % 4) + 4) % 4) % 2 === 1 ? `${FACTORY_SPRITE_SHAPES}_r` : FACTORY_SPRITE_SHAPES;
 
 /**
