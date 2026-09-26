@@ -623,6 +623,8 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
   display: flex; flex-direction: column; gap: 4px;
 }
 .ui-root[data-phone="1"] .guide-strip { bottom: 62px; width: calc(100vw - 16px); }
+/* the target is low on screen: the strip moves up so it never covers it */
+.guide-top .guide-strip { top: 64px; bottom: auto; }
 .guide-head { display: flex; align-items: center; gap: 8px; }
 .guide-kicker {
   font-family: var(--display); font-weight: 500; font-size: 11px;

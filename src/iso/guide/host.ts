@@ -89,13 +89,18 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
     // step either way, so a muted or unrecorded guide still teaches.
     try { voice.setNarration(true); } catch { /* garnish */ }
     if (!step.voice) return;
-    try { voice.say(step.voice); } catch { /* a missing clip is a subtitle */ }
+    // The caption strip already shows the words: no second subtitle bubble.
+    try { voice.say(step.voice, { subtitle: false }); } catch { /* a missing clip is silent */ }
   }
 
   function applyAssist(view: GuideView): void {
     const step = view.step;
     if (!step?.assist) return;
-    try { hooks.assist(step.assist); } catch { /* garnish */ }
+    // After the gesture that advanced us has finished: the step may have been
+    // reached by a click on a drawer tab, whose own handler toggles the drawer
+    // AFTER our capture listener — assisting synchronously would be undone.
+    const assist = step.assist;
+    setTimeout(() => { try { hooks.assist(assist); } catch { /* garnish */ } }, 0);
   }
 
   function paint(): void {

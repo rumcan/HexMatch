@@ -114,7 +114,9 @@ export function createGuideRenderer(hooks: GuideRendererHooks): GuideRenderer {
       if (!sel) continue;
       let hit: Element | null = null;
       try { hit = t.closest(sel); } catch { hit = null; }
-      if (hit) { hooks.emit({ kind: "click", selector: sel }); return; }
+      // No early return: a click on the target may ALSO be the tool or tab
+      // the step waits for (a tab step targets that very tab button).
+      if (hit) { hooks.emit({ kind: "click", selector: sel }); break; }
     }
     const tool = t.closest<HTMLElement>("[data-tool]");
     if (tool?.dataset.tool) { hooks.emit({ kind: "tool", tool: tool.dataset.tool }); return; }
@@ -145,6 +147,9 @@ export function createGuideRenderer(hooks: GuideRendererHooks): GuideRenderer {
     }
     hole.style.opacity = "1";
     pointer.classList.remove("hidden");
+    // A target in the lower half (the drawer, the bottom bays) would sit under
+    // the caption strip: lift the strip to the top of the screen instead.
+    layer.classList.toggle("guide-top", rect.y + rect.h / 2 > window.innerHeight * 0.5);
     const pad = 6;
     hole.style.left = `${Math.round(rect.x - pad)}px`;
     hole.style.top = `${Math.round(rect.y - pad)}px`;

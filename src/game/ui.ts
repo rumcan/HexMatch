@@ -5082,7 +5082,11 @@ export function createOriginalUi(
     // bay, or switch a phone's sheet, so a step's target is on screen before
     // the spotlight looks for it. Both are the same calls the player's own
     // clicks make, so an assisted step can never drift from a real one.
-    setTab: (t) => { drawerTab(t as TabName); },
+    // TUT-03: the guide OPENS a bay; it never toggles an open drawer shut.
+    setTab: (t) => {
+      if (railRightCollapsed && !isPhoneViewport()) { railRightCollapsed = false; paintRails(); }
+      setTab(t as TabName);
+    },
     setMobileView: (v) => { setMobileView(v); },
     /**
      * C2 (#257): one line into the panel. Mine, the other seat's and the

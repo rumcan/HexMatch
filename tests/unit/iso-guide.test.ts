@@ -1,3 +1,4 @@
+import { moneyValueOf } from "../../src/iso/config";
 // @vitest-environment jsdom
 // ══════════════════════════════════════════════════════════════════════════
 // TUT-03 (#422) — the in-game guide (src/iso/guide/*).
@@ -359,7 +360,7 @@ describe("TUT-03 the sections", () => {
       return [step.caption, step.hint ?? ""].join(" ");
     };
     // the setup allowance pays for the first Depot
-    expect(text("one-each")).toContain(costLabel(DEPOT_COST));
+    expect(text("one-each")).toContain(`$${moneyValueOf(DEPOT_COST)}`); // ECON-1: builds cost money
     // the tuning session's bounds
     expect(text("session")).toContain(String(TUNING.moves));
     expect(text("score")).toContain(String(TUNING.targetScore));
@@ -379,7 +380,7 @@ describe("TUT-03 the sections", () => {
     const market = allGuideSteps(CTX).find((x) => x.step.id === "market")!.step;
     const text = [market.caption, market.hint ?? ""].join(" ");
     expect(text).not.toMatch(/\d+\s*(gold|grain|wood|stone|ore|oil)/i);
-    expect(text.toLowerCase()).toMatch(/read the cards/);
+    expect(text.toLowerCase()).toMatch(/sell materials for money/); // ECON-1: the Market is the exchange
   });
 
   it("name every cargo the drawer can carry, without the retired Market rail", () => {

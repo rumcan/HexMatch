@@ -21,6 +21,7 @@ import {
   BATTLE_RULES, ROAD_TIERS, TUNING, TRANSPORT, VICTORY,
 } from "../config";
 import { DEPOT_COST, costLabel } from "../construction";
+import { moneyValueOf } from "../config";
 import { fmtVp } from "../victory";
 import type { GuideSection } from "./types";
 
@@ -71,7 +72,7 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
         {
           id: "topbar",
           title: "The top bar",
-          caption: `Along the top: your materials, the race to ${star(ctx.vpTarget)}, the menu, and the radio.`,
+          caption: `Along the top: your money and materials, the race to ${star(ctx.vpTarget)}, the menu, and the radio.`,
           hint: "The menu holds difficulty, sound, the camera keys and this tutorial.",
           voice: "g-getting-started-topbar",
           target: { kind: "ui", selector: ".topbar" },
@@ -129,7 +130,7 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
           id: "one-each",
           title: "One Depot per industry",
           caption: "One Depot per industry, and the first to connect keeps it.",
-          hint: `Your first Depot rides on the setup allowance. Every one after it costs ${costLabel(DEPOT_COST)}.`,
+          hint: `Your first Depot rides on the setup allowance. Every one after it costs $${moneyValueOf(DEPOT_COST)}.`,
           voice: "g-depots-one-each",
           target: { kind: "anchor", what: "depot" },
           complete: { kind: "next" },
@@ -176,7 +177,7 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
         {
           id: "tiers",
           title: "Road tiers",
-          caption: `Dirt Road is ${dirtPrice}. Street, Road and Highway haul faster and cost materials.`,
+          caption: `Dirt Road is ${dirtPrice}. Street, Road and Highway haul faster and cost money.`,
           hint: `Hauling: Dirt ×${TRANSPORT.dirt.throughput}, Street ×${ROAD_TIERS.street.throughput}, Road ×${roadThroughput}, Highway ×${highwayThroughput}. The setup allowance pays for your first ${ctx.freeTrack} tiles.`,
           voice: "g-logistics-tiers",
           target: { kind: "ui", selector: '[data-tool="dirt"], [data-tool="street"], [data-tool="road"], [data-tool="highway"]' },
@@ -353,11 +354,10 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
         {
           id: "market",
           title: "Market",
-          // ECON-1 (#421) may land while this ships: the copy describes what
-          // the tab SHOWS and reads its numbers off the cards, so it stays
-          // true whatever the market rules become.
-          caption: "The Market lists what is on offer and at what price. Read the cards — they move.",
-          hint: "Nothing here is a fixed price: every card carries its own, and they change as the offers do.",
+          // ECON-1 (#421): the Market is the exchange - sell materials for the
+          // money every build costs. Prices drift, and big sales push them down.
+          caption: "The Market is where you sell materials for money. Prices move, so sell high.",
+          hint: "Every build is paid in money. A big sale pushes the price down for a while, and demand events swing it.",
           voice: "g-drawer-market",
           target: { kind: "ui", selector: '[data-tab="market"], .market-pane' },
           complete: { kind: "tab", tab: "market" },
