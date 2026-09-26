@@ -771,3 +771,11 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .start-screen.menu .menu-card > .start-kicker { display: none; }
 .menu-title.menu-logo { margin: 0 0 6px; }
 .menu-title.menu-logo img { max-width: 300px; max-height: 26vh; width: auto; margin: 0 auto; }
+/* owner: the angled orange + aqua stripes live on the left menu panel now; no footer */
+.start-screen.menu > .menu-card {
+  background:
+    linear-gradient(115deg, transparent 0 58%, rgba(240,138,36,.30) 58% 68%, transparent 68%),
+    linear-gradient(115deg, transparent 0 72%, rgba(79,179,191,.30) 72% 76%, transparent 76%),
+    #1f2427 !important;
+}
+.start-screen.menu > .menu-foot { display: none; }
