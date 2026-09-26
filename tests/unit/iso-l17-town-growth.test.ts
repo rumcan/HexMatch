@@ -264,9 +264,13 @@ describe("L17 upgrade table + tier names", () => {
       expect(TOWN_UPGRADES[i].bonus).toBe(0.5 * (i + 1));
       expect(TOWN_UPGRADES[i].storage).toBeGreaterThan(0);
     }
-    // The opening still fits under the base cap (L16's rule the rows ride).
-    const biggest = Math.max(...TOWN_UPGRADES.map((r) => Math.max(0, ...Object.values(r.cost))));
-    expect(STORAGE_CAP_BASE).toBeGreaterThanOrEqual(biggest);
+    // Prices were tripled: only the opening must fit the BASE cap. Later
+    // upgrades can use the storage bought at earlier levels (L16/L17).
+    let cap = STORAGE_CAP_BASE;
+    for (const row of TOWN_UPGRADES) {
+      expect(cap).toBeGreaterThanOrEqual(Math.max(0, ...Object.values(row.cost)));
+      cap += row.storage;
+    }
   });
 
   it("the centre sprite and label follow the tier", () => {

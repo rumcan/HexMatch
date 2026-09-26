@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isCli } from "./is-cli.mjs";
 /**
  * Validate an atlas manifest against tools/atlas-manifest.schema.json (E1).
  * Enforces the JSON Schema plus the geometric invariants a schema can't
@@ -63,8 +64,7 @@ export function validateManifest(manifest) {
   return errors;
 }
 
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
-if (isCli) {
+if (isCli(import.meta.url)) {
   const file = process.argv[2];
   if (!file) {
     console.error("Usage: node tools/validate-manifest.mjs <manifest.json>");

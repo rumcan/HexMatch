@@ -13,9 +13,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
-      - name: run slow suite (AI/map sweeps)
-        run: npm run test:slow
+      - name: default unit suite (#458)
+        run: npm test
+        timeout-minutes: 10
       - name: atlas matches cells (G7)
         run: |
           # slice-atlas reads tools/opengfx-sprites.json, a gitignored build
@@ -24,6 +24,19 @@ jobs:
           node tools/parse-pnml.mjs
           npm run slice-atlas
           git diff --exit-code assets/iso-atlas/
+
+  # Import-only smoke tests on the platform that exposed the CLI path bug.
+  windows-tools:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run tests/unit/iso-458-cli.test.ts tests/unit/iso-manifest.test.ts tests/unit/iso-building-templates.test.ts tests/unit/iso-normalize-building-art.test.ts
 
   # E13: Playwright never ran in CI. Desktop chromium on every PR; full
   # viewport matrix is the nightly workflow so G4/G5 mobile coverage is

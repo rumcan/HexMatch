@@ -70,7 +70,7 @@ function sitesAround(
   for (let ty = y0 - pad; ty <= y0 + h + pad; ty++) {
     for (let tx = x0 - pad; tx <= x0 + w + pad; tx++) {
       for (const view of RAIL_VIEWS) {
-        if (platformRefusal(grid, state.structures, plants, ownerId, tx, ty, view) !== "ok") continue;
+        if (platformRefusal(grid, state.structures, plants, ownerId, tx, ty, view, undefined, undefined, state.rail) !== "ok") continue;
         const anchor = resolveAnchor(grid, plants, ownerId, tx, ty, view);
         if (!anchor || anchor.kind !== want) continue;
         out.push({ tx, ty, view, anchorKind: anchor.kind, anchorId: anchor.id });
@@ -148,7 +148,7 @@ export function findRailLine(o: {
   pairs.sort((a, b) => a.d - b.d || a.src.tx - b.src.tx || a.src.ty - b.src.ty);
 
   for (const { src, dst } of pairs.slice(0, 64)) {
-    const fixture = tryLine(grid, track, state, ownerId, purse, src, dst);
+    const fixture = tryLine(grid, track, state, plants, ownerId, purse, src, dst);
     if (fixture) return fixture;
   }
   return null;
@@ -156,7 +156,7 @@ export function findRailLine(o: {
 
 /** One candidate pair, judged exactly as the click, the intent and `autoTrains` will. */
 function tryLine(
-  grid: Grid, track: Track, state: RailState, ownerId: number,
+  grid: Grid, track: Track, state: RailState, plants: Factory[], ownerId: number,
   purse: Purse, srcSites: PlatformSite, dstSites: PlatformSite,
 ): RailLineFixture | null {
   // The source platform is part of the world every candidate is judged in.
@@ -165,6 +165,12 @@ function tryLine(
     { kind: "industry", id: srcSites.anchorId, tiles: [] });
   layPlatformTrack(grid, track, withSrc, srcStruct);
   const srcStop = stopTile(srcStruct);
+
+  // Sites were collected against the original world. The first platform can
+  // occupy the second one's footprint/track or take its anchor; the host will
+  // refuse that second intent. Validate it again in the sequential build world.
+  if (platformRefusal(grid, withSrc.structures, plants, ownerId,
+    dstSites.tx, dstSites.ty, dstSites.view, undefined, undefined, withSrc.rail) !== "ok") return null;
 
   const ghost = ghostRail(withSrc);
   const dstStruct = placePlatform(ghost, "you", ownerId, dstSites.tx, dstSites.ty, dstSites.view,

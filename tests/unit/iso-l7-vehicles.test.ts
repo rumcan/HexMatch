@@ -35,6 +35,7 @@ import {
 } from "../../src/iso/track";
 import type { EconomyState, Harvester } from "../../src/iso/economy";
 import { MAP_W, MAP_H, setRng, mulberry32 } from "../../src/game/config";
+import { seedWithFeature } from "./helpers/map-feature";
 import { southLotFree } from "./helpers/depot-lot";
 
 const TICK = 1 / TRUCK_SPEED; // ms per tile at rateMult 1 on gravel
@@ -277,16 +278,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+let corridorSeed: number | undefined;
 async function boot(opts: { newLoop?: boolean } = {}) {
+  corridorSeed ??= seedWithFeature("separate farm and forest corridors", (grid) => {
+    const track = createTrack();
+    seedTownRoads(track, grid);
+    seedPublicRoads(track, grid);
+    const a = findCorridors({ grid, track }, 5, "farm")[0];
+    return !!a && findCorridors({ grid, track }, 5, "forest")
+      .some((b) => Math.abs(b.hx - a.hx) >= 5);
+  });
   const { startIsoGame } = await import("../../src/iso/game");
-  dispose = startIsoGame(root, opts);
+  dispose = startIsoGame(root, { ...opts, seed: corridorSeed });
   await settle();
   return hook();
 }
 
 interface Corridor { hx: number; hy: number; fy: number; len: number; ind: Industry }
 
-function findCorridors(h: L7Hook, len: number, type: string): Corridor[] {
+function findCorridors(h: Pick<L7Hook, "grid" | "track">, len: number, type: string): Corridor[] {
   const out: Corridor[] = [];
   for (const ind of h.grid.industries) {
     if (ind.type !== type) continue;
@@ -321,7 +331,7 @@ describe("L7 (#221) the live loop: connected depots show a moving vehicle", () =
   it("plans a lorry for a connected depot and drops it when the road is cut", async () => {
     const h = await boot({ newLoop: true });
     const corridors = findCorridors(h, 5, "farm");
-    expect(corridors.length, "seed 1337 offers a farm corridor").toBeGreaterThan(0);
+    expect(corridors.length, "the selected map offers a farm corridor").toBeGreaterThan(0);
     const c = corridors[0];
     buildCorridor(h, 1, 0, c);
     h.rescore();
@@ -354,8 +364,8 @@ describe("L7 (#221) the live loop: connected depots show a moving vehicle", () =
     const farms = findCorridors(h, 5, "farm");
     const forests = findCorridors(h, 5, "forest");
     const a = farms[0];
-    const b = forests.find((c) => Math.abs(c.hx - a.hx) >= 5) ?? forests[0];
-    expect(a && b, "seed 1337 offers two near corridors").toBeTruthy();
+    const b = forests.find((c) => Math.abs(c.hx - a.hx) >= 5);
+    expect(a && b, "the selected map offers two near corridors").toBeTruthy();
     buildCorridor(h, 1, 0, a);
     buildCorridor(h, 2, 1, b);
     h.eco.harvesters.find((d) => d.id === 1)!.yield = 1;
@@ -381,7 +391,7 @@ describe("L7 (#221) income is unchanged with vehicles disabled", () => {
     const h = await boot({ newLoop: true });
     expect(h.newLoop).toBe(true);
     const corridors = findCorridors(h, 5, "farm");
-    expect(corridors.length, "seed 1337 offers a farm corridor").toBeGreaterThan(0);
+    expect(corridors.length, "the selected map offers a farm corridor").toBeGreaterThan(0);
     const c = corridors[0];
     buildCorridor(h, 1, 0, c);
     h.eco.harvesters.find((d) => d.id === 1)!.yield = 2;

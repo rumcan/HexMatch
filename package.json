@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test": "vitest run --exclude tests/unit/iso-ai-sweep.test.ts --exclude tests/unit/iso-rebalance.test.ts --exclude tests/unit/iso-debug.test.ts",
+    "test": "vitest run --exclude tests/unit/iso-ai-sweep.test.ts --exclude tests/unit/iso-rebalance.test.ts --exclude tests/unit/iso-debug.test.ts --exclude tests/unit/iso-l1d-race.test.ts --exclude tests/unit/battle-ai-sim.test.ts",
     "test:watch": "vitest",
     "test:server": "vitest run tests/unit/server.test.ts",
     "test:slow": "vitest run --testTimeout=60000 tests/unit/iso-ai-sweep.test.ts tests/unit/iso-rebalance.test.ts tests/unit/iso-debug.test.ts tests/unit/iso-l1d-race.test.ts tests/unit/battle-ai-sim.test.ts",

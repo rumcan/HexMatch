@@ -20,6 +20,7 @@
 // read the real DOM, so the same silence cannot come back unnoticed.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { seedWithFeature } from "./helpers/map-feature";
 import { southLotFree } from "./helpers/depot-lot";
 import { WATER, type Grid, type Industry } from "../../src/iso/grid";
 import { MAP_W, MAP_H, CARGO, type Cargo } from "../../src/iso/config";
@@ -142,9 +143,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+let depotSeed: number | undefined;
 async function boot(opts: { newLoop?: boolean; story?: boolean | string; firstRun?: boolean } = {}) {
+  depotSeed ??= seedWithFeature("south Depot corridors", (grid) => {
+    const first = depotSite(grid);
+    return !!first;
+  });
   const { startIsoGame } = await import("../../src/iso/game");
-  dispose = startIsoGame(root, opts);
+  dispose = startIsoGame(root, { ...opts, ...(!localStorage.getItem("hexmatch:save") && !opts.story ? { seed: depotSeed } : {}) });
   await settle();
   return hook();
 }
@@ -731,11 +737,12 @@ describe("L8 the live HUD on the new loop", () => {
     // Normal is the no-decay row: the card must not invent a cooling line.
     expect(card).not.toMatch(/decay:/);
 
-    // Hard is the decay row: the same card prints it.
+    // Owner rule (2026-09): yields never decay on ANY difficulty.
+    // Switching to Hard must not invent the retired cooling line either.
     h.setRivalSkill("hard");
     await settle();
     const hard = await inspectDepotAt(h, site.hx, site.hy);
-    expect(hard).toMatch(/decay: [\d.]+%\/tick above ×[\d.]+/);
+    expect(hard).not.toMatch(/decay:/);
   });
 });
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isCli } from "./is-cli.mjs";
 /**
  * Y1 — declaration-driven sprite extractor.
  *
@@ -350,8 +351,7 @@ export function parsePnml(root = PNML_ROOT) {
   return sprites;
 }
 
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
-if (isCli) {
+if (isCli(import.meta.url)) {
   const sprites = parsePnml();
   const out = join(ROOT, "tools/opengfx-sprites.json");
   const sorted = {};

@@ -66,7 +66,7 @@ npm test                          # fast unit project (excludes heavy seed sweep
 npx playwright test --project=desktop-chromium   # single-desktop e2e (required CI check)
 ```
 
-`npm test` is the **fast** unit suite. Heavy seed sweeps (`iso-ai-sweep`, `iso-rebalance`, `iso-debug` network dump) live in `npm run test:slow` so the default suite stays deterministic under full-suite load. Only run the slow project when you touch **AI, map generation, rival placement, or economy balancing** — or when CI tells you to.
+`npm test` is the **fast** unit suite. Heavy simulations (`iso-ai-sweep`, `iso-rebalance`, `iso-debug` network dump, `iso-l1d-race`, `battle-ai-sim`) live in `npm run test:slow` so the default suite stays deterministic under full-suite load. Only run the slow project when you touch **AI, map generation, rival placement, or economy balancing** — or when CI tells you to.
 
 ### When you changed...
 
@@ -94,7 +94,7 @@ npm run test:e2e:mp      # multiplayer (dev server, 60s grace waits)
 
 - **Scenery / vehicle art loads** — unit tests boot the real game in `jsdom`. `fetch("/assets/...")` for scenery/ground/decals uses relative URLs that resolve to `file:` under `vitest` — they log `TypeError: Failed to parse URL from /assets/...` and fall back to placeholders. Those `[scenery] not installed` warnings are **expected noise** in `npm test` — they do not fail the test. Only a missing **required** sprite (e.g., `road_0011`) fails.
 
-- **Seed sweeps are heavy** — `iso-ai-sweep` (184 lines, 4 seeds × multiple AI turns), `iso-rebalance` (40-seed ore-distance sweep, ~3s locally), `iso-debug` `dumpNetwork` (≈10s per boot). They have `testTimeout: 30_000` (or per-test 10_000) and `hookTimeout: 30_000` in `vitest.config.ts`. Under full-suite parallelism they can still exceed the shared runner's budget — hence the `test:slow` split and `poolOptions.maxThreads = 3` tuning so full runs behave like isolated runs. If a sweep flakes only under `npm test` but passes alone, run it alone and file a `docs/known-test-failures.md` entry with the seed / timeout, rather than bumping the global timeout.
+- **Seed sweeps are heavy** — `iso-ai-sweep` (184 lines, 4 seeds × multiple AI turns), `iso-rebalance` (40-seed ore-distance sweep, ~3s locally), `iso-debug` `dumpNetwork` (≈10s per boot). They have `testTimeout: 30_000` (or per-test 10_000) and `hookTimeout: 30_000` in `vitest.config.ts`. Under full-suite parallelism they can still exceed the shared runner's budget — hence the `test:slow` split and `maxWorkers = 3` (Vitest 4) tuning so full runs behave like isolated runs. If a sweep flakes only under `npm test` but passes alone, run it alone and file a `docs/known-test-failures.md` entry with the seed / timeout, rather than bumping the global timeout.
 
 - **E2e boot waits** — desktop boots in ~20s (`bootBudget()` in `tests/e2e/boot.ts`), phone emulation (dpr 2–3, software raster) needs 150s. `bootSoloIso` waits for `__iso.phase === "setup-factory" && !__iso.loading && __iso.grid.industries.length > 0` — never a fixed `sleep`. Building-layer specs additionally wait for `__iso.artLoad.ready` (the loading screen's own completion flag) and poll for inclusion of every `assets/buildings/manifest.json` name, because `loadBuildingLayers` installs PNGs as they arrive. If you add a new art set, expose a new `__iso.artLoad.*` flag and wait for it — don't add `waitForTimeout`.
 

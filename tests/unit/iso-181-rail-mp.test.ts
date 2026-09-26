@@ -26,12 +26,14 @@ import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/n
 import type { HexRoom } from "../../src/net/transport";
 import { MAP_W, MAP_H, mulberry32, setRng } from "../../src/game/config";
 import { FACTORY_FOOTPRINT } from "../../src/iso/config";
-import { RAIL_COSTS, ownerRailTiles as ownerRailTilesOf, railToWire, type RailState } from "../../src/iso/rail";
+import { createRailState, RAIL_COSTS, ownerRailTiles as ownerRailTilesOf, railToWire, type RailState } from "../../src/iso/rail";
 import { WATER, factoryTouchesTown, type Grid } from "../../src/iso/grid";
 import { adjacentTown } from "../../src/iso/plants";
-import { tIdx, type Track } from "../../src/iso/track";
+import { createTrack, seedTownRoads, seedPublicRoads, tIdx, type Track } from "../../src/iso/track";
 import { buildSnapshot } from "../../src/iso/snapshot";
 import type { Factory, Harvester } from "../../src/iso/economy";
+import { seedWithFeature } from "./helpers/map-feature";
+import { planFactoryPlacement } from "../../src/iso/placement";
 import { findPlatformSite, findRailLine } from "./helpers/rail-line";
 
 vi.mock("../../assets/iso-atlas/atlas@0.5x.png", () => ({ default: "a05.png" }));
@@ -177,18 +179,36 @@ function greet(msg: WelcomeMsg, privateTo?: Endpoint): void {
   privateTo?.deliverPrivate(msg);
 }
 
-const SEED = 1337;
+let SEED: number;
+function railwaySeed(): number {
+  return seedWithFeature("two-seat opening with a legal two-stop railway", (grid) => {
+    const track = createTrack();
+    seedTownRoads(track, grid);
+    seedPublicRoads(track, grid);
+    const a = findFactorySpot(grid, track);
+    if (!a) return false;
+    const town = adjacentTown(grid, ...a)?.id ?? -1;
+    const b = findFactorySpot(grid, track, footprint(...a), town);
+    if (!b) return false;
+    const plants: Factory[] = [
+      { owner: "you", ownerId: 1, tx: a[0], ty: a[1], id: 0, townId: town },
+      { owner: "ai", ownerId: 2, tx: b[0], ty: b[1], id: 0, townId: adjacentTown(grid, ...b)?.id ?? null },
+    ];
+    return !!findRailLine({ grid, track, state: createRailState(), plants, ownerId: 2, purse: { ...rich } });
+  });
+}
 let roots: HTMLDivElement[] = [];
 let disposers: (() => void)[] = [];
 
 beforeEach(() => {
+  SEED ??= railwaySeed();
   stubCanvas();
   stubImage();
-  window.history.replaceState(null, "", "/?seed=1337&loop=old");
+  window.history.replaceState(null, "", `/?seed=${SEED}&loop=old`);
   localStorage.removeItem("hexmatch:save");
   localStorage.setItem("hexmatch:rival-skill", "normal");
   localStorage.setItem("hexmatch:tutorial", "never");
-  setRng(mulberry32(1337));
+  setRng(mulberry32(SEED));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
   };
@@ -259,7 +279,7 @@ async function bootPair(): Promise<{ host: RailHook; guest: RailHook; hostEnd: E
  * the tests that used it are the `.skip`ped ones. This helper avoids it.)
  */
 function findFactorySpot(
-  grid: Grid, exclude: ReadonlySet<number> = new Set(), avoidTown = -1,
+  grid: Grid, track: Track, exclude: ReadonlySet<number> = new Set(), avoidTown = -1,
 ): [number, number] | null {
   for (let y = 6; y < MAP_H - 6; y++) {
     for (let x = 6; x < MAP_W - 6; x++) {
@@ -271,6 +291,7 @@ function findFactorySpot(
         }
       }
       if (ok && !factoryTouchesTown(grid, x, y)) ok = false;
+      if (ok && !planFactoryPlacement(grid, x, y, { requireTown: true, track }).valid) ok = false;
       if (ok && avoidTown >= 0 && adjacentTown(grid, x, y)?.id === avoidTown) ok = false;
       if (ok) return [x, y];
     }
@@ -287,13 +308,20 @@ const footprint = (x: number, y: number) => {
 };
 
 function findDepotSpot(h: RailHook, cx: number, cy: number): [number, number] | null {
-  for (let r = 1; r <= 14; r++) {
-    for (let y = cy - r; y <= cy + r; y++) {
-      for (let x = cx - r; x <= cx + r; x++) {
-        if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
-        if (h.placementPlan("depot", x, y).valid) return [x, y];
+  // Map quotas no longer promise an industry within 14 tiles of a town.
+  // Search the actual industry edges, nearest first, using live legality.
+  const candidates = new Map<number, [number, number]>();
+  for (const ind of h.grid.industries) {
+    for (let y = ind.ty - 2; y <= ind.ty + ind.h; y++) {
+      for (let x = ind.tx - 2; x <= ind.tx + ind.w; x++) {
+        if (x >= 1 && y >= 1 && x < MAP_W - 1 && y < MAP_H - 1)
+          candidates.set(tIdx(x, y), [x, y]);
       }
     }
+  }
+  const distance = ([x, y]: [number, number]) => Math.abs(x - cx) + Math.abs(y - cy);
+  for (const [x, y] of [...candidates.values()].sort((a, b) => distance(a) - distance(b))) {
+    if (h.placementPlan("depot", x, y).valid) return [x, y];
   }
   return null;
 }
@@ -310,20 +338,22 @@ function findDepotSpot(h: RailHook, cx: number, cy: number): [number, number] | 
  * its own sim to run — which is the half of this suite that watches the host.
  */
 async function seatBoth(host: RailHook, guest: RailHook): Promise<void> {
-  const hostSpot = findFactorySpot(host.grid)!;
+  const hostSpot = findFactorySpot(host.grid, host.track)!;
   expect(hostSpot).not.toBeNull();
-  host.placeFactory(hostSpot[0], hostSpot[1]);
+  expect(host.placeFactory(hostSpot[0], hostSpot[1])).toBe(true);
   pump();
   const hostTown = adjacentTown(host.grid, hostSpot[0], hostSpot[1])?.id ?? -1;
-  const guestSpot = findFactorySpot(guest.grid, footprint(hostSpot[0], hostSpot[1]), hostTown)!;
+  const guestSpot = findFactorySpot(guest.grid, guest.track, footprint(hostSpot[0], hostSpot[1]), hostTown)!;
   expect(guestSpot).not.toBeNull();
-  guest.placeFactory(guestSpot[0], guestSpot[1]);
+  expect(guest.placeFactory(guestSpot[0], guestSpot[1])).toBe(true);
   pump();
   const guestDepot = findDepotSpot(guest, guestSpot[0], guestSpot[1])!;
-  guest.placeDepot(guestDepot[0], guestDepot[1]);
+  expect(guestDepot, "guest opening has a legal Depot").not.toBeNull();
+  expect(guest.placeDepot(guestDepot[0], guestDepot[1])).toBe(true);
   pump();
   const hostDepot = findDepotSpot(host, hostSpot[0], hostSpot[1])!;
-  host.placeDepot(hostDepot[0], hostDepot[1]);
+  expect(hostDepot, "host opening has a legal Depot").not.toBeNull();
+  expect(host.placeDepot(hostDepot[0], hostDepot[1])).toBe(true);
   host.finishSetup();          // the setup Depot click's own phase flip
   pump();
   await settle();

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isCli } from "./is-cli.mjs";
 // ══════════════════════════════════════════════════════════════════════════
 // F5 (#273) — square a loose building drawing up to the game's 2:1 grid and
 // seat it on its DECLARED footprint diamond.
@@ -482,7 +483,6 @@ export async function lightingCheck(file) {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
 
 /** footprints.json as {<name>: {footprint, footRoom}} (keys starting "_" are notes). */
 export function declaredFootprints(path = DECLARATIONS) {
@@ -541,4 +541,4 @@ async function main() {
   }
 }
 
-if (isCli) await main();
+if (isCli(import.meta.url)) await main();

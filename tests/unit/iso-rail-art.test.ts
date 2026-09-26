@@ -17,13 +17,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import sharp from "sharp";
 import { loadRailwaySprites, RAILWAY_SPRITE_NAMES } from "../../src/iso/rail-art";
 import {
-  DEPOT_FOOTPRINT, COUPLE_GAP, LOCO_LEN, WAGON_LEN, WAGON_OFFSET, RAIL_VIEWS,
+  DEPOT_FOOTPRINT, PLATFORM_FOOTPRINT, CAR_LEN, CAR_GAP, OCT_NAMES,
+  carOffsets, RAIL_VIEWS, type CarKind,
 } from "../../src/iso/rail";
-import {
-  ALL_SPRITE_NAMES, LANE, PALETTE, PLATFORM_FOOTPRINT, SPRITE_KINDS, VIEWS, footprintFor,
-} from "../../tools/make-railway-art.mjs";
+import { PALETTE } from "../../tools/make-railway-art.mjs";
 import { RAIL_GAUGE } from "../../src/iso/rail-geometry";
 import type { Atlas } from "../../src/iso/atlas";
 
@@ -33,10 +33,10 @@ const manifest = JSON.parse(readFileSync(resolve(ROOT, "assets/railway/manifest.
   generatedBy: string; license: string;
   meta: { note: string; palette: Record<string, string> };
   sprites: Record<string, {
-    name: string; kind: string; view: string; w: number; h: number;
+    name: string; kind: string; car?: CarKind; view: string; note: string; w: number; h: number;
     anchor: [number, number]; footprint: [number, number]; moving: boolean;
-    box2x: [number, number]; alpha: { coverage: number; corners: number[] };
-    lenTiles?: number; widthTiles?: number; coupler?: { front: number; rear: number };
+    box2x: [number, number];
+    lenTiles?: number; widthTiles?: number;
   }>;
 };
 
@@ -44,7 +44,14 @@ const manifest = JSON.parse(readFileSync(resolve(ROOT, "assets/railway/manifest.
 const channels = (hex: string): [number, number, number] =>
   [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
 const chroma = (hex: string): number => Math.max(...channels(hex)) - Math.min(...channels(hex));
-const spriteFiles = ALL_SPRITE_NAMES as string[];
+// The runtime now draws five consist cars in eight headings, not the retired
+// procedural locomotive/wagon pair. Keep an independent list of required names
+// so both a missing manifest entry and a stale transformed JSON import fail.
+const carKinds = ["loco", "tender", "box", "tank", "flat"] as const;
+const spriteFiles = [
+  ...RAIL_VIEWS.flatMap((view) => [`platform_${view}`, `train-depot_${view}`]),
+  ...OCT_NAMES.flatMap((view) => carKinds.map((kind) => `car-${kind}_${view}`)),
+].sort();
 
 /** A stand-in for the real atlas: the loader only reads these three fields. */
 function fakeAtlas(cap = 2): Atlas {
@@ -73,43 +80,36 @@ afterEach(() => vi.unstubAllGlobals());
 describe("RAIL-03 the art set is complete and self-consistent", () => {
   it("ships every required sprite name, direction and family", () => {
     expect(RAILWAY_SPRITE_NAMES).toEqual([...spriteFiles].sort());
-    expect(RAILWAY_SPRITE_NAMES).toHaveLength(SPRITE_KINDS.length * VIEWS.length);
-    for (const kind of SPRITE_KINDS) {
-      for (const view of VIEWS) {
-        const name = kind === "train-depot" ? `train-depot_${view}` : `${kind}_${view}`;
-        expect(RAILWAY_SPRITE_NAMES).toContain(name);
-      }
-    }
+    expect(Object.keys(manifest.sprites).sort()).toEqual(spriteFiles);
+    expect(RAILWAY_SPRITE_NAMES).toHaveLength(48);
   });
 
   it("gives every sprite its footprint, anchor and moving flag", () => {
     for (const name of spriteFiles) {
       const s = manifest.sprites[name];
       expect(s, name).toBeTruthy();
-      const kind = s.kind as never;
-      const view = s.view as never;
-      expect(s.footprint).toEqual(footprintFor(kind, view));
+      const kind = s.kind;
+      const view = s.view as typeof RAIL_VIEWS[number];
+      if (kind === "car") expect(s.footprint).toEqual([1, 1]);
       if (kind === "platform") expect(s.footprint).toEqual(PLATFORM_FOOTPRINT[view]);
       // …and the depot's, against the RULES' own constant rather than the art's.
       if (kind === "train-depot") expect(s.footprint).toEqual(DEPOT_FOOTPRINT);
-      // The anchor is inside the sprite's own box, and the alpha metadata says
-      // the art is transparent — the epic's "explicit metadata" clause.
+      // Ground-contact anchors and dimensions are explicit; transparency is
+      // checked against the actual pixels below.
       expect(s.anchor[0]).toBeGreaterThanOrEqual(0);
       expect(s.anchor[1]).toBeGreaterThanOrEqual(0);
       expect(s.w).toBeGreaterThan(0);
       expect(s.h).toBeGreaterThan(0);
-      expect(s.alpha.coverage).toBeGreaterThan(0);
-      expect(s.alpha.coverage).toBeLessThan(1);
-      expect(s.alpha.corners).toEqual([0, 0, 0, 0]);
-      expect(s.moving).toBe(kind === "locomotive" || kind === "wagon");
+      expect(s.moving).toBe(kind === "car");
+      if (kind === "car") {
+        expect(s.lenTiles).toBe(CAR_LEN[s.car!]);
+        expect(s.widthTiles).toBeGreaterThan(0);
+        expect(s.widthTiles).toBeLessThan(1);
+      }
     }
-    // The two moving families carry the length/width a wagon's trail needs.
-    expect(manifest.sprites.locomotive_se.lenTiles).toBeGreaterThan(1);
-    expect(manifest.sprites.wagon_se.lenTiles).toBeLessThan(manifest.sprites.locomotive_se.lenTiles!);
-    expect(manifest.sprites.locomotive_se.widthTiles).toBeLessThan(1);
   });
 
-  it("has all 48 PNGs on disk, at the three tiers the manifest geometry names", () => {
+  it("has all 144 PNGs on disk, at the three tiers the manifest geometry names", () => {
     // PNG stores width/height as big-endian u32 at offset 16 (after the 8-byte
     // signature, the IHDR length and the tag) — reading them beats trusting a
     // file's byte count, which does not grow monotonically for flat art.
@@ -135,39 +135,40 @@ describe("RAIL-03 the art set is complete and self-consistent", () => {
     }
   });
 
-  it("couples the wagon to the locomotive exactly as the rules space it", () => {
-    for (const view of RAIL_VIEWS) {
-      const loco = manifest.sprites[`locomotive_${view}`];
-      const wagon = manifest.sprites[`wagon_${view}`];
-      // The body lengths the runtime spaces by are the art's own.
-      expect(loco.lenTiles).toBeCloseTo(LOCO_LEN, 6);
-      expect(wagon.lenTiles).toBeCloseTo(WAGON_LEN, 6);
-      // The buffer planes overhang the bodies, and at `WAGON_OFFSET` apart they
-      // MEET: never overlapping, and never further apart than the coupling gap.
-      const buffers = Math.abs(loco.coupler!.rear) + wagon.coupler!.front;
-      expect(buffers).toBeGreaterThan(LOCO_LEN / 2 + WAGON_LEN / 2);
-      expect(WAGON_OFFSET - buffers).toBeGreaterThan(0);
-      expect(WAGON_OFFSET - buffers).toBeLessThanOrEqual(COUPLE_GAP);
-      // Centres, not edges: the coupling sign convention is front-positive.
-      expect(loco.coupler!.front).toBeGreaterThan(0);
-      expect(loco.coupler!.rear).toBeLessThan(0);
-      expect(wagon.coupler!.front).toBeGreaterThan(0);
-      expect(wagon.coupler!.rear).toBeLessThan(0);
+  it("ships transparent PNGs with visible pixels, not opaque rectangles", async () => {
+    // The owner-supplied cars do not carry the old generator's alpha metadata.
+    // Check the actual shipped pixels instead, for every sprite family.
+    for (const name of spriteFiles) {
+      const { data, info } = await sharp(resolve(ROOT, `assets/railway/${name}@2x.png`))
+        .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let visible = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 0) visible++;
+      expect(visible, name).toBeGreaterThan(0);
+      expect(visible, name).toBeLessThan(info.width * info.height);
+      for (const i of [0, info.width - 1, (info.height - 1) * info.width, info.width * info.height - 1])
+        expect(data[i * 4 + 3], `${name} corner`).toBe(0);
     }
   });
 
-  it("draws the lane rails at the gauge the vector track uses", () => {
-    // A structure's internal track IS the network's track — the two meet at the
-    // structure's ports — so the art's lane half-gauge and the geometry's
-    // RAIL_GAUGE are one contract, asserted from both sides.
-    expect(LANE.platformRailHalf).toBeCloseTo(RAIL_GAUGE / 2, 9);
-    // The depot's lane is the art's own figure, a fifth of a tile inside the
-    // gauge and under a pixel apart at 1×: bound rather than left to drift.
-    expect(Math.abs(LANE.depotRailHalf - RAIL_GAUGE / 2)).toBeLessThan(0.02);
-    // The lane's own sleeper pitch is the art's (the network's sleepers ride
-    // the absolute 0.25 lattice instead — see TIE_SPACING), and it is pinned so
-    // neither number can move without the other being looked at.
-    expect(LANE.tiePitch).toBeCloseTo(0.23, 9);
+  it("spaces all consist cars using the shipped body lengths and coupling gap", () => {
+    const offsets = carOffsets([...carKinds]);
+    expect(offsets[0]).toBe(0);
+    for (const view of OCT_NAMES) {
+      for (let i = 1; i < carKinds.length; i++) {
+        const front = manifest.sprites[`car-${carKinds[i - 1]}_${view}`];
+        const back = manifest.sprites[`car-${carKinds[i]}_${view}`];
+        expect(offsets[i] - offsets[i - 1] - front.lenTiles! / 2 - back.lenTiles! / 2)
+          .toBeCloseTo(CAR_GAP, 9);
+      }
+    }
+  });
+
+  it("keeps the track and owner-supplied cars at the 25% smaller scale", () => {
+    // Platforms no longer contain internal rails; the old generator's LANE
+    // dimensions are not the shipped art. Both track and cars were scaled down.
+    expect(RAIL_GAUGE).toBeCloseTo(0.32 * 0.75, 9);
+    for (const name of spriteFiles.filter((name) => name.startsWith("car-")))
+      expect(manifest.sprites[name].widthTiles).toBeCloseTo(0.42 * 0.75, 9);
   });
 
   it("carries the 1950s palette it was drawn from", () => {
@@ -191,16 +192,19 @@ describe("RAIL-03 the art set is complete and self-consistent", () => {
     }
   });
 
-  it("states its provenance: original procedural art, no third-party asset", () => {
+  it("states its provenance for procedural structures and owner-supplied art", () => {
     const licences = readFileSync(resolve(ROOT, "assets/railway/LICENSES.md"), "utf8");
     expect(manifest.license).toMatch(/original art, procedurally generated/);
     expect(licences).toMatch(/no third-party art/i);
     expect(licences).toMatch(/make-railway-art\.mjs/);
     // The epic's one prohibition, stated as a negative in the file itself.
     expect(licences).toMatch(/\* no Transport Fever \/ Urban Games asset has been extracted/i);
-    // Every sprite's own note points at the generator, so a stray hand-made
-    // PNG in the folder is visible in review.
-    for (const name of spriteFiles) expect(manifest.sprites[name].note).toMatch(/make-railway-art\.mjs/);
+    for (const name of spriteFiles) {
+      const def = manifest.sprites[name];
+      const source = def.kind === "car" ? /owner-supplied art/ :
+        def.kind === "platform" ? /owner art.*cut_platform\.py/ : /make-railway-art\.mjs/;
+      expect(def.note, name).toMatch(source);
+    }
   });
 
   it("ships with no build-time copy step: the art is globbed into the bundle", () => {
@@ -239,10 +243,10 @@ describe("RAIL-03 the loader installs the art into the atlas", () => {
     stubBitmaps(true);
     const atlas = fakeAtlas(0.5);
     expect(await loadRailwaySprites(atlas)).toBe(spriteFiles.length);
-    expect([...atlas.buildingImages.get("locomotive_se")!.keys()]).toEqual([0.5]);
+    expect([...atlas.buildingImages.get("car-loco_se")!.keys()]).toEqual([0.5]);
     // Raising the cap adds the missing levels rather than re-fetching any.
     expect(await loadRailwaySprites(atlas, 2)).toBe(spriteFiles.length);
-    expect([...atlas.buildingImages.get("locomotive_se")!.keys()].sort()).toEqual([0.5, 1, 2]);
+    expect([...atlas.buildingImages.get("car-loco_se")!.keys()].sort()).toEqual([0.5, 1, 2]);
     expect(await loadRailwaySprites(atlas, 2)).toBe(0);       // nothing left to do
   });
 

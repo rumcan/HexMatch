@@ -147,8 +147,12 @@ describe("PP-06 plant records", () => {
   });
 
   it("prices a plant from one authoritative constant", () => {
-    expect(canAffordPlant({ wood: 2, stone: 2, grain: 2, ore: 3 })).toBe(true);
-    expect(canAffordPlant({ wood: 2, stone: 2, grain: 2, ore: 2 })).toBe(false);
+    // This legacy resource helper still feeds planning; live builds use
+    // money (ECON-1). Follow the authoritative, tripled resource price.
+    expect(canAffordPlant({ ...PLANT_COST })).toBe(true);
+    for (const [cargo, cost] of Object.entries(PLANT_COST)) {
+      expect(canAffordPlant({ ...PLANT_COST, [cargo]: cost! - 1 })).toBe(false);
+    }
     expect(canAffordPlant({})).toBe(false);
     expect(Object.values(PLANT_COST).every((v) => v > 0)).toBe(true);
   });

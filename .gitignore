@@ -23,3 +23,6 @@ tools/opengfx-sprites.json
 # `npm run slice-atlas` / `node tools/footprint-check.mjs` — never shipped art.
 assets/iso-atlas/contact-sheet.png
 assets/iso-atlas/footprint-check.png
+
+# Per-worktree Vitest transforms/results (never shared through node_modules).
+.cache/
