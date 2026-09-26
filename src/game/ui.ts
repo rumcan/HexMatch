@@ -686,7 +686,9 @@ export interface OriginalUi {
   /** A brief, non-modal exchange beside the HUD. The portrait switches with
    *  each speaker; game.ts also records every beat in the Feed for later. */
   rivalQuip: (beats: readonly UiRivalryBeat[]) => void;
-  toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success") => void;
+  /** All messages enter Feed. Routine gains (good) default to low priority;
+   *  callers can promote important good news or quiet a routine notice. */
+  toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success", priority?: "normal" | "low") => void;
   fx: (type: FxType, r: number, c: number, text?: string) => void;
   /**
    * `score` (L12 #227): the new loop's readout — the pass's session SCORE
@@ -1132,7 +1134,7 @@ export function createOriginalUi(
   const railPanel = h("div", "panel rail-panel hidden");
   railPanel.appendChild(h("div", "panel-title", "Railway"));
   const railNote = h("div", "pane-note");
-  railNote.innerHTML = "Rail costs stone · a platform pays +1★ · one train per connected network. <b>R</b> turns a platform or depot.";
+  railNote.innerHTML = `Rail ${moneyMarkup(RAIL_COSTS.rail)} a tile · a platform pays +1★ · one train per connected network. <b>R</b> turns a platform or depot.`;
   railPanel.appendChild(railNote);
   const railRows = h("div", "rail-rows");
   railPanel.appendChild(railRows);
@@ -1366,6 +1368,31 @@ export function createOriginalUi(
   const tabQuests = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.quests}</i><span class="tab-l">Quests</span><span class="tab-badge hidden"></span>`);
   tabQuests.onclick = () => drawerTab("quests");
   const questsBadge = tabQuests.querySelector(".tab-badge") as HTMLElement;
+  const feedBadge = h("span", "tab-badge hidden");
+  const marketBadge = h("span", "tab-badge hidden");
+  tabFeed.appendChild(feedBadge);
+  tabMarket.appendChild(marketBadge);
+  let feedUnread = 0;
+  let marketAlert: string | null = null;
+  let marketSeen: string | null = null;
+  function paintBadge(el: HTMLElement, count: number, label: string): void {
+    const text = count ? String(count) : "";
+    if (el.textContent === text && el.hasAttribute("aria-label")) return;
+    el.textContent = text;
+    el.classList.toggle("hidden", count === 0);
+    el.setAttribute("aria-label", `${count} ${label}`);
+  }
+  function tabVisible(t: TabName): boolean {
+    return !rightAside.inert && currentTab === t && (isPhoneViewport()
+      ? root.dataset.view === "trade" : !railRightCollapsed);
+  }
+  function acknowledgeTab(): void {
+    if (tabVisible("feed")) feedUnread = 0;
+    if (tabVisible("market")) marketSeen = marketAlert;
+    if (tabVisible("quests")) markQuestsSeen();
+    paintBadge(feedBadge, feedUnread, "unread messages");
+    paintBadge(marketBadge, marketAlert && marketAlert !== marketSeen ? 1 : 0, "price alerts");
+  }
   // #299: the Plant tab only exists where the plant is a pane at all — the
   // retired loop. On the new loop the session moved out of the rail and into
   // its own window, so the strip is Bank / Feed and nothing else.
@@ -1474,6 +1501,31 @@ export function createOriginalUi(
   let sessionWin: HTMLElement | null = null;
   let sessionFrame: HTMLElement | null = null;
   let plantCard: HTMLElement | null = null;
+  let plantToggle: HTMLButtonElement | null = null;
+  let plantBadge: HTMLElement | null = null;
+  let plantManualOpen = false;
+  let plantDepotSelected = false;
+  let plantRetuneReady = false;
+  let plantCityReady = false;
+  let guideWasRunning = false;
+  let plantContextSig = "";
+  function paintPlantContext(): void {
+    if (!plantCard || !plantToggle || !plantBadge) return;
+    const needed = plantDepotSelected || plantRetuneReady;
+    const collapsed = !isPhoneViewport() && !plantManualOpen && !needed;
+    // A ready city upgrade can stay tucked away, but never silently.
+    const label = plantRetuneReady ? "Retune ready" : plantCityReady ? "Upgrade ready" : "";
+    const inert = collapsed && tuningPlate.parentElement === plantCard;
+    const sig = `${collapsed}:${label}:${inert}`;
+    if (sig === plantContextSig) return;
+    plantContextSig = sig;
+    plantCard.classList.toggle("plant-collapsed", collapsed);
+    plantToggle.setAttribute("aria-expanded", String(!collapsed));
+    plantBadge.textContent = label;
+    plantBadge.classList.toggle("hidden", !label);
+    // The same plate moves into the session window: never make that inert.
+    tuningPlate.inert = inert;
+  }
   if (sessionMode) {
     const win = h("div", "session-window hidden");
     win.id = "iso-session";
@@ -1503,9 +1555,20 @@ export function createOriginalUi(
     // session comes and goes.
     const card = h("div", "panel plant-card");
     card.id = "iso-plant";
-    card.appendChild(h("div", "panel-title", "Plant"));
+    const head = h("div", "panel-title plant-head");
+    head.appendChild(h("span", "plant-phone-title", "Plant"));
+    plantToggle = h("button", "plant-toggle", "Plant") as HTMLButtonElement;
+    plantToggle.type = "button";
+    plantToggle.setAttribute("aria-controls", "iso-tuning");
+    plantToggle.title = "Plant details";
+    plantBadge = h("span", "plant-badge hidden");
+    plantToggle.appendChild(plantBadge);
+    plantToggle.onclick = () => { plantManualOpen = !plantManualOpen; paintPlantContext(); };
+    head.appendChild(plantToggle);
+    card.appendChild(head);
     card.appendChild(tuningPlate);
     plantCard = card;
+    paintPlantContext();
     rightAside.appendChild(tp);
     brDock.appendChild(card);
     // The window is mounted OUTSIDE the rails so the backdrop covers them:
@@ -1601,6 +1664,7 @@ export function createOriginalUi(
     if (isPhoneViewport()) return;
     railRightCollapsed = !railRightCollapsed;
     paintRails();
+    acknowledgeTab();
   };
   /** RAIL-01: the sheets own the panels on a phone. Crossing the regime
    *  hands them back unfolded — called from responsiveZoom, which is the one
@@ -1715,8 +1779,7 @@ export function createOriginalUi(
   }
   function paintQuestsBadge(): void {
     const unseen = (questsPanel?.items ?? []).filter((i) => !questsSeen.has(i.id)).length;
-    questsBadge.textContent = unseen ? String(unseen) : "";
-    questsBadge.classList.toggle("hidden", unseen === 0);
+    paintBadge(questsBadge, unseen, "unread quests");
   }
   const modalRoot = h("div", "modal-root hidden");
   root.appendChild(modalRoot);
@@ -2436,12 +2499,10 @@ export function createOriginalUi(
     const how = hooks.onBank(give, want);
     if (how === "relayed") {
       // #114: a guest's bank trade is a request until the host accepts it.
-      toast(`Sent to the host — the trade lands once they confirm.`, "info");
-      feed(`Bank request sent: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+      toast(`Bank request sent: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name} — waiting for the host.`, "info");
     } else if (how === "done") {
       toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "success");
-      // W6: bank trades are trades — log them even with no rival around.
-      feed(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}`);
+      // toast() also records the trade in the Feed.
     } else if (!bankAllowed(give, seat.unlocked) || !bankAllowed(want, seat.unlocked)) {
       const locked = [give, want].find((c) => !bankAllowed(c, seat.unlocked))!;
       toast(`${CARGO[locked].name} needs rung ${bankTier(locked)} — tune a Depot to unlock it.`, "danger");
@@ -2480,7 +2541,7 @@ export function createOriginalUi(
   // ── feed ─  // ── feed ──────────────────────────────────────────────────────────────────
   function renderFeed() {
     feedPane.innerHTML = "";
-    feedEntries.slice(0, 14).forEach((f) => {
+    feedEntries.forEach((f) => {
       const row = h("div", "feed-row");
       row.style.borderLeftColor = f.colour;
       row.textContent = f.text;
@@ -2535,7 +2596,7 @@ export function createOriginalUi(
     feedPane.classList.toggle("hidden", t !== "feed");
     tabQuests.classList.toggle("active", t === "quests");
     questsPane.classList.toggle("hidden", t !== "quests");
-    if (t === "quests") markQuestsSeen();
+    acknowledgeTab();
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
     // leaves a measurable slot once this pane is the visible one.
     // FIT-01: and so does the desktop — the fit clamps on the measured plant
@@ -3168,52 +3229,83 @@ export function createOriginalUi(
     setTimeout(() => e.remove(), 1600);
   }
 
-  const lastToast: Record<string, number> = {};
-  function toast(text: string, kind: "good" | "bad" | "info" | "danger" | "success" = "info") {
+  // One notification channel: every toast is retained in Feed; routine gains
+  // (good) are Feed-only, while refusals, instructions and explicit action
+  // confirmations get one FIFO toast. No overlapping enter/exit animations.
+  type ToastKind = "good" | "bad" | "info" | "danger" | "success";
+  const toastQueue: { text: string; kind: ToastKind }[] = [];
+  let activeToast: string | null = null;
+  const recentToasts = new Map<string, number>();
+  const messageKey = (text: string) => text.trim().replace(/[.!]+$/, "");
+  function toast(text: string, kind: ToastKind = "info", priority: "normal" | "low" = kind === "good" ? "low" : "normal") {
+    const key = messageKey(text);
+    if (activeToast === key || toastQueue.some((m) => messageKey(m.text) === key)) return;
+    recordMessage(text);
+    if (priority === "low") return;
     const now = performance.now();
-    if (lastToast[text] && now - lastToast[text] < 900) return;
-    lastToast[text] = now;
-    // SFX-01: a refusal is worth a sound — two muted knocks, "a palm flat on
-    // the ledger" — because it is the one message the player might otherwise
-    // miss at the edge of their vision. Good news stays SILENT here on purpose:
-    // every gain already sounds where it happens (`harvest`, `coin`, `star`,
-    // `build`), and a second chime on the toast that reports it is the doubling
-    // that makes a game feel noisy. The cue's own 200 ms gap keeps a cascade of
-    // bad news from drumming.
+    for (const [old, at] of recentToasts) if (now - at >= 900) recentToasts.delete(old);
+    if (recentToasts.has(key)) return;
+    recentToasts.set(key, now);
+    toastQueue.push({ text, kind });
+    showNextToast();
+  }
+  function showNextToast(): void {
+    if (activeToast !== null) return;
+    const message = toastQueue.shift();
+    if (!message) return;
+    const { text, kind } = message;
+    activeToast = messageKey(text);
     if (kind === "bad" || kind === "danger") sfx.play("deny");
-    // V4: the toast carries its own ✕ and the ✕ actually closes it — the
-    // auto-dismiss timer is cleared so a closed toast can never re-arm, and
-    // each toast owns its timer so closing one leaves the stack intact.
-    const t = h("div", `toast ${kind === "danger" ? "danger" : kind}`);
-    t.appendChild(h("span", "toast-msg", text));
+    const t = h("div", `toast ${kind}`);
+    t.setAttribute("role", "status");
+    const msg = h("span", "toast-msg");
+    msg.textContent = text;
+    t.appendChild(msg);
     const x = h("button", "toast-x", "✕");
-    (x as HTMLButtonElement).type = "button";
+    x.type = "button";
     x.title = "Dismiss";
+    x.setAttribute("aria-label", "Dismiss notification");
     let timer = 0;
+    let closing = false;
     const close = () => {
+      if (closing) return;
+      closing = true;
       window.clearTimeout(timer);
       t.classList.remove("in");
-      setTimeout(() => t.remove(), 300);
+      window.setTimeout(() => {
+        t.remove();
+        activeToast = null;
+        // A detached game's queue must not continue playing sounds.
+        if (!root.isConnected) { toastQueue.length = 0; return; }
+        showNextToast();
+      }, 300);
     };
     x.dataset.sfx = "close";
     x.onclick = (e) => { e.stopPropagation(); close(); };
     t.appendChild(x);
     toasts.appendChild(t);
-    requestAnimationFrame(() => t.classList.add("in"));
+    requestAnimationFrame(() => { if (!closing) t.classList.add("in"); });
     timer = window.setTimeout(close, 2400);
   }
 
-  function feed(text: string, who?: string) {
-    // L11 (#226): the local seat is the only player record the chrome holds —
-    // a line tagged with anyone else is the rival's, and the colour says so.
+  // Older callers sometimes report the same event through both doors. Treat
+  // matching text (including a trailing full stop) as one message, either order.
+  const recentMessages = new Map<string, number>();
+  function recordMessage(text: string, who?: string): void {
+    const now = performance.now();
+    for (const [key, at] of recentMessages) if (now - at >= 900) recentMessages.delete(key);
+    const key = `${who ?? seat.name}:${messageKey(text)}`;
+    if (recentMessages.has(key)) return;
+    recentMessages.set(key, now);
     const mine = !who || who === seat.name;
-    feedEntries.unshift({
-      who: who ?? seat.name,
-      colour: mine ? "#5aa8ff" : "#ff7a5a",
-      text,
-    });
+    feedEntries.unshift({ who: who ?? seat.name, colour: mine ? "#5aa8ff" : "#ff7a5a", text });
     if (feedEntries.length > 40) feedEntries.pop();
+    if (!tabVisible("feed")) feedUnread = Math.min(40, feedUnread + 1);
+    acknowledgeTab();
     renderFeed();
+  }
+  function feed(text: string, who?: string) {
+    recordMessage(text, who);
   }
 
   const rivalWireQueue: UiRivalryBeat[] = [];
@@ -3495,6 +3587,7 @@ export function createOriginalUi(
     if (plantCard) {
       const home = phone ? rightAside : brDock;
       if (plantCard.parentElement !== home) home.appendChild(plantCard);
+      paintPlantContext();
     }
     // UI Space Age: on desktop the footer is gone; the bottom lane is the
     // drawer's tab strip (--dock-h, 36px).
@@ -3713,7 +3806,7 @@ export function createOriginalUi(
     void bannerUp;
     const live = !!panel && items.length > 0;
     questsEl.classList.toggle("hidden", !live);
-    if (tabQuests.classList.contains("active")) markQuestsSeen();
+    if (tabVisible("quests")) markQuestsSeen();
     else paintQuestsBadge();
     if (!live || !panel) {
       questsSig = null;
@@ -3973,6 +4066,7 @@ export function createOriginalUi(
     // the (window-hidden) upgrade bar rather than trailing after the slot.
     if (open) qp.insertBefore(tuningPlate, upbar);
     else plantCard!.appendChild(tuningPlate);
+    paintPlantContext();
     // The lock: map, rails and nav stop answering input while the window is
     // up — inert takes the pointer events, the tab order and AT traversal,
     // and the backdrop over the rest swallows the presses aimed at them.
@@ -4423,6 +4517,10 @@ export function createOriginalUi(
   /** Paint the exchange from the game's own numbers. */
   function paintExchange(rows: UiState["market"], event: string | null | undefined, money: number | undefined): void {
     const on = !!rows && !!hooks.onSell;
+    const nextAlert = on ? event ?? null : null;
+    if (nextAlert !== marketAlert) marketSeen = null;
+    marketAlert = nextAlert;
+    acknowledgeTab();
     exHead.classList.toggle("hidden", !on);
     exEvent.classList.toggle("hidden", !on || !event);
     exList.classList.toggle("hidden", !on);
@@ -4579,6 +4677,8 @@ export function createOriginalUi(
     if (actionCardRaf) { cancelAnimationFrame(actionCardRaf); actionCardRaf = 0; }
     depotCard?.remove();
     depotCard = null;
+    plantDepotSelected = false;
+    paintPlantContext();
   }
   function showActionCard(o: ActionCardInfo): void {
     closeActionCard();
@@ -4652,6 +4752,8 @@ export function createOriginalUi(
         },
       ],
     });
+    plantDepotSelected = true;
+    paintPlantContext();
   }
 
   // ── TUT-03 (#422): the coach is gone ──────────────────────────────────
@@ -4664,11 +4766,20 @@ export function createOriginalUi(
 
   // ── paint ─────────────────────────────────────────────────────────────────
   function paint(state: UiState) {
+    const guideRunning = root.classList.contains("guide-on");
+    if (guideWasRunning && !guideRunning && !isPhoneViewport()) {
+      railRightCollapsed = true;
+      paintRails();
+    }
+    guideWasRunning = guideRunning;
+    plantRetuneReady = !!state.tuningIdle?.retune;
+    plantCityReady = !!state.town?.affordable && state.town.level < state.town.maxLevel;
     paintTuning(state.tuning, state.tuningIdle);
     // #300: after the plate — the window it rides in is stood up (or taken
     // down) by `paintTuning` first.
     paintTuningResult(state.tuningResult);
     paintTown(state.town);
+    paintPlantContext();
     paintMarket(state.offers);
     // ECON-1 (#421): the exchange rows and the money chip's number.
     paintExchange(state.market, state.marketEvent, state.money);
