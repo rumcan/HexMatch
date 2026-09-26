@@ -22,10 +22,11 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   industryLocks, industriesInCatchment, isServiced, lockedIndustryIds,
+  buildAllComponents, heldIndustries, harvesterYield, ownerIdOf,
   type EconomyState, type Harvester, type SiteRights, type TownHold,
 } from "./economy";
 import type { Industry } from "./grid";
-import { BATTLE_SALE, INDUSTRY_BY_KEY, type BattleRules, type Cargo } from "./config";
+import { BATTLE_SALE, INDUSTRY_BY_KEY, MAP_W, VICTORY, type BattleRules, type Cargo } from "./config";
 import { BATTLE_SKILLS } from "./battle-ai";
 import type { SkillKey } from "./skill";
 import { PRESENT, type Track } from "./track";
@@ -677,4 +678,191 @@ export function challengeRefusalText(reason: ChallengeRefusal, goldNeed = 12): s
     case "not-eligible":
     default: return "Challenges unlock when a cargo is a monopoly, or every town is taken.";
   }
+}
+
+// ── BATTLE-1 (#468) — the stakes card: the live numbers a duel is for ────────
+//
+// Before a duel the player sees WHAT the fight moves: the site, who holds it,
+// the ★ and the income riding on it, the Gold the fight costs, the difficulty
+// of the seat across the board. Everything here is a PURE READ of the live
+// economy — no clocks, no DOM — so the card can never promise a number the
+// settle will not pay (the same honesty rule the depot readout keeps).
+//
+// `siteIncome` reuses the clock's own maths (`harvesterYield` over the owner's
+// components), so "income/min here" is exactly what `economyTick` pays, per
+// minute, at the moment the card is opened.
+
+/** The economy's harvest beat (`HARVEST_MS` in game.ts) — income/min divides by it. */
+export const BATTLE_TICK_MS = 3000;
+
+export interface SiteIncome {
+  /** Whole units per minute the owner draws at this site right now. */
+  perMin: number;
+  /** The cargo that income pays in (industries); null for a town's mix. */
+  cargo: Cargo | null;
+}
+
+/** Per-tick income one owner draws AT an industry (its holder's depot(s)). */
+function industryTick(eco: EconomyState, industryId: number, owner: string, now: number): number {
+  const ind = eco.grid.industries[industryId];
+  const def = ind ? INDUSTRY_BY_KEY[ind.type] : undefined;
+  if (!ind || !def) return 0;
+  const ownerId = ownerIdOf(eco, owner);
+  if (ownerId === 0) return 0;
+  const locks = industryLocks(eco);
+  const comp = buildAllComponents(eco.track, ownerId);
+  let acc = 0;
+  for (const h of eco.harvesters) {
+    if (h.owner !== owner) continue;
+    const y = harvesterYield(eco, comp, locks, h, now);
+    if (!y.serviced || y.connection.kind === null) continue;
+    for (const held of heldIndustries(eco, h, locks)) {
+      if (held.id !== industryId) continue;
+      acc += (held.output ?? def.output) * y.connection.multiplier;
+    }
+  }
+  return acc;
+}
+
+/** Per-tick income one owner draws THROUGH a town (its open plant's depots). */
+function townTick(eco: EconomyState, townId: number, owner: string, now: number): number {
+  const plants = eco.factories.filter((f) => f.owner === owner && !f.closed && f.townId === townId);
+  if (!plants.length) return 0;
+  const ownerId = ownerIdOf(eco, owner);
+  if (ownerId === 0) return 0;
+  const locks = industryLocks(eco);
+  const comp = buildAllComponents(eco.track, ownerId);
+  let acc = 0;
+  for (const h of eco.harvesters) {
+    if (h.owner !== owner) continue;
+    const y = harvesterYield(eco, comp, locks, h, now);
+    if (!y.serviced || y.connection.kind === null) continue;
+    const via = y.connection.factory;
+    if (!via || !plants.some((f) => (f.id ?? 0) === (via.id ?? 0))) continue;
+    for (const v of Object.values(y.yields)) acc += v ?? 0;
+  }
+  return acc;
+}
+
+/**
+ * Per-minute income `owner` draws at/through a contested site right now — the
+ * same yields `harvesterYield` pays the clock, scaled to a minute. A blockaded
+ * industry, a cut road or a closed plant reads as 0, never as a promise.
+ */
+export function siteIncome(
+  eco: EconomyState,
+  site: { kind: "industry"; industryId: number } | { kind: "town"; townId: number },
+  owner: string,
+  tickMs: number = BATTLE_TICK_MS,
+  now = 0,
+): SiteIncome {
+  const perTick = site.kind === "industry"
+    ? industryTick(eco, site.industryId, owner, now)
+    : townTick(eco, site.townId, owner, now);
+  return {
+    perMin: Math.round((perTick * 60_000) / Math.max(1, tickMs)),
+    cargo: site.kind === "industry"
+      ? INDUSTRY_BY_KEY[eco.grid.industries[site.industryId]?.type ?? ""]?.cargo ?? null
+      : null,
+  };
+}
+
+/** What the stakes card prints, all read live off the economy. */
+export interface BattleStakeFacts {
+  kind: "industry" | "town";
+  /** The site's display name ("Farm", "Town 2"). */
+  site: string;
+  /** Who holds it now ("You", a rival's name, or "Unclaimed"). */
+  holder: string;
+  /** Hold ★ the standing winner is paid while they hold it (the live ★ table). */
+  holdStars: number;
+  /** The per-seat cap on that ★ — the card says "cap N★" so the number is honest. */
+  holdCap: number;
+  /** City ★ one closed plant gives up per tier (towns only; 0 for industries). */
+  cityStarsPerTier: number;
+  /** Income/min the holder draws at (industries) or through (towns) the site. */
+  holderIncomePerMin: number;
+  /** The cargo that income pays in, when it is one cargo. */
+  holderIncomeCargo: Cargo | null;
+}
+
+/**
+ * Read a stake's live facts for the stakes card. Null for fight-offs (they
+ * are not fights OVER a site — their offer card says what lands) and for a
+ * site id the map does not have.
+ */
+export function battleStakeFacts(
+  eco: EconomyState,
+  stake: MapBattleStake,
+  opts: {
+    /** Player id → display name ("You" / the rival's name / "Unclaimed"). */
+    nameOf: (playerId: string | null | undefined) => string;
+    tickMs?: number;
+    now?: number;
+  },
+): BattleStakeFacts | null {
+  if (stake.kind === "fightoff") return null;
+  const tickMs = opts.tickMs ?? BATTLE_TICK_MS;
+  const now = opts.now ?? 0;
+  if (stake.kind === "industry") {
+    const ind = eco.grid.industries[stake.industryId];
+    const def = ind ? INDUSTRY_BY_KEY[ind.type] : undefined;
+    if (!ind || !def) return null;
+    const holderId = industryLocks(eco).get(stake.industryId)?.owner ?? null;
+    const inc = holderId
+      ? siteIncome(eco, { kind: "industry", industryId: stake.industryId }, holderId, tickMs, now)
+      : { perMin: 0, cargo: def.cargo as Cargo | null };
+    return {
+      kind: "industry",
+      site: def.name,
+      holder: holderId ? opts.nameOf(holderId) : "Unclaimed",
+      holdStars: VICTORY.loop.hold,
+      holdCap: VICTORY.loop.holdCap,
+      cityStarsPerTier: 0,
+      holderIncomePerMin: inc.perMin,
+      holderIncomeCargo: inc.cargo,
+    };
+  }
+  const townId = stake.townId;
+  // The same read the town card prints: an open plant beside the town is the
+  // holder; a town's battle hold is the fallback; else unclaimed.
+  const owners = [...new Set(eco.factories
+    .filter((f) => !f.closed && f.townId === townId)
+    .map((f) => f.owner))];
+  const hold = eco.townHolds?.get(townId);
+  let perMin = 0;
+  for (const o of owners) perMin += siteIncome(eco, { kind: "town", townId }, o, tickMs, now).perMin;
+  return {
+    kind: "town",
+    site: `Town ${townId + 1}`,
+    holder: owners.length
+      ? owners.map((o) => opts.nameOf(o)).join(" & ")
+      : hold ? opts.nameOf(hold.holder) : "Unclaimed",
+    holdStars: VICTORY.loop.hold,
+    holdCap: VICTORY.loop.holdCap,
+    cityStarsPerTier: VICTORY.loop.city,
+    holderIncomePerMin: perMin,
+    holderIncomeCargo: null,
+  };
+}
+
+/**
+ * Where a stake's aftermath plays on the map: the site's centre tile, or null
+ * when the stake has no place to fly to (a protest with no tile, say).
+ */
+export function stakeSiteTile(
+  eco: EconomyState, stake: MapBattleStake,
+): { tx: number; ty: number } | null {
+  const centre = (i: Industry | undefined) =>
+    i ? { tx: i.tx + Math.floor(i.w / 2), ty: i.ty + Math.floor(i.h / 2) } : null;
+  if (stake.kind === "industry") return centre(eco.grid.industries[stake.industryId]);
+  if (stake.kind === "town") {
+    const t = eco.grid.towns[stake.townId];
+    return t ? { tx: t.tx, ty: t.ty } : null;
+  }
+  if (stake.pending.industryId !== undefined) return centre(eco.grid.industries[stake.pending.industryId]);
+  if (stake.pending.tile !== undefined) {
+    return { tx: stake.pending.tile % MAP_W, ty: Math.floor(stake.pending.tile / MAP_W) };
+  }
+  return null;
 }
