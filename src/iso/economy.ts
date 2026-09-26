@@ -32,11 +32,12 @@
 import { roadPath, depotShoulders, plantShoulders } from "./road-routing";
 import { DEFAULT_FACING, depotEntranceTiles, industriesTouchingDepot, type DepotFacing } from "./depot";
 import { MAP_W, MAP_H } from "../game/config";
-import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, type Cargo } from "./config";
+import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, BASE_RATE, CARGO, DEPOT_TREE, type Cargo } from "./config";
 import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump, roadDiagNeighbours,
-  plantFootprintTiles, type Track, type TrackKind,
+  plantFootprintTiles, sideBranch, ROAD_TIER, TIER_RANK, ROAD_DIAG, ROAD_RAIL_DECK_X, ROAD_RAIL_DECK_Y,
+  type Track, type TrackKind,
 } from "./track";
 // RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
 // `railOpenTo` / `railServicedIndustries` are the rail module's own rules; this
@@ -489,17 +490,36 @@ export function depotRouteTiles(state: EconomyState, h: Harvester, f: Factory): 
     new Set(plantShoulders(state.track, h.ownerId, f.tx, f.ty, f.rot ?? 0, factoryFootprintOf(state.grid)).map(([x, y]) => tIdx(x, y))));
 }
 
+/**
+ * #462: the haul speed `resolveConnection` pays a paved link — the tier
+ * throughput averaged over the tiles the lorry drives. Exported so the ledger,
+ * the upgrade preview and the clock cannot each invent a second average.
+ *
+ * A map with no tiers set (every pre-#393 map, every test track that never
+ * stamped one) short-cuts to exactly `TRANSPORT.road.throughput`. That
+ * short-cut is the economy: do not "fix" it to an average, or every old road
+ * pays a different number than the clock.
+ */
+export function routeThroughput(state: EconomyState, route: readonly [number, number][]): number {
+  const tier = state.track.tier;
+  if (!tier || !tier.some((v) => v !== 0)) return TRANSPORT.road.throughput;
+  if (!route || route.length === 0) return TRANSPORT.road.throughput;
+  let sum = 0;
+  for (const [x, y] of route) {
+    const i = tIdx(x, y);
+    sum += (state.track.road[i] & PRESENT) !== 0
+      ? (TIER_THROUGHPUT[tier[i]] ?? TRANSPORT.road.throughput)
+      : TRANSPORT.dirt.throughput;
+  }
+  return Math.round((sum / route.length) * 100) / 100;
+}
+
 function pavedRouteThroughput(state: EconomyState, h: Harvester, f: Factory): number {
   const tier = state.track.tier;
   if (!tier || !tier.some((v) => v !== 0)) return TRANSPORT.road.throughput;
   const route = depotRouteTiles(state, h, f);
   if (!route || route.length === 0) return TRANSPORT.road.throughput;
-  let sum = 0;
-  for (const [x, y] of route) {
-    const i = tIdx(x, y);
-    sum += (state.track.road[i] & PRESENT) !== 0 ? (TIER_THROUGHPUT[tier[i]] ?? TRANSPORT.road.throughput) : TRANSPORT.dirt.throughput;
-  }
-  return Math.round((sum / route.length) * 100) / 100;
+  return routeThroughput(state, route);
 }
 
 export function resolveConnection(
@@ -966,6 +986,345 @@ export function pickBlockadeTarget(
   }
   return near;
 }
+
+// ── #462: route stats the player can see ─────────────────────────────────
+// The clock pays `raw yield × clockFactor` every HARVEST_MS. `raw` already
+// includes this module's route throughput (`connection.multiplier`). The
+// ledger, the upgrade preview and the network labels all read the functions
+// below, so a number on the map is a number the economy will pay.
+
+/** The clock's multiplier, in one place — the expression `economyTick` uses. */
+export function clockFactorOf(p: {
+  yieldLevel: number;
+  distanceFactor: number;
+  transportFactor: number;
+  dam?: number;
+  city?: number;
+}): number {
+  return BASE_RATE * p.yieldLevel * p.distanceFactor * p.transportFactor
+    * (1 + (p.dam ?? 0))
+    * (1 + (p.city ?? 0));
+}
+
+/** Cargo per minute from a per-tick raw yield and `clockFactorOf`. */
+export function cargoPerMinute(rawPerTick: number, factor: number, tickMs: number): number {
+  if (!(tickMs > 0) || !Number.isFinite(rawPerTick) || !Number.isFinite(factor)) return 0;
+  return rawPerTick * factor * (60000 / tickMs);
+}
+
+/**
+ * $/min at current prices: each cargo the depot yields, priced on its own.
+ * `price` is `priceOf` from market.ts — this module does not import the
+ * market, so a test can pass a fixed price and the game can pass the live one.
+ */
+export function routeDollarsPerMin(
+  yields: Partial<Record<Cargo, number>>,
+  factor: number,
+  tickMs: number,
+  price: (cargo: Cargo) => number,
+): number {
+  let sum = 0;
+  for (const [cargo, amount] of Object.entries(yields) as [Cargo, number][]) {
+    sum += cargoPerMinute(amount, factor, tickMs) * price(cargo);
+  }
+  return sum;
+}
+
+/** One tile's contribution to the route average, and the name the ledger prints. */
+export interface TilePace {
+  tx: number;
+  ty: number;
+  throughput: number;
+  /** Dirt, Street, Road, Highway, Ramp, Overpass. */
+  name: string;
+}
+
+const PACE_NAME = ["Road", "Street", "Highway", "Ramp", "Overpass", "Overpass"] as const;
+
+/** The same per-tile throughput `routeThroughput` averages. */
+export function tilePace(track: Track, tx: number, ty: number): TilePace {
+  const i = tIdx(tx, ty);
+  if ((track.road[i] & PRESENT) === 0) {
+    return { tx, ty, throughput: TRANSPORT.dirt.throughput, name: "Dirt" };
+  }
+  const stored = track.tier?.[i] ?? 0;
+  const throughput = TIER_THROUGHPUT[stored] ?? TRANSPORT.road.throughput;
+  const name = PACE_NAME[stored & 7] ?? "Road";
+  return { tx, ty, throughput, name };
+}
+
+const onSurface = (track: Track, tx: number, ty: number): boolean => {
+  const i = tIdx(tx, ty);
+  return (track.road[i] & PRESENT) !== 0 || (track.dirt[i] & PRESENT) !== 0;
+};
+
+/**
+ * The slowest tile on the route (lowest throughput; ties keep the first).
+ * The depot lot the lorry loads on is not track — it is not a segment.
+ */
+export function slowestOnRoute(track: Track, route: readonly [number, number][]): TilePace | null {
+  let best: TilePace | null = null;
+  for (const [x, y] of route) {
+    if (!onSurface(track, x, y)) continue;
+    const pace = tilePace(track, x, y);
+    if (!best || pace.throughput < best.throughput) best = pace;
+  }
+  return best;
+}
+
+/**
+ * Pace name per tile, for the network-view colours. A lot tile (no track)
+ * borrows the next surface tile's pace so the depot diamond is not painted
+ * as dirt.
+ */
+export function routePaceNames(track: Track, route: readonly [number, number][]): string[] {
+  const names = route.map(([x, y]) => onSurface(track, x, y) ? tilePace(track, x, y).name : "");
+  for (let i = 0; i < names.length; i++) {
+    if (names[i]) continue;
+    names[i] = names.slice(i + 1).find(Boolean) ?? [...names.slice(0, i)].reverse().find(Boolean) ?? "Road";
+  }
+  return names;
+}
+
+/**
+ * The contiguous run of `route` that shares the hovered tile's pace — the
+ * stretch a hover previews upgrading. Empty when the tile is not on the route.
+ */
+export function stretchAround(
+  track: Track,
+  route: readonly [number, number][],
+  tx: number,
+  ty: number,
+): [number, number][] {
+  const idx = route.findIndex(([x, y]) => x === tx && y === ty);
+  if (idx < 0) return [];
+  const name = tilePace(track, tx, ty).name;
+  let a = idx, b = idx;
+  while (a > 0 && tilePace(track, route[a - 1][0], route[a - 1][1]).name === name) a--;
+  while (b + 1 < route.length && tilePace(track, route[b + 1][0], route[b + 1][1]).name === name) b++;
+  return route.slice(a, b + 1).map(([x, y]) => [x, y]);
+}
+
+export interface DepotRoutePay {
+  connected: boolean;
+  /** `resolveConnection`'s multiplier — the throughput the clock multiplies by. */
+  throughput: number;
+  /** Sum of `harvesterYield` amounts (output × multiplier), per tick, before the clock factor. */
+  rawPerTick: number;
+  yields: Partial<Record<Cargo, number>>;
+  cargo: Cargo | null;
+  route: [number, number][] | null;
+  slowest: TilePace | null;
+  factory: Factory | null;
+}
+
+/**
+ * What one Depot's route is worth, off the same seams the clock reads.
+ * `now` is the blockade clock (`harvesterYield` pays a blockaded industry
+ * nothing). `comp` is optional so a caller that already flooded the network
+ * does not flood it again.
+ */
+export function depotRoutePay(
+  state: EconomyState,
+  h: Harvester,
+  now = 0,
+  comp?: Components,
+): DepotRoutePay {
+  const c = comp ?? buildAllComponents(state.track, h.ownerId);
+  const y = harvesterYield(state, c, industryLocks(state), h, now);
+  let raw = 0;
+  let cargo: Cargo | null = null;
+  let best = -1;
+  for (const [k, v] of Object.entries(y.yields) as [Cargo, number][]) {
+    raw += v;
+    if (v > best) { best = v; cargo = k; }
+  }
+  const route = y.connection.factory && !isRailDepot(h)
+    ? depotRouteTiles(state, h, y.connection.factory)
+    : null;
+  return {
+    connected: y.serviced && y.connection.kind !== null,
+    throughput: y.connection.multiplier,
+    rawPerTick: raw,
+    yields: y.yields,
+    cargo,
+    route,
+    slowest: route && route.length ? slowestOnRoute(state.track, route) : null,
+    factory: y.connection.factory,
+  };
+}
+
+export const depotRouteName = (cargo: Cargo | null, id: number): string =>
+  cargo ? DEPOT_TREE[cargo].name : `Depot #${id}`;
+
+/** Street < Road < Highway, matching `track.ts` `RANK_OF_STORED`. */
+const STORED_RANK = [1, 0, 2, 1, 2, 2];
+const storedRank = (tier: number): number => STORED_RANK[tier & 7] ?? 1;
+
+
+
+function cloneTrack(t: Track): Track {
+  return {
+    ...t,
+    dirt: t.dirt.slice(),
+    road: t.road.slice(),
+    owner: t.owner.slice(),
+    upgraded: t.upgraded ? t.upgraded.slice() : new Uint8Array(t.road.length),
+    tier: (t.tier ?? new Uint8Array(t.road.length)).slice(),
+  };
+}
+
+/**
+ * Stamp `stretch` the way `commitDrag` would, on a CLONE — no autotile, no
+ * dirty-tile journal. Already-paved tiles only change tier (and a Highway
+ * through a junction becomes a Ramp, the same rule the drag uses). Dirt is
+ * paved in place, facing bits copied so the route the economy walks does not
+ * move. A plain Road drag does not retier existing pavement.
+ */
+function stampStretch(
+  track: Track,
+  stretch: readonly [number, number][],
+  to: "street" | "road" | "highway",
+): [number, number][] {
+  const raised: [number, number][] = [];
+  const want = ROAD_TIER[to];
+  const wantRank = TIER_RANK[to];
+  const path = stretch.map(([x, y]) => [x, y] as [number, number]);
+  if (!track.tier) track.tier = new Uint8Array(track.road.length);
+  for (const [x, y] of stretch) {
+    if (!inMapT(x, y)) continue;
+    const i = tIdx(x, y);
+    const paved = (track.road[i] & PRESENT) !== 0;
+    const dirt = (track.dirt[i] & PRESENT) !== 0;
+    if (!paved && !dirt) continue;
+    // Rank applies to pavement only. A Dirt tile's stored byte is 0, which
+    // ranks as Road — that must not refuse a Street laid on gravel.
+    if (paved && storedRank(track.tier[i] ?? 0) >= wantRank) continue;
+    if (to === "road" && paved) continue;
+    if (!paved) {
+      // previewDrag copies the diagonal bits and clears the gravel. The
+      // facing bits ride along too: commit autotiles them back, and without
+      // them the clone's route flood dies and the preview reports a broken
+      // link instead of a faster one. `setRoadTier` is not called — it
+      // dirties the live journal even on a copy.
+      const bits = track.dirt[i] & (0b1111 | ROAD_DIAG);
+      track.dirt[i] = 0;
+      track.road[i] |= PRESENT | bits;
+    }
+    const tier = to === "highway" && sideBranch(track, path, x, y) ? ROAD_TIER.ramp : want;
+    track.tier[i] = tier | (track.tier[i] & (ROAD_RAIL_DECK_X | ROAD_RAIL_DECK_Y));
+    raised.push([x, y]);
+  }
+  return raised;
+}
+
+export interface UpgradeForecast {
+  before: number;
+  after: number;
+  /** (after − before) / before × 100. The cargo/min percent, because `measure` is cargo/min. */
+  pct: number;
+  raised: [number, number][];
+}
+
+/**
+ * What upgrading `stretch` to `to` does to this Depot's cargo/min.
+ *
+ * `measure` is the economy's own cargo/min (raw yield × the clock factor the
+ * tick pays, per minute). It is called on the live state and on a clone the
+ * stretch has been stamped onto, so the percent is the percent a real build
+ * of those tiles will produce — not a second formula.
+ *
+ * Null when the stretch would not raise the rate (already that tier, a
+ * downgrade, or a tile that is not road).
+ */
+export function forecastStretchUpgrade(
+  state: EconomyState,
+  h: Harvester,
+  stretch: readonly [number, number][],
+  to: "street" | "road" | "highway",
+  measure: (state: EconomyState, h: Harvester) => number,
+): UpgradeForecast | null {
+  if (!stretch.length) return null;
+  const before = measure(state, h);
+  if (!(before > 0)) return null;
+  const track = cloneTrack(state.track);
+  const raised = stampStretch(track, stretch, to);
+  if (!raised.length) return null;
+  const after = measure({ ...state, track }, h);
+  const pct = ((after - before) / before) * 100;
+  if (!(pct > 0.05)) return null;
+  return { before, after, pct, raised };
+}
+
+/**
+ * One line for a tile several Depots share: the seat's own Depots only
+ * (the caller filters), and among those the largest cargo/min gain, not the
+ * largest percent. A small Depot's +40% must not hide a large Depot's +10%
+ * that pays more cargo.
+ */
+export function pickLargestGain(
+  rows: readonly { name: string; forecast: UpgradeForecast }[],
+): { name: string; pct: number } | null {
+  let best: { name: string; pct: number; gain: number } | null = null;
+  for (const row of rows) {
+    const gain = row.forecast.after - row.forecast.before;
+    if (!(gain > 0)) continue;
+    if (!best || gain > best.gain) best = { name: row.name, pct: row.forecast.pct, gain };
+  }
+  return best ? { name: best.name, pct: best.pct } : null;
+}
+
+export function formatUpgradePreview(pct: number, depotName: string): string {
+  const rounded = Math.abs(pct) >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
+  return `+${rounded}% cargo/min on ${depotName}`;
+}
+
+function fmtNum(n: number, digits = 1): string {
+  if (!Number.isFinite(n)) return "0";
+  const p = 10 ** digits;
+  return String(Math.round(n * p) / p);
+}
+
+/** A cargo/min the ledger and the network label both print. */
+export function formatCargoRate(n: number): string {
+  return Math.abs(n) >= 100 ? String(Math.round(n)) : fmtNum(n, 1);
+}
+
+export function formatMoneyPerMin(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 100) return `$${Math.round(n).toLocaleString("en-US")}`;
+  const r = Math.round(n * 10) / 10;
+  return `$${r.toLocaleString("en-US")}`;
+}
+
+export interface RouteLedgerText {
+  cargo: string;
+  slow: string;
+  trips: string;
+  html: string;
+  plain: string;
+}
+
+/** The three lines the L8 ledger grows by. The UI inserts `html`; the card uses `plain`. */
+export function routeLedgerText(v: {
+  cargoPerMin: number;
+  dollarsPerMin: number;
+  cargoName: string | null;
+  slowest: { name: string; throughput: number } | null;
+  tripsPerMin: number;
+}): RouteLedgerText {
+  const cargoName = v.cargoName ? ` ${v.cargoName}` : "";
+  const cargo = `cargo: ${formatCargoRate(v.cargoPerMin)}/min${cargoName} · ${formatMoneyPerMin(v.dollarsPerMin)}/min`;
+  const slow = v.slowest
+    ? `slowest: ${v.slowest.name} ×${fmtNum(v.slowest.throughput, 2)}`
+    : "slowest: none";
+  const trips = `lorry: ${formatCargoRate(v.tripsPerMin)} trips/min`;
+  return { cargo, slow, trips, html: `${cargo}<br>${slow}<br>${trips}`, plain: `${cargo} · ${slow} · ${trips}` };
+}
+
+/** The cargo's display name, for the ledger line. */
+export const cargoDisplayName = (cargo: Cargo | null): string | null =>
+  cargo ? CARGO[cargo].name : null;
 
 // ── victory points ────────────────────────────────────────────────────────
 // VP-01 moved the scoreboard out of this module: a CONNECTION no longer earns

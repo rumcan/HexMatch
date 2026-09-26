@@ -1170,7 +1170,7 @@ export function tierTileCost(t: Track, tier: RoadTierKey, tx: number, ty: number
 }
 
 /** ROADS-3 (#394): does (x,y) have track beside it that is not part of `path`? */
-function sideBranch(t: Track, path: [number, number][], x: number, y: number): boolean {
+export function sideBranch(t: Track, path: [number, number][], x: number, y: number): boolean {
   const on = new Set(path.map(([px, py]) => tIdx(px, py)));
   for (const d of DIRS) {
     const nx = x + DIR[d][0], ny = y + DIR[d][1];
