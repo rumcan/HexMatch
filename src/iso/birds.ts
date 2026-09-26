@@ -16,7 +16,7 @@
 //   • the pool is FIXED (`MAX_BIRDS`) and POOLED: a bird that leaves the view
 //     is re-seeded back into it, never freed and re-allocated, and the
 //     per-frame path allocates nothing;
-//   • the sim runs only while the fade is non-zero. Zoomin out, or switching
+//   • the sim runs only while the fade is non-zero. Zooming out, or switching
 //     performance mode on, parks it completely: no steering, no draw.
 //
 // WHY THE POOL RECYCLES. A 144×144 map at zoom 2 shows roughly 15×20 tiles.
@@ -117,10 +117,42 @@ export const VEHICLE_SCARE_R = 1.0;    // "a vehicle passes within about 1 tile"
 export const CLICK_SCARE_R = 2.0;      // "the player clicks near them"
 export const SCATTER_R = 1.8;          // flockmates caught by a take-off
 
-/** How far outside the view a bird may drift before it is relocated. */
+/**
+ * How far outside the pool's area a bird may drift before it is relocated,
+ * in the screen-shaped metric `screenish` measures (one unit is one tile of
+ * the visible diamond's own edge). Also the pad the game adds to the cull rect
+ * it hands the sim, so the two agree on where "off the view" starts.
+ */
 export const BIRD_VIEW_PAD = 3;
 /** How often the pool retries a spawn when the view had no sites at all. */
 const SPAWN_RETRY_MS = 400;
+/** How long a freshly seated bird takes to fade in. */
+export const BIRD_APPEAR_MS = 420;
+/**
+ * How far from the middle of the view the pool lives, as a fraction of the
+ * view's SHORTER side.
+ *
+ * The tile rect the game hands us is the CULLING box — the bounding box of the
+ * four screen corners, which is about twice the visible diamond's area and
+ * whose corners are well off-screen. Seeding birds anywhere in that box would
+ * put half the pool out of sight; seeding them inside this radius around the
+ * middle is what makes "twelve birds" mean twelve birds you can see.
+ *
+ * Two radii, because spawning and roaming want different answers: a bird is
+ * BORN inside the visible diamond (`SPAWN_FRACTION`, so the pool is on screen
+ * from the first frame) but may ROAM a little further (`ROAM_FRACTION`, still
+ * well inside the cull rect, so a flock crossing the screen edge never trips
+ * the recycle step while the camera stands still).
+ */
+const SPAWN_FRACTION = 0.35;
+const ROAM_FRACTION = 0.4;
+/**
+ * How hard a bird is pushed back toward the middle of the screen once it
+ * leaves the pool's area. Stronger than the wander by an order of magnitude:
+ * this is the wall that keeps a flock from drifting off the view (and so from
+ * ever tripping the recycle step) while the camera stands still.
+ */
+const BOUNDARY_PULL = 1.6;
 
 /** Tile buckets the sites are indexed in — a spawn picks a bucket the view overlaps. */
 const SITE_BUCKET = 16;
@@ -161,6 +193,13 @@ export interface Bird {
   phase: number;
   /** Rotating heading the wander noise reads — integrated, not stored as rng. */
   wander: number;
+  /**
+   * 0..1 appear-fade. A bird that is seated — at a spawn, or re-seeded by the
+   * pool's recycling — fades in over `BIRD_APPEAR_MS` instead of blinking into
+   * existence, which is what keeps a pan from showing birds popping up in the
+   * middle of the screen.
+   */
+  fade: number;
 }
 
 /** What the map says about where each species belongs. */
@@ -378,6 +417,49 @@ export function planBirds(sites: BirdSites, rng: () => number): BirdPlan {
 }
 
 // ── spawning ──────────────────────────────────────────────────────────────
+/**
+ * The pool's active area: the middle of the view and a radius in the
+ * SCREEN-ISH metric below. The rect itself is only used to find the buckets to
+ * look in.
+ */
+interface ActiveView {
+  cx: number; cy: number;
+  /** Where the pool may roam before it is steered back. */
+  r: number;
+  /** Where a bird may be SEEDED — inside the visible diamond. */
+  spawnR: number;
+  /** Where one may ROAM before the pool relocates it: the screen, plus a pad. */
+  recycleR: number;
+}
+
+/** Where the pool lives this frame: the view's middle, and its two radii. */
+function activeView(view: TileRange): ActiveView {
+  const span = Math.min(view.x1 - view.x0 + 1, view.y1 - view.y0 + 1);
+  return {
+    cx: (view.x0 + view.x1 + 1) / 2,
+    cy: (view.y0 + view.y1 + 1) / 2,
+    r: Math.max(4, span * ROAM_FRACTION),
+    spawnR: Math.max(3, span * SPAWN_FRACTION),
+    recycleR: Math.max(6, span * ROAM_FRACTION) + BIRD_VIEW_PAD,
+  };
+}
+
+/**
+ * A tile-space distance that follows the SCREEN, not the grid: the two screen
+ * axes are (x − y) and (x + y), so the larger of those two offsets is a
+ * screen-shaped distance in tiles. A point inside `r` in this metric has
+ * |dx| ≤ r and |dy| ≤ r too (the two axes are a rotation of the tile grid), so
+ * the area is contained in the cull rect's own box as soon as `r` is under its
+ * half-extent — which is what lets the pool promise never to trip its own
+ * recycling while the camera stands still.
+ */
+const screenish = (dx: number, dy: number): number =>
+  Math.max(Math.abs(dx - dy), Math.abs(dx + dy));
+
+/** Is a tile inside the pool's active area (plus `slack`)? */
+const inActive = (a: ActiveView, tx: number, ty: number, slack = 0): boolean =>
+  screenish(tx + 0.5 - a.cx, ty + 0.5 - a.cy) <= a.spawnR + slack;
+
 /** The buckets of one species that `view` overlaps, in row-major order. */
 function viewBuckets(state: BirdState, species: BirdSpecies, view: TileRange): number[][] {
   const { sites } = state;
@@ -396,25 +478,86 @@ function viewBuckets(state: BirdState, species: BirdSpecies, view: TileRange): n
   return hits;
 }
 
+/**
+ * The tiles of `species` inside the active area, grouped by bucket. Built by
+ * walking the buckets the view rect overlaps — the rect is a cheap prefilter,
+ * the metric decides. Buckets hold a few dozen tiles, so this is a few hundred
+ * reads on a spawn, and a spawn happens a handful of times a minute.
+ */
+function activeBuckets(
+  state: BirdState, species: BirdSpecies, view: TileRange,
+): { hits: number[][]; anywhere: number[][] } {
+  const grid = state.sites.grid;
+  const buckets = viewBuckets(state, species, view);
+  const a = activeView(view);
+  const hits: number[][] = [];
+  const anywhere: number[][] = [];
+  for (const list of buckets) {
+    // The fallback (a view whose middle has no sites — the open sea): every
+    // qualifying tile of the buckets the rect overlaps, off-screen or not, so
+    // a pool still exists to fly in when the player pans back to land.
+    if (anywhere.length === 0) anywhere.push(list);
+    let near: number[] | null = null;
+    for (const i of list) {
+      const tx = i % grid.w, ty = (i / grid.w) | 0;
+      if (!inActive(a, tx, ty)) continue;
+      (near ??= []).push(i);
+    }
+    if (near) hits.push(near);
+  }
+  return { hits, anywhere };
+}
+
 /** Does this species have anywhere to stand inside `view`? (Consumes no rng.) */
 function hasSiteInView(state: BirdState, species: BirdSpecies, view: TileRange): boolean {
   return viewBuckets(state, species, view).length > 0;
 }
 
-/** A random tile of `species` whose bucket overlaps `view`, or null. */
+/**
+ * A placement tile of `species` for the pool: a random one inside the active
+ * area when there is one, else — a screen-wide town at the closest zoom, an
+ * open sea — the nearest tile the cull rect offers, pulled back to the edge of
+ * the visible diamond. A bird is never parked off the view to be recycled on
+ * the next tick; it flies over its own terrain at the screen's edge instead.
+ */
 function pickSiteInView(
   state: BirdState, species: BirdSpecies, view: TileRange,
 ): [number, number] | null {
-  const hits = viewBuckets(state, species, view);
-  if (hits.length === 0) return null;
+  const { hits, anywhere } = activeBuckets(state, species, view);
+  const groups = hits.length > 0 ? hits : anywhere;
+  if (groups.length === 0) return null;
   const grid = state.sites.grid;
-  const list = hits[Math.min(hits.length - 1, (state.rng() * hits.length) | 0)];
+  if (hits.length === 0) {
+    const a = activeView(view);
+    let best = -1, bd = Infinity;
+    for (const list of groups) {
+      for (const i of list) {
+        const d = screenish(i % grid.w + 0.5 - a.cx, ((i / grid.w) | 0) + 0.5 - a.cy);
+        if (d < bd) { bd = d; best = i; }
+      }
+    }
+    if (best >= 0 && bd > a.spawnR) {
+      const k = a.spawnR / bd;
+      const tx = Math.round(a.cx + (best % grid.w + 0.5 - a.cx) * k - 0.5);
+      const ty = Math.round(a.cy + (((best / grid.w) | 0) + 0.5 - a.cy) * k - 0.5);
+      return [
+        Math.max(0, Math.min(grid.w - 1, tx)),
+        Math.max(0, Math.min(grid.h - 1, ty)),
+      ];
+    }
+  }
+  const list = groups[Math.min(groups.length - 1, (state.rng() * groups.length) | 0)];
   const i = list[Math.min(list.length - 1, (state.rng() * list.length) | 0)];
   return [i % grid.w, (i / grid.w) | 0];
 }
 
 
-/** A species that actually has a site inside `view`; the plan's, or any. */
+/**
+ * A species the pool can actually use in this view: the plan's if its terrain
+ * is anywhere in the cull rect (the terrain decides — `pickSiteInView` pulls an
+ * off-screen placement in to the edge of the visible diamond), else any
+ * species that does have ground here.
+ */
 function speciesForView(state: BirdState, wanted: BirdSpecies, view: TileRange): BirdSpecies | null {
   if (hasSiteInView(state, wanted, view)) return wanted;
   for (const s of BIRD_SPECIES) {
@@ -428,7 +571,7 @@ function blankBird(): Bird {
   return {
     species: "pigeon", mode: "perch", x: 0, y: 0, vx: 0, vy: 0, alt: 0,
     home: [0, 0], perch: null, flock: 0, percher: false,
-    calmAt: 0, phase: 0, wander: 0,
+    calmAt: 0, phase: 0, wander: 0, fade: 1,
   };
 }
 
@@ -451,6 +594,7 @@ function seatFlying(state: BirdState, b: Bird, species: BirdSpecies, flock: numb
   b.calmAt = state.time;
   b.phase = state.rng() * Math.PI * 2;
   b.wander = state.rng() * Math.PI * 2;
+  b.fade = 0;
 }
 
 /** Seat a ground bird on a perch tile inside the view, at rest. */
@@ -469,6 +613,7 @@ function seatPerched(state: BirdState, b: Bird, species: BirdSpecies, tx: number
   b.calmAt = state.time;
   b.phase = state.rng() * Math.PI * 2;
   b.wander = state.rng() * Math.PI * 2;
+  b.fade = 0;
 }
 
 /**
@@ -636,12 +781,15 @@ export function scareBirds(state: BirdState, x: number, y: number, radius = CLIC
 /** Boids + wander + home pull, then the altitude ease. No allocations. */
 function simulate(state: BirdState, dt: number, ctx: BirdTickContext): void {
   const s = dt / 1000;
-  const view = ctx.view;
-  const span = Math.max(3, Math.min(view.x1 - view.x0 + 1, view.y1 - view.y0 + 1));
-  const homeR = Math.max(4, span * 0.55);
+  // The pool's active circle: where the birds live, and how far one may roam
+  // from its flock before it is pulled back — a fraction of where it was
+  // seeded, so a flock circles a point on screen rather than drifting.
+  const a = activeView(ctx.view);
+  const homeR = Math.max(2, a.r * 0.2);
   const birds = state.birds;
   for (let i = 0; i < birds.length; i++) {
     const b = birds[i];
+    if (b.fade < 1) b.fade = Math.min(1, b.fade + dt / BIRD_APPEAR_MS);
     if (b.mode === "perch") {
       // Pecking and the odd hop are read off the phase at DRAW time, so a
       // perched bird holds no timer that could drift while it is out of view.
@@ -680,6 +828,18 @@ function simulate(state: BirdState, dt: number, ctx: BirdTickContext): void {
       const pull = HOME_PULL * (hd - homeR);
       ax += (hx / hd) * pull;
       ay += (hy / hd) * pull;
+    }
+    // The pool's own boundary: past the active circle the bird is steered back
+    // toward the middle of the screen, hard. Without it a flock slowly walks
+    // off the view and gets recycled — a teleport the player can see; with it
+    // the pool turns on the spot.
+    const cx2 = b.x - a.cx, cy2 = b.y - a.cy;
+    const m = screenish(cx2, cy2);
+    if (m > a.r) {
+      const md = Math.hypot(cx2, cy2) || 1;
+      const pull = BOUNDARY_PULL * (m - a.r);
+      ax -= (cx2 / md) * pull;
+      ay -= (cy2 / md) * pull;
     }
     // A landing bird flies AT its perch instead of with its flock.
     if (b.mode === "land" && b.perch) {
@@ -736,6 +896,7 @@ function pickSiteNear(
 ): [number, number] | null {
   const { sites } = state;
   const grid = state.sites.grid;
+  const a = activeView(state.view);
   const bx = clampNum((x / SITE_BUCKET) | 0, 0, sites.bucketCols - 1);
   const by = clampNum((y / SITE_BUCKET) | 0, 0, sites.bucketRows - 1);
   const found: number[] = [];
@@ -747,7 +908,10 @@ function pickSiteNear(
         const list = sites.bySpecies[species][gy * sites.bucketCols + gx];
         for (const i of list) {
           const tx = i % grid.w, ty = (i / grid.w) | 0;
+          // A bird lands where the player can see it land: near where it is
+          // now, and inside the pool's own active area.
           if (Math.abs(tx + 0.5 - x) > 9 || Math.abs(ty + 0.5 - y) > 9) continue;
+          if (!inActive(a, tx, ty, 2)) continue;
           found.push(i);
         }
       }
@@ -767,11 +931,13 @@ function pickSiteNear(
 function recycle(state: BirdState, view: TileRange): void {
   const { birds } = state;
   if (birds.length === 0) return;
+  const a = activeView(view);
   const moved = new Set<number>();
   for (let i = 0; i < birds.length; i++) {
     const b = birds[i];
-    if (b.x >= view.x0 - BIRD_VIEW_PAD && b.x <= view.x1 + BIRD_VIEW_PAD
-      && b.y >= view.y0 - BIRD_VIEW_PAD && b.y <= view.y1 + BIRD_VIEW_PAD) continue;
+    // The cull rect's CORNERS are well off-screen, so a bird inside them can
+    // still be invisible — the metric keeps the pool on the visible diamond.
+    if (screenish(b.x - a.cx, b.y - a.cy) <= a.recycleR) continue;
     if (b.percher) {
       const species = speciesForView(state, b.species, view);
       const site = species ? pickSiteInView(state, species, view) : null;
@@ -887,34 +1053,41 @@ export function paintBirds(
   const m = 24 * z;                                    // off-screen margin, device px
   const vw = cam.vw, vh = cam.vh;
   const stamp = shadowStamp(state, z);
+  const prev = typeof ctx.globalAlpha === "number" ? ctx.globalAlpha : 1;
+  const sw = Math.max(2, Math.round(SHADOW_W * z)), sh = Math.max(2, Math.round(SHADOW_H * z));
+  const shadows = !!stamp && typeof ctx.drawImage === "function";
+  // Every bird's opacity is its own: the pool's zoom fade times the bird's
+  // appear-fade (a re-seeded bird arrives dimmed rather than blinking in).
+  const shown: { b: Bird; sx: number; sy: number; a: number }[] = [];
+  for (const b of state.birds) {
+    const [px, py] = birdScreen(cam, grid, b.x, b.y, b.alt);
+    if (px < -m || py < -m || px > vw + m || py > vh + m) continue;
+    shown.push({ b, sx: px, sy: py, a: alpha * Math.max(0, Math.min(1, b.fade)) });
+  }
   // Shadows first, as one pass: a bird's shadow is on the ground and another
   // bird's body must never be drawn under it.
-  if (stamp && typeof ctx.drawImage === "function") {
-    const sw = Math.max(2, Math.round(SHADOW_W * z)), sh = Math.max(2, Math.round(SHADOW_H * z));
-    const prev = typeof ctx.globalAlpha === "number" ? ctx.globalAlpha : 1;
-    ctx.globalAlpha = prev * alpha * SHADOW_ALPHA;
-    for (const b of state.birds) {
-      const [sx, sy] = birdScreen(cam, grid, b.x, b.y, 0);
+  if (shadows) {
+    for (const s0 of shown) {
+      const [sx, sy] = birdScreen(cam, grid, s0.b.x, s0.b.y, 0);
       if (sx < -m || sy < -m || sx > vw + m || sy > vh + m) continue;
-      ctx.drawImage(stamp, Math.floor(sx - sw / 2), Math.floor(sy - sh / 2), sw, sh);
+      ctx.globalAlpha = prev * s0.a * SHADOW_ALPHA;
+      ctx.drawImage(stamp!, Math.floor(sx - sw / 2), Math.floor(sy - sh / 2), sw, sh);
     }
     ctx.globalAlpha = prev;
   }
   const flap = state.reducedMotion ? 0 : Math.floor(state.time / FLAP_MS) % 2;
-  let drawn = 0;
-  for (const b of state.birds) {
-    const [sx, sy] = birdScreen(cam, grid, b.x, b.y, b.alt);
-    if (sx < -m || sy < -m || sx > vw + m || sy > vh + m) continue;
+  for (const s0 of shown) {
+    const b = s0.b;
     // A perched bird bobs on its phase; a flying one flaps (unless the player
     // asked for reduced motion, when the wings hold the glide frame).
-    const peck = b.mode === "perch" ? Math.max(0, Math.sin((state.time + b.phase * 900) / PECK_MS * Math.PI * 2)) : 0;
+    const peck = b.mode === "perch"
+      ? Math.max(0, Math.sin((state.time + b.phase * 900) / PECK_MS * Math.PI * 2)) : 0;
     const bob = peck * 1.5 * z;
     const frame = b.mode === "perch" ? 1 : flap;       // perched wings sit low
     const dir = (b.vx - b.vy) >= 0 ? 1 : -1;           // screen-space facing
-    drawBird(ctx, Math.round(sx), Math.round(sy + bob), z, b.species, frame, dir, alpha);
-    drawn++;
+    drawBird(ctx, Math.round(s0.sx), Math.round(s0.sy + bob), z, b.species, frame, dir, s0.a);
   }
-  return drawn;
+  return shown.length;
 }
 
 /** One placeholder bird: two wing sweeps, a body, a head and a beak. */
@@ -929,7 +1102,7 @@ function drawBird(
   const tipY = up ? -h * 0.85 : h * 0.4;
   const ctrlY = up ? -h * 1.15 : h * 0.1;
   const prevAlpha = typeof ctx.globalAlpha === "number" ? ctx.globalAlpha : 1;
-  if (alpha < 1) ctx.globalAlpha = prevAlpha * alpha;
+  ctx.globalAlpha = prevAlpha * Math.max(0, Math.min(1, alpha));
   if (typeof ctx.lineCap === "string") ctx.lineCap = "round";
   ctx.lineWidth = Math.max(1, Math.round(s * 0.15));
   // Wings: one quadratic each way from the body, mirrored about the bird.

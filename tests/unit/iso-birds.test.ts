@@ -21,7 +21,7 @@ import {
   type BirdState, type BirdTickContext, type TileRange,
 } from "../../src/iso/birds";
 import { GRASS, WATER, generateMap, type Grid } from "../../src/iso/grid";
-import { createCamera } from "../../src/iso/camera";
+import { createCamera, visibleTileRange } from "../../src/iso/camera";
 import { LEVEL_PX } from "../../src/iso/elevation";
 import { tileToScreen } from "../../src/game/config";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
@@ -239,6 +239,54 @@ describe("AMB-2 spawn determinism", () => {
       expect(b.y).toBeGreaterThanOrEqual(view.y0 - BIRD_VIEW_PAD - 1);
       expect(b.y).toBeLessThanOrEqual(view.y1 + BIRD_VIEW_PAD + 1);
       expect(Number.isFinite(b.x) && Number.isFinite(b.y)).toBe(true);
+    }
+  });
+
+  it("never teleports the pool at the real zoom-2 view", () => {
+    // Five minutes of a real 1280x720 zoom-2 camera on town: the pool must
+    // never be seen to jump (a recycle the player can watch — the pre-polish
+    // code did it 18 times in 300 ticks, flinging a flock 38 tiles), must never
+    // be parked a screen away from the camera, and must stay on screen as a
+    // whole. `visibleTileRange(cam, BIRD_VIEW_PAD)` is exactly what game.ts
+    // hands the pool, so this is the shipped call, five times over.
+    const HW = 32, HH = 16;
+    for (const seed of [4242, 7, 99, 1234, 555]) {
+      const grid = generateMap(seed);
+      const cam = createCamera(1280, 720);
+      const cx = grid.towns[0].tx + 0.5, cy = grid.towns[0].ty + 0.5;
+      const [wx, wy] = tileToScreen(cx, cy);
+      cam.zoom = BIRD_ZOOM;
+      cam.x = cam.vw / 2 - wx * cam.zoom;         // the camera holds device px
+      cam.y = cam.vh / 2 - wy * cam.zoom;
+      const view = visibleTileRange(cam, BIRD_VIEW_PAD);
+      const state = createBirds(grid);
+      for (let i = 0; i < 50; i++) tickBirds(state, 100, { grid, zoom: cam.zoom, view });
+      let teleports = 0, worst = 0, centroid = Infinity;
+      const prev: [number, number][] = state.birds.map((b) => [b.x, b.y]);
+      const onScreen = (b: { x: number; y: number }): number => {
+        const dx = b.x - cx, dy = b.y - cy;
+        return Math.max(
+          Math.abs(dx - dy) - (cam.vw / 2) / (HW * cam.zoom),
+          Math.abs(dx + dy) - (cam.vh / 2) / (HH * cam.zoom),
+        );
+      };
+      for (let i = 0; i < 600; i++) {
+        tickBirds(state, 100, { grid, zoom: cam.zoom, view });
+        let mx = 0, my = 0, over = 0;
+        state.birds.forEach((b, k) => {
+          const [px, py] = prev[k] ?? [b.x, b.y];
+          const jump = Math.hypot(b.x - px, b.y - py);
+          if (jump > 4) teleports++;
+          worst = Math.max(worst, onScreen(b));
+          mx += b.x; my += b.y; over++;
+          prev[k] = [b.x, b.y];
+        });
+        if (over > 0) centroid = Math.min(centroid, onScreen({ x: mx / over, y: my / over }));
+      }
+      expect(teleports, `seed ${seed}: the pool was recycled under the player`).toBe(0);
+      expect(worst, `seed ${seed}: a bird was parked off the view`).toBeLessThan(5);
+      expect(centroid, `seed ${seed}: the pool drifted off the view`).toBeLessThan(3);
+      expect(state.birds.length).toBeGreaterThan(0);
     }
   });
 
@@ -523,3 +571,5 @@ describe("AMB-2 painting", () => {
     expect(view.x1).toBeGreaterThan(view.x0);
   });
 });
+
+// SCRATCH (temporary) — dynamics sanity, removed before the commit.
