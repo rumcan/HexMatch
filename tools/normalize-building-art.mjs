@@ -482,7 +482,7 @@ export async function lightingCheck(file) {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split("/").pop();
+const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
 
 /** footprints.json as {<name>: {footprint, footRoom}} (keys starting "_" are notes). */
 export function declaredFootprints(path = DECLARATIONS) {

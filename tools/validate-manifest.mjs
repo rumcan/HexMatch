@@ -63,7 +63,7 @@ export function validateManifest(manifest) {
   return errors;
 }
 
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split("/").pop();
+const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
 if (isCli) {
   const file = process.argv[2];
   if (!file) {
