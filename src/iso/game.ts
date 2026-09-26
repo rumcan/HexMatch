@@ -101,7 +101,7 @@ import {
 import { createBirds, paintBirds, scareBirds, tickBirds, BIRD_VIEW_PAD, type BirdState } from "./birds";
 import { LEVEL_PX, elevationActive, tileSurfaceHeight } from "./elevation";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
-import { IsoRenderer, type World } from "./renderer";
+import { IsoRenderer, composeRouteOverlay, type World, type RouteOverlayPath } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
 import { BRIDGE_REFUSAL_TEXT } from "./bridges";
@@ -130,6 +130,9 @@ import {
   pickBlockadeTarget, harvesterYield, depotPathLength,
   type EconomyState, type Factory, type Harvester,
   depotRouteTiles,
+  clockFactorOf, cargoPerMinute, routeDollarsPerMin, depotRoutePay, depotRouteName,
+  forecastStretchUpgrade, formatUpgradePreview, pickLargestGain, routeLedgerText, stretchAround,
+  slowestOnRoute, routePaceNames, cargoDisplayName, formatCargoRate,
 } from "./economy";
 // VP-01: the scoreboard lives in its own module now, because what it counts
 // changed from "connections a player has made" to "tiles and plants a player
@@ -171,7 +174,7 @@ import {
   factoryFootprintFor, factorySpriteFor,
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
-  BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
+  VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
   BASE_PRICE, START_MONEY, moneyValueOf,
   type Cargo, type Portrait,
 } from "./config";
@@ -263,7 +266,7 @@ import { createRivalPlant } from "./rival-plant";
 import type { GuideAnchor } from "./guide/types";
 import { createFloatLayer, type FloatLayer } from "./floats";
 import {
-  createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester,
+  createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester, lorryTripsPerMin,
   type Truck,
 } from "./vehicles";
 import {
@@ -1299,6 +1302,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** ROADS-2 (#393): the paved tier the Road tool lays (the rail's Street /
    *  Road / Highway buttons all arm "road" with one of these). */
   let roadTier: RoadTierKey = "road";
+  /** #462: the Depot a Select click is reading — its route stays drawn. */
+  let selectedDepotId: number | null = null;
+  /** #462: Network view — every one of your routes, coloured by speed. */
+  let networkView = false;
+  const toggleNetworkView = (): void => {
+    networkView = !networkView;
+    toast(networkView ? "Network view on — routes coloured by speed." : "Network view off.", "info");
+  };
   /**
    * NAMES: the top-bar "Names" button shows/hides the tags that float over
    * resources, towns, plants and depots while you pan. ON by default (a
@@ -1699,6 +1710,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // localStorage record); the button only reports the toggle and reads
     // `showNames` back through `paint`.
     onNames: toggleNames,
+    onNetworkView: toggleNetworkView,
     names: showNames,
     onRecenter: recenterCamera,
     // MOBILE-01: the floating +/− keys are the wheel's touch twin — one zoom
@@ -5026,8 +5038,140 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  /**
+   * #462: the clock factor the ledger and the upgrade preview multiply by.
+   * Same expression `economyTick` passes to `clockFactorOf` — dam and city
+   * included — so a cargo/min on the card is a cargo/min the clock will pay.
+   */
+  function cargoClock(h: Harvester, factory: Factory | null, state: EconomyState = eco): number {
+    const seat = h.owner === me.id ? me : rival;
+    const damF = damFactorsFor(seat, h, factory);
+    return clockFactorOf({
+      yieldLevel: depotYield(h),
+      distanceFactor: distanceFactorForPath(depotPathLength(state, h)),
+      transportFactor: transportFactor(h),
+      dam: damF.dam,
+      city: hasCities(seat)
+        ? cityBonusFor(seat.id, factory) + damF.damCity
+        : Math.max(0, seat.townBonus) + damF.damCity,
+    });
+  }
+
+  /** Cargo/min for one Depot, on `state` (the live world, or a forecast clone). */
+  function measureCargo(state: EconomyState, h: Harvester): number {
+    const pay = depotRoutePay(state, h, performance.now());
+    if (!pay.connected) return 0;
+    return cargoPerMinute(pay.rawPerTick, cargoClock(h, pay.factory, state), HARVEST_MS);
+  }
+
+  /** The three ledger lines, or null when the Depot has no route to price. */
+  function routeLedgerHtml(h: Harvester, now: number): string | null {
+    const pay = depotRoutePay(eco, h, now, componentsFor(h.ownerId));
+    if (!pay.connected) return null;
+    const route = roadRouteForHarvester(eco, h, componentsFor(h.ownerId)) ?? pay.route;
+    const slow = route && route.length ? slowestOnRoute(track, route) : pay.slowest;
+    const factor = cargoClock(h, pay.factory);
+    const text = routeLedgerText({
+      cargoPerMin: cargoPerMinute(pay.rawPerTick, factor, HARVEST_MS),
+      dollarsPerMin: routeDollarsPerMin(pay.yields, factor, HARVEST_MS, unitPrice),
+      cargoName: cargoDisplayName(pay.cargo),
+      slowest: slow,
+      tripsPerMin: tripsForDepot(h),
+    });
+    return text.html;
+  }
+
+  function tripsForDepot(h: Harvester): number {
+    const live = trucks.trucks.find((t) => t.depotId === h.id);
+    return live ? lorryTripsPerMin(live) : 0;
+  }
+
+  function armedUpgradeTier(): "street" | "road" | "highway" | null {
+    if (tool !== "road") return null;
+    if (roadTier === "street" || roadTier === "road" || roadTier === "highway") return roadTier;
+    return null;
+  }
+
+  let upgradePreviewCache: { key: string; text: string | null } | null = null;
+  /**
+   * "+x% cargo/min on <Depot>" for upgrading the stretch under the pointer.
+   * One line: this seat only, and the Depot the stretch helps the most.
+   * Cached per network version and tile — a hover must not re-flood every frame.
+   */
+  function upgradePreviewAt(tx: number, ty: number): string | null {
+    const to = armedUpgradeTier();
+    if (!to) return null;
+    const key = `${netVersion}:${to}:${tx},${ty}`;
+    if (upgradePreviewCache?.key === key) return upgradePreviewCache.text;
+    const rows: { name: string; forecast: NonNullable<ReturnType<typeof forecastStretchUpgrade>> }[] = [];
+    for (const h of eco.harvesters) {
+      if (h.owner !== me.id || isRailDepot(h)) continue;
+      const route = roadRouteForHarvester(eco, h, componentsFor(h.ownerId));
+      if (!route) continue;
+      const stretch = stretchAround(track, route, tx, ty);
+      if (!stretch.length) continue;
+      const pay = depotRoutePay(eco, h, performance.now(), componentsFor(h.ownerId));
+      const forecast = forecastStretchUpgrade(eco, h, stretch, to, measureCargo);
+      if (forecast) rows.push({ name: depotRouteName(pay.cargo, h.id), forecast });
+    }
+    const best = pickLargestGain(rows);
+    const text = best ? formatUpgradePreview(best.pct, best.name) : null;
+    upgradePreviewCache = { key, text };
+    return text;
+  }
+
+  let routeGeomCache: { version: number; rows: { id: number; tiles: [number, number][]; pace: string[] }[] } | null = null;
+  /** Every road route, geometry cached on the network version. Labels are live. */
+  function networkPaths(): RouteOverlayPath[] {
+    if (!routeGeomCache || routeGeomCache.version !== netVersion) {
+      const rows: { id: number; tiles: [number, number][]; pace: string[] }[] = [];
+      for (const h of eco.harvesters) {
+        if (isRailDepot(h)) continue;
+        const route = roadRouteForHarvester(eco, h, componentsFor(h.ownerId));
+        if (!route || route.length < 2) continue;
+        rows.push({
+          id: h.id,
+          tiles: route,
+          pace: routePaceNames(track, route),
+        });
+      }
+      routeGeomCache = { version: netVersion, rows };
+    }
+    const out: RouteOverlayPath[] = [];
+    for (const row of routeGeomCache.rows) {
+      const h = eco.harvesters.find((x) => x.id === row.id);
+      if (!h) continue;
+      const pay = depotRoutePay(eco, h, performance.now(), componentsFor(h.ownerId));
+      const cargo = cargoPerMinute(pay.rawPerTick, cargoClock(h, pay.factory), HARVEST_MS);
+      const mid = row.tiles[Math.floor(row.tiles.length / 2)];
+      out.push({
+        tiles: row.tiles,
+        pace: row.pace,
+        label: { tx: mid[0], ty: mid[1], text: `${formatCargoRate(cargo)}/min` },
+      });
+    }
+    return out;
+  }
+
+  let focusCache: { key: string; path: RouteOverlayPath | null } | null = null;
+  /** The aqua line: the Depot under the pointer, else the one a Select click opened. */
+  function focusRoute(): RouteOverlayPath | null {
+    const ref = hover?.ref as { kind?: string; id?: number } | null;
+    const hoveredId = ref?.kind === "harvester" ? ref.id ?? null : null;
+    const id = hoveredId ?? selectedDepotId;
+    if (id == null) return null;
+    const key = `${id}:${netVersion}`;
+    if (focusCache?.key === key) return focusCache.path;
+    const h = eco.harvesters.find((x) => x.id === id) ?? null;
+    const route = h ? roadRouteForHarvester(eco, h, componentsFor(h.ownerId)) : null;
+    const path = route && route.length >= 2 ? { tiles: route, focus: true as const } : null;
+    focusCache = { key, path };
+    return path;
+  }
+
   /** 2026-09: the Depot card a click on one of my Depots opens. */
   function depotCardFor(d: Harvester): void {
+    selectedDepotId = d.id;
     const lvl = d.level ?? 1;
     // R3 (#270): the dam's bonus, when a dam of mine reaches this Depot —
     // the card prints it beside the yield the clock pays, the same line the
@@ -5042,6 +5186,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       upgradeCost: costLabel(DEPOT_UPGRADE_COST),
       retuneCost: costLabel(DEPOT_RETUNE_COST),
       busy: !!tuning,
+      statsLine: routeLedgerHtml(d, performance.now()),
       damLine: damC.dam > 0 ? `dam: ×${1 + damC.dam} — hydro dam nearby` : null,
       onUpgrade: () => upgradeDepot(d.id),
       onRetune: () => retuneNow(d.id),
@@ -7121,11 +7266,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // city term adds to the factor's city bonus (the seat's city within
           // range of its dam lifts every Depot that feeds it).
           const damF = damFactorsFor(seat, depot, result.connection?.factory);
-          const factor = BASE_RATE * depotYield(depot) * distanceInfoFor(depot.id).factor
-            * transportFactor(depot) * (1 + damF.dam)
-            * (1 + (hasCities(seat)
+          // #462: the same factor the depot ledger and the upgrade preview use
+          // (`clockFactorOf`), so a cargo/min on the card is a cargo/min the
+          // clock will pay.
+          const factor = clockFactorOf({
+            yieldLevel: depotYield(depot),
+            distanceFactor: distanceInfoFor(depot.id).factor,
+            transportFactor: transportFactor(depot),
+            dam: damF.dam,
+            city: hasCities(seat)
               ? cityBonusFor(seat.id, result.connection?.factory) + damF.damCity
-              : Math.max(0, seat.townBonus) + damF.damCity));
+              : Math.max(0, seat.townBonus) + damF.damCity,
+          });
           const total = cargoes.reduce((sum, [, amount]) => sum + amount, 0) * factor
             + (loopCarry.get(depot.id) ?? 0);
           const whole = Math.floor(total);
@@ -9747,6 +9899,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               tickMs: HARVEST_MS,
             });
             info += `<br>${readout.yieldLine}<br>${readout.rateLine}`;
+            // #462: cargo/min, $/min, the slowest segment, the lorry's trips.
+            // Same seams as the clock (and the Select card), appended so the
+            // L8 lines the tests already pin stay byte-for-byte.
+            const ledger = routeLedgerHtml(h, now);
+            if (ledger) info += `<br>${ledger}`;
             if (readout.damLine) info += `<br>${readout.damLine}`;
             if (readout.decayLine) info += `<br>${readout.decayLine}`;
             // L16 (#231): the storage cap's read on this Depot. A connected
@@ -9839,6 +9996,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               : `<b>held</b> by ${holder.owner === me.id ? "your" : "the rival's"} Depot`);
         }
       }
+    }
+
+    // #462: Street / Road / Highway armed, pointer on a route tile — what
+    // upgrading that stretch would do to this seat's busiest Depot.
+    if (hover && armedUpgradeTier()) {
+      const preview = upgradePreviewAt(hover.tx, hover.ty);
+      if (preview) info = info ? `${info}<br><b>${preview}</b>` : `<b>${preview}</b>`;
     }
 
     const sig = (Object.entries(quarry.reach) as [Cargo, number][])
@@ -10009,6 +10173,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       portrait,
       // NAMES: the top-bar Names button paints its pressed state from this.
       showNames,
+      networkView,
       // L4 (#218): the board's own state on the new loop. `undefined` (the flag
       // off) leaves the always-on plant exactly as it ships; `null` takes the
       // board down between sessions; a session puts it up with its budget, its
@@ -10722,15 +10887,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // the click target for the city upgrade — the map door beside the
             // HUD key. Any other tool keeps its own behaviour above.
             const town = townCentreAt(p);
-            if (town) townCentreClick(town);
+            if (town) { selectedDepotId = null; townCentreClick(town); }
             else if (newLoop) {
               const ind = industryAt(p);
-              if (ind) showIndustryCard(ind);
+              if (ind) { selectedDepotId = null; showIndustryCard(ind); }
               else {
                 // 2026-09: a click on one of my Depots opens its card
-                // (level, yield vs cap, Upgrade, Retune).
+                // (level, yield vs cap, Upgrade, Retune). #462 keeps that
+                // Depot's route drawn until the next Select click.
                 const d = myDepotAt(p.tx, p.ty);
                 if (d) depotCardFor(d);
+                else selectedDepotId = null;
               }
             }
           } else if (tool === "road" || tool === "dirt" || tool === "rail") {
@@ -10783,6 +10950,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!isTypingTarget(e) && map[e.key]) {
       if (map[e.key] === "select") cancelPlacement();
       else armTool(map[e.key]);
+    }
+    // #462: N toggles Network view — every route, coloured by speed. Not a
+    // pan key, not a tool. A field, a chord, and key-repeat do not flip it.
+    if (!isTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "n") {
+      e.preventDefault();
+      if (!e.repeat) toggleNetworkView();
     }
     // RAIL-02: R turns the platform/depot heading a quarter turn — the same
     // four headings the art and the footprints are authored in, in the same
@@ -12234,6 +12407,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         vehicles: world.vehicles,
       });
       const { items, ghost } = overlayFrame();
+      // #462: route lines, set before the overlay pass so a frame never paints
+      // a stale list. Geometry is cached on the network version.
+      renderer!.routeOverlay = composeRouteOverlay(
+        networkView, networkView ? networkPaths() : [], focusRoute(),
+      );
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
       mini.paint();
