@@ -6270,7 +6270,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const theirs = rivalStars === 0 ? "" : ` · ${rival.name} ${rivalStars > 0 ? "+" : "−"}${Math.abs(rivalStars)}★`;
       lines.push(`${mine}${theirs}`);
     }
-    if (before.myIncome && (before.myIncome.perMin !== myIncome.perMin || myIncome.perMin > 0)) {
+    if (before.myIncome && before.myIncome.perMin !== myIncome.perMin) {
       const cargo = myIncome.cargo ? ` ${myIncome.cargo}` : "";
       lines.push(`Your income here: ${myIncome.perMin}/min${cargo} (was ${before.myIncome.perMin}/min)`);
     }
