@@ -7294,7 +7294,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  leave behind (see `rivalPlanReserve`). */
   const rivalPaveReserve = (): Purse | null => {
     const ranked = paveCandidates(eco, {
-      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
+      owner: rival.id, ownerId: rival.i + 1, stock: rival.purse, purse: buildPurse(rival),
       maxTiles: PAVE_MILESTONE_TILES,
     });
     if (!ranked.length) return null;
@@ -7665,8 +7665,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function rivalPavePass(): boolean {
+    // FIX (#431): Use buildPurse(rival) for affordability (money→resources at base prices)
+    // while keeping stock: rival.purse for scarcity calculations in planUpgrades.
     const plan = planUpgrades(eco, {
-      owner: rival.id, ownerId: rival.i + 1, purse: rival.purse,
+      owner: rival.id, ownerId: rival.i + 1, stock: rival.purse, purse: buildPurse(rival),
       // AI-01: the batch cap is a skill lever (8 on normal, 4/12 on easy/hard).
       maxTiles: skill().paveTiles,
       keepOre: rivalPlantWanted() ? (PLANT_COST.ore ?? 0) : 0,
@@ -7911,7 +7913,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // The tree's answer, read once and used by all three verbs below — the
     // plant guard, the planner's ranking and the city's reserve all work
     // toward the SAME goal, so one turn cannot pull in two directions.
-    const goal = treeGoal({ purse: rival.purse, tier: rival.depotTier });
+    // FIX (#431): Use buildPurse(rival) for affordability (money→resources at base prices)
+    // while keeping stock: rival.purse for scarcity calculations.
+    const goal = treeGoal({ stock: rival.purse, purse: buildPurse(rival), tier: rival.depotTier });
     // Owner call (2026-09): with the rung gate off every Depot costs one of
     // each cargo, so no single industry pays for the next one. The bank is how
     // the mix gets made — trade toward it FIRST, then build in the same turn,
@@ -7978,9 +7982,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // (`aiBuildStep` → `planCandidates` → `priceDepot`); the new-loop input is
     // `wantCargo`. `expandPerTurn` still paces how many it may raise in one
     // clock, so a hard rival visibly spreads.
+    // FIX (#431): Use buildPurse(rival) for affordability (money→resources at base prices)
+    // while keeping stock: rival.purse for scarcity calculations.
     const depotBuild = (): boolean => {
+      const rivalBuildPurse = buildPurse(rival);
       const out = aiBuildStep(eco, f, {
-        stock: rival.purse, purse: rival.purse,
+        stock: rival.purse, purse: rivalBuildPurse,
         free: rival.freeTrack, freeDepots: rival.freeDepots, now,
         newLoop, depotTier: rival.depotTier, wantCargo: want,
       }, allocHarvesterId());
@@ -8177,8 +8184,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     //    first. AI-01: `expandPerTurn` depot plans in ONE turn is what makes a
     //    hard rival visibly SPREAD — each pass re-plans against the purse the
     //    last build left behind, so it can never overdraw.
+    // FIX (#431): Use buildPurse(rival) for affordability (money→resources at base prices)
+    // while keeping stock: rival.purse for scarcity calculations.
     const opts = () => ({
-      stock: rival.purse, purse: rival.purse,
+      stock: rival.purse, purse: buildPurse(rival),
       free: rival.freeTrack, freeDepots: rival.freeDepots, now,
       oreUrgency: urgency, newLoop,
       // L5 (#219): the tree gate — the planner may only plan a Depot whose
