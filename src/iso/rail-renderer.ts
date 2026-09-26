@@ -84,8 +84,11 @@ import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
 import { FLAT_DRAPER, type Draper } from "./elevation";
-import { resolveDiagonalRoads, roadConnectionMask, type Track } from "./track";
+import { roadRailDeckAxis, resolveDiagonalRoads, roadConnectionMask, type Track } from "./track";
 import { roadTile, roadWidth } from "./road-geometry";
+
+// Saved byte flag, mirrored here like DE/DS to avoid renderer → rail → renderer.
+const RAIL_OVERPASS = 128;
 
 const DIAGONAL_ROADS = resolveDiagonalRoads();
 const EMPTY_ROADS = new Uint8Array(MAP_W * MAP_H);
@@ -150,7 +153,7 @@ export function railBridgeDecksIn(
     for (let tx = tx0; tx <= tx1; tx++) {
       const cell = cellAt(layer.tile, tx, ty);
       if ((cell & PRESENT) === 0) continue;
-      if (!isWater(tx, ty)) continue;
+      if (!isWater(tx, ty) && !(cell & RAIL_OVERPASS)) continue;
       out.push({ tx, ty, axis: deckAxis(cell, isWater, tx, ty) });
     }
   }
@@ -674,13 +677,16 @@ export function railTilesIn(
       if ((cell & DE) && on(tx + 1, ty - 1)) diag |= DIAG_E;
       if ((cell & DS) && on(tx + 1, ty + 1)) diag |= DIAG_S;
       if ((cellAt(layer.tile, tx - 1, ty + 1) & DE) && on(tx - 1, ty + 1)) diag |= DIAG_W;
-      const road = roadConnectionMask(roadView, tx, ty);
+      // A rail deck has continuous sleepers/ballast, not level-crossing boards.
+      // Road-deck occlusion remains in this cached pass, never the per-frame renderer.
+      const roadDeck = roadRailDeckAxis(world.roadTiers?.[ty * MAP_W + tx] ?? 0);
+      const road = (cell & RAIL_OVERPASS) || roadDeck ? 0 : roadConnectionMask(roadView, tx, ty);
       if (!road) { out.push(railTile(tx, ty, cell, maskAt, 0, diag)); continue; }
       // D3's width contract, including narrow Street and 1.6x Highway, rather
       // than another tier-width table. Geometry work stays inside cache misses.
       const paved = cellAt(world.roadBits, tx, ty);
       const surface = roadTile(tx, ty, road & BITS, paved & PRESENT ? "paved" : "dirt", () => false);
-      surface.tier = cellAt(world.roadTiers, tx, ty);
+      surface.tier = cellAt(world.roadTiers, tx, ty) & 7;
       const roadDiagonal = cellAt(world.grid?.terrain, tx, ty) === WATER ? 0 : road & ~BITS;
       out.push(railTile(tx, ty, cell, maskAt, road & BITS, diag, roadDiagonal, roadWidth(surface)));
     }

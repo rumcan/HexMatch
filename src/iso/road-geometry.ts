@@ -174,6 +174,8 @@ export interface RoadTile {
   tier?: number;
   /** ROADS-3 (#394): the road deck an overpass carries across its highway. */
   deck?: boolean;
+  /** #420: unlike a highway crossing deck, this retains its own paved tier. */
+  railDeck?: boolean;
   material: RoadMaterial;
   mask: number;
   /** Resolved logical directions, never a raw stored road byte. */
@@ -304,7 +306,7 @@ export const ROAD_WIDTH: Record<RoadMaterial, number> = {
 /** Single width contract for bounds, sidewalks and every raster pass. */
 export const roadWidth = (tile: RoadTile): number =>
   tile.material !== "paved" ? ROAD_WIDTH[tile.material]
-    : tile.deck ? ROAD_WIDTH.paved
+    : tile.deck && !tile.railDeck ? ROAD_WIDTH.paved
       : (tile.tier === 2 || tile.tier === 4 || tile.tier === 5) ? ROAD_WIDTH.paved * 1.6
         : tile.tier === 3 ? ROAD_WIDTH.paved * 1.2
           : tile.tier === 1 ? ROAD_WIDTH.paved * 0.8 : ROAD_WIDTH.paved;
@@ -871,7 +873,7 @@ export function continuousRoadFigures(figures: readonly RoadFigure[]): RoadFigur
 export function highwayDividerFigures(tiles: readonly RoadTile[]): RoadFigure[] {
   const figures: RoadFigure[] = [];
   for (const t of tiles) {
-    if (t.deck || t.material !== "paved" || ![2, 4, 5].includes(t.tier ?? 0)) continue;
+    if ((t.deck && !t.railDeck) || t.material !== "paved" || ![2, 4, 5].includes(t.tier ?? 0)) continue;
     const dirs = roadDirections(t.mask, t.diagonal);
     if (dirs.length === 1) figures.push({ points: [tileCentre(t.tx, t.ty), portPoint(t.tx, t.ty, dirs[0])] });
     else figures.push(...paintFigures(t.tx, t.ty, t.mask, t.diagonal));

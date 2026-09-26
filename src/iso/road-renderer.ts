@@ -53,7 +53,7 @@ import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
 import { FLAT_DRAPER, draperFor, elevationLiftPx, type Draper } from "./elevation";
-import { DIAGONAL_DIRS, DIR, roadDiagLinked, resolveDiagonalRoads, type Track } from "./track";
+import { DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads, type Track } from "./track";
 
 // Same local DEV query as the simulation, evaluated once, not every frame.
 const DIAGONAL_ROADS = resolveDiagonalRoads();
@@ -469,9 +469,11 @@ export function roadTilesIn(
       if (hasRoad(road)) {
         // ROADS-2 (#393): a Street is kerbed like a town street; a Highway
         // is wider with a solid centre line (see paintRoadTiles).
-        const tier = world.roadTiers?.[ty * MAP_W + tx] ?? 0;
+        const packedTier = world.roadTiers?.[ty * MAP_W + tx] ?? 0;
+        const tier = packedTier & 7;
         const tile = roadTile(tx, ty, road, "paved", paved, tier === 1 || (tier === 0 && town), diagonalAt(tx, ty));
         if (tier) tile.tier = tier;
+        if (roadRailDeckAxis(packedTier)) { tile.deck = true; tile.railDeck = true; }
         out.push(tile);
         // ROADS-3 (#394): an overpass carries a road deck ACROSS the highway.
         if (tier === 4 || tier === 5) {
@@ -981,7 +983,7 @@ export function paintRoadTiles(
   ctx.lineCap = "butt";
   for (const t of tiles) {
     if (t.material !== "paved") continue;
-    if (t.tier === 1 || (!t.deck && [2, 4, 5].includes(t.tier ?? 0))) continue;
+    if (t.tier === 1 || ((!t.deck || t.railDeck) && [2, 4, 5].includes(t.tier ?? 0))) continue;
     for (const f of paintFigures(t.tx, t.ty, t.mask, t.diagonal)) {
       ctx.setLineDash([DASH_ON, DASH_OFF]);
       // The dash phase stays anchored on the FLAT figure: the lattice it is
@@ -1009,15 +1011,25 @@ export function paintRoadTiles(
     ctx.lineCap = "butt";
     ctx.globalAlpha = 0.35;
     ctx.strokeStyle = "#000";
-    ctx.lineWidth = ROAD_WIDTH.paved * 1.35;
+    ctx.lineWidth = widthOf(t) * 1.35;
     for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
     ctx.globalAlpha = 1;
     ctx.strokeStyle = "#8f9498";
-    ctx.lineWidth = ROAD_WIDTH.paved * 1.15;
+    ctx.lineWidth = widthOf(t) * 1.15;
     for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
     ctx.strokeStyle = fills.paved;
-    ctx.lineWidth = ROAD_WIDTH.paved;
+    ctx.lineWidth = widthOf(t);
     for (const f of t.figures) { trace(ctx, f, elev); ctx.stroke(); }
+    // The deck top must retain the tier's markings, not erase D3's divider.
+    if (t.railDeck && t.tier !== 1) {
+      ctx.strokeStyle = style.paint; ctx.globalAlpha = style.paintAlpha;
+      ctx.lineWidth = t.tier === 2 ? PAINT_WIDTH * 2.2 : PAINT_WIDTH;
+      for (const f of t.tier === 2 ? highwayDividerFigures([t]) : paintFigures(t.tx, t.ty, t.mask)) {
+        ctx.setLineDash(t.tier === 2 ? [] : [DASH_ON, DASH_OFF]);
+        ctx.lineDashOffset = t.tier === 2 ? 0 : dashOffsetFor(f);
+        trace(ctx, f, elev); ctx.stroke();
+      }
+    }
     ctx.restore();
   }
 
@@ -1209,7 +1221,9 @@ export class RoadCache {
     );
     // In the sprite road mode the atlas cells draw the roads, so this raster
     // carries the railway and nothing else.
-    const tiles = this.railOnly ? [] : roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    const allRoadTiles = roadTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    const tiles = this.railOnly ? allRoadTiles.filter((t) => t.deck) : allRoadTiles;
+    const gradeRoadDecks = tiles.filter((t) => t.deck && roadRailDeckAxis(world.roadTiers?.[t.ty * MAP_W + t.tx] ?? 0));
     // R2 (#266): decks are NOT atlas art, so they are collected in both road
     // modes — in the sprite mode the cells above would otherwise leave a road
     // bridge floating on the sea with no deck under it.
@@ -1242,6 +1256,9 @@ export class RoadCache {
       // …and the track OVER the finished road: that is what a level crossing
       // is, and why the road pass above has to stay exactly as it was.
       paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks, elev);
+      // Road-above-rail is the inverse ordering of a level/rail-deck crossing.
+      // Repaint only those deck tiles, inside the existing cached raster.
+      if (gradeRoadDecks.length) paintRoadTiles(ctx, gradeRoadDecks, style, [], [], elev, diagonalsOn(world));
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       // Soften the vectors by a pixel so roads and rails sit with the pixel
       // artwork instead of looking razor-cut. ONE filtered copy of the finished
