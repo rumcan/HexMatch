@@ -22,7 +22,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { routeIncome, routeUpgradeGain } from "./economy";
 import { TIER_THROUGHPUT } from "./config";
-import { TRUCK_SPEED, TRUCK_ROAD_MULT, DEPOT_LOAD_MS, truckRateMultOf, type Truck } from "./vehicles";
+import { TRUCK_SPEED, TRUCK_ROAD_MULT, DEPOT_LOAD_MS, truckRateMultOf } from "./vehicles";
 import { uphillSpeed } from "./slopes";
 import { resolveMapOptions, type MapOptions } from "./map-options";
 import { mountTerrainGl, terrainGlWanted, type TerrainGl } from "./terrain-gl-adapter";
