@@ -5167,10 +5167,12 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .battle-health {
-  position: relative; height: 14px;
+  position: relative; height: 22px;
   background: #060b0c; border: 1px solid var(--brass-lo); border-radius: 0;
   overflow: hidden;
 }
+/* BATTLE-1 (#468): the health read is the duel's headline — big number, dim
+   cap, no decoration. The fill keeps its slow ease so a swing lands gently. */
 .battle-health-fill {
   position: absolute; inset: 0; width: 100%;
   background: #7bc67b;
@@ -5178,10 +5180,36 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 }
 .battle-health-num {
   position: absolute; inset: 0;
-  font-family: var(--mono, monospace); font-size: 10px; line-height: 14px;
+  font-family: var(--mono, monospace); font-size: 13px; font-weight: 700; line-height: 22px;
   color: var(--brass-hi); text-align: center;
-  text-shadow: none;
+  text-shadow: 0 1px 0 #000;
 }
+.battle-health-max {
+  position: absolute; inset: 0; padding-left: 3px;
+  font-family: var(--mono, monospace); font-size: 10px; line-height: 22px;
+  color: var(--ink2); text-align: right;
+}
+.battle-side.low .battle-health-num { color: var(--danger2); }
+/* BATTLE-1 (#468): one mana bar per side — the whole bank against the whole
+   cap — so "can I cast yet?" reads at a glance; the six per-cargo chips under
+   it keep the per-ability detail. */
+.battle-mana-total {
+  position: relative; height: 12px; margin-top: 5px;
+  background: #060b0c; border: 1px solid rgb(var(--c-line) / 0.6); border-radius: 0;
+  overflow: hidden;
+}
+.battle-mana-total-fill {
+  position: absolute; inset: 0; width: 0;
+  background: var(--aqua, var(--patina, #4fb3bf));
+  transition: width .3s ease-out;
+}
+.battle-mana-total-num {
+  position: absolute; inset: 0;
+  font-family: var(--mono, monospace); font-size: 9px; line-height: 12px;
+  color: var(--txt, #d9e2e4); text-align: center; text-shadow: 0 1px 0 #000;
+  font-variant-numeric: tabular-nums;
+}
+.battle-mana-total.full .battle-mana-total-fill { background: #ecf5f7; }
 .battle-mana { display: flex; gap: 4px; margin-top: 4px; }
 .battle-mana-chip { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
 .battle-mana-chip .bm-ic { font-size: 10px; line-height: 1; }
@@ -5289,8 +5317,71 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .battle-hint { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .battle-health-fill, .battle-mana-fill, .battle-timer-fill { transition: none; }
+  .battle-health-fill, .battle-mana-fill, .battle-mana-total-fill, .battle-timer-fill { transition: none; }
+  .battle-flash.pop, .battle-flash.out { animation: none; }
+  .iso-float.flag-swap { animation: none; }
 }
+
+/* ── BATTLE-1 (#468) — the aftermath flag swap ────────────────────────────
+   The site changes hands and a flag pops up over the tile that says who
+   holds it now: rises, waves once, holds, and goes. A `.iso-float` with its
+   own clock (the battle settles long — the default float's 1.15s is too
+   quick to read a sentence), re-anchored to the live camera like every
+   float. Reduced motion: no animation (the rule above), the words just sit
+   on the tile for their life and go. */
+.iso-float.flag-swap {
+  z-index: 10;
+  font-size: 15px; letter-spacing: .6px;
+  color: var(--sa-lemon, #f2d64b);
+  text-shadow: 0 0 12px rgba(0, 0, 0, .9), 0 2px 3px #000;
+  animation: battleFlagSwap 2.6s ease-out forwards;
+}
+@keyframes battleFlagSwap {
+  0%   { transform: translate(-50%, -40%) scale(.5); opacity: 0; }
+  12%  { transform: translate(-50%, -108%) scale(1.14); opacity: 1; }
+  22%  { transform: translate(-50%, -100%) scale(1); }
+  30%  { transform: translate(-50%, -100%) rotate(-2.5deg); }
+  44%  { transform: translate(-50%, -100%) rotate(2deg); }
+  58%  { transform: translate(-50%, -100%) rotate(0deg); }
+  82%  { opacity: 1; }
+  100% { transform: translate(-50%, -132%) scale(.97); opacity: 0; }
+}
+
+/* ── BATTLE-1 (#468) — the stakes card ────────────────────────────────────
+   What a duel is FOR, before the duel: one ledger over the map — the site,
+   its holder, the ★ and income at stake, the Gold, the difficulty — then
+   Accept or Decline. Stock modal plate; only the ledger rows are new. */
+.battle-stakes .battle-stakes-card { max-width: 440px; text-align: left; }
+.battle-stakes .battle-stakes-sub {
+  margin: 2px 0 10px; font-family: var(--serif, serif); font-size: 13px; color: var(--txt-dim);
+}
+.battle-stakes-rows {
+  display: flex; flex-direction: column; gap: 0;
+  border-top: 1px solid var(--line); margin-bottom: 10px;
+}
+.stakes-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+  padding: 6px 2px; border-bottom: 1px solid var(--line);
+}
+.stakes-row .stakes-label {
+  font-family: var(--sans); font-size: 12px; letter-spacing: .04em;
+  color: var(--txt-mute); text-transform: uppercase;
+}
+.stakes-row .stakes-value {
+  font-family: var(--serif, serif); font-size: 14px; color: var(--txt);
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.stakes-row .stakes-value.muted { color: var(--txt-dim); font-size: 12.5px; }
+.battle-stakes-note {
+  margin: 0 0 8px; font-family: var(--serif, serif); font-style: italic;
+  font-size: 12.5px; color: var(--gold2); text-align: left;
+}
+.battle-stakes-count {
+  font-family: var(--mono, monospace); font-size: 11.5px; color: var(--patina, #4fb3bf);
+  text-align: right; margin-bottom: 6px; font-variant-numeric: tabular-nums;
+}
+.battle-stakes-acts { justify-content: space-between; gap: 10px; }
+.battle-stakes-acts button { min-width: 130px; }
 
 /* ══════════════════════════════════════════════════════════════════════════
    B3 (#248) — the battle ability row: six industrial spells under the board.
@@ -5540,7 +5631,41 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 /* five tabs in one strip: one line each */
 .tab { letter-spacing: .8px; font-size: 10.5px; white-space: nowrap; padding-left: 3px; padding-right: 3px; }
 .tab .tab-l { overflow: hidden; text-overflow: ellipsis; }
-.battle-turns { font-family: var(--serif, serif); font-size: 11px; color: var(--ink2, #b3bbbd); letter-spacing: .5px; }
+/* BATTLE-1 (#468): the turn counter is a clock the player can plan against —
+   its own mono line, big enough to read mid-swap, aqua so it never competes
+   with the whose-turn banner. */
+.battle-turns {
+  font-family: var(--mono, monospace); font-size: 14px; font-weight: 700;
+  color: var(--patina, #4fb3bf); letter-spacing: 1.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* BATTLE-1 (#468): the extra-turn rule, flashed when it triggers — one banner
+   over the board: pops in, holds a breath, out. Reduced motion: no animation,
+   the same words simply appear and clear. */
+.battle-flash {
+  position: absolute; left: 50%; top: 42%; z-index: 5;
+  transform: translate(-50%, -50%);
+  padding: 7px 14px; pointer-events: none;
+  background: rgba(6, 11, 12, 0.92);
+  border: 1px solid var(--gold2, #f7e58a); border-radius: 0;
+  font-family: var(--display); font-weight: 700; font-size: 13px;
+  letter-spacing: 1.6px; text-transform: uppercase;
+  color: var(--gold2, #f7e58a); text-align: center;
+  white-space: nowrap; max-width: 92%;
+}
+.battle-flash.pop { animation: battleFlashPop 1.5s cubic-bezier(.2, 1.2, .3, 1) both; }
+.battle-flash.out { animation: battleFlashOut .26s ease-in both; }
+@keyframes battleFlashPop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.7); }
+  14% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+  22% { transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes battleFlashOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
 /* 2026-09: city-pick mode — the town halls you can upgrade glow */
 .label-upgrade {
   background: var(--sa-lemon, #f2d64b) !important; color: var(--sa-on-lemon, #2b2604) !important;

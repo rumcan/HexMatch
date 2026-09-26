@@ -27,6 +27,7 @@
 import { CELL, RES, mulberry32, type ResKey } from "./config";
 import { GEM_ART } from "./gem-art";
 import { BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
+import { sfx } from "../audio/sfx";
 import {
   createBattle, type AbilityOutcome, type Battle, type BattleMove, type BattleSeat, type TurnOutcome,
   maxHealthOf,
@@ -232,7 +233,10 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     <div class="battle-portrait">${v.portrait ? `<img src="${v.portrait}" alt="">` : `<span>${v.name.slice(0, 1)}</span>`}</div>
     <div class="battle-who">
       <div class="battle-name">${v.name}</div>
-      <div class="battle-health"><div class="battle-health-fill"></div><span class="battle-health-num"></span></div>
+      <div class="battle-health"><div class="battle-health-fill"></div><span class="battle-health-num"></span><span class="battle-health-max"></span></div>
+      <div class="battle-mana-total" title="Mana banked, all cargos">
+        <div class="battle-mana-total-fill"></div><span class="battle-mana-total-num"></span>
+      </div>
       <div class="battle-mana">${CARGOES.map((c) => `
         <div class="battle-mana-chip" data-cargo="${c}" title="${CARGO[c].name}">
           <span class="bm-ic">${CARGO[c].icon}</span>
@@ -265,6 +269,29 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   const grid = h("div", "grid");
   boardWrap.appendChild(grid);
   center.appendChild(boardWrap);
+
+  // BATTLE-1 (#468): the extra-turn rule, flashed the moment it triggers —
+  // one banner over the board that says WHAT kept the turn, gone again in a
+  // breath. Reduced motion: it appears and clears with no animation (CSS).
+  const flashEl = h("div", "battle-flash");
+  flashEl.setAttribute("role", "note");
+  flashEl.hidden = true;
+  boardWrap.appendChild(flashEl);
+  let flashTimer = 0;
+  const flashRule = (text: string) => {
+    flashEl.textContent = text;
+    flashEl.hidden = false;
+    flashEl.classList.remove("out");
+    // restart the pop even when two extras land back to back
+    flashEl.classList.remove("pop");
+    void flashEl.offsetWidth;
+    flashEl.classList.add("pop");
+    window.clearTimeout(flashTimer);
+    flashTimer = window.setTimeout(() => {
+      flashEl.classList.add("out");
+      flashTimer = window.setTimeout(() => { flashEl.hidden = true; }, 260);
+    }, 1500);
+  };
 
   // B3 (#248) — the ability buttons (the row B2 kept hidden until now).
   const abilityRow = h("div", "battle-abilities");
@@ -330,11 +357,23 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     const el = sideEls[seat];
     const fill = el.querySelector(".battle-health-fill") as HTMLElement;
     const num = el.querySelector(".battle-health-num") as HTMLElement;
+    const max = el.querySelector(".battle-health-max") as HTMLElement;
     const full = maxHealthOf(p, rules);
     const pct = Math.max(0, Math.min(100, (p.health / full) * 100));
     fill.style.width = pct + "%";
     num.textContent = `${p.health}`;
+    max.textContent = `/ ${full}`;
     el.classList.toggle("low", p.health * 4 <= full);
+    // BATTLE-1 (#468): one mana bar per side — the whole bank against the
+    // whole cap — over the six per-cargo chips (which stay for the abilities).
+    const total = el.querySelector(".battle-mana-total") as HTMLElement;
+    const totalFill = total.querySelector(".battle-mana-total-fill") as HTMLElement;
+    const totalNum = total.querySelector(".battle-mana-total-num") as HTMLElement;
+    const banked = CARGOES.reduce((s, c) => s + (p.mana[c] ?? 0), 0);
+    const bankCap = rules.manaCap * CARGOES.length;
+    totalFill.style.width = ((banked / Math.max(1, bankCap)) * 100) + "%";
+    totalNum.textContent = `${banked}/${bankCap}`;
+    total.classList.toggle("full", banked >= bankCap);
     for (const cargo of CARGOES) {
       const chip = el.querySelector(`.battle-mana-chip[data-cargo="${cargo}"]`) as HTMLElement;
       const mfill = chip.querySelector(".battle-mana-fill") as HTMLElement;
@@ -361,7 +400,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (turnsEl) {
       const left = Math.max(0, rules.turnLimit - battle.state.turns);
       turnsEl.textContent = battle.state.over ? ""
-        : `Turn ${Math.min(battle.state.turns + 1, rules.turnLimit)} / ${rules.turnLimit}`
+        : `Turn ${Math.min(battle.state.turns + 1, rules.turnLimit)}/${rules.turnLimit}`
           + (left <= 3 ? " — at the limit, higher health wins" : "");
     }
     const mine = battle.state.turn === mySeat;
@@ -757,7 +796,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
       const [cargo, n] = gains.sort((a, b) => b[1] - a[1])[0];
       showFloat(`+${n} ${CARGO[cargo].icon}`);
     }
-    if (out.extraTurn && !battle.state.over) showFloat("EXTRA TURN!", true);
+    if (out.extraTurn && !battle.state.over) flashRule(extraTurnRuleText(rules));
     if (battle.state.over) {
       window.setTimeout(showResult, 700);
       return;
@@ -934,6 +973,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     destroyed = true;
     window.clearTimeout(oppTimer);
     window.clearTimeout(awaitTimer);
+    window.clearTimeout(flashTimer);
     window.clearInterval(timerHandle);
     window.removeEventListener("pointerup", commitDrag);
     window.removeEventListener("pointercancel", cancelDragEvent);
@@ -986,3 +1026,183 @@ export function startBattleScreen(
     firstHint: opts.firstHint,
   });
 }
+
+/**
+ * BATTLE-1 (#468): the extra-turn rule in words, read off the LIVE rules —
+ * the banner flashes exactly what this battle's table pays an extra turn for.
+ */
+export function extraTurnRuleText(rules: BattleRules): string {
+  const ways: string[] = [];
+  if (rules.extraTurnMinMatch > 0) ways.push(`a ${rules.extraTurnMinMatch}+ run`);
+  if (rules.extraTurnOnShape) ways.push("a special shape");
+  if (rules.extraTurnOnCascade > 0) ways.push(`a ${rules.extraTurnOnCascade}-pass cascade`);
+  const cap = rules.extraTurnChain ?? 0;
+  if (!ways.length) return "EXTRA TURN";
+  return `EXTRA TURN — ${ways.join(", ")} keeps the turn`
+    + (cap > 0 ? ` (max ${cap} in a row)` : "");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// BATTLE-1 (#468) — the stakes card: what a duel is FOR, before the duel.
+//
+// The map's challenge entry points open this over the board: the site, who
+// holds it, the ★ and income riding on it, the Gold the fight costs and the
+// difficulty of the seat across the table — then Accept or Decline. It is a
+// pure door: it holds no battle state and moves nothing until a button says
+// so (the caller's `onAccept` charges the Gold and opens the duel).
+//
+//   • Escape and the backdrop answer `onClose` — NEVER `onDecline`. A
+//     defender's Decline forfeits the site, so the forfeit is a button the
+//     player means to press, not a mis-timed click on nothing;
+//   • the Tab trap is the confirm sheet's (a question on screen keeps the
+//     keyboard), and the Accept door takes the first focus;
+//   • `until` shows the offer's countdown when the card answers a challenge —
+//     silence is a fold, and the card shows the clock running out.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** One live number on the card: a label and its read ("Held by", "Vex"). */
+export interface StakesRow {
+  label: string;
+  /** Plain text (written with textContent — never markup from the map). */
+  value: string;
+  /** Dim the value (a note rather than a number). */
+  muted?: boolean;
+}
+
+export interface StakesCardOptions {
+  title: string;
+  /** One line under the title ("Vex challenges you for the Farm"). */
+  subtitle?: string;
+  rows: StakesRow[];
+  /** The plain sentence about declining ("Declining forfeits — they take it."). */
+  declineNote: string;
+  acceptLabel: string;
+  declineLabel: string;
+  /** The offer's expiry (epoch ms) — shows a countdown; null/absent = no clock. */
+  until?: number | null;
+  onAccept?: () => void;
+  onDecline?: () => void;
+  /** Escape / backdrop: close the card only (the offer behind stays open). */
+  onClose?: () => void;
+}
+
+export interface StakesCardHandle {
+  root: HTMLElement;
+  /** Take the card down now. Answers nothing — the caller decided. */
+  destroy(): void;
+}
+
+export function openStakesCard(host: HTMLElement, opts: StakesCardOptions): StakesCardHandle {
+  const root = h("div", "modal-root battle-stakes");
+  const id = ++stakesCardSeq;
+  root.innerHTML = `
+    <div class="modal-back" data-stakes-close></div>
+    <div class="modal box small battle-stakes-card" role="dialog" aria-modal="true"
+         aria-labelledby="stakes-title-${id}" aria-describedby="stakes-note-${id}">
+      <h2 id="stakes-title-${id}"></h2>
+      <p class="sub battle-stakes-sub"></p>
+      <div class="battle-stakes-rows"></div>
+      <p class="battle-stakes-note" id="stakes-note-${id}"></p>
+      <div class="battle-stakes-count" hidden></div>
+      <div class="confirm-row battle-stakes-acts">
+        <button type="button" class="big-btn ghost" data-stakes-decline data-sfx="deny"></button>
+        <button type="button" class="big-btn" data-stakes-accept data-sfx="click"></button>
+      </div>
+    </div>`;
+  (root.querySelector("h2") as HTMLElement).textContent = opts.title;
+  const sub = root.querySelector(".battle-stakes-sub") as HTMLElement;
+  sub.textContent = opts.subtitle ?? "";
+  sub.hidden = !opts.subtitle;
+  const rowsEl = root.querySelector(".battle-stakes-rows") as HTMLElement;
+  for (const row of opts.rows) {
+    const el = h("div", "stakes-row");
+    const label = h("span", "stakes-label", "");
+    label.textContent = row.label;
+    const value = h("span", "stakes-value", "");
+    value.textContent = row.value;
+    if (row.muted) value.classList.add("muted");
+    el.append(label, value);
+    rowsEl.appendChild(el);
+  }
+  (root.querySelector(".battle-stakes-note") as HTMLElement).textContent = opts.declineNote;
+  const countEl = root.querySelector(".battle-stakes-count") as HTMLElement;
+  const acceptBtn = root.querySelector("[data-stakes-accept]") as HTMLButtonElement;
+  const declineBtn = root.querySelector("[data-stakes-decline]") as HTMLButtonElement;
+  acceptBtn.textContent = opts.acceptLabel;
+  declineBtn.textContent = opts.declineLabel;
+
+  let closed = false;
+  let raf = 0;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    window.cancelAnimationFrame(raf);
+    document.removeEventListener("keydown", onKey, true);
+    root.remove();
+    opts.onClose?.();
+  };
+  // Escape and the backdrop only CLOSE — a forfeit must be a pressed button.
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape") { e.stopPropagation(); close(); return; }
+    if (e.key !== "Tab") return;
+    const doors = [declineBtn, acceptBtn];
+    const at = doors.indexOf(document.activeElement as HTMLButtonElement);
+    const outside = at === -1;
+    if (e.shiftKey && (outside || at === 0)) {
+      e.preventDefault();
+      doors[doors.length - 1].focus();
+    } else if (!e.shiftKey && (outside || at === doors.length - 1)) {
+      e.preventDefault();
+      doors[0].focus();
+    }
+  }
+  document.addEventListener("keydown", onKey, true);
+  for (const el of root.querySelectorAll<HTMLElement>("[data-stakes-close]")) {
+    el.onclick = () => close();
+  }
+  acceptBtn.onclick = () => {
+    if (closed) return;
+    closed = true;
+    window.cancelAnimationFrame(raf);
+    document.removeEventListener("keydown", onKey, true);
+    root.remove();
+    opts.onAccept?.();
+  };
+  declineBtn.onclick = () => {
+    if (closed) return;
+    closed = true;
+    window.cancelAnimationFrame(raf);
+    document.removeEventListener("keydown", onKey, true);
+    root.remove();
+    opts.onDecline?.();
+  };
+  if (opts.until != null) {
+    countEl.hidden = false;
+    const paintCount = () => {
+      if (closed) return;
+      const left = Math.max(0, opts.until! - performance.now());
+      const s = Math.ceil(left / 1000);
+      countEl.textContent = left > 0
+        ? `Answer within ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+        : "The offer has run out.";
+      raf = requestAnimationFrame(paintCount);
+    };
+    paintCount();
+  }
+
+  host.appendChild(root);
+  try { sfx.play("open"); } catch { /* an un-armed engine stays silent */ }
+  acceptBtn.focus();
+  return {
+    root,
+    destroy: () => {
+      if (closed) return;
+      closed = true;
+      window.cancelAnimationFrame(raf);
+      document.removeEventListener("keydown", onKey, true);
+      root.remove();
+    },
+  };
+}
+
+let stakesCardSeq = 0;
