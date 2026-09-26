@@ -253,6 +253,7 @@ import { mulberry32, setRng } from "../../src/game/config";
 interface DragHook {
   grid: Grid; track: Track; purse: Record<string, number>;
   finishSetup(): void; setTool(t: string): void;
+  dragPreview(kind: TrackKind, ax: number, ay: number, bx: number, by: number, first?: boolean): DragPreview;
   activeRoadDrag: { ax: number; ay: number; bx: number; by: number; xFirst: boolean; preview: DragPreview } | null;
   activeDragOverlay: { sprite: string; tx: number; ty: number }[];
 }
@@ -351,6 +352,23 @@ describe("D2 live pointer / R / overlay contract", () => {
     pointer("pointerup", 15, 12); assertLinks(h.track, pv);
     expect(hasTrack(h.track, "road", 15, 12)).toBe(false);
     for (const key of Object.keys(budget)) expect(h.purse[key]).toBe(0);
+  });
+
+  it.each(["road", "street", "highway", "ramp"] as const)("the %s toolbar selection, debug preview and pointer price agree", async (tier) => {
+    const h = await boot();
+    const button = root.querySelector<HTMLButtonElement>(`[data-tool="${tier}"]`)!;
+    expect(button).not.toBeNull();
+    // Dispatch the toolbar's click handler directly; layout/enabled-state
+    // browser behavior is not under test in this canvas-stubbed harness.
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const expected = h.dragPreview("road", 10, 10, 15, 12);
+    const before = { ...h.purse };
+    pointer("pointerdown", 10, 10); pointer("pointermove", 15, 12);
+    expect(h.activeRoadDrag!.preview).toEqual(expected);
+    expect(expected.cost).toEqual(addCost({}, tierTileCost(h.track, tier, 10, 10), 6));
+    pointer("pointerup", 15, 12); assertLinks(h.track, expected);
+    for (const [x, y] of expected.tiles) expect(roadTierAt(h.track, x, y)).toBe(ROAD_TIER[tier]);
+    for (const [key, price] of Object.entries(expected.cost)) expect(h.purse[key]).toBe(before[key] - price!);
   });
 
   it("a prefix ending on the overpass keeps its crossing tier and quoted price on release", async () => {

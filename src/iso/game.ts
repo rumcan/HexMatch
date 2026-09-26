@@ -12863,7 +12863,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!canBuildOn(grid, kind, ax, ay) && !ownFloor(ax, ay)) return null;
       return previewDrag(grid, track, kind, me.purse, ax, ay, bx, by, xFirst, undefined, me.freeTrack,
         structureTiles(eco.factories, eco.harvesters, me.i + 1, factoryFp), newLoop,
-        { railAt: (x, y) => hasRail(rail.rail, x, y) });
+        { railAt: (x, y) => hasRail(rail.rail, x, y) }, track.diagonalRoads && kind === "road" ? roadTier : "road");
     },
     /**
      * PP-13: the e2e/unit twin of a demolish click — the same `doDemolish`
