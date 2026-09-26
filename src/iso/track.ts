@@ -3,7 +3,8 @@
 //
 // Two parallel Uint8Array(MAP_W*MAP_H) layers hold a 4-bit direction mask per
 // tile (OpenTTD's RoadBits model), PRESENT=16, and optional one-sided diagonal
-// links in bits 32/64 (D1, DEV-only). No wider bytes or format migration.
+// links in bits 32/64 (D1 — ON for every new game since #440, `?diag=0` off).
+// No wider bytes or format migration.
 // The two tiers are `dirt` (basic gravel) and
 // `road` (premium paved, which also carries the map's paved public/town
 // roads). Paving a Road over a Dirt Road replaces it — a tile carries at most
@@ -79,12 +80,32 @@ export function crossingMasksOk(roadMask: number, railMask: number, roadDiagonal
   return a !== undefined && b !== undefined && a !== b && !(a > 15 && b > 15);
 }
 
-/** D1 is a local development experiment, not a save/wire format field. */
+/**
+ * #440: 45° roads are ON for every new game — the D1–D5 experiment graduated.
+ *
+ * The chain is the map-options one (`iso/map-options.ts`): the game resolves
+ * the flag once at boot and hands it to `createTrack`, so this reader is the
+ * DEFAULT and the fallback for callers with no game in hand (the renderers'
+ * module-level read, the demo, a debug boot). It answers:
+ *
+ *   • `?diag=0` → OFF, `?diag=1` → ON (the only two values it honours, exactly
+ *     like `?rivers=`);
+ *   • otherwise ON in a shipped or dev build, and OFF under the unit-test
+ *     runner — the `defaultMapOptions()` rule, so the seed-pinned suites keep
+ *     the axis-only maps and routes they were written against. An explicit
+ *     `?diag=1` still turns them on there, which is how the D1–D5 files boot.
+ *
+ * It is no longer a DEV experiment: production reads it too, because a rule
+ * the shipped game cannot reach is a rule nobody plays.
+ */
 export function resolveDiagonalRoads(
   search = typeof location === "undefined" ? "" : location.search,
-  dev = import.meta.env.DEV,
+  testRunner = import.meta.env.MODE === "test",
 ): boolean {
-  return dev && new URLSearchParams(search).get("diag") === "1";
+  let q: string | null = null;
+  try { q = new URLSearchParams(search).get("diag"); } catch { q = null; }
+  if (q === "0" || q === "1") return q === "1";
+  return !testRunner;
 }
 
 export type TrackKind = "dirt" | "road";
@@ -142,12 +163,21 @@ export interface Track {
    *  traffic can cache adjacency by revision without rescanning the whole map
    *  every render frame. */
   revision: number;
-  /** Local DEV flag; deliberately not serialized. Missing means OFF. */
+  /**
+   * #440: may this game's roads leave the grid axis? Resolved ONCE at boot by
+   * `map-options.ts` (default ON, `?diag=0` off, a save's own record, the
+   * room's) and passed in by `game.ts`; every reader — the drag, the routing,
+   * the AI, the renderers — asks the flag rather than the URL, so one game can
+   * never half-agree with itself. Missing means OFF, which is what a pre-#440
+   * save or snapshot resumes as. Not serialized on its own: the flag rides the
+   * save's / the room's `map` record, and the tile bytes it produced ride the
+   * track layers, so the wire format never grew a field.
+   */
   diagonalRoads?: boolean;
 }
 
 export const createTrack = (diagonalRoads = resolveDiagonalRoads()): Track => ({
-  diagonalRoads: import.meta.env.DEV && diagonalRoads,
+  diagonalRoads: !!diagonalRoads,
   dirt: new Uint8Array(MAP_W * MAP_H),
   road: new Uint8Array(MAP_W * MAP_H),
   owner: new Uint8Array(MAP_W * MAP_H),

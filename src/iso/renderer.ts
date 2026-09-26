@@ -191,6 +191,16 @@ export interface World {
    * and drops only the chunks whose tiles moved.
    */
   rail?: RailLayer;
+  /**
+   * #440: the game's 45° road rule, copied from the simulation's `Track` at
+   * boot. The road/rail painters used to read `?diag` for themselves at module
+   * load, which only agreed with the rules while the URL was the only thing
+   * that decided — a resumed save or a room record could then paint diagonals
+   * the drag could not build (or hide ones it could). Absent means "ask the
+   * renderer's own read" (`resolveDiagonalRoads`), which is what the demo and
+   * the bare test worlds do.
+   */
+  diagonalRoads?: boolean;
 }
 
 // Track layers carry a PRESENT bit (0b10000) above the 4 direction bits, so a
@@ -676,7 +686,7 @@ export class IsoRenderer {
     this.cam = cam;
     this.world = world;
     this.cloudField = createCloudField(world.grid.seed ?? 0);
-    this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits, roadTiers: world.roadTiers };
+    this.roadWorld = { grid: world.grid, roadBits: world.roadBits, dirtBits: world.dirtBits, roadTiers: world.roadTiers, diagonalRoads: world.diagonalRoads };
     this.pad = cullPad(atlas);
     const g = (el: HTMLCanvasElement, smooth: boolean) => {
       const ctx = el.getContext("2d") as Ctx2D;
@@ -778,6 +788,7 @@ export class IsoRenderer {
       dirtBits: this.world.dirtBits,
       roadTiers: this.world.roadTiers,
       rail: this.world.rail,
+      diagonalRoads: this.world.diagonalRoads,
     };
     this.syncRoadCache();
   }

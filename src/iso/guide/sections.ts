@@ -171,7 +171,7 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
     {
       id: "logistics",
       title: "Logistics",
-      blurb: "Tiers, ramps, overpasses, bridges and slopes",
+      blurb: "Tiers, 45° bends, ramps, overpasses, bridges and slopes",
       steps: [
         {
           id: "tiers",
@@ -208,7 +208,7 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
           id: "connect",
           title: "Join Depot to Factory",
           caption: "Drag a road from the Depot back to your factory. Nothing ticks until the two are joined.",
-          hint: "One continuous run is all it takes — the longer the line, the less each tick pays.",
+          hint: "One continuous run is all it takes — the longer the line, the less each tick pays. Roads bend 45°: drag on the diagonal, or press R mid-drag to switch which way the corner turns.",
           voice: "n-road",
           target: { kind: "ui", selector: '[data-tool="dirt"], [data-group="roads"]' },
           complete: { kind: "build", what: "road" },

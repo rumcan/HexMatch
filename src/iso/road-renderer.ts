@@ -55,10 +55,12 @@ import {
 import { FLAT_DRAPER, draperFor, elevationLiftPx, type Draper } from "./elevation";
 import { DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads, type Track } from "./track";
 
-// Same local DEV query as the simulation, evaluated once, not every frame.
+// #440: the same `?diag` read as the simulation, evaluated once, not every
+// frame. The live World carries the resolved flag itself (`RoadWorld.
+// diagonalRoads`); this constant is the fallback for a world that does not.
 const DIAGONAL_ROADS = resolveDiagonalRoads();
 const EMPTY_ROADS = new Uint8Array(MAP_W * MAP_H);
-const diagonalsOn = (world: RoadWorld): boolean => import.meta.env.DEV && (world.diagonalRoads ?? DIAGONAL_ROADS);
+const diagonalsOn = (world: RoadWorld): boolean => world.diagonalRoads ?? DIAGONAL_ROADS;
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -352,8 +354,12 @@ export function tilesForRect(
  * costs or speed.
  */
 export interface RoadWorld {
-  /** Optional local renderer override; omitted by the live World, which uses
-   * the simulation's DEV ?diag=1 query. Never a saved or network field. */
+  /**
+   * #440: the 45° road rule the game resolved at boot (`Track.diagonalRoads`).
+   * The live World passes it; a bare harness world omits it and falls back to
+   * this module's own `?diag` read. Never a wire field of its own — the tiles
+   * it produced travel in the road bytes.
+   */
   diagonalRoads?: boolean;
   roadBits?: Uint8Array;
   dirtBits?: Uint8Array;

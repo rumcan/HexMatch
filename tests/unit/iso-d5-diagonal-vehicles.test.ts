@@ -76,10 +76,11 @@ describe("D5 Euclidean vehicle clocks and continuous four-heading placeholders",
 });
 
 describe("D5 shared road graph, distance and snapshot bytes", () => {
-  it("keeps diagonals behind the DEV flag", () => {
-    expect(resolveDiagonalRoads("?diag=1", false)).toBe(false);
+  it("keeps diagonals behind the #440 flag — default ON, ?diag=0 off", () => {
+    expect(resolveDiagonalRoads("", false)).toBe(true);      // a new game builds 45° roads
+    expect(resolveDiagonalRoads("?diag=0", false)).toBe(false);
+    expect(resolveDiagonalRoads("", true)).toBe(false);      // the unit-test runner: axis-only
     expect(resolveDiagonalRoads("?diag=1", true)).toBe(true);
-    expect(resolveDiagonalRoads("", true)).toBe(false);
     const track = createTrack(true), grid = flat(), route: Tile[] = [[10, 10], [11, 11], [12, 12]];
     connect(grid, track, route);
     expect(roadPath(track, 1, [route[0]], new Set([tIdx(...route[2])]))).toEqual(route);
