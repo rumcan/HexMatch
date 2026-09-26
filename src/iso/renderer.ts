@@ -866,6 +866,28 @@ export class IsoRenderer {
     this.terrainDirty = true;
   }
 
+  /**
+   * #456 Level Ground — the HEIGHTS moved under these tiles. Everything that
+   * cached the old heights goes: the ground chunks, the road/rail chunk
+   * rasters draped on them (a drop per tile, the road cache's own reach),
+   * the coast contours' lift groups and the decal lift groups (E2: "a
+   * function of (decals, heights)"). The terrain-GL mesh is rebuilt in ONE
+   * batch by the caller (`TerrainGl.heightsChanged`), so the per-tile hook
+   * stays quiet here — one mesh rebuild for the patch, not one per tile.
+   */
+  heightsInvalidated(tiles: ReadonlyArray<readonly [number, number]>): void {
+    this.decalGroups = null;
+    this.decalGroupsFor = null;
+    invalidateGroundContours(this.world.grid);
+    const hook = this.onTileInvalidated;
+    this.onTileInvalidated = null;
+    try {
+      for (const [tx, ty] of tiles) this.invalidateTile(tx, ty);
+    } finally {
+      this.onTileInvalidated = hook;
+    }
+  }
+
   invalidateAll() {
     invalidateGroundContours(this.world.grid);
     // E2 (#267): the decal lift groups are a function of (decals, heights).

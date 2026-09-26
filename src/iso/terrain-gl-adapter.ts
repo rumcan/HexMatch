@@ -9,6 +9,7 @@ import { MAP_H, MAP_W } from "../game/config";
 import type { Grid } from "./grid";
 import { cornerHeight, elevationActive } from "./elevation";
 import { createTerrainRenderer, type TerrainCamera, type TerrainMapInput, type TerrainRenderer, type TerrainTextureUrls } from "./terrain-gl";
+import { meshRefreshWindow } from "./terrain-gl/mesh";
 
 /** Every PNG in the ground-art folder, keyed by path. A glob (not static
  *  imports) means the #451 variant files — grass_b_512.png and friends — are
@@ -87,6 +88,14 @@ export interface TerrainGl {
   render(cam: TerrainCamera, timeMs: number): void;
   resize(w: number, h: number): void;
   invalidateTiles(tiles: ReadonlyArray<readonly [number, number]>): void;
+  /**
+   * #456 Level Ground — the heights moved under `tiles` (the caller has
+   * already written `Grid.height` and re-derived the elevation lattice).
+   * Refreshes the corner rows the change touches in the map the renderer
+   * holds, then rebuilds the mesh for that chunk and only that chunk
+   * (`meshRefreshWindow`'s contract).
+   */
+  heightsChanged(grid: Grid, tiles: ReadonlyArray<readonly [number, number]>): void;
   dispose(): void;
 }
 
@@ -99,13 +108,34 @@ export function mountTerrainGl(host: HTMLElement, grid: Grid, seed: number, qual
   let renderer: TerrainRenderer | null = null;
   try { renderer = createTerrainRenderer(canvas, { quality, textures: TEXTURES }); } catch { renderer = null; }
   if (!renderer) { canvas.remove(); return null; }
-  renderer.setMap(terrainMapInput(grid, seed));
+  let mapInput = terrainMapInput(grid, seed);
+  renderer.setMap(mapInput);
   const r = renderer;
   return {
     canvas, renderer: r,
     render: (cam, t) => r.render(cam, t),
     resize: (w, h) => { canvas.width = w; canvas.height = h; r.resize(w, h); },
     invalidateTiles: (tiles) => { if (tiles.length) r.invalidateTiles(tiles); },
+    heightsChanged: (grid, tiles) => {
+      if (!tiles.length) return;
+      if (!mapInput.heights) {
+        // Heights appeared on a map that had none (the Level Ground tool
+        // refuses such maps, so this is belt and braces): rebuild the input.
+        mapInput = terrainMapInput(grid, seed);
+        r.setMap(mapInput);
+        return;
+      }
+      const win = meshRefreshWindow(mapInput, tiles);
+      if (!win) return;
+      // The changed corners are exactly rows y0..y1+1, cols x0..x1+1.
+      const w1 = MAP_W + 1;
+      for (let j = win.y0; j <= Math.min(MAP_H, win.y1 + 1); j++) {
+        for (let i = win.x0; i <= Math.min(MAP_W, win.x1 + 1); i++) {
+          mapInput.heights[j * w1 + i] = Math.max(0, Math.round(cornerHeight(grid, i, j)));
+        }
+      }
+      r.invalidateTiles(tiles);
+    },
     dispose: () => { r.dispose(); canvas.remove(); },
   };
 }

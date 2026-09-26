@@ -468,6 +468,54 @@ export interface TerrainFields {
   sand: Float32Array;
 }
 
+/**
+ * #456 — the "touched chunk" contract, in one pure function: which mesh rows
+ * a change to `tiles` forces a rewrite of, and when the change is so large a
+ * full rebuild is cheaper. `invalidateTiles` (index.ts) and the Level Ground
+ * test both read THIS, so the claim "a levelled patch rebuilds only its own
+ * chunk" is pinned against the code the renderer runs, not a copy of it.
+ *
+ *   • the tile bbox, clamped to the map (null when nothing is on the map);
+ *   • lattice rows `j0..j1` for positions AND shade — the changed corners
+ *     are rows y0..y1+1 and `writeShadeRows` central-differences one row
+ *     wider, so the window pads one more either way;
+ *   • tile rows `ty0..ty1` for the index buffer — a tile's diagonal is a
+ *     function of its own four corners, so a corner change can flip the
+ *     diagonals of the tile row ABOVE and BELOW the change (a height edit
+ *     moves corners; a plain repaint does not, but one window serves both);
+ *   • `full` when the bbox covers more than 40% of the map — the whole-map
+ *     rebuild then costs less than a sub-rect upload.
+ */
+export interface MeshWindow {
+  x0: number; y0: number; x1: number; y1: number;
+  j0: number; j1: number;
+  ty0: number; ty1: number;
+  full: boolean;
+}
+
+export function meshRefreshWindow(
+  map: { w: number; h: number },
+  tiles: ReadonlyArray<readonly [number, number]>,
+): MeshWindow | null {
+  let x0 = map.w, y0 = map.h, x1 = -1, y1 = -1;
+  for (const [tx, ty] of tiles) {
+    if (tx < 0 || ty < 0 || tx >= map.w || ty >= map.h) continue;
+    if (tx < x0) x0 = tx;
+    if (tx > x1) x1 = tx;
+    if (ty < y0) y0 = ty;
+    if (ty > y1) y1 = ty;
+  }
+  if (x1 < 0) return null;
+  return {
+    x0, y0, x1, y1,
+    j0: Math.max(0, y0 - 1),
+    j1: Math.min(map.h, y1 + 2),
+    ty0: Math.max(0, y0 - 1),
+    ty1: Math.min(map.h - 1, y1 + 1),
+    full: (x1 - x0 + 1) * (y1 - y0 + 1) > map.w * map.h * 0.4,
+  };
+}
+
 export function encodeField(d: number): number {
   const c = d < -FIELD_RANGE ? -FIELD_RANGE : d > FIELD_RANGE ? FIELD_RANGE : d;
   return Math.round((c / (2 * FIELD_RANGE) + 0.5) * 255);
