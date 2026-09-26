@@ -510,7 +510,7 @@ export function templateSvg([w, h]) {
 }
 
 // ── main ───────────────────────────────────────────────────────────────────
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split("/").pop();
+const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
 
 async function main() {
   mkdirSync(OUT, { recursive: true });

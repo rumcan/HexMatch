@@ -350,7 +350,7 @@ export function parsePnml(root = PNML_ROOT) {
   return sprites;
 }
 
-const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split("/").pop();
+const isCli = process.argv[1] && import.meta.url.split("/").pop() === process.argv[1].split(/[\\/]/).pop();
 if (isCli) {
   const sprites = parsePnml();
   const out = join(ROOT, "tools/opengfx-sprites.json");
