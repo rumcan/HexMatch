@@ -765,3 +765,9 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 /* main menu: the landscape (owner, 2026-09-26); the poster stays on the loading screen */
 .start-screen.menu { background-image: url("../assets/poster/menu-bg.webp") !important; background-position: 65% center !important; }
 .start-screen.menu > .menu-leaderboard { background: rgba(31,36,39,.88); border: 1px solid #343b3f; padding: 16px 18px; }
+/* menu fixes (owner): solid ladder panel, compact left column */
+.start-screen.menu > .menu-leaderboard { opacity: 1 !important; background: #1f2427; }
+.start-screen.menu > .menu-card { justify-content: center; gap: 14px; overflow-y: auto; }
+.start-screen.menu .menu-card > .start-kicker { display: none; }
+.menu-title.menu-logo { margin: 0 0 6px; }
+.menu-title.menu-logo img { max-width: 300px; max-height: 26vh; width: auto; margin: 0 auto; }
