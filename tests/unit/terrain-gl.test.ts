@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTerrainMesh, hash2, worldOfCorner, TERRAIN_GRASS, TERRAIN_WATER, TERRAIN_SAND, TERRAIN_ROUGH, type TerrainMapInput } from "../../src/iso/terrain-gl/index";
+import { TERRAIN_FS } from "../../src/iso/terrain-gl/shaders";
 import { buildFields, buildVertexShade, HH, HW, LEVEL_PX, signedDistance, updateFieldsRegion } from "../../src/iso/terrain-gl/mesh";
 
 const W = (a: number, b: number): [number, number] => [(a - b) * 32, (a + b) * 16];
@@ -32,6 +33,19 @@ function islandMap(w = 144, h = 144, seed = 7): TerrainMapInput {
     }
   return { w, h, terrain, rivers, heights, seed };
 }
+
+describe("terrain water shader", () => {
+  it("applies animated wave normals at all water depths without a deep-water cutoff", () => {
+    const waterSection = TERRAIN_FS.split("// 4. Water")[1].split("// 5. Composite")[0];
+    expect(waterSection).toContain("if (dShore < 0.9)");
+    expect(waterSection).toContain("if (uWaterAnim > 0.0)");
+    expect(waterSection).toContain("textureGrad(uWaterN");
+    expect(waterSection).toContain("water += diff");
+    expect(waterSection).toContain("water += spec");
+    expect(waterSection).toContain("float deepness = smoothstep(1.0, 9.0, depth)");
+    expect(waterSection).not.toContain("clamp(-dShore, 0.0, 8.0)");
+  });
+});
 
 describe("hash2", () => {
   it("is deterministic and in [0,1)", () => {
