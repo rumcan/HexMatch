@@ -53,6 +53,13 @@ export const DAM_BONUS = 0.25;
  */
 export const DAM_RANGE = 4;
 
+/**
+ * Owner call (2026-09-26): Dams are OFF for now. No Build-menu button, no
+ * hotkey, no guest intent, no rival dams. The code stays so they can come
+ * back by flipping this flag (the test hooks still place dams directly).
+ */
+export const DAMS_ENABLED = false;
+
 /** The dam's price — in `BUILD_COSTS` with every other price. */
 export const DAM_COST: Purse = { ...BUILD_COSTS.dam };
 
