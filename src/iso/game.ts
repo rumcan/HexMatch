@@ -2451,6 +2451,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // U1: the restored HUD owns the toast DOM.
     ui.toast(text, kind);
   };
+  // RADIO-2: a dead stream skips to the next station and says so. The hook
+  // outlives the widget (the radio keeps playing across a quit) until dispose.
+  radio.setNotice((text) => toast(text, "info"));
 
   /**
    * STORY-01: the face a beat speaks with. Rival beats wear the mood their
@@ -13131,9 +13134,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     get sabotageEventWindow() { return sabotageWindow; },
     /**
-     * MUSIC-1 (#377): the radio, for probes and the play-test. Reads the state
-     * machine and the three saved choices; with an argument it drives the same
-     * verbs the pill and the settings sheet use (`__iso.radio({ play: true })`).
+     * MUSIC-1 (#377) / RADIO-2 (#432): the radio, for probes and the play-test.
+     * Reads the state machine, the saved choices and the current station; with
+     * an argument it drives the same verbs the pill and the settings sheet use
+     * (`__iso.radio({ play: true })`, `__iso.radio({ next: true })`).
      * A console call is not a user gesture, so the browser may refuse the very
      * first `play()` — tapping the pill is the honest way in; this is for
      * inspection and for turning it off without hunting for the widget.
@@ -13141,12 +13145,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     radio: (action?: {
       play?: boolean; pause?: boolean; duck?: boolean;
       enabled?: boolean; show?: boolean; volume?: number;
+      /** RADIO-2: a station id, or step the dial. Does not start playback. */
+      station?: string; next?: boolean; prev?: boolean;
     }) => {
       if (action) {
         if (action.enabled !== undefined) radio.setEnabled(action.enabled);
         if (action.show !== undefined) radio.setShow(action.show);
         if (action.volume !== undefined) radio.setVolume(action.volume);
         if (action.duck !== undefined) radio.duck(action.duck);
+        if (action.station) radio.setStation(action.station);
+        if (action.next) radio.next();
+        if (action.prev) radio.prev();
         if (action.play) radio.play();
         if (action.pause) radio.pause();
       }
@@ -13159,6 +13168,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         failures: radio.machine.failures,
         nowPlaying: radio.nowPlaying,
         text: radioText(radio.machine.status, radio.station, radio.nowPlaying),
+        stationId: radio.stationId,
+        station: radio.station,
+        credit: radio.credit,
       };
     },
     /**
@@ -13531,6 +13543,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     offVoiceDuck();
     // A game that dies mid-line must not leave the mix ducked for the next one.
     radio.duck(false);
+    radio.setNotice(null);
     radioWidget.destroy();
     // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
     // open sheet is destroyed rather than orphaned over a dead board.

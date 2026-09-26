@@ -45,8 +45,9 @@ import { radio } from "../audio/radio";
 const MINIATURE_NOTE = "Tilt-shift — a sharp band across the middle, the rest softly blurred, colours popped. The island reads as a tiny model.";
 // Shared by every look the performance policy suppresses (miniature, clouds).
 const SUPPRESSED_BY_PERF = "Unavailable while Performance mode is on.";
-/** MUSIC-1 (#377): the Radio row's copy, live — what off actually does. */
-const RADIO_NOTE = "SomaFM Secret Agent, in the little player at the top right. Off stops the stream and releases the connection.";
+/** MUSIC-1 (#377) / RADIO-2 (#432): what the Radio row says. The live station
+ *  credit is painted over this once the sheet subscribes. */
+const RADIO_NOTE = "The player at the top right. Off stops the stream and releases the connection.";
 const RADIO_OFF_NOTE = "Off — the stream is stopped and the player is disconnected. Your volume is remembered.";
 
 export interface SettingsSheetHandle {
@@ -103,6 +104,14 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
           <button type="button" class="gfx-switch" role="switch" aria-label="Radio" data-gfx="radio" data-sfx="click">ON</button>
         </div>
       </div>
+      <div class="gfx-row gfx-radio-station-row">
+        <div class="gfx-copy">
+          <h3>Station</h3>
+          <p class="gfx-radio-credit"></p>
+          <a class="gfx-radio-terms" target="_blank" rel="noopener noreferrer">Licence</a>
+        </div>
+        <select class="gfx-radio-station" data-gfx="radio-station" aria-label="Radio station"></select>
+      </div>
       <div class="gfx-row">
         <div class="gfx-copy"><h3>Show radio player</h3><p>Hide the player in the top-right corner. The music keeps playing.</p></div>
         <button type="button" class="gfx-switch" role="switch" aria-label="Show radio player" data-gfx="radio-show" data-sfx="click">ON</button>
@@ -129,6 +138,10 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const radioVol = root.querySelector("[data-gfx=\"radio-volume\"]") as HTMLInputElement;
   const radioShow = root.querySelector("[data-gfx=\"radio-show\"]") as HTMLButtonElement;
   const radioNote = root.querySelector(".gfx-radio-note") as HTMLElement;
+  const stationSel = root.querySelector("[data-gfx=\"radio-station\"]") as HTMLSelectElement;
+  const stationCredit = root.querySelector(".gfx-radio-credit") as HTMLElement;
+  const stationTerms = root.querySelector(".gfx-radio-terms") as HTMLAnchorElement;
+  const stationRow = root.querySelector(".gfx-radio-station-row") as HTMLElement;
 
   for (const q of QUALITY_KEYS) {
     const b = document.createElement("button");
@@ -152,6 +165,15 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   radioBtn.onclick = () => { radio.setEnabled(!radio.settings.enabled); };
   radioVol.oninput = () => { radio.setVolume(Number(radioVol.value)); };
   radioShow.onclick = () => { radio.setShow(!radio.settings.show); };
+  // RADIO-2: the dial. One row, the same store the chip's ‹ › writes.
+  stationRow.hidden = radio.stations.length < 2;
+  for (const st of radio.stations) {
+    const opt = document.createElement("option");
+    opt.value = st.id;
+    opt.textContent = st.name;
+    stationSel.appendChild(opt);
+  }
+  stationSel.onchange = () => { radio.setStation(stationSel.value); };
 
   const paint = (g: GraphicsSettings) => {
     note.textContent = QUALITY_NOTE[g.quality];
@@ -210,7 +232,15 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     radioShow.setAttribute("aria-checked", String(s.show));
     if (document.activeElement !== radioVol) radioVol.value = String(s.volume);
     radioVol.setAttribute("aria-valuenow", String(Math.round(s.volume * 100) / 100));
-    radioNote.textContent = s.enabled ? RADIO_NOTE : RADIO_OFF_NOTE;
+    const credit = radio.credit
+      ? `${radio.station}. ${radio.genre}. ${radio.credit} Licence: ${radio.licence}.`
+      : RADIO_NOTE;
+    stationCredit.textContent = radio.credit ? `${radio.genre}. ${radio.credit}` : "";
+    if (radio.termsUrl) stationTerms.href = radio.termsUrl;
+    stationTerms.hidden = !radio.termsUrl;
+    if (document.activeElement !== stationSel && radio.stationId) stationSel.value = radio.stationId;
+    stationSel.title = radio.station ? `${radio.station}. ${radio.genre}` : "Radio station";
+    radioNote.textContent = s.enabled ? credit : RADIO_OFF_NOTE;
   });
   paint(currentGraphics());
 
