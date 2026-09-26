@@ -778,6 +778,8 @@ export class IsoRenderer {
       dirtBits: this.world.dirtBits,
       roadTiers: this.world.roadTiers,
       rail: this.world.rail,
+      // #437: survives a world sync — the gardens are map data, not world data.
+      gardens: this.gardens ?? undefined,
     };
     this.syncRoadCache();
   }
@@ -1113,8 +1115,18 @@ export class IsoRenderer {
     this.decals = scenery?.decals ?? null;
     this.decalGroups = null;
     this.decalGroupsFor = null;
+    // #437: the town gardens ride the ROAD world, not the terrain decals —
+    // they are painted over the block lawns that pass lays down. Stored here
+    // because `setDecals` is the one call that knows the map's scenery.
+    this.gardens = scenery?.gardens ?? null;
+    this.roadWorld = { ...this.roadWorld, gardens: this.gardens ?? undefined };
+    this.roadCache.bumpStyle("gardens");
+    this.structuresDirty = true;
     this.terrainDirty = true;
   }
+
+  /** #437: the map's town gardens, kept so `syncWorld` can re-attach them. */
+  private gardens: readonly Decal[] | null = null;
 
   /**
    * E2 (#267): the decals, bucketed by the lift they need. Cached against the
@@ -1156,6 +1168,17 @@ export class IsoRenderer {
   setDecalImages(images: DecalImages | null): void {
     this.decalImages = images;
     this.terrainDirty = true;
+    // #437: the GARDEN family is not painted with the other decals — it goes
+    // into the road style, because the pass that lays the town lawns is the
+    // pass that must lay the gardens on top of them. Installing it here bumps
+    // the chunk cache exactly as a late asphalt texture does, so a town
+    // already rasterised picks the gardens up.
+    const bank = images?.garden ?? [];
+    const had = this.roadStyle.gardens?.length ?? 0;
+    if (bank.length === 0 && had === 0) return;
+    this.roadStyle = { ...this.roadStyle, gardens: bank.length ? bank : undefined };
+    this.roadCache.bumpStyle("garden-art");
+    this.structuresDirty = true;
   }
 
   // Faster chunk surface lookup: pre-compute the zoom key once instead of

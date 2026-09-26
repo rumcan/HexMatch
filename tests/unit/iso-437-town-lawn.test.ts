@@ -32,7 +32,10 @@ import {
   LAWN_FEATHER, buildFields, encodeLawn, updateFieldsRegion,
   type TerrainMapInput,
 } from "../../src/iso/terrain-gl/mesh";
-import { DEFAULT_ROAD_STYLE, TOWN_GROUND_WASH } from "../../src/iso/road-renderer";
+import { DEFAULT_ROAD_STYLE, TOWN_GROUND_WASH, townGardensIn } from "../../src/iso/road-renderer";
+import {
+  DECAL_KINDS, GARDEN_KIND, groundOf, scatterScenery, scatterTownGardens,
+} from "../../src/iso/scenery";
 
 const SEEDS = [7, 42, 199, 1337];
 
@@ -234,7 +237,106 @@ describe("#437 no town-block or apron tile resolves to the dirt material", () =>
   });
 });
 
-// ── 4. the shader still honours the mask ───────────────────────────────────
+// ── 4. the garden hook ─────────────────────────────────────────────────────
+describe("#437 the town-garden hook is wired and inert without art", () => {
+  it("registers a garden decal family the art loader will glob", () => {
+    // `loadDecalImages` keys a file on its `<family>_<n>` prefix, so the
+    // family existing here IS the hook: dropping garden_1.webp into
+    // assets/ground/decals/ installs it with no code change.
+    expect(DECAL_KINDS).toContain("garden");
+    expect(GARDEN_KIND).toBe("garden");
+  });
+
+  it("never lets a garden into the WILD patch mix", () => {
+    // The country patches are moods of open ground. A hedge in a meadow two
+    // miles from anywhere would read as a bug, so the mix must not carry one.
+    const grid = generateMap(7);
+    for (const d of scatterScenery(grid).decals) {
+      expect(d.kind, "a wild patch is never a garden").not.toBe("garden");
+    }
+  });
+
+  for (const seed of SEEDS) {
+    it(`seed ${seed}: every garden stands on a town lot, never on a street`, () => {
+      const grid = generateMap(seed);
+      const gardens = scatterTownGardens(grid);
+      expect(gardens.length, "a map with towns has lots to dress").toBeGreaterThan(0);
+
+      const lots = new Set<number>();
+      const streets = new Set<number>();
+      for (const t of grid.towns) {
+        for (const [x, y] of t.houses) lots.add(y * MAP_W + x);
+        for (const [x, y] of t.roads) streets.add(y * MAP_W + x);
+      }
+      for (const g of gardens) {
+        const i = g.ty * MAP_W + g.tx;
+        expect(lots.has(i), `garden at (${g.tx},${g.ty}) is off the blocks`).toBe(true);
+        expect(streets.has(i), `garden at (${g.tx},${g.ty}) is in the road`).toBe(false);
+        expect(grid.terrain[i], "a garden is never under water").not.toBe(WATER);
+        expect(g.kind).toBe("garden");
+      }
+    });
+
+    it(`seed ${seed}: a garden's art cannot reach across a kerb`, () => {
+      // The art box is a square turned 45° to the tile grid, half-diagonal
+      // w/64 tiles along each ground axis. Centre offset + that reach must
+      // stay under a whole tile, or a hedge is painted in the street beside
+      // its lot. `groundOf` is the real inverse of the projection the scatter
+      // placed it with, so this measures the shipped geometry, not a copy.
+      for (const g of scatterTownGardens(generateMap(seed))) {
+        const [gx, gy] = groundOf(g.wx, g.wy);
+        const off = Math.max(Math.abs(gx - g.tx), Math.abs(gy - g.ty));
+        expect(off, "the centre stays well inside its own lot").toBeLessThan(0.25);
+        expect(g.w / 64 + off, `garden at (${g.tx},${g.ty}) overhangs the kerb`)
+          .toBeLessThan(1);
+      }
+    });
+  }
+
+  it("is a pure function of the seed", () => {
+    const a = scatterTownGardens(generateMap(99));
+    const b = scatterTownGardens(generateMap(99));
+    expect(a).toEqual(b);
+    const other = scatterTownGardens(generateMap(100));
+    expect(other).not.toEqual(a);
+  });
+
+  it("does not disturb the wild patches, the trees or the fields", () => {
+    // The gardens draw from their OWN stream, so adding or retuning them can
+    // never shift a single tree — the property every scatter here keeps.
+    const s = scatterScenery(generateMap(7));
+    expect(s.gardens.length).toBeGreaterThan(0);
+    expect(s.decals.length).toBeGreaterThan(0);
+    expect(s.forests.length).toBeGreaterThan(0);
+  });
+
+  it("hands back nothing for a map with no towns", () => {
+    const grid = generateMap(7);
+    expect(scatterTownGardens({ ...grid, towns: [] })).toEqual([]);
+  });
+
+  it("draws no garden pass until the art exists", () => {
+    // The default style carries no garden bank, so the paint pass is skipped
+    // and today's town renders exactly as it does on main.
+    expect(DEFAULT_ROAD_STYLE.gardens ?? []).toEqual([]);
+  });
+
+  it("collects the gardens whose art box reaches into a chunk", () => {
+    const grid = generateMap(7);
+    const gardens = scatterTownGardens(grid);
+    const g = gardens[0];
+    const world = { grid, gardens };
+    // Its own tile: found.
+    expect(townGardensIn(world, g.tx, g.ty, g.tx, g.ty)).toContain(g);
+    // Far away: not found.
+    const far = townGardensIn(world, 0, 0, 0, 0);
+    expect(far.includes(g)).toBe(g.tx <= g.reach && g.ty <= g.reach);
+    // A world with no gardens asks nothing of the map.
+    expect(townGardensIn({ grid }, 0, 0, MAP_W - 1, MAP_H - 1)).toEqual([]);
+  });
+});
+
+// ── 5. the shader still honours the mask ───────────────────────────────────
 describe("#437 the terrain shader keeps the dirt material off tended ground", () => {
   it("declares and samples the tended-ground mask", () => {
     expect(TERRAIN_FS).toContain("uniform sampler2D uLawn;");

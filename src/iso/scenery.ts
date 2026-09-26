@@ -42,7 +42,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H, TILE_W, TILE_H, mulberry32 } from "../game/config";
 import {
-  GRASS, ROUGH, WATER, chebyshevField, idx, inBounds, type Grid,
+  GRASS, ROUGH, WATER, chebyshevField, idx, inBounds, townGroundBytes, type Grid,
 } from "./grid";
 
 /**
@@ -94,7 +94,23 @@ export interface Forest {
  * painted back to front by depth alone, and the families only pick art and
  * weight the mix.
  */
-export const DECAL_KINDS = ["bare", "dry", "rocky", "lush"] as const;
+export const DECAL_KINDS = ["bare", "dry", "rocky", "lush", "garden"] as const;
+
+/**
+ * #437 — the GARDEN family is not one of the wild moods.
+ *
+ * It is never drawn by `scatterDecals` (it is absent from `DECAL_MIX` on
+ * purpose): a hedge or a flower bed belongs to a town lot, not to open
+ * country. It is placed by `scatterTownGardens` on the town blocks instead,
+ * and painted over the block's lawn.
+ *
+ * The family exists so the lead can DROP THE ART IN and have it appear:
+ * `loadDecalImages` globs `assets/ground/decals/<family>_<n>.webp`, so
+ * `garden_1.webp`, `garden_2.webp`, … are picked up with no code change.
+ * Until they exist the bank is empty and the paint pass skips every garden,
+ * which is exactly the town with no gardens we ship today.
+ */
+export const GARDEN_KIND: DecalKind = "garden";
 export type DecalKind = (typeof DECAL_KINDS)[number];
 
 /**
@@ -147,6 +163,13 @@ export interface Decal {
 
 export interface Scenery {
   decals: Decal[];
+  /**
+   * #437: the garden details on the town blocks — hedges, flower beds, paths.
+   * Separate from `decals` because they are painted in a different pass (over
+   * the block's lawn, under the kerbs) and placed by a different rule. Empty
+   * until the `garden_*` art exists, and harmless when it does not.
+   */
+  gardens: Decal[];
   /** Per tile: 0 = no tree, else 1-based index into TREE_SPRITES. */
   trees: Uint8Array;
   /** The multi-tile forest blocks, at their footprint origins. */
@@ -838,7 +861,99 @@ export function scatterScenery(grid: Grid): Scenery {
 
   plantForestResourceWoods(grid, plant, tryForestBlock);
 
-  return { decals, trees, forests, fields };
+  return { decals, gardens: scatterTownGardens(grid), trees, forests, fields };
+}
+
+// ── #437: town gardens ──────────────────────────────────────────────────────
+/**
+ * Nominal garden width in world pixels — and the number that keeps a hedge
+ * out of the road.
+ *
+ * A patch drawn `w` wide covers a ground diamond of half-diagonal `w / 64`
+ * tiles (see `decalDiagonal`: the art box is a square turned 45° to the tile
+ * grid, NOT the axis-aligned rect the blit looks like). At the widest scale
+ * that is 44.8 / 64 ≈ 0.70 tiles, and with `GARDEN_JITTER` on top the art
+ * reaches at most ~0.88 tiles from its lot's centre — so the faint outer
+ * feather can just touch a neighbouring lot inside the same 2×2 block, and
+ * cannot reach across the kerb of the street beyond it.
+ *
+ * Small on purpose, then: these are a flower bed and a hedge in one yard, not
+ * the patches that mood the open country (`DECAL_BASE_W` is 160 — two and a
+ * half tiles).
+ */
+const GARDEN_BASE_W = 40;
+const GARDEN_SCALE_MIN = 0.72, GARDEN_SCALE_MAX = 1.12;
+/**
+ * How far a garden's centre may wander from its lot's centre, in tiles. Kept
+ * well inside a half-tile: a garden that drifted to the lot's edge would hang
+ * over the kerb of the street beside it, and the street is not a garden.
+ */
+const GARDEN_JITTER = 0.18;
+/**
+ * The share of town lots that get a garden. Not every yard is planted — a
+ * town where every single lot carries the same handful of art reads as
+ * wallpaper — and the buildings cover most lots anyway, so this is really
+ * "how dressed are the EMPTY lots".
+ */
+const GARDEN_DENSITY = 0.55;
+
+/**
+ * #437 — the garden details laid on a town's blocks.
+ *
+ * WHY THIS IS NOT PART OF `scatterDecals`: that pass moods the open country
+ * and is forbidden from every owned tile (`buildable` refuses anything the
+ * occupancy claims, towns included). Gardens are the opposite — they exist
+ * ONLY on town ground. So they get their own pass, their own stream and their
+ * own family, and the two can be retuned without disturbing each other.
+ *
+ * One candidate per town-block tile, in tile order, each drawing once from a
+ * seeded stream: deterministic for a seed, and stable if the density or the
+ * art count changes later. The tile a garden sits on may well end up under a
+ * house — `townBuildings` decides that at paint time from the art manifest,
+ * which this pass has no access to and does not need: a garden under a
+ * building is simply never seen, and the lots the buildings do NOT cover are
+ * the empty lots the ticket is about.
+ *
+ * Returns [] when the map has no towns, so a caller can treat "no towns" and
+ * "no gardens" identically.
+ */
+export function scatterTownGardens(grid: Grid): Decal[] {
+  const blocks = townGroundBytes(grid);
+  if (!blocks) return [];
+  const rng = mulberry32((grid.seed ^ 0x6a12d3f7) >>> 0);
+  const gardens: Decal[] = [];
+  for (let ty = 0; ty < MAP_H; ty++) {
+    for (let tx = 0; tx < MAP_W; tx++) {
+      const i = ty * MAP_W + tx;
+      if (!blocks[i]) continue;
+      // Every candidate draws the same five numbers whether or not it is
+      // planted, so the density knob cannot reshuffle the whole town.
+      const roll = rng(), scale = rng(), rot = rng(), jx = rng(), jy = rng();
+      const variant = (rng() * 1024) | 0;
+      if (roll >= GARDEN_DENSITY) continue;
+      if (grid.terrain[i] === WATER) continue;
+      const w = GARDEN_BASE_W * (GARDEN_SCALE_MIN + scale * (GARDEN_SCALE_MAX - GARDEN_SCALE_MIN));
+      const gx = tx + (jx - 0.5) * 2 * GARDEN_JITTER;
+      const gy = ty + (jy - 0.5) * 2 * GARDEN_JITTER;
+      const [wx, wy] = worldOf(gx, gy);
+      gardens.push({
+        tx, ty,
+        kind: GARDEN_KIND,
+        variant,
+        wx, wy, w,
+        // Opaque: a garden is an object in a yard, not a wash over it.
+        alpha: 1,
+        flip: jx < 0.5,
+        // Turned on the ground like every other patch, but only a little: a
+        // hedge or a path reads as laid out, and a lot turned 40 degrees to
+        // its own street looks like a mistake rather than like variety.
+        rot: (rot - 0.5) * 0.5,
+        pad: 0,
+        reach: decalDiagonal(w) + 1,
+      });
+    }
+  }
+  return gardens;
 }
 
 /**
