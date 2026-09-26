@@ -344,6 +344,10 @@ import { showLeftSheet, type LeftSheetDoors, type LeftSheetHandle } from "./left
 import {
   buildEnding, showEndingScreen, type DecisiveSource, type EndingScreenHandle,
 } from "./ending";
+import {
+  createHistory, recordSample, recordEvent, recordDepotDelivery, finalizeHistory, buildSummary,
+  type MatchHistory,
+} from "./match-history";
 // STORY-01 — the campaign seam: a contract names the rival, the voice, the
 // ★ line and the three scenes around the match; the guide rides the wire.
 import { CAST, FACE_FOR_DIRECTION, faceOf, type Expression } from "../story/cast";
@@ -1084,6 +1088,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const quote = sellOnMarket(market, cargo, units, marketMs);
     p.purse[cargo] = (p.purse[cargo] ?? 0) - quote.units;
     p.money += quote.revenue;
+    // END-1 (#472): biggest sale highlight
+    try {
+      const seatIdx = p.i === 0 ? 0 : 1;
+      const t = (performance.now() - matchHistory.startMs) / 1000;
+      recordEvent(matchHistory, { kind: "sale", seat: seatIdx as 0 | 1, cargo, units: quote.units, revenue: quote.revenue, t });
+    } catch {}
     return quote.revenue;
   }
 
@@ -1369,6 +1379,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let rankVerdict: RankVerdict | null = null;
   /** When this match booted, for the ladder's required `duration` field. */
   const rankBootAt = performance.now();
+
+  // END-1 (#472): match history — sampled every 10 s: ★, money, events. Save-safe and MP-safe.
+  const matchHistory: MatchHistory = createHistory(rankBootAt);
 
   // ── #164: presence of the far seat ─────────────────────────────────────
   /**
@@ -2860,6 +2873,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the same shape descending and muted when they did not. No fail horn: the
     // ending card is already sombre, and the sound must not gloat either way.
     sfx.play(model.outcome === "victory" ? "victory" : "defeat");
+    // END-1 (#472): finalize history and build summary
+    try { finalizeHistory(matchHistory, performance.now()); } catch {}
+    let summary = null as ReturnType<typeof buildSummary> | null;
+    try { summary = buildSummary(matchHistory); } catch {}
+
     const openLedger = () => {
       endingView = showEndingScreen(ui.el, model, {
         playerPortrait: opts.portrait ?? "vex",
@@ -2867,12 +2885,44 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // `null` while a rated match waits on the room's verdict (the row
         // prints "filing…"), and the line itself once it has landed.
         rank: rankRuntime ? (rankVerdict ? rankLineFor(rankVerdict) : null) : undefined,
+        summary,
         onRestart: () => {
           restartArmed = true;
           clearSave(saveKey);
           // Keep the selected difficulty: this is a rematch, not first-run
           // onboarding. The ☰ menu's New Game remains the full reset.
           location.reload();
+        },
+        onRematch: () => {
+          // Same settings, new seed — clear save and reload without seed param
+          restartArmed = true;
+          clearSave(saveKey);
+          try {
+            const url = new URL(location.href);
+            url.searchParams.delete("seed");
+            // Keep map options and other flags, drop seed so a fresh one generates
+            history.replaceState(null, "", url.toString());
+          } catch {}
+          location.reload();
+        },
+        onSameMap: () => {
+          // Same seed — clear save and reload with current seed pinned
+          restartArmed = true;
+          clearSave(saveKey);
+          try {
+            const url = new URL(location.href);
+            url.searchParams.set("seed", String(seed));
+            history.replaceState(null, "", url.toString());
+          } catch {}
+          location.reload();
+        },
+        onMainMenu: () => {
+          restartArmed = true;
+          clearSave(saveKey);
+          if (opts.onQuitToMenu) opts.onQuitToMenu();
+          else {
+            try { location.href = "/"; } catch { location.reload(); }
+          }
         },
         // STORY-01: the ledger's third door — back to the campaign menu with
         // the contract recorded, instead of a reload into the same chapter.
@@ -2887,6 +2937,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             clearSave(saveKey);
             opts.onStoryExit?.();
           },
+          onNextContract: (() => {
+            const curIdx = storyChapter ? storyChapter.index : -1;
+            const next = curIdx >= 0 ? CHAPTERS[curIdx + 1] : null;
+            if (!next) return undefined;
+            return () => {
+              restartArmed = true;
+              clearSave(saveKey);
+              try {
+                const url = new URL(location.href);
+                url.searchParams.set("chapter", next.id);
+                url.searchParams.delete("seed");
+                history.replaceState(null, "", url.toString());
+              } catch {}
+              location.reload();
+            };
+          })(),
         } : {}),
       });
     };
@@ -3030,6 +3096,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const speaker = questSpeakerFor(def);
     toast(`Quest complete — ${questSpeakerName(speaker)}: +${reward.label}`, "good");
     quests = quests.filter((q) => q.id !== def.id);
+    // END-1 (#472): contracts (quests) taken
+    try {
+      const t = (performance.now() - matchHistory.startMs) / 1000;
+      recordEvent(matchHistory, { kind: "quest", seat: 0, questId: def.id, t });
+    } catch {}
     return true;
   }
 
@@ -4844,9 +4915,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           bonus: bonus > 0 ? bonus : r.cityBonus,
         });
         syncSeatCities(me);
+        // END-1 (#472): first to each town tier
+        try {
+          const t = (performance.now() - matchHistory.startMs) / 1000;
+          const lvl = Math.min(r.cityLevel + 1, TOWN_UPGRADES.length);
+          recordEvent(matchHistory, { kind: "town", seat: 0, townId: targetTown.id, level: lvl, t });
+        } catch {}
       } else {
         if (bonus > 0) me.townBonus = bonus;
         me.townLevel = Math.min(r.cityLevel + 1, TOWN_UPGRADES.length);
+        try {
+          const t = (performance.now() - matchHistory.startMs) / 1000;
+          const lvl = Math.min(r.cityLevel + 1, TOWN_UPGRADES.length);
+          // seat-level town upgrade — use townId -1 as sentinel
+          recordEvent(matchHistory, { kind: "town", seat: 0, townId: -1, level: lvl, t });
+        } catch {}
       }
       // L17 (#245): the town on the map takes the step with the seat — the
       // one the buyer's Factory touches — with the growth moment (art swap,
@@ -6162,6 +6245,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function finishStake(stake: MapBattleStake, won: boolean | null): ReturnType<typeof settleMapBattle> {
     const verdict = settleMapBattle(eco, stake, won);
+    // END-1 (#472): battles won highlight
+    try {
+      if (won !== null) {
+        const playerIsChallenger = stake.kind === "fightoff" ? true : stake.challengerId === me.id;
+        const playerWon = stake.kind === "fightoff" ? won : (playerIsChallenger ? won : !won);
+        const winnerSeat = playerWon ? 0 : 1;
+        const loserSeat = playerWon ? 1 : 0;
+        const t = (performance.now() - matchHistory.startMs) / 1000;
+        recordEvent(matchHistory, { kind: "battle", winner: winnerSeat as 0 | 1, loser: loserSeat as 0 | 1, t });
+      }
+    } catch {}
     if (verdict === "closed" && stake.kind === "town") {
       const loserId = won ? (stake.holderId ?? null) : stake.challengerId;
       if (loserId) {
@@ -7637,6 +7731,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // for the integer credit and retain any sub-unit remainder per
             // depot (one map serves both seats: depot ids are unique).
             earn(seat, { [cargoes[0][0]]: whole } as Purse);
+            // END-1 (#472): best route highlight — track per-depot totals
+            try {
+              const seatIdx = seat.i === 0 ? 0 : 1;
+              recordDepotDelivery(matchHistory, depot.id, seatIdx as 0 | 1, cargoes[0][0], whole);
+              // Also ensure depot event exists for first time
+              if (!matchHistory.depotTotals.has(depot.id) || matchHistory.depotTotals.get(depot.id)!.total === whole) {
+                const t = (performance.now() - matchHistory.startMs) / 1000;
+                // Record first time this depot produced
+                if (!matchHistory.events.some((e) => e.kind === "depot" && e.depotId === depot.id)) {
+                  recordEvent(matchHistory, { kind: "depot", seat: seatIdx as 0 | 1, depotId: depot.id, cargo: cargoes[0][0], t });
+                }
+              }
+            } catch {}
             // TUT-03 (#422): the guide's own walk — the first cargo that pays
             // is the Logistics step's door, and it fires once per game.
             if (seat === me && !voicedIncome) {
@@ -8026,6 +8133,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // L17 (#245): the rival's investment shows on the map too — its town
     // takes the same growth step, with the same moment, as the player's.
     const grownRival = rivalCity ? growCity(rivalCity, rival) : growTownForSeat(rival);
+    // END-1 (#472): first to each town tier — rival side
+    try {
+      const t = (performance.now() - matchHistory.startMs) / 1000;
+      const lvl = rivalCity ? Math.min(cityOf(rivalCity, rival).level, TOWN_UPGRADES.length) : Math.min(rival.townLevel, TOWN_UPGRADES.length);
+      const tid = rivalCity ? rivalCity.id : -1;
+      recordEvent(matchHistory, { kind: "town", seat: 1, townId: tid, level: lvl, t });
+    } catch {}
     // L14 (#229): say it in the feed, in the same words the player's own
     // upgrade uses (L5) — the rival climbing the city ladder is one of the
     // three things this ticket is about, and a ladder nobody can see is a
@@ -8983,6 +9097,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ui.feed(`${taker.name} took ${poster.name}'s offer: ${offerLine(r)}.`);
     if (r.from === 0 && seat !== 0) toast(`${taker.name} took your offer: ${offerLine(r)}.`, "good");
     if (isMp()) publishNet(performance.now(), true);
+    // END-1 (#472): tenders taken (trade offers)
+    try {
+      const t = (performance.now() - matchHistory.startMs) / 1000;
+      recordEvent(matchHistory, {
+        kind: "offer",
+        from: r.from as 0 | 1,
+        to: seat as 0 | 1,
+        give: r.give,
+        giveN: r.giveN,
+        want: r.want,
+        wantN: r.wantN,
+        t,
+      });
+    } catch {}
     return null;
   }
 
@@ -12675,6 +12803,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (!isGuest()) marketEventTick();
       } else marketLast = t;
       if (sim) economyTick(t);
+      // END-1 (#472): sample ★ and $ every 10 s for the summary charts
+      if (sim) {
+        try {
+          recordSample(
+            matchHistory,
+            t,
+            vpFor(score, me.id),
+            vpFor(score, rival.id),
+            me.money,
+            rival.money,
+          );
+        } catch { /* history must never break the frame */ }
+      }
       // ECON-1 (#421): the rival works the market on its own clock.
       if (sim) rivalMarketTick(t);
       // L8 (#222): the optional quests — pay what is done, keep 2–3 on the
