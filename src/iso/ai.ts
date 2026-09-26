@@ -2512,7 +2512,7 @@ function platformSpotsAround(
       for (let tx = bx - 3 - (w - 1); tx <= bx + bw + 2; tx++) {
         const chosen = resolveAnchor(grid, factories, ownerId, tx, ty, view, anchor);
         if (!chosen) continue;
-        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen, locked) !== "ok") continue;
+        if (platformRefusal(grid, rail.structures, factories, ownerId, tx, ty, view, chosen, locked, rail.rail) !== "ok") continue;
         out.push({ tx, ty, view, anchor: chosen });
         if (out.length >= limit) return out;
       }
@@ -2787,7 +2787,7 @@ export function executeRailMove(
     }
     case "platform": {
       const factories = state.factories;
-      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor, lockedIndustryIdsFor(state, owner)) !== "ok") {
+      if (platformRefusal(grid, rail.structures, factories, ownerId, move.tx, move.ty, move.view, move.anchor, lockedIndustryIdsFor(state, owner), rail.rail) !== "ok") {
         return null;
       }
       const s = placePlatform(rail, owner, ownerId, move.tx, move.ty, move.view, move.anchor);

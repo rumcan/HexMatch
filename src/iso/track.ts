@@ -64,6 +64,21 @@ export const OPPOSITE: Record<number, number> = {
   [ROAD_DE]: ROAD_DW, [ROAD_DS]: ROAD_DN, [ROAD_DW]: ROAD_DE, [ROAD_DN]: ROAD_DS,
 };
 
+/** D4: direction of a straight resolved eight-way mask. Raw stored diagonal
+ * bits must first be resolved at both endpoints; PRESENT is not a direction. */
+export function straightTrackDirection(mask: number): number | undefined {
+  return [...DIRS, ...DIAGONAL_DIRS].find((d) => mask === (d | OPPOSITE[d]));
+}
+
+/** Shared model/geometry crossing policy. Straight axis/axis and axis/diagonal
+ * intersections are legal, never parallel runs, bends, junctions or two
+ * diagonals in an X. Diagonal arguments use logical ROAD_D* directions. */
+export function crossingMasksOk(roadMask: number, railMask: number, roadDiagonal = 0, railDiagonal = 0): boolean {
+  const a = straightTrackDirection((roadMask & 15) | roadDiagonal);
+  const b = straightTrackDirection((railMask & 15) | railDiagonal);
+  return a !== undefined && b !== undefined && a !== b && !(a > 15 && b > 15);
+}
+
 /** D1 is a local development experiment, not a save/wire format field. */
 export function resolveDiagonalRoads(
   search = typeof location === "undefined" ? "" : location.search,
@@ -786,6 +801,17 @@ export function roadDiagNeighbours(t: Track, x: number, y: number, kind?: TrackK
     if (roadDiagLinked(t, x, y, nx, ny)) out.push([nx, ny]);
   }
   return out;
+}
+
+/** D4: a road's complete physical mask for crossing rules and cached paint.
+ * Uses the same local flag, endpoint presence and tier gates as road routing. */
+export function roadConnectionMask(t: Track, x: number, y: number): number {
+  if (!inMapT(x, y)) return 0;
+  let mask = (t.road[tIdx(x, y)] | t.dirt[tIdx(x, y)]) & 15;
+  if (t.diagonalRoads) for (const d of DIAGONAL_DIRS) {
+    if (roadDiagLinked(t, x, y, x + DIR[d][0], y + DIR[d][1])) mask |= d;
+  }
+  return mask;
 }
 
 /** Terrain/buildings block the two flanks. Rough land alone is not a wall. */

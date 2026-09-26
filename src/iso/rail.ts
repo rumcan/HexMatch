@@ -34,7 +34,7 @@
 //   in v1, so two trains sharing a component could collide. Enforced on
 //   assignment AND on a build that would merge two components with a train each.
 //
-//   RAIL AT A CROSSING ONLY ON A STRAIGHT ROAD, PERPENDICULAR. A level crossing
+//   RAIL AT A CROSSING ONLY ON A STRAIGHT ROAD, TRANSVERSE. A level crossing
 //   preserves the road's bits, owner and upgrade provenance exactly; the rail
 //   gets its own layer beside it. No curves, no junctions, and no transfer
 //   between the road graph and the rail graph at a crossing.
@@ -43,7 +43,8 @@ import { MAP_W } from "../game/config";
 import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
-  addCost, mergedPresent, octPath, type DragPreview, type Purse, type Track,
+  addCost, mergedPresent, octPath, crossingMasksOk, roadConnectionMask, roadDiagLinked,
+  DIAGONAL_DIRS, straightTrackDirection, type DragPreview, type Purse, type Track,
 } from "./track";
 import { FIELD_OCC, GRASS, ROUGH, SAND, factoryFootprintOf, idx, type Grid } from "./grid";
 import {
@@ -321,36 +322,19 @@ export const railTerrainOk = (grid: Grid, tx: number, ty: number): boolean => {
 export const roadAt = (track: Track, tx: number, ty: number): number =>
   inMapT(tx, ty) ? (track.dirt[tIdx(tx, ty)] | track.road[tIdx(tx, ty)]) & 0b1111 : 0;
 
-const isStraight = (mask: number): boolean => mask === (NE | SW) || mask === (SE | NW);
-
 /**
  * A level crossing: rail may be laid over a road tile only when the road is an
- * EMPTY STRAIGHT segment and the rail crosses it PERPENDICULARLY. Curves and
+ * EMPTY STRAIGHT segment and the rail crosses it (axis/axis or axis/diagonal). Curves and
  * junctions are refused, and the road's bits, owner and upgrade provenance are
  * never written — the crossing exists purely as two overlapping tile models.
  */
-export function crossingOk(track: Track, tx: number, ty: number, railMask: number): boolean {
-  return crossingMasksOk(roadAt(track, tx, ty), railMask);
+export function crossingOk(track: Track, tx: number, ty: number, railMask: number, railDiagonal = 0): boolean {
+  const road = roadConnectionMask(track, tx, ty);
+  return crossingMasksOk(road & 15, railMask, road & ~15, railDiagonal);
 }
 
-/**
- * The SHAPE half of `crossingOk`, on masks alone.
- *
- * Exported because the RENDERER has to classify a tile as a crossing from the
- * layer bytes it was handed, with no `Track` in reach — and the geometry that
- * draws the planks must agree with the rule that allowed them, or a legal
- * crossing would be drawn as track laid across an open road. `rail-geometry.ts`
- * cannot import this (a value import there would close a runtime cycle through
- * `track.ts` and `renderer.ts`), so it re-states these four lines and the unit
- * test drives all 16 × 16 mask pairs through both to prove they agree.
- */
-export function crossingMasksOk(roadMask: number, railMask: number): boolean {
-  const road = roadMask & 0b1111, rail = railMask & 0b1111;
-  if (road === 0) return false;
-  if (!isStraight(road)) return false;      // no curves or junctions at a crossing
-  if (!isStraight(rail)) return false;      // ditto for the rail
-  return road !== rail;                     // perpendicular, never shared
-}
+// Shared leaf policy in track.ts: geometry must not import the rail simulation.
+export { crossingMasksOk } from "./track";
 
 // ── structures ────────────────────────────────────────────────────────────
 export type RailKind = "platform" | "depot";
@@ -766,6 +750,16 @@ function railEdit(state: RailState, tiles: [number, number][]) {
       const arms = railArms(state, owner, x, y);
       return arms.some((a) => !old.arms.includes(a)) && !railArmsTurnOk(arms);
     }),
+    crossingRefusal: (track: Track, planned: ReadonlySet<number>, links: ReadonlyMap<number, number>): RailRefusal => {
+      for (const [i, old] of before) {
+        const x = i % MAP_W, y = Math.floor(i / MAP_W), owner = effectiveOwner(state, x, y);
+        if (!owner || !roadConnectionMask(track, x, y)
+          || !railArms(state, owner, x, y).some((a) => !old.arms.includes(a))) continue;
+        const why = crossingRefusalAt(track, state, owner, x, y, planned, links);
+        if (why !== "ok") return why;
+      }
+      return "ok";
+    },
     rollback: () => {
       for (const [i, old] of before) {
         state.rail.tile[i] = old.tile;
@@ -788,6 +782,7 @@ export function previewRailBuild(
 // ── refusals: one vocabulary for the preview, the click, the rival, the host ─
 export type RailRefusal =
   | "ok" | "off-map" | "water" | "occupied" | "road-parallel" | "crossing-curve"
+  | "diagonal-crossing" | "axis-only"
   | "foreign-rail" | "component-conflict" | "no-anchor" | "anchor-taken"
   | "no-network" | "exit-blocked" | "overlap" | "anchor-range" | "train-in-way"
   | "not-yours" | "missing" | "track-blocked"
@@ -812,6 +807,8 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "off-map": "That is off the map.",
   water: "Rail cannot be laid on water.",
   occupied: "Something else stands there.",
+  "diagonal-crossing": "Diagonal tracks cannot cross in an X. Use an axis crossing.",
+  "axis-only": "Platforms and train depots need axis-only track; move diagonal bends beyond their lanes.",
   "road-parallel": "Rail may only cross a straight road, never run along it.",
   "crossing-curve": "A crossing needs a straight empty road and a straight rail.",
   "foreign-rail": "That rail belongs to the other player.",
@@ -862,6 +859,40 @@ function prospectiveMask(
   return mask & RAIL_BITS;
 }
 
+/** Explicit gesture links, including the two logical reverse diagonals. */
+function plannedRailLinks(tiles: readonly (readonly [number, number])[]): Map<number, number> {
+  const links = new Map<number, number>();
+  for (let i = 1; i < tiles.length; i++) {
+    const [ax, ay] = tiles[i - 1], [bx, by] = tiles[i];
+    const d = [...DIRS, ...DIAGONAL_DIRS].find((d) => ax + DIR[d][0] === bx && ay + DIR[d][1] === by);
+    if (d === undefined || !inMapT(ax, ay) || !inMapT(bx, by)) continue;
+    links.set(tIdx(ax, ay), (links.get(tIdx(ax, ay)) ?? 0) | d);
+    links.set(tIdx(bx, by), (links.get(tIdx(bx, by)) ?? 0) | OPPOSITE[d]);
+  }
+  return links;
+}
+
+function crossingRefusalAt(track: Track, state: RailState, owner: number, x: number, y: number,
+  planned?: ReadonlySet<number>, links?: ReadonlyMap<number, number>): RailRefusal {
+  const road = roadConnectionMask(track, x, y);
+  if (!road) return "ok";
+  let rail = links ? effectiveMask(state, x, y) | (links.get(tIdx(x, y)) ?? 0)
+    : prospectiveMask(state, x, y, owner, planned);
+  rail &= ~RAIL_PRESENT;
+  for (const d of DIAGONAL_DIRS) if (diagLinked(state.rail, x, y, x + DIR[d][0], y + DIR[d][1])) rail |= d;
+  if ((road & ~15) && (rail & ~15)) return "diagonal-crossing";
+  if (straightTrackDirection(road) !== undefined && road === rail) return "road-parallel";
+  return crossingMasksOk(road & 15, rail & 15, road & ~15, rail & ~15) ? "ok" : "crossing-curve";
+}
+
+/** Both endpoints of a proposed link see the other square diagonal, even
+ * when the crossing has no shared tile and belongs to a different owner. */
+function diagonalConflict(track: Track, state: RailState, tiles: [number, number][], n: number): boolean {
+  const [x, y] = tiles[n];
+  return [tiles[n - 1], tiles[n + 1]].some((p) => p && isDiagStep(x, y, p[0], p[1])
+    && (roadDiagLinked(track, x, p[1], p[0], y) || diagLinked(state.rail, x, p[1], p[0], y)));
+}
+
 /**
  * Everything that makes one rail tile illegal — as a CODE, so the preview, the
  * click, the rival AI and a host's validation all answer the same question with
@@ -871,6 +902,7 @@ export function railTileRefusal(
   grid: Grid, track: Track, state: RailState, ownerId: number, tx: number, ty: number,
   planned?: ReadonlySet<number>,
   bridges?: ReadonlySet<number>,
+  links?: ReadonlyMap<number, number>,
 ): RailRefusal {
   if (!inMapT(tx, ty)) return "off-map";
   // R2 (#266): a tile the drag's own bridge plan covers is RIVER WATER a deck
@@ -904,20 +936,15 @@ export function railTileRefusal(
     // its water tile answers "water" above before this is ever reached.
     return "occupied";
   }
+  // Stopping lanes stay axis-only even if a later diagonal drag would form
+  // an otherwise legal 45-degree WYE at one of their ordinary rail tiles.
+  if (((links?.get(tIdx(tx, ty)) ?? 0) & ~15) && state.structures.some((s) => s.kind === "platform"
+    && platformTrack(s).some(([x, y]) => x === tx && y === ty))) return "axis-only";
   if (trainOccupies(state, tx, ty)) return "train-in-way";
   const owner = state.rail.owner[tIdx(tx, ty)];
   if ((state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) && owner !== ownerId) return "foreign-rail";
-  const road = roadAt(track, tx, ty);
-  if (road !== 0) {
-    // A crossing is judged on the FINAL shape: a straight drag across a straight
-    // road is legal while a curve, a corner or a junction is not.
-    const finalMask = prospectiveMask(state, tx, ty, ownerId, planned);
-    // The road itself must be an empty straight segment ...
-    if (!isStraight(road)) return "crossing-curve";
-    // ... and the rail must be a straight line ACROSS it, never along it.
-    if (road === finalMask) return "road-parallel";
-    if (!isStraight(finalMask) || !crossingOk(track, tx, ty, finalMask)) return "crossing-curve";
-  }
+  const crossing = crossingRefusalAt(track, state, ownerId, tx, ty, planned, links);
+  if (crossing !== "ok") return crossing;
   // E4 (#268): the slope step to every tile this one would JOIN — a planned
   // tile of the same drag, or the owner's standing rail (the same connection
   // model `prospectiveMask` uses). The drag's own SHAPE rules (the ramp run and
@@ -929,8 +956,9 @@ export function railTileRefusal(
   if (steep) return steep;
   // A standalone tile still auto-links. Whole drags probe incrementally in
   // buildRail, with their explicit links and planned diagonals in hand.
-  if (!planned && previewRailBuild(grid, track, state, ownerId, [[tx, ty]]).why === "too-sharp") {
-    return "too-sharp";
+  if (!planned) {
+    const why = previewRailBuild(grid, track, state, ownerId, [[tx, ty]]).why;
+    if (why !== "ok") return why;
   }
   return "ok";
 }
@@ -1065,6 +1093,7 @@ function buildRailAttempt(
   const guardMerge = trainsOf(state, ownerId).length > 1;
   // The whole gesture is the "final shape" a crossing is judged against.
   const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
+  const links = plannedRailLinks(tiles);
   // R2 (#266): …and the whole gesture is the bridge, too — a deck exists only
   // as part of a straight crossing with both banks inside this same drag.
   const bridgePlan = railBridgePlan(grid, track, state, ownerId, tiles, planned);
@@ -1091,8 +1120,8 @@ function buildRailAttempt(
       return { ok: built.length > 0, why: "too-sharp", cost: railCostOf(charged, decks), built };
     }
     const why = slopeWhy.get(n)
-      ?? (diagOverRoad(track, tiles, n) ? "crossing-curve"
-        : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles));
+      ?? (diagonalConflict(track, state, tiles, n) ? "diagonal-crossing"
+        : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles, links));
     if (why !== "ok") return { ok: built.length > 0, why, cost: railCostOf(charged, decks), built };
     // Rail you already own is stepped over for free — a drag that redraws part
     // of an existing line (or crosses its own track at a junction) pays only
@@ -1115,6 +1144,11 @@ function buildRailAttempt(
       state.rail.tile[tIdx(tx, ty)] |= OPPOSITE[ortho];
     }
     proposeRailAutolinks(state, [[tx, ty]], plannedDiag);
+    const crossingWhy = edit.crossingRefusal(track, planned, links);
+    if (crossingWhy !== "ok") {
+      edit.rollback();
+      return { ok: built.length > 0, why: crossingWhy, cost: railCostOf(charged, decks), built };
+    }
     if (edit.tooSharp()) {
       edit.rollback();
       return { ok: built.length > 0, why: "too-sharp", cost: railCostOf(charged, decks), built };
@@ -1165,14 +1199,6 @@ export function railBridgePlan(
   );
 }
 
-/** Would tile `n` of a drag carry a diagonal link while standing on a road? */
-function diagOverRoad(track: Track, tiles: [number, number][], n: number): boolean {
-  const [x, y] = tiles[n];
-  if (roadAt(track, x, y) === 0) return false;
-  const p = tiles[n - 1], q = tiles[n + 1];
-  return (!!p && isDiagStep(p[0], p[1], x, y)) || (!!q && isDiagStep(x, y, q[0], q[1]));
-}
-
 /** Tear up one rail tile: bits recomputed, nothing else on the map touched. */
 /**
  * The drag preview for the rail tool, shaped exactly like `previewDrag`'s
@@ -1203,6 +1229,7 @@ export function railPreview(
   const path = octPath(ax, ay, bx, by, xFirst);
   const probe = previewRailBuild(grid, track, state, ownerId, path);
   const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
+  const links = plannedRailLinks(path);
   // R2 (#266): the drag's crossing — the deck tiles, and the price each buys.
   const bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
   const bridgeTiles = bridgePlan.deckTiles;      // TILE indices — see `BridgePlan`
@@ -1222,7 +1249,7 @@ export function railPreview(
     blocked.push(path[from]);
     for (let j = from + 1; j < path.length; j++) {
       const [bx, by] = path[j];
-      if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles) === "ok") break;
+      if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles, links) === "ok") break;
       blocked.push([bx, by]);
     }
   };
@@ -1233,9 +1260,8 @@ export function railPreview(
     if (i === probe.built.length && probe.why !== "ok") { noteObstacle(i, probe.why); break; }
     const shape = slopeWhy.get(i);
     if (shape) { noteObstacle(i, shape); break; }
-    if (diagOverRoad(track, path, i)) { noteObstacle(i, "crossing-curve"); break; }
     if (!already) {
-      const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned, bridgeTiles);
+      const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned, bridgeTiles, links);
       if (refusal !== "ok") { noteObstacle(i, refusal); break; }
       // R2 (#266): a deck tile pays the deck price; everything else pays the
       // flat rail tile, exactly as before.
@@ -1245,7 +1271,7 @@ export function railPreview(
         // paints it as "not this drag", exactly like the road preview.
         for (let j = i; j < path.length; j++) {
           const [ux, uy] = path[j];
-          const tail = railTileRefusal(grid, track, state, ownerId, ux, uy, planned, bridgeTiles);
+          const tail = railTileRefusal(grid, track, state, ownerId, ux, uy, planned, bridgeTiles, links);
           // The purse already stopped the drag; the obstacle only paints the
           // tiles it claims. Don't invent a refusal the affordable prefix
           // didn't hit.
@@ -1253,7 +1279,7 @@ export function railPreview(
             truncated = true;
             for (let k = j; k < path.length; k++) {
               const [bx, by] = path[k];
-              if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles) === "ok") break;
+              if (railTileRefusal(grid, track, state, ownerId, bx, by, planned, bridgeTiles, links) === "ok") break;
               blocked.push([bx, by]);
             }
             break;
@@ -1375,7 +1401,9 @@ export function platformRefusal(
    * a Depot.
    */
   locked?: ReadonlySet<number>,
+  rail?: Rail,
 ): RailRefusal {
+  if (!RAIL_VIEWS.includes(view)) return "axis-only";
   if (!inMapT(tx, ty)) return "off-map";
   const [w, h] = PLATFORM_FOOTPRINT[view];
   if (!inMapT(tx + w - 1, ty + h - 1)) return "off-map";
@@ -1389,6 +1417,7 @@ export function platformRefusal(
       || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
+  if (rail && platformTrackAt(tx, ty, view).some(([x, y]) => diagNeighbours(rail, x, y).length > 0)) return "axis-only";
   // The track side must be free to lay the three stopping tiles on.
   for (const [x, y] of platformTrackAt(tx, ty, view)) {
     if (!railTerrainOk(grid, x, y)) return "track-blocked";
@@ -1464,9 +1493,11 @@ export function layPlatformTrack(grid: Grid, track: Track, state: RailState, s: 
 export function depotRefusal(
   grid: Grid, state: RailState, ownerId: number, tx: number, ty: number, view: RailView,
 ): RailRefusal {
+  if (!RAIL_VIEWS.includes(view)) return "axis-only";
   if (!inMapT(tx, ty)) return "off-map";
   const [w, h] = DEPOT_FOOTPRINT;
   if (!inMapT(tx + w - 1, ty + h - 1)) return "off-map";
+  if (footprintTiles({ tx, ty, w, h }).some(([x, y]) => diagNeighbours(state.rail, x, y).length > 0)) return "axis-only";
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     if (!railTerrainOk(grid, tx + x, ty + y)) return "water";
     if (grid.occupancy[tIdx(tx + x, ty + y)] >= 0 || grid.occupancy[tIdx(tx + x, ty + y)] === FIELD_OCC) return "occupied";
@@ -1474,7 +1505,7 @@ export function depotRefusal(
     // Depot lot, or rail that is already there.
     const b = grid.builtAt?.(tx + x, ty + y);
     if (b === "depot" || b === "plant" || b === "platform" || b === "bridge"
-      || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
+      || b === "dam" || b === "rail" || b === "rail-x" || b === "rail-y") return "occupied";
   }
   if (state.structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   // E4 (#268): the 2×2 shed needs level ground, like every other footprint.
@@ -1492,7 +1523,7 @@ export function depotRefusal(
   if (!inMapT(nx, ny) || !railTerrainOk(grid, nx, ny)) return "exit-blocked";
   const exitBuilt = grid.builtAt?.(nx, ny);
   const blocked = grid.occupancy[tIdx(nx, ny)] >= 0 || grid.occupancy[tIdx(nx, ny)] === FIELD_OCC || structureAt(state, nx, ny) !== null
-    || exitBuilt === "depot" || exitBuilt === "plant" || exitBuilt === "platform" || exitBuilt === "bridge"
+    || exitBuilt === "depot" || exitBuilt === "plant" || exitBuilt === "platform" || exitBuilt === "bridge" || exitBuilt === "dam"
     || (hasRail(state.rail, nx, ny) && state.rail.owner[tIdx(nx, ny)] !== ownerId);
   return blocked ? "exit-blocked" : "no-network";
 }

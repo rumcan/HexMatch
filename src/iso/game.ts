@@ -3392,7 +3392,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // so building one never switches the other seat's Depot off.
     const why = platformRefusal(
       grid, rail.structures, railPlants(), ownerId, tx, ty, view, undefined,
-      lockedIndustryIdsFor(eco, p.id),
+      lockedIndustryIdsFor(eco, p.id), rail.rail,
     );
     if (why !== "ok") {
       if (p.human) {
@@ -8599,7 +8599,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             ? payload.view as RailView : "se";
           if (tx !== null && ty !== null) {
             const why = what === "platform"
-              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view, undefined, lockedIndustryIdsFor(eco, p.id))
+              ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view, undefined, lockedIndustryIdsFor(eco, p.id), rail.rail)
               : depotRefusal(grid, rail, p.i + 1, tx, ty, view);
             if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
             else if (what === "platform") placeRailPlatform(tx, ty, p, view);
@@ -9040,7 +9040,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // the SAME refusal function the click runs, so the two cannot disagree.
       const kind: "platform" | "depot" = tool === "platform" ? "platform" : "depot";
       const why = kind === "platform"
-        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id))
+        ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id), rail.rail)
         : depotRefusal(grid, rail, me.i + 1, tx, ty, railView);
       const ok = why === "ok";
       const [fw, fh] = footprintFor(kind, railView);
