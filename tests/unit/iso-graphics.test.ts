@@ -52,46 +52,46 @@ describe("GFX-01 graphics store", () => {
   });
 
   it("precedence: defaults < storage < URL flags", () => {
-    expect(parseSettings(null, { quality: null, miniature: null, performance: null }))
+    expect(parseSettings(null, { quality: null, miniature: null, performance: null, clouds: null }))
       .toEqual(DEFAULT_SETTINGS);
     expect(parseSettings(JSON.stringify({ quality: "low", miniature: true }),
-      { quality: null, miniature: null, performance: null }))
-      .toEqual({ quality: "low", miniature: true, performance: false });
+      { quality: null, miniature: null, performance: null, clouds: null }))
+      .toEqual({ quality: "low", miniature: true, performance: false, clouds: true });
     // a half-written blob still merges over the defaults
     expect(parseSettings(JSON.stringify({ quality: "medium" }),
-      { quality: null, miniature: null, performance: null }))
-      .toEqual({ quality: "medium", miniature: false, performance: false });
-    expect(parseSettings("not json", { quality: null, miniature: null, performance: null }))
+      { quality: null, miniature: null, performance: null, clouds: null }))
+      .toEqual({ quality: "medium", miniature: false, performance: false, clouds: true });
+    expect(parseSettings("not json", { quality: null, miniature: null, performance: null, clouds: null }))
       .toEqual(DEFAULT_SETTINGS);
     expect(parseSettings(JSON.stringify({ quality: "low" }),
-      { quality: "high", miniature: true, performance: true }))
-      .toEqual({ quality: "high", miniature: true, performance: true });
+      { quality: "high", miniature: true, performance: true, clouds: null }))
+      .toEqual({ quality: "high", miniature: true, performance: true, clouds: true });
   });
 
   it.skip("PERF-01 migration: a pre-performance blob simply means performance OFF", () => {
     const old = JSON.stringify({ quality: "low", miniature: true });
-    expect(parseSettings(old, { quality: null, miniature: null, performance: null }))
-      .toEqual({ quality: "low", miniature: true, performance: false });
+    expect(parseSettings(old, { quality: null, miniature: null, performance: null, clouds: null }))
+      .toEqual({ quality: "low", miniature: true, performance: false, clouds: true });
     // an explicit stored choice still wins over the migration default
     const newer = JSON.stringify({ quality: "low", miniature: true, performance: true });
-    expect(parseSettings(newer, { quality: null, miniature: null, performance: null }))
-      .toEqual({ quality: "low", miniature: true, performance: true });
+    expect(parseSettings(newer, { quality: null, miniature: null, performance: null, clouds: null }))
+      .toEqual({ quality: "low", miniature: true, performance: true, clouds: true });
     // garbage in the field is ignored (the default stands)
     const junk = JSON.stringify({ quality: "low", miniature: true, performance: "yes" });
-    expect(parseSettings(junk, { quality: null, miniature: null, performance: null }).performance)
+    expect(parseSettings(junk, { quality: null, miniature: null, performance: null, clouds: null }).performance)
       .toBe(false);
   });
 
   it("reads the URL flags it documents, and ignores garbage", () => {
     expect(urlOverrides("?quality=low&miniature=1"))
-      .toEqual({ quality: "low", miniature: true, performance: null });
-    expect(urlOverrides("?miniature=off")).toEqual({ quality: null, miniature: false, performance: null });
+      .toEqual({ quality: "low", miniature: true, performance: null, clouds: null });
+    expect(urlOverrides("?miniature=off")).toEqual({ quality: null, miniature: false, performance: null, clouds: null });
     expect(urlOverrides("?quality=ultra&miniature=maybe"))
-      .toEqual({ quality: null, miniature: null, performance: null });
-    expect(urlOverrides("?performance=1")).toEqual({ quality: null, miniature: null, performance: true });
-    expect(urlOverrides("?performance=off")).toEqual({ quality: null, miniature: null, performance: false });
-    expect(urlOverrides("?performance=maybe")).toEqual({ quality: null, miniature: null, performance: null });
-    expect(urlOverrides(undefined)).toEqual({ quality: null, miniature: null, performance: null });
+      .toEqual({ quality: null, miniature: null, performance: null, clouds: null });
+    expect(urlOverrides("?performance=1")).toEqual({ quality: null, miniature: null, performance: true, clouds: null });
+    expect(urlOverrides("?performance=off")).toEqual({ quality: null, miniature: null, performance: false, clouds: null });
+    expect(urlOverrides("?performance=maybe")).toEqual({ quality: null, miniature: null, performance: null, clouds: null });
+    expect(urlOverrides(undefined)).toEqual({ quality: null, miniature: null, performance: null, clouds: null });
   });
 
   it("setGraphics persists, notifies only on change, and survives private mode", () => {
@@ -104,7 +104,7 @@ describe("GFX-01 graphics store", () => {
       setGraphics({ quality: "medium" });
       expect(seen).toHaveLength(1);
       expect(JSON.parse(localStorage.getItem(GRAPHICS_STORAGE_KEY)!))
-        .toEqual({ quality: "medium", miniature: false, performance: false });
+        .toEqual({ quality: "medium", miniature: false, performance: false, clouds: true });
       setGraphics({ quality: "medium" });          // a no-op notifies nobody
       expect(seen).toHaveLength(1);
       setGraphics({ miniature: true });
@@ -132,7 +132,7 @@ describe("GFX-01 graphics store", () => {
     withStorage(() => {
       (globalThis as Record<string, unknown>).location = { search: "?quality=low&miniature=1&performance=1" };
       resetGraphicsForTests();
-      expect(currentGraphics()).toEqual({ quality: "low", miniature: true, performance: true });
+      expect(currentGraphics()).toEqual({ quality: "low", miniature: true, performance: true, clouds: true });
       expect(localStorage.getItem(GRAPHICS_STORAGE_KEY)).toBe(null);
     });
   });
@@ -143,7 +143,7 @@ describe("GFX-01 graphics store", () => {
 describe.skip("PERF-01 render policy", () => {
   it("OFF: every quality keeps the full rendering (Medium/High look preserved)", () => {
     for (const quality of ["low", "medium", "high"] as const) {
-      const p = renderPolicy({ quality, miniature: true, performance: false });
+      const p = renderPolicy({ quality, miniature: true, performance: false, clouds: true });
       expect(p.quality).toBe(quality);
       expect(p.detail).toBe(QUALITY_MAX_DETAIL[quality]);
       expect(p.performance).toBe(false);
@@ -157,7 +157,7 @@ describe.skip("PERF-01 render policy", () => {
 
   it("ON: flat static terrain, no decals, DPR capped at 1 — at every quality", () => {
     for (const quality of ["low", "medium", "high"] as const) {
-      const p = renderPolicy({ quality, miniature: false, performance: true });
+      const p = renderPolicy({ quality, miniature: false, performance: true, clouds: true });
       // quality stays an ART axis: the atlas cap still follows the preset
       expect(p.detail).toBe(QUALITY_MAX_DETAIL[quality]);
       expect(p.texturedGround).toBe(false);
@@ -169,7 +169,7 @@ describe.skip("PERF-01 render policy", () => {
   });
 
   it("suppresses the miniature EFFECTIVELY without touching the stored choice", () => {
-    const stored = { quality: "high" as const, miniature: true, performance: true };
+    const stored = { quality: "high" as const, miniature: true, performance: true, clouds: true };
     expect(renderPolicy(stored).miniature).toBe(false);      // off for the frame
     // turning performance mode off restores the stored preference
     expect(renderPolicy({ ...stored, performance: false }).miniature).toBe(true);

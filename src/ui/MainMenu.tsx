@@ -183,7 +183,7 @@ export default function MainMenu({ onPlay, onContinue }: MainMenuProps) {
             Play<span className="mb-tag">{resume ? "start a new game" : STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "sandbox · rooms"}</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="click" onClick={() => setSettings(true)}>
-            Settings<span className="mb-tag">graphics · miniature · performance · sound</span>
+            Settings<span className="mb-tag">graphics · miniature · performance · clouds · sound</span>
           </button>
           <button type="button" className="menu-btn" data-sfx="open" onClick={() => setHowTo(true)}>
             How to Play<span className="mb-tag">eight cards, one loop</span>
