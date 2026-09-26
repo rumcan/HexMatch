@@ -66,7 +66,7 @@ import {
   type GhostSpec, type OverlayStats,
 } from "./overlay-art";
 import {
-  CLOUD_COUNT, cloudAlphaForZoom, createCloudField, makeCloudSprites, paintCloudLayer,
+  CLOUD_COUNT, cloudAlphaForZoom, cloudShadowAlphaForZoom, createCloudField, makeCloudSprites, paintCloudLayer,
   type CloudField, type CloudSprites,
 } from "./clouds";
 
@@ -1001,7 +1001,7 @@ export class IsoRenderer {
 
   private paintCloudShadows(timeMs: number): void {
     if (!this.cloudsOn) { this.cloudShadowBlits = 0; return; }
-    const fade = cloudAlphaForZoom(this.cam.zoom);
+    const fade = cloudShadowAlphaForZoom(this.cam.zoom);
     if (!(fade > 0)) { this.cloudShadowBlits = 0; return; }
     this.cloudShadowBlits = paintCloudLayer(
       this.ctxT, this.cam, this.cloudField, this.cloudSprites(),

@@ -36,7 +36,7 @@ import { mapWorldBounds, type Camera } from "./camera";
 // Owner: at least 8 clouds on screen at the normal zoom. The field is ~60x
 // the screen, so the sky holds a few hundred small clouds; only the ones on
 // screen are drawn.
-export const CLOUD_COUNT = 480;
+export const CLOUD_COUNT = 240;
 /** Procedural placeholder variants (the lead's rundot set is 4–6 too). */
 export const CLOUD_VARIANTS = 4;
 /** The veil's alpha at the furthest zoom (the ticket wants about 0.25–0.45). */
@@ -44,8 +44,8 @@ export const CLOUD_ALPHA_MAX = 0.36;
 /** The ground shadows stay a whisper — barely-there darkening. */
 export const CLOUD_SHADOW_ALPHA = 0.32;
 /** Wind speed in world pixels per second: slow drift, ~10 min to cross. */
-export const CLOUD_WIND_MIN = 8;
-export const CLOUD_WIND_MAX = 16;
+export const CLOUD_WIND_MIN = 2;
+export const CLOUD_WIND_MAX = 4;
 /** One cloud covers 10–18 tiles across — a veil, not confetti. */
 export const CLOUD_W_MIN_TILES = 4;
 export const CLOUD_W_MAX_TILES = 8;
@@ -61,7 +61,7 @@ export const CLOUD_WRAP_MARGIN = 640;
  */
 /** Owner: the clouds sit ABOVE the map - they slide faster than the ground
  *  when the camera pans (parallax). Shadows stay pinned to the ground. */
-export const CLOUD_PARALLAX = 1.4;
+export const CLOUD_PARALLAX = 1.6;
 export const CLOUD_SHADOW_DX = 96;
 export const CLOUD_SHADOW_DY = 48;
 
@@ -132,10 +132,15 @@ const smooth = (t: number): number => t * t * (3 - 2 * t);
  * the three ZOOM_STEPS ever arrive, but the curve is continuous anyway.
  */
 export function cloudAlphaForZoom(zoom: number): number {
+  // Owner: the clouds themselves only at the FURTHEST zoom - gone by medium.
   if (zoom <= 0.5) return 1;
-  if (zoom >= 2) return 0;
-  if (zoom <= 1) return 1 - smooth((zoom - 0.5) / 0.5) * 0.3;
-  return 0.7 * (1 - smooth(zoom - 1));
+  if (zoom >= 0.75) return 0;
+  return 1 - smooth((zoom - 0.5) / 0.25);
+}
+
+/** Their ground shadows drift over the map at every zoom. */
+export function cloudShadowAlphaForZoom(_zoom: number): number {
+  return 1;
 }
 
 /**
