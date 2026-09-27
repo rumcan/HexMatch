@@ -741,6 +741,15 @@ export interface OriginalUi {
   showDepotCard: (o: DepotCardInfo) => void;
   /** #322: generic bottom-centre action card — one at a time. */
   showActionCard: (o: ActionCardInfo) => void;
+  /**
+   * MOB-1 (#474): the phone's confirm-to-place sheet. A tap with a structure
+   * tool stages the build here instead of placing it; the tool's own name,
+   * price and icon are read off its build button, so the sheet quotes exactly
+   * what the rail quotes. Confirm runs the build, Cancel/✕ drops it.
+   */
+  showPlaceConfirm: (o: { tool: string; where: string; onConfirm: () => void; onCancel: () => void }) => void;
+  /** MOB-1 (#474): take the confirm sheet down (the stage was dropped elsewhere). */
+  hidePlaceConfirm: () => void;
   /** #322: take the action card down (stale offer, resolved elsewhere). */
   closeActionCard: () => void;
   feed: (text: string, who?: string) => void;
@@ -5038,6 +5047,40 @@ export function createOriginalUi(
       paintCount();
     }
   }
+  // MOB-1 (#474): the confirm-to-place sheet — one DOM, reused per staging.
+  const placeConfirm = h("div", "confirm-sheet hidden");
+  placeConfirm.setAttribute("role", "dialog");
+  placeConfirm.setAttribute("aria-label", "Confirm placement");
+  root.appendChild(placeConfirm);
+  function hidePlaceConfirm(): void {
+    placeConfirm.classList.remove("open");
+    placeConfirm.classList.add("hidden");
+    placeConfirm.innerHTML = "";
+  }
+  function showPlaceConfirm(o: { tool: string; where: string; onConfirm: () => void; onCancel: () => void }): void {
+    const btn = root.querySelector<HTMLElement>(`[data-tool="${o.tool}"]`);
+    const name = btn?.querySelector(".bb-mid b")?.textContent?.trim() || o.tool;
+    const cost = btn?.querySelector(".bb-mid small")?.innerHTML ?? "";
+    placeConfirm.innerHTML =
+      `<div class="confirm-sheet__header"><span class="confirm-sheet__title">Place ${name}?</span>`
+      + `<button type="button" class="confirm-sheet__close" aria-label="Cancel" data-sfx="close">✕</button></div>`
+      + `<div class="confirm-sheet__preview"><span class="confirm-sheet__preview-icon">${toolIconSvg(o.tool)}</span>`
+      + `<div class="confirm-sheet__preview-info"><div class="confirm-sheet__preview-name">${name}</div>`
+      + (cost ? `<div class="confirm-sheet__preview-cost">${cost}</div>` : "")
+      + `<div class="confirm-sheet__preview-location">${o.where}</div></div></div>`
+      + `<div class="confirm-sheet__actions"><button type="button" class="post-btn confirm-sheet__cancel" data-sfx="close">Cancel</button>`
+      + `<button type="button" class="post-btn confirm-sheet__confirm" data-sfx="open">Place</button></div>`;
+    const cancel = () => { hidePlaceConfirm(); o.onCancel(); };
+    placeConfirm.querySelector(".confirm-sheet__close")!.addEventListener("click", cancel);
+    placeConfirm.querySelector(".confirm-sheet__cancel")!.addEventListener("click", cancel);
+    placeConfirm.querySelector(".confirm-sheet__confirm")!.addEventListener("click", () => {
+      hidePlaceConfirm();
+      o.onConfirm();
+    });
+    placeConfirm.classList.remove("hidden");
+    // `.open` lifts the sheet off its off-screen rest (theme-space-age.css).
+    placeConfirm.classList.add("open");
+  }
   function showDepotCard(o: DepotCardInfo): void {
     const full = o.yieldNow >= o.cap;
     const lastLine = o.lastStars !== undefined && o.lastStars > 0
@@ -5584,6 +5627,8 @@ export function createOriginalUi(
     setCombo,
     paint,
     showDepotCard,
+    showPlaceConfirm,
+    hidePlaceConfirm,
     showActionCard,
     closeActionCard,
     feed,

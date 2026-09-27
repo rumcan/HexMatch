@@ -12068,14 +12068,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let dragLive = false;
 
-  /** MOBILE-01: hold-then-drag for structure tools (harvester, plant, platform, raildepot, interchange, dam, demolish).
-   * Press and hold ~300ms to arm placement, then drag to position, release to show confirm button.
+  /**
+   * MOB-1 (#474): on a phone a TAP with a structure tool no longer builds — it
+   * stages the build here and opens the confirm sheet (`ui.showPlaceConfirm`);
+   * Place runs it, Cancel or any drop (`dropDrag`) forgets it. A pan never
+   * reaches the stage: `onUp` only stages a press that did not move.
    */
-  let holdTimer: ReturnType<typeof setTimeout> | null = null;
-  let holdPosition: { tx: number; ty: number } | null = null;
-  let isHolding = false;
-  let pendingPlacement: { tool: Tool; tx: number; ty: number; extra?: any } | null = null;
-  const HOLD_DELAY = 300; // ms
+  let pendingPlacement: { tool: Tool; tx: number; ty: number } | null = null;
+  const CONFIRM_TOOLS: ReadonlySet<Tool> = new Set<Tool>(
+    ["harvester", "plant", "platform", "raildepot", "interchange", "dam", "demolish"]);
 
   /** D2: one preview seam for pointer motion and R (including tier/bridge costs). */
   const previewRoadGesture = (): DragPreview | null => drag ? previewDrag(
@@ -12117,7 +12118,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // closest, and every performance-mode frame).
     scareBirds(birds, p.tx + 0.5, p.ty + 0.5);
     const isTrackTool = tool === "road" || tool === "dirt" || tool === "rail" || tool === "level";
-    const isStructureTool = tool === "harvester" || tool === "plant" || tool === "platform" || tool === "raildepot" || tool === "interchange" || tool === "dam" || tool === "demolish";
     // TK-001: left mouse (button 0) is build/place ONLY — it never starts a
     // pan. Touch keeps its old behaviour (one finger pans, a quick tap places).
     // An armed protest owns the left button: it must never start a track drag.
@@ -12135,21 +12135,6 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         dragLive = false;
         return;
       }
-    }
-    // MOBILE-01: hold-then-drag for structure tools on touch devices
-    // Press and hold ~300ms to arm placement, then drag to position, release to show confirm button
-    if (phase === "play" && isStructureTool && !pendingProtest && !isMouse && e.isPrimary) {
-      holdPosition = { tx: p.tx, ty: p.ty };
-      isHolding = true;
-      holdTimer = setTimeout(() => {
-        if (isHolding && holdPosition) {
-          // Show placement preview at hold position
-          pendingPlacement = { tool, tx: holdPosition.tx, ty: holdPosition.ty };
-          isHolding = false;
-          paintOverlayNow();
-        }
-      }, HOLD_DELAY);
-      return;
     }
     // TK-001: mouse panning is the MIDDLE button (button === 1). Left and
     // right mouse presses never enter the pan gesture. The right button's
@@ -12180,11 +12165,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   /** Drop the half-planned drag, if one is armed. */
   function dropDrag(): boolean {
-    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-    isHolding = false;
-    holdPosition = null;
     const hadPending = !!pendingPlacement;
-    pendingPlacement = null;
+    if (hadPending) { pendingPlacement = null; ui.hidePlaceConfirm(); }
     if (!drag && !preview && !levelPlan && !hadPending) return false;
     drag = null; preview = null; levelPlan = null; dragLive = false; previewKey = "";
     return true;
@@ -12346,6 +12328,91 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     paintOverlayNow();
   });
 
+  /** The play-phase answer to a click/tap with tool `t` at `p` — every build,
+   *  demolish and select a map press can mean. MOB-1 (#474) runs it twice:
+   *  straight from `onUp`, and from the phone's confirm sheet. */
+  function useToolAt(p: NonNullable<ReturnType<typeof pickForAction>>, t: Tool): void {
+    // A bought protest intercepts the click: it stages on a public road
+    // (or refuses and stays armed), and never runs the current tool.
+    if (pendingProtest) placeProtest(p.tx, p.ty);
+    // PP-05: every Depot after the setup allowance pays DEPOT_COST.
+    else if (t === "harvester") {
+      if (isGuest()) {
+        noteGuestBuild("harvester");   // BUILD-1 (#460): optimistic undo chip
+        net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
+      } else placeHarvester(p.tx, p.ty, me);
+    } else if (t === "plant") {
+      if (isGuest()) {
+        noteGuestBuild("plant");       // BUILD-1 (#460): optimistic undo chip
+        net?.sendIntent("build", { do: "plant", tx: p.tx, ty: p.ty });
+      } else placePlant(p.tx, p.ty, me);
+    } else if (t === "platform" || t === "raildepot") {
+      // RAIL-02 (#176): the two railway structures. On a guest the click
+      // is an intent like every other build; the host runs the same rule
+      // function against the guest's seat (and the same heading, which
+      // the guest sends with it).
+      if (isGuest()) {
+        noteGuestBuild(t);          // BUILD-1 (#460): optimistic undo chip
+        net?.sendIntent("build", { do: t === "platform" ? "platform" : "raildepot", tx: p.tx, ty: p.ty, view: railView });
+      } else if (t === "platform") placeRailPlatform(p.tx, p.ty, me);
+      else placeRailDepot(p.tx, p.ty, me);
+    } else if (t === "interchange") {
+      if (isGuest()) net?.sendIntent("build", { do: "interchange", tx: p.tx, ty: p.ty });
+      else placeInterchange(p.tx, p.ty);
+    } else if (t === "dam") {
+      // R3 (#270): the hydro dam, on a guest an intent like every other
+      // build — the host runs the same `damRefusal` against the guest's
+      // seat. The side is the guest's own (its R), sent with the intent.
+      if (isGuest()) {
+        net?.sendIntent("build", { do: "dam", tx: p.tx, ty: p.ty, side: damSide });
+      } else placeDam(p.tx, p.ty, me);
+    } else if (t === "railway") {
+      // The panel tool builds nothing on the map: the panel is the UI's,
+      // and a click here is a no-op with a hint rather than a refusal.
+      toast("The Railway panel is on the left — assign a line, recall or sell a train.", "info");
+    } else if (t === "demolish") {
+      if (isGuest()) net?.sendIntent("demolish", { do: "demolish", tx: p.tx, ty: p.ty });
+      else doDemolish(p.tx, p.ty);
+    } else if (t === "select") {
+      // L17 (#245): the town's middle building (church, then bank) is
+      // the click target for the city upgrade — the map door beside the
+      // HUD key. Any other tool keeps its own behaviour above.
+      const town = townCentreAt(p);
+      if (town) { selectedDepotId = null; townCentreClick(town); }
+      else if (newLoop) {
+        const ind = industryAt(p);
+        if (ind) { selectedDepotId = null; showIndustryCard(ind); }
+        else {
+          // 2026-09: a click on one of my Depots opens its card
+          // (level, yield vs cap, Upgrade, Retune). #462 keeps that
+          // Depot's route drawn until the next Select click.
+          const d = myDepotAt(p.tx, p.ty);
+          if (d) depotCardFor(d);
+          else selectedDepotId = null;
+        }
+      }
+    } else if (t === "road" || t === "dirt" || t === "rail") {
+      // A tap with a track tool that got here is a refusal: the legal
+      // single-tile build is handled where the drag ends (above).
+      refuseTrackAt(t as TrackKind, p.tx, p.ty);
+    }
+  }
+
+  /** MOB-1 (#474): stage a phone tap's build and ask before placing it. */
+  function stagePlacement(p: NonNullable<ReturnType<typeof pickForAction>>, t: Tool): void {
+    pendingPlacement = { tool: t, tx: p.tx, ty: p.ty };
+    ui.showPlaceConfirm({
+      tool: t,
+      where: `Tile ${p.tx}, ${p.ty}`,
+      onConfirm: () => {
+        const staged = pendingPlacement;
+        pendingPlacement = null;
+        if (staged && phase === "play") useToolAt({ ...p, tx: staged.tx, ty: staged.ty }, staged.tool);
+      },
+      onCancel: () => { pendingPlacement = null; },
+    });
+  }
+
   const onUp = (e: PointerEvent) => {
     const [x, y] = pos(e);
     // RIGHT-CLICK: the strategy-game "escape to pointer". It cancels whatever
@@ -12497,70 +12564,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             void setupDepotToast;
           }
         } else if (phase === "play") {
-          // A bought protest intercepts the click: it stages on a public road
-          // (or refuses and stays armed), and never runs the current tool.
-          if (pendingProtest) placeProtest(p.tx, p.ty);
-          // PP-05: every Depot after the setup allowance pays DEPOT_COST.
-          else if (tool === "harvester") {
-            if (isGuest()) {
-              noteGuestBuild("harvester");   // BUILD-1 (#460): optimistic undo chip
-              net?.sendIntent("build", { do: "depot", tx: p.tx, ty: p.ty });
-            } else placeHarvester(p.tx, p.ty, me);
-          } else if (tool === "plant") {
-            if (isGuest()) {
-              noteGuestBuild("plant");       // BUILD-1 (#460): optimistic undo chip
-              net?.sendIntent("build", { do: "plant", tx: p.tx, ty: p.ty });
-            } else placePlant(p.tx, p.ty, me);
-          } else if (tool === "platform" || tool === "raildepot") {
-            // RAIL-02 (#176): the two railway structures. On a guest the click
-            // is an intent like every other build; the host runs the same rule
-            // function against the guest's seat (and the same heading, which
-            // the guest sends with it).
-            if (isGuest()) {
-              noteGuestBuild(tool);          // BUILD-1 (#460): optimistic undo chip
-              net?.sendIntent("build", { do: tool === "platform" ? "platform" : "raildepot", tx: p.tx, ty: p.ty, view: railView });
-            } else if (tool === "platform") placeRailPlatform(p.tx, p.ty, me);
-            else placeRailDepot(p.tx, p.ty, me);
-          } else if (tool === "interchange") {
-            if (isGuest()) net?.sendIntent("build", { do: "interchange", tx: p.tx, ty: p.ty });
-            else placeInterchange(p.tx, p.ty);
-          } else if (tool === "dam") {
-            // R3 (#270): the hydro dam, on a guest an intent like every other
-            // build — the host runs the same `damRefusal` against the guest's
-            // seat. The side is the guest's own (its R), sent with the intent.
-            if (isGuest()) {
-              net?.sendIntent("build", { do: "dam", tx: p.tx, ty: p.ty, side: damSide });
-            } else placeDam(p.tx, p.ty, me);
-          } else if (tool === "railway") {
-            // The panel tool builds nothing on the map: the panel is the UI's,
-            // and a click here is a no-op with a hint rather than a refusal.
-            toast("The Railway panel is on the left — assign a line, recall or sell a train.", "info");
-          } else if (tool === "demolish") {
-            if (isGuest()) net?.sendIntent("demolish", { do: "demolish", tx: p.tx, ty: p.ty });
-            else doDemolish(p.tx, p.ty);
-          } else if (tool === "select") {
-            // L17 (#245): the town's middle building (church, then bank) is
-            // the click target for the city upgrade — the map door beside the
-            // HUD key. Any other tool keeps its own behaviour above.
-            const town = townCentreAt(p);
-            if (town) { selectedDepotId = null; townCentreClick(town); }
-            else if (newLoop) {
-              const ind = industryAt(p);
-              if (ind) { selectedDepotId = null; showIndustryCard(ind); }
-              else {
-                // 2026-09: a click on one of my Depots opens its card
-                // (level, yield vs cap, Upgrade, Retune). #462 keeps that
-                // Depot's route drawn until the next Select click.
-                const d = myDepotAt(p.tx, p.ty);
-                if (d) depotCardFor(d);
-                else selectedDepotId = null;
-              }
-            }
-          } else if (tool === "road" || tool === "dirt" || tool === "rail") {
-            // A tap with a track tool that got here is a refusal: the legal
-            // single-tile build is handled where the drag ends (above).
-            refuseTrackAt(tool as TrackKind, p.tx, p.ty);
-          }
+          // MOB-1 (#474): a phone tap with a structure tool stages the build
+          // behind the confirm sheet instead of placing it outright.
+          if (!pendingProtest && e.pointerType === "touch" && ui.el.dataset.phone === "1"
+            && CONFIRM_TOOLS.has(tool)) {
+            stagePlacement(p, tool);
+          } else useToolAt(p, tool);
         }
       }
     }
