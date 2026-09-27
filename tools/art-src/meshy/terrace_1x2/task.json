@@ -1,0 +1,9 @@
+{
+  "id": "01a0e375-a50d-702a-8309-4eeffd0c5cad",
+  "name": "terrace_1x2",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790522534556,
+  "finished_at": 1790522678734
+}
