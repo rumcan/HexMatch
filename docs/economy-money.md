@@ -166,3 +166,38 @@ No economy prices or money knobs were changed for BAL-1. The new calibration har
   watch that the rival still reaches its first Depot in the first two minutes
   and still wins *sometimes* — a rival that hoards is the failure mode to look
   for, and `DUMP_FLOOR` / the 2% edge are the two knobs for it.
+
+## 8. The BAL-1 balance pass (#471)
+
+The match-arc and rival-difficulty targets live in `docs/BALANCE.md` (targets,
+harness, measured results). Every knob that pass turned, and where it lives:
+
+| knob | file | change | why |
+| --- | --- | --- | --- |
+| `RIVAL_SKILLS.easy` clocks | `src/iso/skill.ts` | session 110s → 85s, build/idle held | the measured "easy wins ~20% vs steady" line (5/30 in the committed report) |
+| `RIVAL_SKILLS.easy` cadence | `src/iso/skill.ts` | pave 4 → 7 tiles, townReserve 1.25 → 0.95 | same — the easy rival's mid-game was starved of routes and city tiers |
+| `RIVAL_SKILLS.easy` tuning hand | `src/iso/skill.ts` | `tuningSkill` 0.35 → 0.53 | same — a session quality a steady player's still beats |
+| `RIVAL_SKILLS.normal` clocks | `src/iso/skill.ts` | session 80s → 74s | onto the measured "normal wins ~40%" line (11/30 in the committed report) |
+| `RIVAL_SKILLS.normal` cadence | `src/iso/skill.ts` | pave 10 → 12, townReserve 1 → 0.85, `tuningSkill` 0.62 → 0.67 | same — the ladder rows are one knob: the rival's action cadence and its hands |
+| `RIVAL_SKILLS.hard` clocks | `src/iso/skill.ts` | session 55s → 54s | a 1s trim onto the measured "~60%" line; hard measured in-band on the first full round |
+| `RIVAL_SKILLS.trainee` | `src/iso/skill.ts` | session 120s, tune 0.30, townReserve 1.25, winTarget 6★ | FTUE-1's (#464) Starter Island rival — measured 0 wins vs novice |
+| `DIFFICULTY_RULES.trainee` (new row) | `src/iso/config.ts` | gentle floor (minYield 1.5), no obstacles | the Starter Island's player side — FTUE-1 (#464), not a race knob |
+
+Considered and **held at their shipped values** (measured, then documented
+here so the next pass does not re-open them blind):
+
+- **`VICTORY.loop.target` (12★)** — a 10★ line was measured and rejected:
+  with the rival's Depot bill goods-gated but never deducted (CONTRACT-1,
+  #466), a 10★ line is won by filling the map with Depots (~13 min, no
+  logistics phase). 12★ keeps the land-grab → logistics → finale arc and
+  measured 19.8 min mean vs Normal.
+- **`START_MONEY` ($300) and `BASE_PRICE`** — the money ratio between the
+  two seats is the CONTRACT-1 asymmetry, not a price bug; moving prices
+  moved both seats together and blurred the ladder. Re-check after #466.
+- **the market's `DUMP_FLOOR` / 2% edge** — MKT-2 (#465) owns them.
+- **per-map yields** — #603's row in §5.
+
+The trainee's rows were added for FTUE-1 (#464) and only re-measured here:
+"the trainee never beats the novice" is a harness *target*, not a knob. The
+bots' plant budget (§ the bots in `docs/BALANCE.md`) is measuring-stick
+policy, not a game knob.

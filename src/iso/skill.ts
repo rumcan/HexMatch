@@ -101,7 +101,14 @@
 import { RAID_EVERY } from "../game/config";
 import { VICTORY } from "./config";
 
-export type SkillKey = "easy" | "normal" | "hard" | "trainee";
+/**
+ * BAL-1 (#471) / FTUE-1 (#464): `trainee` is the Starter Island rival — a
+ * preset the GAME casts (the first-launch scenario), not a card in the picker.
+ * `SKILL_KEYS` below stays the three pickable rows, so the top-bar selector
+ * and the skill picker never offer it. Its balance contract (BAL-1): the
+ * trainee never beats the novice bot (tests/unit/iso-471-balance-*).
+ */
+export type SkillKey = "trainee" | "easy" | "normal" | "hard";
 
 export interface RivalSkill {
   key: SkillKey;
@@ -225,7 +232,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     buildMs: 11_000,
     idleMs: 3_500,
     expandPerTurn: 1,
-    paveTiles: 4,
+    paveTiles: 7,
     raidEveryMs: 0,
     blockades: false,
     moveMs: 4_200,
@@ -236,11 +243,13 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     contests: true,
     challenges: true,
     // L4 (#218): a casual tuning hand — its depots land just above baseline.
-    tuningSkill: 0.35,
+    // BAL-1: tuned to the measured "easy wins ~20% vs steady" line.
+    // easy: nudge between the measured 37.5% (round 2) and 12.5% (round 3).
+    tuningSkill: 0.53,
     // L14 (#229): a careful steward — the city waits until the next Depot's
-    // whole price (and a quarter more) is in hand.
-    townReserve: 1.25,
-    sessionMs: 110_000,
+    // whole price is in hand.
+    townReserve: 0.95,
+    sessionMs: 85_000,
     // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
     winTarget: 5,
   },
@@ -253,7 +262,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     buildMs: 6_500,
     idleMs: 1_800,
     expandPerTurn: 2,
-    paveTiles: 10,
+    paveTiles: 12,
     raidEveryMs: RAID_EVERY,   // the classic 2-minute raid clock
     blockades: true,
     moveMs: 2_600,
@@ -264,10 +273,11 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     contests: true,
     challenges: true,
     // L4 (#218): the shipped tuning hand — the middle of the multiplier.
-    tuningSkill: 0.62,
+    // BAL-1: set to the measured "normal wins ~40% vs steady" line.
+    tuningSkill: 0.67,
     // L14 (#229): the shipped city timing — the next Depot stays funded.
-    townReserve: 1,
-    sessionMs: 80_000,
+    townReserve: 0.85,
+    sessionMs: 74_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   hard: {
@@ -289,12 +299,13 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     // FTUE-1 (#464): every pickable chair races the ordinary race.
     contests: true,
     challenges: true,
-    // L4 (#218): reads the board — long matches and cascades.
+    // L4 (#218): reads the board — long matches and cascades. BAL-1: set to
+    // the measured "hard wins ~60% vs steady" line.
     tuningSkill: 0.88,
     // L14 (#229): buys the upgrade early — the ×1.6 is worth more than the
     // tempo the next Depot loses, and a hard rival is playing a compound game.
     townReserve: 0.6,
-    sessionMs: 55_000,
+    sessionMs: 54_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
   // FTUE-1 (#464) — the TRAINEE: the Starter Island's rival, and the only
@@ -343,6 +354,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
  * save reads, tests).
  */
 export const SKILL_KEYS: SkillKey[] = ["easy", "normal", "hard"];
+/** Every preset, including the ones only the game casts (BAL-1's harness). */
 export const ALL_SKILL_KEYS: SkillKey[] = [...SKILL_KEYS, "trainee"];
 
 /**
