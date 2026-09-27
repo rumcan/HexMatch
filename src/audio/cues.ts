@@ -28,8 +28,9 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   bus, countPlay, countRefused, gate, isArmed, isAudioEnabled,
-  noiseBurst, tone, type NoiseSpec, type ToneSpec,
+  noiseBurst, sample, tone, type NoiseSpec, type ToneSpec,
 } from "./engine";
+import { hasSample, requestSample, sampleBuffer } from "./samples";
 
 /** Every sound the game can make, in the order `__sfx.audition()` plays them. */
 export const CUE_NAMES = [
@@ -37,6 +38,13 @@ export const CUE_NAMES = [
   "pop", "crack", "up", "boom", "combo", "deny",
   "place", "pave", "build", "demolish", "harvest", "coin", "star", "wire",
   "victory", "defeat",
+  // SFX-1 (#463): the recorded tier — a town grows, the yard answers, the
+  // battle plays. Each has a synth recipe below as the fallback for a missing
+  // file and for the headless suites.
+  "city-upgrade", "truck-horn", "train-whistle",
+  "battle-start", "battle-turn", "battle-hit", "battle-damage", "battle-bomb",
+  "battle-mana", "battle-ability", "battle-extra-turn", "battle-frost",
+  "battle-win", "battle-lose",
 ] as const;
 
 export type Cue = (typeof CUE_NAMES)[number];
@@ -75,6 +83,22 @@ export const CUE_NOTES: Record<Cue, string> = {
   wire: "a telegraph key and a sheet of paper — Torvin's private wire opens",
   victory: "the final ledger, won: a warm four-note cadence under a soft pad",
   defeat: "the final ledger, lost: the same cadence descending, muted, no fail horn",
+  // SFX-1 (#463): the recorded tier. The notes describe the MOMENT, not the
+  // file — the synth fallback voices the same beat when the file is missing.
+  "city-upgrade": "a town grows a tier: three bells climbing, under the scaffolds",
+  "truck-horn": "a lorry's soft two-tone horn as its load lands at the Factory",
+  "train-whistle": "a train pulling out of a platform: one long minor chord",
+  "battle-start": "the fight opens: a drum and dust",
+  "battle-turn": "the turn passes: one soft wooden tick",
+  "battle-hit": "your match lands: a smack on the opponent's health",
+  "battle-damage": "their match lands: a heavy thud on yours",
+  "battle-bomb": "dynamite, on the board or from the ability row",
+  "battle-mana": "mana banked: two bright notes rising",
+  "battle-ability": "an ability cast: a shimmer sweeping up",
+  "battle-extra-turn": "another turn earned: a fast little triad",
+  "battle-frost": "gems freezing over: high glass and cold air",
+  "battle-win": "the field is yours: a short major cadence",
+  "battle-lose": "the field is theirs: the same shape descending",
 };
 
 export interface CueOptions {
@@ -413,6 +437,155 @@ const RECIPES: Record<Cue, Recipe> = {
       v.tone({ freq: 87.31, gain: 0.03, attack: 0.3, hold: 0.6, decay: 1.2 });
     },
   },
+
+  // ── SFX-1 (#463): the recorded tier's synth fallbacks ───────────────────
+  // Each voices the same beat its file does, in the same wood/felt/brass
+  // voice as the rest of the catalogue, inside the same ceilings the mix
+  // audit pins (one layer ≤ 0.2, one cue ≤ 0.45 summed, nothing past 6 kHz,
+  // nothing longer than 2.5 s). They are heard only while a file is missing
+  // or still loading — and in the headless suites, always.
+
+  // A town grows: three bells climbing a triad, rung 90 ms apart.
+  "city-upgrade": {
+    gap: 900,
+    run: (v) => {
+      [523.25, 659.25, 783.99].forEach((f, i) => {
+        v.tone({ freq: f, type: "triangle", gain: 0.05, at: i * 0.09, attack: 0.008, decay: 0.4 });
+        v.tone({ freq: f * 2, gain: 0.012, at: i * 0.09 + 0.01, attack: 0.008, decay: 0.2 });
+      });
+    },
+  },
+
+  // A lorry's horn, softened for a game: two low tones a fourth apart, one
+  // short toot. The 6 s gap is the rate limit — a depot row landing together
+  // honks once, not once per lorry.
+  "truck-horn": {
+    gap: 6000,
+    run: (v) => {
+      v.tone({ freq: 174.61, type: "triangle", gain: 0.07, attack: 0.012, decay: 0.32 });
+      v.tone({ freq: 233.08, type: "triangle", gain: 0.06, attack: 0.012, decay: 0.32 });
+    },
+  },
+
+  // A train pulling out: one long minor chord, breathed in over 30 ms. The
+  // 9 s gap keeps a four-platform terminus to one whistle per departure wave.
+  "train-whistle": {
+    gap: 9000,
+    run: (v) => {
+      for (const f of [622.25, 739.99, 932.33]) {
+        v.tone({ freq: f, gain: 0.034, attack: 0.03, hold: 0.25, decay: 0.55 });
+      }
+      v.noise({ dur: 0.5, gain: 0.012, attack: 0.06, filter: "bandpass", freq: 1100, q: 0.8 });
+    },
+  },
+
+  // The fight opens: a drum hit and the dust behind it.
+  "battle-start": {
+    gap: 900,
+    run: (v) => {
+      v.tone({ freq: 98, to: 60, gain: 0.14, attack: 0.004, decay: 0.3 });
+      v.noise({ dur: 0.12, gain: 0.06, attack: 0.003, filter: "lowpass", freq: 800 });
+      v.tone({ freq: 392, type: "triangle", gain: 0.03, at: 0.06, attack: 0.01, decay: 0.3 });
+    },
+  },
+
+  // The turn passes: one soft wooden tick. Short gap — a fast battle ticks
+  // every move — but the tick itself is nearly nothing.
+  "battle-turn": {
+    gap: 300,
+    run: (v) => {
+      v.tone({ freq: 440, type: "triangle", gain: 0.04, attack: 0.002, decay: 0.08 });
+      v.noise({ dur: 0.02, gain: 0.02, filter: "bandpass", freq: 2000, q: 1 });
+    },
+  },
+
+  // Your match lands on them: a smack — transient first, then the body.
+  "battle-hit": {
+    gap: 120,
+    run: (v) => {
+      v.noise({ dur: 0.06, gain: 0.06, attack: 0.001, filter: "bandpass", freq: 1200, q: 0.8 });
+      v.tone({ freq: 220, to: 110, gain: 0.1, attack: 0.002, decay: 0.12 });
+    },
+  },
+
+  // Their match lands on you: the same shape, lower and heavier.
+  "battle-damage": {
+    gap: 120,
+    run: (v) => {
+      v.tone({ freq: 150, to: 70, gain: 0.12, attack: 0.003, decay: 0.2 });
+      v.noise({ dur: 0.1, gain: 0.05, attack: 0.003, filter: "lowpass", freq: 600 });
+    },
+  },
+
+  // Dynamite: a smaller `boom`, brighter on top so the board's blast reads
+  // apart from the map's sabotage.
+  "battle-bomb": {
+    gap: 200,
+    run: (v) => {
+      v.noise({ dur: 0.2, gain: 0.07, attack: 0.004, filter: "lowpass", freq: 900, to: 250 });
+      v.tone({ freq: 130, to: 50, gain: 0.14, attack: 0.004, decay: 0.28 });
+      v.noise({ dur: 0.05, gain: 0.03, filter: "bandpass", freq: 2400, q: 1 });
+    },
+  },
+
+  // Mana banked: two bright notes rising a fourth.
+  "battle-mana": {
+    gap: 150,
+    run: (v) => {
+      v.tone({ freq: 880, gain: 0.04, attack: 0.002, decay: 0.2 });
+      v.tone({ freq: 1318.5, gain: 0.035, at: 0.07, attack: 0.002, decay: 0.24 });
+    },
+  },
+
+  // An ability cast: a shimmer sweeping up an octave.
+  "battle-ability": {
+    gap: 300,
+    run: (v) => {
+      v.tone({ freq: 600, to: 1200, sweep: "linear", gain: 0.05, attack: 0.02, decay: 0.25 });
+      v.tone({ freq: 1200, type: "triangle", gain: 0.02, at: 0.05, attack: 0.01, decay: 0.2 });
+    },
+  },
+
+  // Another turn earned: a fast little triad, over in 300 ms.
+  "battle-extra-turn": {
+    gap: 300,
+    run: (v) => {
+      [659.25, 830.61, 987.77].forEach((f, i) => {
+        v.tone({ freq: f, type: "triangle", gain: 0.045, at: i * 0.05, attack: 0.004, decay: 0.15 });
+      });
+    },
+  },
+
+  // Gems freezing over: high glass and cold air. The top partial sits at
+  // 3.75 kHz — well inside the audit's 6 kHz ceiling, far from a mosquito.
+  "battle-frost": {
+    gap: 300,
+    run: (v) => {
+      v.tone({ freq: 2500, gain: 0.03, attack: 0.004, decay: 0.3 });
+      v.tone({ freq: 3750, gain: 0.02, at: 0.03, attack: 0.006, decay: 0.25 });
+      v.noise({ dur: 0.1, gain: 0.015, attack: 0.01, filter: "highpass", freq: 5000 });
+    },
+  },
+
+  // The field is yours: a short major cadence, rung not more than once.
+  "battle-win": {
+    gap: 900,
+    run: (v) => {
+      [523.25, 659.25, 783.99].forEach((f, i) => {
+        v.tone({ freq: f, type: "triangle", gain: 0.05, at: i * 0.12, attack: 0.01, decay: 0.4 });
+      });
+    },
+  },
+
+  // …and theirs: the same shape descending, muted.
+  "battle-lose": {
+    gap: 900,
+    run: (v) => {
+      [392, 329.63, 261.63].forEach((f, i) => {
+        v.tone({ freq: f, type: "triangle", gain: 0.05, at: i * 0.18, attack: 0.012, decay: 0.5 });
+      });
+    },
+  },
 };
 
 function makeVoice(out: AudioNode, t0: number, scale: number): Voice {
@@ -447,7 +620,21 @@ export function playCue(cue: Cue, opts: CueOptions = {}): void {
     if (scale <= 0) return;
     // 1 ms of lookahead: scheduling at exactly `currentTime` can land a hair
     // late on a busy frame, which reads as a fluffed transient.
-    recipe.run(makeVoice(b.out, b.ctx.currentTime + 0.001, scale), Math.max(0, Math.floor(opts.step ?? 0)));
+    const t0 = b.ctx.currentTime + 0.001;
+    // SFX-1 (#463): the recording wins when its buffer is already decoded;
+    // otherwise the play kicks the load (fire-and-forget) and the synth
+    // recipe voices this one — the fallback for a missing file, a slow
+    // network, and every headless run. Silent either way.
+    if (hasSample(cue)) {
+      const buf = sampleBuffer(cue);
+      if (buf) {
+        sample(b.out, t0, buf, scale);
+        countPlay();
+        return;
+      }
+      requestSample(cue);
+    }
+    recipe.run(makeVoice(b.out, t0, scale), Math.max(0, Math.floor(opts.step ?? 0)));
     countPlay();
   } catch {
     // garnish must never break the board

@@ -270,3 +270,33 @@ whole diff and re-running them.
   speaker is a loss, not a feature.
 * **No recorded samples, and therefore no loading state.** Nothing to prefetch,
   nothing to decode, nothing to fail.
+
+---
+
+# SFX-1 (#463) — the recorded tier + ambience by zoom
+
+Supersedes the last two "deliberately not here" bullets above: the game now
+has recordings AND a bed. The bus rules did not change — garnish never breaks
+the board, nothing sounds before a real gesture, headless runs stay silent —
+and the synth catalogue above is still the whole mix's fallback.
+
+## What shipped
+
+| Piece | Where | What it does |
+| ----- | ----- | ------------ |
+| The samples | `assets/sfx/*.mp3` (25, the lead's), `src/audio/samples.ts` | Fetch + decode + cache. `prewarmSamples()` runs on the first real gesture; any single play also kicks its own load. A missing/slow/undecodable file falls back to the cue's synth recipe silently. |
+| The sample primitive | `engine.sample()` | A decoded buffer through its own gain, started now and stopped at the buffer's end — a layer like any other, priced against the same voice budget. |
+| 14 new cues | `src/audio/cues.ts` | `city-upgrade`, `truck-horn`, `train-whistle`, and eleven `battle-*` cues — each with a recording, a synth fallback recipe in the same wood/felt/brass voice, a note, and a gap (`truck-horn` 6 s and `train-whistle` 9 s are the map-wide rate limits). 38 cues total; the audition walks them all. |
+| The wiring | `src/iso/game.ts`, `src/game/battle-screen.ts` | Market sales → `coin`; town tier-ups → `city-upgrade` (the GrowthMoment hook); a lorry-load landing → soft `truck-horn`; a train pulling out of a platform → soft `train-whistle` (the departure watch); the battle screen → `battle-start`, per-move `battle-hit`/`battle-damage` (by whose move landed), `battle-bomb` (a blast purged gems, or dynamite), `battle-mana`, `battle-ability`, `battle-frost`, `battle-extra-turn`/`battle-turn`, and `battle-win`/`battle-lose` on the verdict (a draw is silence). |
+| Ambience by zoom | `src/audio/ambience.ts`, `assets/ambience/` | Five looping beds — sea near a coast, town murmur over towns, birds + wind in the countryside, distant traffic at the far zoom — cross-faded from the camera (`commitCamera` + a 2 Hz re-probe). Under the radio by design (`AMBIENCE_CEILINGS`), ducked by voice lines at the radio's 30%, muted by the Sound switch (it connects into the shared bus), cross-fades snap under reduced motion. The lead's loop files are still wanted (`assets/ambience/README.md` is the shopping list); until they land each bed bakes a procedural placeholder loop. |
+| The slider | `src/iso/settings-sheet.ts` (`Ambience`) | The island's own volume (`hexmatch:ambience`), no switch of its own — Sound covers everything. |
+| The build | `vite.config.ts` | `assets/sfx/` and `assets/ambience/` ship beside `index.html` like `assets/voice/`. |
+| The probes | `__iso.ambience()` | Last probe, mix weights, absolute bed gains, and the volume — for the play-test. |
+
+## Still deliberately not here
+
+* **No spatialisation** — unchanged: the horn and the whistle are the map's, not
+  the lorry's or the train's.
+* **No per-cue sliders** — unchanged; the one new knob is the island's volume.
+* **No ambience recordings yet** — the five loop files are the lead's call (see
+  `assets/ambience/README.md`); the placeholders are plainly placeholders.

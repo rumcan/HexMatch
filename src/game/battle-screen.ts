@@ -615,7 +615,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     const out = await battle.playSwap(from.r, from.c, to.r, to.c, Date.now());
     busy = false;
     if (out.ok) opts.onLocalMove?.(move);
-    afterOutcome(out);
+    afterOutcome(out, mySeat);
   };
 
   const selectOrSwap = (cell: Cell) => {
@@ -785,7 +785,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   /** Moves the screen has painted — `runExternal` restarts the clock on growth. */
   let seenMoves = battle.moves.length;
 
-  const afterOutcome = (out: TurnOutcome) => {
+  const afterOutcome = (out: TurnOutcome, mover: BattleSeat) => {
     if (destroyed) return;
     seenMoves = battle.moves.length;
     paintTurn();
@@ -801,6 +801,13 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
       window.setTimeout(showResult, 700);
       return;
     }
+    // SFX-1 (#463): the battle's own mix — a bomb's blast under the damage,
+    // hit or hurt by whose move just landed, mana banked, and the turn
+    // passing on (an extra turn keeps it instead). Silent headless (unarmed).
+    if (out.passes.some((p) => p.purged > 0)) sfx.play("battle-bomb");
+    if (out.damage > 0) sfx.play(mover === mySeat ? "battle-hit" : "battle-damage");
+    if (gains.length) sfx.play("battle-mana");
+    sfx.play(out.extraTurn ? "battle-extra-turn" : "battle-turn");
     if (battle.state.turn === oppSeat) scheduleOpponent();
     else lockInput(false);
   };
@@ -809,7 +816,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   const abilityName = (id: string): string =>
     BATTLE_ABILITIES[id as keyof typeof BATTLE_ABILITIES]?.name ?? id;
 
-  const afterAbility = (out: AbilityOutcome) => {
+  const afterAbility = (out: AbilityOutcome, caster: BattleSeat) => {
     if (destroyed) return;
     seenMoves = battle.moves.length;
     paintTurn();
@@ -824,10 +831,20 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     if (out.frozen > 0) showFloat(`${out.frozen} gems freeze${later} ❄`);
     if (out.girders > 0) showFloat(`${out.girders} girders drop${later}`);
     if (out.smog > 0) showFloat("SMOG!", true);
+    // SFX-1 (#463): every cast shimmers; dynamite booms, frost crackles cold,
+    // stolen mana rings. Hit or hurt by whose cast landed. Silent headless.
+    sfx.play("battle-ability");
+    if (out.id === "dynamite") sfx.play("battle-bomb");
+    else if (out.damage > 0) sfx.play(caster === mySeat ? "battle-hit" : "battle-damage");
+    if (out.frozen > 0) sfx.play("battle-frost");
+    if (stolenTotal > 0) sfx.play("battle-mana");
     if (battle.state.over) {
       window.setTimeout(showResult, 700);
       return;
     }
+    // A free cast (girders / frost / smog) does not pass the turn — only a
+    // turn-costing ability ticks it on.
+    if (out.costsTurn) sfx.play("battle-turn");
     if (battle.state.turn === oppSeat) scheduleOpponent();
     else lockInput(false);
   };
@@ -845,7 +862,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
       if (destroyed) return;
       if (out.ok) {
         opts.onLocalMove?.({ t: "ability", id, seat: mySeat });
-        afterAbility(out);
+        afterAbility(out, mySeat);
       } else paintAbilities();
     });
   });
@@ -877,6 +894,9 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
           restartTimer();
           awaitingAt = -1;
           window.clearTimeout(awaitTimer);
+          // SFX-1 (#463): B6 remote moves land here, never in afterOutcome —
+          // one neutral tick so the far seat's move is heard too.
+          if (!battle.state.over) sfx.play("battle-turn");
         }
         paintTurn();
         if (battle.state.over) {
@@ -910,12 +930,12 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
         }
         if (mv.t === "ability") {
           const out = await battle.useAbility(mv.id);
-          if (out.ok) afterAbility(out);
+          if (out.ok) afterAbility(out, oppSeat);
           else if (!destroyed && !battle.state.over) scheduleOpponent();
           return;
         }
         const out = await battle.playSwap(mv.r1, mv.c1, mv.r2, mv.c2, Date.now());
-        if (out.ok) afterOutcome(out);
+        if (out.ok) afterOutcome(out, oppSeat);
         else if (!destroyed && !battle.state.over) scheduleOpponent();
       })();
     }, opponentDelayMs);
@@ -929,6 +949,9 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
     const w = battle.state.winner;
     const verdict: BattleScreenResult["verdict"] =
       w === null ? "draw" : w === mySeat ? "win" : "lose";
+    // SFX-1 (#463): the verdict's own cue. A draw resolves to silence.
+    if (verdict === "win") sfx.play("battle-win");
+    else if (verdict === "lose") sfx.play("battle-lose");
     result.classList.remove("hidden");
     result.innerHTML = `
       <div class="battle-result-card">
@@ -965,8 +988,12 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
   restartTimer();
   fitBoard();
   if (battle.state.over) showResult();
-  else if (battle.state.turn === oppSeat) scheduleOpponent();
-  else lockInput(false);
+  else {
+    // SFX-1 (#463): the fight opens — one drum, once per screen.
+    sfx.play("battle-start");
+    if (battle.state.turn === oppSeat) scheduleOpponent();
+    else lockInput(false);
+  }
 
   function destroy() {
     if (destroyed) return;

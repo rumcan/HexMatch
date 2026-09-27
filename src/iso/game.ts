@@ -106,7 +106,7 @@ import { loadGroundTextures } from "./ground";
 import {
   createCamera, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
-  bootZoomFor, tapSlop, HH, HW, visibleTileRange,
+  bootZoomFor, tapSlop, HH, HW, visibleTileRange, screenToTileAt,
   type Camera, type GestureState,
 } from "./camera";
 // AMB-2 (#391): the bird pool — cosmetic, seeded from the map seed, drawn at
@@ -345,6 +345,9 @@ import { onVoiceLine, voice } from "../game/voice";
 // MUSIC-1 (#377): the mini radio player (state machine + element + pill). Its
 // own bus, its own settings; nothing about it touches the wire or a save.
 import { mountRadioWidget, radio, radioText, type RadioWidget } from "../audio/radio";
+// SFX-1 (#463): ambience by zoom — the island's own beds, fed from the camera
+// below. Like the radio: nothing on the wire, nothing in a save.
+import { ambience } from "../audio/ambience";
 // AI-02: the start-of-game difficulty prompt (see skill-picker.ts for the
 // "when do we ask" contract: only when nothing has chosen yet).
 import { promptForRivalSkill } from "./skill-picker";
@@ -1279,6 +1282,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const got = sellCargo(me, cargo, units);
     if (got <= 0) return "That sale fetched nothing.";
     ui.feed(`Sold ${units} ${CARGO[cargo].name} for ${moneyStr(got)}.`);
+    // SFX-1 (#463): a market sale rings the till. Silent headless (unarmed).
+    sfx.play("coin");
     if (isMp()) publishNet(performance.now(), true);
     return got;
   };
@@ -2652,6 +2657,43 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     flashLayer.frame(now);
     labels.frame();
     upgradeMarkers.frame();
+    // SFX-1 (#463): the island listens to the camera too — see probeAmbience.
+    probeAmbience();
+  }
+
+  /**
+   * SFX-1 (#463): feed the ambience its probe — the zoom plus what the
+   * camera's centre tile sits near (water within earshot? a town?). Called
+   * from every camera commit and, because a town can grow under a still
+   * camera (and the first gesture arms the engine after the last commit),
+   * from the frame loop at ~2 Hz. A few hundred array reads; the ambience
+   * itself folds re-probes closer than 250 ms into one glide.
+   */
+  function probeAmbience(): void {
+    try {
+      if (!grid || !grid.terrain) return;
+      const [cx, cy] = screenToTileAt(cam, cam.vw / 2, cam.vh / 2);
+      // Earshot, in tiles: the coast carries further than a town's murmur.
+      const COAST_R = 10, TOWN_R = 9;
+      let nearCoast = false;
+      const x0 = Math.max(0, cx - COAST_R), x1 = Math.min(grid.w - 1, cx + COAST_R);
+      const y0 = Math.max(0, cy - COAST_R), y1 = Math.min(grid.h - 1, cy + COAST_R);
+      for (let y = y0; y <= y1 && !nearCoast; y++) {
+        for (let x = x0; x <= x1; x++) {
+          if (grid.terrain[tIdx(x, y)] === WATER) { nearCoast = true; break; }
+        }
+      }
+      let nearTown = false;
+      for (const town of grid.towns) {
+        const pts: readonly (readonly [number, number])[] =
+          town.houses.length > 0 ? town.houses : [[town.tx, town.ty]];
+        for (const [hx, hy] of pts) {
+          if (Math.abs(hx - cx) + Math.abs(hy - cy) <= TOWN_R) { nearTown = true; break; }
+        }
+        if (nearTown) break;
+      }
+      ambience.setProbe({ zoom: cam.zoom, nearCoast, nearTown });
+    } catch { /* garnish */ }
   }
 
   /**
@@ -2746,6 +2788,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const radioWidget: RadioWidget = mountRadioWidget(ui.radioHost, radio);
   const offVoiceDuck = onVoiceLine((line) => {
     try { radio.duck(line !== null); } catch { /* garnish */ }
+    // SFX-1 (#463): the island ducks under a spoken line exactly like the radio.
+    try { ambience.duck(line !== null); } catch { /* garnish */ }
   });
 
   // M2 (#256): Sabotage Event Window — opens on clicking a sabotage marker on the minimap
@@ -3576,9 +3620,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and cancels on a pointer-down of its own, so this is safe to ask for.
     camera: (tx, ty) => flyCameraTo(tx, ty),
     feed: (text) => { if (growthSeat?.id === me.id) ui.feed(text, me.name); },
-    // SFX-1 (#463) ships the recorded `city-upgrade` sample; until it does the
-    // moment voices the beat with the catalogue's own "stamped up a grade" cue.
-    sound: (tier) => sfx.play("up", { step: tier }),
+    // SFX-1 (#463): the tier-up beat — the recorded `city-upgrade` sample,
+    // falling back to its synth recipe while the file is missing or loading.
+    sound: () => sfx.play("city-upgrade"),
     // The flag/bunting placeholder: a float over the hall while that art is
     // missing, so the beat is visible on a checkout without the PNGs.
     float: (text, tx, ty) => { floats.add(text, tx, ty, { cls: "delivery" }); },
@@ -13135,6 +13179,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     (newLoop ? [] : truckCargos(trucks.trucks, now, owner));
 
   /**
+   * SFX-1 (#463): the departure watch — which trains were dwelling at a
+   * platform on the last frame. A train that was dwelling and is rolling now
+   * has just pulled out, and that is the moment the whistle blows. Purely
+   * presentational (no economy, no wire): guests run it too.
+   */
+  const dwellingTrains = new Set<number>();
+  function whistleDepartures(): void {
+    const now = new Set<number>();
+    for (const t of rail.trains) {
+      if (t.status === "dwelling") {
+        now.add(t.id);
+        continue;
+      }
+      // Was dwelling, is rolling: a departure. The battle owns its own mix,
+      // so departures during a fight are tracked but stay silent.
+      if (dwellingTrains.has(t.id) && !battleScreen) sfx.play("train-whistle", { gain: 0.5 });
+    }
+    dwellingTrains.clear();
+    for (const id of now) dwellingTrains.add(id);
+  }
+
+  /**
    * Turn every lorry arrival since the last frame into a delivery: one token
    * of that depot's cargo on the board, one "+N" over the Factory.
    *
@@ -13156,6 +13222,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       seenDeliveries.set(truck.depotId, truck.deliveries);
       if (truck.deliveries <= seen) continue;
       const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
+      // SFX-1 (#463): a lorry-load landed at a Factory — a soft horn, either
+      // seat's. The cue's own 6 s gap is the rate limit across the whole map.
+      if (due > 0) sfx.play("truck-horn", { gain: 0.5 });
       // BUILD-1 (#460): a lorry-load landed from this depot — cargo moved, so
       // an open undo on its build dies (shipped loop; the new loop flags the
       // same thing from its clock in `economyTick`).
@@ -14269,6 +14338,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     void layersPromise;
 
     let lastFrameT = 0;
+    // SFX-1 (#463): the ambience re-probe counter — see the tail of `frame`.
+    let ambienceTick = 0;
     const frame = (t: number) => {
       if (disposed) return;
       if (loopToastPending && !loading.active && !storyView && !guideRunning()) {
@@ -14417,6 +14488,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // E4 (#268): the grid rides along so a train climbing a slope loses
       // speed the way a lorry does.
       if (sim) tickTrains(rail, dt, grid);
+      // SFX-1 (#463): departures whistle on the same frame the wheels start.
+      if (sim) whistleDepartures();
       if (sim) collectDeliveries(t);
 
       // WASD camera pan: held keys integrate at a constant world speed per
@@ -14514,6 +14587,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // unchanged this is a key compare; hidden, it returns at once. It
       // catches its own errors, so it can never cost the map a frame.
       minimap.frame(netVersion, rail.rail.revision);
+
+      // SFX-1 (#463): the island re-listens at ~2 Hz — a town that grew under
+      // a still camera, or the first gesture arming the engine after the last
+      // commit, still lands in the right mix within half a second.
+      if (++ambienceTick % 30 === 0) probeAmbience();
     };
 
     /**
@@ -15488,6 +15566,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       };
     },
     /**
+     * SFX-1 (#463): the ambience, for probes and the play-test. Reads the
+     * last camera probe, the mix weights and the absolute bed gains (all zero
+     * until the first real gesture arms the engine); with a `volume` it drives
+     * the same slider the settings sheet owns (`__iso.ambience({ volume: 0 })`
+     * silences the island without touching anything else).
+     */
+    ambience: (action?: { volume?: number; duck?: boolean }) => {
+      if (action) {
+        if (action.volume !== undefined) ambience.setVolume(action.volume);
+        if (action.duck !== undefined) ambience.duck(action.duck);
+      }
+      return {
+        probe: ambience.probe,
+        volume: ambience.settings.volume,
+        levels: ambience.levels(),
+        gains: ambience.gains(),
+      };
+    },
+    /**
      * E14: what a pointer event at a CANVAS point (device px, the same space
      * `pos()` hands the click handlers) resolves to — literally
      * the two-stage hit-test plus the own-factory anchor normalisation a
@@ -15869,6 +15966,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     radio.duck(false);
     radio.setNotice(null);
     radioWidget.destroy();
+    // SFX-1 (#463): the island goes quiet with the map — unlike the radio it
+    // has nothing to say on a menu, and a dead game must not hold its loops.
+    try { ambience.duck(false); } catch { /* garnish */ }
+    try { ambience.stop(); } catch { /* garnish */ }
     // SETTINGS-01: the ☰ menu's document listeners die with the game, and an
     // open sheet is destroyed rather than orphaned over a dead board.
     menuTeardown?.();

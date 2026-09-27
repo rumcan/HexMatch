@@ -100,8 +100,10 @@ function copyVoiceLines(): Plugin {
       srcDir = config.root;
     },
     closeBundle() {
-      for (const dir of ["voice", "music"]) {
-        // assets/music: the radio's own lofi playlist ships the same way.
+      // assets/music: the radio's own lofi playlist ships the same way.
+      // SFX-1 (#463): assets/sfx (the 25 recorded one-shots) and
+      // assets/ambience (the island's loop beds, once the lead ships them).
+      for (const dir of ["voice", "music", "sfx", "ambience"]) {
         const from = path.resolve(srcDir, "assets", dir);
         if (!existsSync(from)) continue;
         const to = path.resolve(srcDir, outDir, "assets", dir);
