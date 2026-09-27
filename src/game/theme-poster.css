@@ -759,3 +759,6 @@
   #iso-guide.guide-top .guide-strip, .guide-top #iso-guide .guide-strip, #iso-guide .guide-top .guide-strip { bottom: auto; }
   .ui-root[data-phone="1"] #iso-guide .guide-strip { bottom: 62px; }
 }
+/* owner: the palette is flat — no gradients on the difficulty cards */
+#iso-skill-prompt .iso-skill-label { background: var(--acc) !important; }
+#iso-skill-prompt .iso-skill-card { background-image: none; }
