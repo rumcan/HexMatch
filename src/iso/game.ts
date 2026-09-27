@@ -177,7 +177,7 @@ import {
   damRefusal, damRiverAt, damSitesFor, damsFromWire, damsToWire,
   type Dam, type DamSide, DAMS_ENABLED } from "./dams";
 import {
-  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades,
+  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades, planGoalPurchase, goalOutOfReach,
   planUpgrades, executePaves,
   paveCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants, type RivalPace,
   planRailMove, executeRailMove,
@@ -212,7 +212,7 @@ import {
 import {
   createMarket, marketToWire, marketFromWire, priceOf,
   sell as sellOnMarket, eventsAt, trendPct, history as priceHistory,
-  rivalSellLot, sellable, money as moneyStr,
+  rivalSellLot, sellable, money as moneyStr, quoteBuy,
 } from "./market";
 import {
   DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
@@ -9463,9 +9463,34 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rescoreNow();
       return;
     }
+    // #431: the bank could not close the gap either — spend the money the
+    // market paid it, if it covers the goal's whole shortfall. The Depot is
+    // built on the next turn by the ordinary goods-gated planner.
+    if (goal && rivalBuyTowardGoal(goal.cost)) {
+      syncWorld();
+      return;
+    }
     // Still nothing: wait for the clock, and the next turn comes on `idleMs`,
     // exactly like the shipped turn's idle path.
     lastAi = now - skill().buildMs + skill().idleMs;
+  }
+
+  /** #431: buy the goal's missing goods at the market's buy price, all or
+   *  nothing (`planGoalPurchase`); true when the purchase landed. */
+  function rivalBuyTowardGoal(cost: Purse): boolean {
+    const earns = new Set(eco.harvesters.filter((h) => h.owner === rival.id)
+      .map((h) => depotCargo(eco, h)).filter((c): c is Cargo => !!c));
+    if (!goalOutOfReach(rival.purse, cost, earns)) return false;
+    const plan = planGoalPurchase(rival.purse, cost, rival.money, (cargo, units) => {
+      const q = quoteBuy(market, cargo, units, marketMs);
+      return q.units === units ? q.cost : null;
+    });
+    if (!plan) return false;
+    rival.money -= plan.price;
+    for (const [cargo, n] of Object.entries(plan.buy) as [Cargo, number][]) {
+      rival.purse[cargo] = (rival.purse[cargo] ?? 0) + n;
+    }
+    return true;
   }
 
   /** L17 (#245): one bank pass toward a price; true when any trade landed. */

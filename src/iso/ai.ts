@@ -1334,6 +1334,48 @@ export function planBankTrades(
 }
 
 
+/**
+ * #431: a stalled seat turns MONEY into its next Depot. The goods gate
+ * (`treeGoal` → `aiBuildStep`) is priced in cargo, but under ECON-1 the rival
+ * sells what it earns — so a seat whose only income is the gold mine (gold is
+ * outside the bank, PP-08) held money it could never spend and sat at 3 of
+ * each for the whole match. This prices the goal's WHOLE shortfall with the
+ * caller's `priceOf` (null = that cargo cannot be bought) and answers only
+ * when `money` covers all of it: a partial buy builds nothing, so it never
+ * happens. The planner keeps planning against goods, so its search stays as
+ * cheap as before (#477 handed it a money purse and every turn A*-searched
+ * every industry).
+ */
+/**
+ * #431: is the goal short on a cargo the seat cannot EARN — no Depot of its
+ * own produces it — so waiting on the clock will never close the gap? Only
+ * then does the seat buy (`planGoalPurchase`); a seat that is merely waiting
+ * for income keeps waiting, so the purchase fixes the stall without handing
+ * every idle turn a shortcut (the BAL-1 gate caught that: Normal 40% → 75%).
+ */
+export function goalOutOfReach(purse: Purse, cost: Purse, earns: ReadonlySet<Cargo>): boolean {
+  return (Object.entries(cost) as [Cargo, number][])
+    .some(([cargo, need]) => (purse[cargo] ?? 0) < need && !earns.has(cargo));
+}
+
+export function planGoalPurchase(
+  purse: Purse, cost: Purse, money: number,
+  priceOf: (cargo: Cargo, units: number) => number | null,
+): { buy: Purse; price: number } | null {
+  const buy: Purse = {};
+  let price = 0;
+  for (const [cargo, need] of Object.entries(cost) as [Cargo, number][]) {
+    const short = Math.max(0, Math.ceil(need - (purse[cargo] ?? 0)));
+    if (short <= 0) continue;
+    const p = priceOf(cargo, short);
+    if (p === null) return null;
+    buy[cargo] = short;
+    price += p;
+  }
+  if (price <= 0 || price > money) return null;
+  return { buy, price };
+}
+
 export const bestCandidate = (
   state: EconomyState, factory: Factory, opts: PlanOptions,
 ): Candidate | null => planCandidates(state, factory, opts)[0] ?? null;
