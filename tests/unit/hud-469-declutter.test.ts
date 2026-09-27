@@ -164,17 +164,17 @@ describe("HUD-1 contextual panels", () => {
     const item = { id: "wood", who: "Mabel", text: "Deliver wood", progress: "0/10", reward: "+1★" };
     const withQuests = state({ quests: { hidden: false, items: [item] } });
     ui.paint(withQuests);
-    expect(badge(ui, "quests").textContent).toBe("1");
-    el(ui, '[data-tab="quests"]').click();
-    expect(badge(ui, "quests").classList.contains("hidden")).toBe(true);
-    el(ui, '[data-tab="quests"]').click(); // close, but keep this tab selected
+    expect(badge(ui, "contracts").textContent).toBe("1");
+    el(ui, '[data-tab="contracts"]').click();
+    expect(badge(ui, "contracts").classList.contains("hidden")).toBe(true);
+    el(ui, '[data-tab="contracts"]').click(); // close, but keep this tab selected
     withQuests.quests!.items.push({ ...item, id: "ore" });
     ui.paint(withQuests);
-    expect(badge(ui, "quests").textContent).toBe("1");
+    expect(badge(ui, "contracts").textContent).toBe("1");
     ui.paint(withQuests);
-    expect(badge(ui, "quests").textContent).toBe("1");
-    el(ui, '[data-tab="quests"]').click();
-    expect(badge(ui, "quests").classList.contains("hidden")).toBe(true);
+    expect(badge(ui, "contracts").textContent).toBe("1");
+    el(ui, '[data-tab="contracts"]').click();
+    expect(badge(ui, "contracts").classList.contains("hidden")).toBe(true);
   });
 
   it("badges live price alerts without auto-opening the drawer", () => {
