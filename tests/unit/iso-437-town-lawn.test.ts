@@ -339,7 +339,7 @@ describe("#437 the town-garden hook is wired and inert without art", () => {
 // ── 5. the shader still honours the mask ───────────────────────────────────
 describe("#437 the terrain shader keeps the dirt material off tended ground", () => {
   it("declares and samples the tended-ground mask", () => {
-    expect(TERRAIN_FS).toContain("uniform sampler2D uLawn;");
+    expect(TERRAIN_FS).toMatch(/uniform\s+sampler2D\s+uLawn;/);
     expect(TERRAIN_FS).toMatch(/float\s+lawn\s*=\s*texture\(uLawn,\s*fuv\)\.r;/);
   });
 
