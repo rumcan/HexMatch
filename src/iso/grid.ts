@@ -221,9 +221,10 @@ export interface MapPreset {
   industryRing: readonly [number, number];
   /**
    * Gentle terrain: a flat apron of this many tiles around every industry
-   * (its own level, rough ground cleared). #436 gives every map this one
-   * day; the preset bakes it in so the scenario plays the same before and
-   * after that lands.
+   * (its own level, rough ground cleared). #436 landed the apron on every
+   * map at `INDUSTRY_APRON`; a preset overrides the RING WIDTH (the Starter
+   * Island asks for 4) and its own rough-ground clearing, so the scenario
+   * plays the same before and after that landed.
    */
   industryApron: number;
 }
@@ -2471,6 +2472,22 @@ function placeTowns(
 }
 
 /**
+ * #436 — the flat APRON every industry gets on every map: a ring this many
+ * tiles wide around its footprint, levelled to the industry's own level
+ * (water, rivers and other footprints keep theirs), blended back into the
+ * open country by the one-level relaxation in `makeElevation` — the same
+ * treatment the town apron gets.
+ *
+ * Three tiles is the floor the Depot rule needs: a 2×2 lot that edge-touches
+ * the footprint (the only way a Depot claims an industry) has every tile
+ * within 2 tiles of the footprint, so a 3-wide ring holds every candidate
+ * lot flat on one level with a tile to spare. FTUE-1 (#464) first shipped
+ * this for the Starter Island preset (`MapPreset.industryApron`); #436
+ * gives it to every generated map.
+ */
+export const INDUSTRY_APRON = 3;
+
+/**
  * Build a small, deliberately conservative height field. This is kept separate
  * from terrain generation so enabling it cannot consume (or perturb) the
  * historical RNG stream. Fixed tiles are flattened first, then the remaining
@@ -2486,9 +2503,9 @@ function makeElevation(
   rivers: Uint8Array | undefined,
   industries: readonly Industry[],
   towns: readonly Town[],
-  /** FTUE-1 (#464): flat apron tiles around every industry (0 = none — every
-   *  ordinary map keeps today's terrain byte for byte). */
-  industryApron = 0,
+  /** #436: flat apron tiles around EVERY industry — `INDUSTRY_APRON` on an
+   *  ordinary map, a preset's tuned width on a scenario (0 = none). */
+  industryApron = INDUSTRY_APRON,
   strength: "normal" | "strong" = "normal",
 ): Uint8Array {
   const n = MAP_W * MAP_H;
@@ -2546,34 +2563,18 @@ function makeElevation(
     flatten(tiles);
   }
   for (const town of towns) flatten([...town.houses, ...town.roads, [town.tx, town.ty]]);
-  // MAP-1 (#412): a flat APRON around every town. The per-tile jitter above
-  // makes open land bumpy everywhere, and a Factory (up to 2×4 with shapes)
-  // needs a level footprint that shares an edge with the town — without an
-  // apron the opening move (first-run coach: "place your Factory beside a
-  // town") often had no legal site. The apron takes the town's own level;
-  // water, rivers and industry footprints keep theirs (already fixed).
-  const APRON = 6;
-  for (const town of towns) {
-    const pts = [...town.houses, ...town.roads, [town.tx, town.ty] as [number, number]];
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-    const level = height[idx(town.tx, town.ty)];
-    for (let y = y0 - APRON; y <= y1 + APRON; y++) {
-      for (let x = x0 - APRON; x <= x1 + APRON; x++) {
-        if (!inBounds(x, y)) continue;
-        const i = idx(x, y);
-        if (fixed[i]) continue;                       // water, rivers, industries, the town itself
-        height[i] = level;
-        fixed[i] = 1;
-      }
-    }
-  }
 
-  // FTUE-1 (#464): the same flat apron around every industry a preset asks
-  // for — the industry's own level, the ring blended back by the relaxation
-  // below exactly as the town apron is. #436 will give every map this; the
-  // Starter Island bakes it in so its "gentle terrain" holds either way, and
-  // an ordinary map (industryApron 0) never touches a tile.
+  // #436: a flat APRON around every industry — its own level, the ring
+  // blended back by the relaxation below exactly as the town apron is. This
+  // is what makes the land around an industry buildable: the per-tile jitter
+  // above made every Depot footprint beside an industry straddle a level
+  // change ("not flat"), and the fix is the town apron's, applied to
+  // industries. It runs BEFORE the town apron so the industry's own ring —
+  // the guarantee the Depot rule reads — wins the few tiles a town's apron
+  // could otherwise claim (a big town's apron and an industry apron can meet
+  // at TOWN_INDUSTRY_SEP). Water, rivers and other footprints keep theirs
+  // (already fixed); rivers are never cut off, and the apron writes height
+  // bytes only — no terrain tile changes course.
   if (industryApron > 0) {
     for (const ind of industries) {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -2588,10 +2589,34 @@ function makeElevation(
         for (let x = x0 - industryApron; x <= x1 + industryApron; x++) {
           if (!inBounds(x, y)) continue;
           const i = idx(x, y);
-          if (fixed[i]) continue;                       // water, rivers, the footprint itself
+          if (fixed[i]) continue;                       // water, rivers, footprints
           height[i] = level;
           fixed[i] = 1;
         }
+      }
+    }
+  }
+
+  // MAP-1 (#412): a flat APRON around every town. The per-tile jitter above
+  // makes open land bumpy everywhere, and a Factory (up to 2×4 with shapes)
+  // needs a level footprint that shares an edge with the town — without an
+  // apron the opening move (first-run coach: "place your Factory beside a
+  // town") often had no legal site. The apron takes the town's own level;
+  // water, rivers, industry footprints and industry aprons keep theirs
+  // (already fixed).
+  const APRON = 6;
+  for (const town of towns) {
+    const pts = [...town.houses, ...town.roads, [town.tx, town.ty] as [number, number]];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const level = height[idx(town.tx, town.ty)];
+    for (let y = y0 - APRON; y <= y1 + APRON; y++) {
+      for (let x = x0 - APRON; x <= x1 + APRON; x++) {
+        if (!inBounds(x, y)) continue;
+        const i = idx(x, y);
+        if (fixed[i]) continue;                       // water, rivers, industries, the town itself
+        height[i] = level;
+        fixed[i] = 1;
       }
     }
   }
@@ -2768,7 +2793,7 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // generated industry and town footprint can be flat without changing the
   // placement RNG stream. Option-off still returns a flat compatibility map.
   const height = opts.elevation
-    ? makeElevation(s, terrain, riverMask, list, towns, preset?.industryApron ?? 0,
+    ? makeElevation(s, terrain, riverMask, list, towns, preset?.industryApron ?? INDUSTRY_APRON,
       opts.elevationStrength === "strong" ? "strong" : "normal")
     : new Uint8Array(MAP_W * MAP_H);
   // fillCoastalHoles only fills sea-disconnected WATER; rivers reach the sea so
