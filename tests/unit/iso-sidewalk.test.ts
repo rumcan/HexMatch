@@ -412,25 +412,25 @@ describe("#159 concrete-slab joints", () => {
     }
   });
 
-  it("spaces the slabs along a curve by arc length, not by a chord", () => {
-    // A bend's arc: joints must be spread along it, and the first must not sit
-    // right on the end of the arc.
+  it("lays a curve's slabs on the iso grid: axis-aligned joints on the world lattice", () => {
     const arc = sidewalkPaths(2, 2, NE | SE).find((p) => p.points.length > 2)!;
     const joints = sidewalkJoints(arc);
-    expect(joints.length).toBeGreaterThan(0);
-    // Measured the way the walker lays them: distance ALONG the polyline.
-    const arcLength = arc.points.reduce((n, p, i) => i === 0 ? 0
-      : n + Math.hypot(p[0] - arc.points[i - 1][0], p[1] - arc.points[i - 1][1]), 0);
-    const trueArc = SIDEWALK_OFFSET * (Math.PI / 2);
-    expect(trueArc / SIDEWALK_JOINT_SPACING).toBeGreaterThan(1.5);   // worth testing
-    expect(arcLength).toBeLessThan(trueArc);                        // a chord walk is shorter
-    const along = joints.map((j) => alongPolyline(arc.points, [(j.points[0][0] + j.points[1][0]) / 2, (j.points[0][1] + j.points[1][1]) / 2]));
-    for (let i = 0; i < along.length; i++) {
-      near(along[i], SIDEWALK_JOINT_SPACING * (i + 1));
+    expect(joints.length).toBeGreaterThan(1);
+    for (const j of joints) {
+      const [a, b] = j.points;
+      // Along a ground axis — on screen, the grid's own ±0.5 slope.
+      const axis = Math.abs(b[0] - a[0]) < 1e-9 ? 0 : 1;
+      expect(Math.abs(b[1 - axis] - a[1 - axis]) < 1e-9 || Math.abs(b[axis] - a[axis]) < 1e-9).toBe(true);
+      const k = (a[axis] - SIDEWALK_JOINT_PHASE) / SIDEWALK_JOINT_SPACING;
+      expect(Math.abs(k - Math.round(k))).toBeLessThan(1e-9);
     }
-    // The last joint stops a margin short of the arc's end, so no slab is a
-    // sliver at the tile's centre-line.
-    expect(arcLength - along[along.length - 1]).toBeGreaterThan(SIDEWALK_JOINT_MARGIN);
+  });
+
+  it("repeats the same joints on every tile of a straight run", () => {
+    const at = (tx: number) => sidewalkPaths(tx, 4, SE | NW).flatMap((p) => sidewalkJoints(p))
+      .map((j) => +(j.points[0][0] - tx).toFixed(9)).sort();
+    expect(at(10)).toEqual(at(11));
+    expect(at(10).length).toBe(Math.round(2 / SIDEWALK_JOINT_SPACING));
   });
 
   it("keeps the phase a property of the world, not of the tile", () => {
