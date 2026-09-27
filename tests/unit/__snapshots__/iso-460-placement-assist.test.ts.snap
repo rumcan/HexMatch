@@ -35,8 +35,12 @@ exports[`#460 cost clarity on the build cards > every build card quotes $ and th
     "tool": "platform",
   },
   {
-    "sub": "$168 · next to a town",
+    "sub": "$168 · next to a town · R turns",
     "tool": "plant",
+  },
+  {
+    "sub": "$10 a tile-level · drag to flatten to where you started",
+    "tool": "level",
   },
   {
     "sub": "Refund 50%",

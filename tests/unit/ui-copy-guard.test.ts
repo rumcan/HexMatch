@@ -286,7 +286,7 @@ describe("#383 How to Play and settings copy", () => {
 // voice is the game's one build currency ($).
 // ────────────────────────────────────────────────────────────────────────────
 import {
-  DEPOT_ASSIST, PLANT_ASSIST, RAIL_ASSIST, SLOPE_ASSIST, MONEY_ASSIST, moneyFix,
+  DEPOT_ASSIST, PLANT_ASSIST, RAIL_ASSIST, SLOPE_ASSIST, MONEY_ASSIST, moneyFix, levelFix,
 } from "../../src/iso/placement-assist";
 
 describe("#460 placement-assist refusal copy", () => {
@@ -310,10 +310,28 @@ describe("#460 placement-assist refusal copy", () => {
     assertClean(samples);
   });
 
-  it("the slope refusal is the #456 seam — 'find flat ground' until Level Ground lands", () => {
+  it("the slope refusal speaks both #456 voices — the level's price, or the flat-ground fallback", () => {
+    // Level Ground (#456) landed, so the seam closed: a levellable footprint
+    // quotes the Level tool's own price (`levelFix` / `slopeAssistFor`), and
+    // one that cannot be levelled still gets the flat-ground fallback. Both
+    // are player-facing, and the money voice is the game's one build currency.
     expect(SLOPE_ASSIST.reason).toBe("Slope");
     expect(SLOPE_ASSIST.fix).toBe("find flat ground");
-    assertClean([{ where: "slope assist", text: `${SLOPE_ASSIST.reason} — ${SLOPE_ASSIST.fix}` }]);
+    expect(levelFix(40)).toBe("level it for $40");
+    expect(levelFix(1234)).toBe("level it for $1,234");
+    expect(levelFix(0)).toBe("level it for $0");
+    const samples: Sample[] = [
+      { where: "slope fallback", text: `${SLOPE_ASSIST.reason} — ${SLOPE_ASSIST.fix}` },
+      { where: "slope priced", text: `Slope — ${levelFix(40)}` },
+      { where: "slope priced (large)", text: `Slope — ${levelFix(12345)}` },
+    ];
+    for (const s of samples) expect(s.text.length).toBeGreaterThan("Slope — ".length);
+    assertClean(samples);
+    for (const money of [10, 40, 1234]) {
+      expect(levelFix(money)).toMatch(/^level it for \$[\d,]+$/);
+    }
+    // Never a cargo icon, never a negative price.
+    expect(levelFix(-50)).toBe("level it for $0");
   });
 
   it("the money voice quotes $, never cargo icons", () => {

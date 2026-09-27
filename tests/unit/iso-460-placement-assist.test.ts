@@ -91,6 +91,9 @@ interface AssistHook {
   // BUILD-1 hooks
   legalSpots: (kind: "harvester" | "plant" | "platform") => [number, number][];
   assistAt: (tx: number, ty: number) => { reason: string; fix: string } | null;
+  /** #456's read-only twin — the Level tool's own price for a rectangle. */
+  levelCostOf: (ax: number, ay: number, bx: number, by: number) =>
+    { money: number; levels: number } | { refusal: string };
   undoInfo: (now?: number, seat?: number) =>
     { kind: string; seat: number; leftMs: number; blocked: string | null } | null;
   undoBuild: (now?: number) => string | null;
@@ -315,6 +318,23 @@ describe("#460 refused tiles answer with a reason and a fix", () => {
     return null;
   }
 
+  /** Every lot the depot plan refuses for slope reason (`not-flat`). */
+  function notFlatLots(hh: AssistHook): [number, number][] {
+    const out: [number, number][] = [];
+    for (let x = 0; x < MAP_W; x++) {
+      for (let y = 0; y < MAP_H; y++) {
+        if (hh.placementPlan("depot", x, y).code === "not-flat") out.push([x, y]);
+      }
+    }
+    return out;
+  }
+
+  /** The Level tool's own price for a 2x2 lot — 0 when it refuses to level it. */
+  function levellableMoney(hh: AssistHook, x: number, y: number): number {
+    const cost = hh.levelCostOf(x, y, x + 1, y + 1);
+    return "money" in cost ? cost.money : 0;
+  }
+
   it("water answers 'Water — build on land'", () => {
     const spot = depotSpotWithCode("water") ?? anySpotWithCode("water");
     expect(spot, "the map has a water lot").not.toBeNull();
@@ -325,14 +345,33 @@ describe("#460 refused tiles answer with a reason and a fix", () => {
     expect(assist!.fix.length).toBeGreaterThan(0);
   });
 
-  it("slope answers 'Slope — find flat ground' until Level Ground (#456) lands", () => {
-    const spot = depotSpotWithCode("not-flat") ?? depotSpotWithCode("too-steep");
-    if (!spot) return; // a flat map has nothing to prove
+  it("a slope Level Ground can fix answers 'Slope — level it for $N' at #456's own price", () => {
+    // #456 landed as this PR's one seam: the fix quotes the Level tool's OWN
+    // plan (`levelCost`) for the refused lot, so the money on the card is
+    // exactly what the drag would charge — never a second price table.
+    const spots = notFlatLots(h);
+    const priced = spots.find(([x, y]) => levellableMoney(h, x, y) > 0);
+    expect(priced, "the map has a not-flat lot Level Ground can fix").toBeTruthy();
     h.setTool("harvester");
-    const assist = h.assistAt(spot[0], spot[1]);
+    const assist = h.assistAt(priced![0], priced![1]);
+    expect(assist).not.toBeNull();
+    expect(assist!.reason).toBe("Slope");
+    expect(assist!.fix).toBe(`level it for $${levellableMoney(h, priced![0], priced![1]).toLocaleString("en-US")}`);
+  });
+
+  it("a slope Level Ground cannot fix still answers 'find flat ground'", () => {
+    // The other half of the seam: when the lot has a tile no level can move
+    // (water, a building, rail, a cliff edge), the card never promises a
+    // price the Level tool would refuse.
+    const spots = notFlatLots(h);
+    const stuck = spots.find(([x, y]) => levellableMoney(h, x, y) === 0);
+    expect(stuck, "the map has a not-flat lot Level Ground refuses").toBeTruthy();
+    h.setTool("harvester");
+    const assist = h.assistAt(stuck![0], stuck![1]);
     expect(assist).not.toBeNull();
     expect(assist!.reason).toBe("Slope");
     expect(assist!.fix).toBe("find flat ground");
+    expect(assist!.fix).not.toMatch(/\$/);
   });
 
   it("a poor purse answers 'Not enough money — $N more' (depot and plant)", () => {

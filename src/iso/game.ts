@@ -182,7 +182,7 @@ import {
 } from "./placement";
 import {
   assistText, depotAssistFor, DEPOT_ASSIST, legalDepotSpots, legalPlantSpots, legalPlatformSpots,
-  MONEY_ASSIST, PLANT_ASSIST, RAIL_ASSIST, moneyFix, type AssistCopy,
+  MONEY_ASSIST, PLANT_ASSIST, RAIL_ASSIST, moneyFix, slopeAssistFor, type AssistCopy,
 } from "./placement-assist";
 import type { GhostSpec } from "./overlay-art";
 import {
@@ -10838,6 +10838,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             return holder !== undefined && holder.owner !== me.id;
           });
         }
+        // BUILD-1 (#460) × #456: a lot that only lacks LEVEL ground is no
+        // longer a dead end — the fix is the Level tool's own price for this
+        // footprint (`slopeAssistFor` runs the seam main left for it).
+        if (plan.code === "not-flat") return slopeAssistFor(grid, depotTiles(tx, ty), { track });
         return depotAssistFor(plan.code ?? "", rivalHolds);
       }
       const cargo = newLoop
@@ -10852,6 +10856,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (tool === "plant") {
       const why = plantRefusal(grid, track, eco, tx, ty, factoryView);
+      // The same #456 courtesy the Depot gets: price the level that would
+      // make this footprint flat instead of sending the player hunting.
+      if (why === "not-flat") {
+        return slopeAssistFor(grid, plantFootprintTiles(tx, ty, factoryView, factoryFp), { track });
+      }
       if (why !== null) return PLANT_ASSIST[why];
       if (!canPayBuild(me, PLANT_COST)) return MONEY_ASSIST(moneyCostOf(PLANT_COST), me.money);
       return null;
@@ -10869,6 +10878,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             const holder = industryLocks(eco).get(anchor.id);
             if (holder && holder.owner === me.id) return DEPOT_ASSIST["industry-taken"];
           }
+        }
+        // A structure whose site only needs levelling says so, with the price
+        // the Level tool would charge for that footprint (#456's seam).
+        if (why === "not-flat") {
+          const [sw, sh] = footprintFor(tool === "platform" ? "platform" : "depot", railView);
+          return slopeAssistFor(grid, footprintTiles({ tx, ty, w: sw, h: sh }), { track });
         }
         return RAIL_ASSIST[why];
       }
@@ -11004,11 +11019,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         + (n ? ` · <i>${n} refused</i>` : "");
       const units = levelPlan.levels;
       costInfo = hintLine(tilesTxt,
-        `${units} tile-level${units === 1 ? "" : "s"} · ${costMarkup(levelBill(units))}`);
+        `${units} tile-level${units === 1 ? "" : "s"} · ${moneyMarkup(levelBill(units))}`);
     } else if (tool === "level") {
       costInfo = hintLine(
         "drag to flatten to where you started · Shift+click raises · Alt+click lowers",
-        `${costMarkup(levelBill(1))} a tile-level`,
+        `${moneyMarkup(levelBill(1))} a tile-level`,
       );
     } else if (tool === "interchange" && hover) {
       const plan = planInterchange(grid, track, me.i + 1, hover.tx, hover.ty, me.purse, me.money);

@@ -28,6 +28,10 @@
 import { DEPOT_SIZE, industriesTouchingDepot } from "./depot";
 import type { EconomyState } from "./economy";
 import { factoryFootprintOf, rotatedSpan, type Grid } from "./grid";
+// #456 LEVEL GROUND — the terraform rule's pure plan. The slope fix is
+// PRICED with it, never re-derived: `levelCost` is the same answer the Level
+// tool's own preview and commit charge for.
+import { levelCost, type PlanLevelOptions, type TilePair } from "./level-ground";
 import {
   planDepotPlacement, planFactoryPlacement,
   type DepotPlanOptions, type PlacementPlan,
@@ -64,14 +68,42 @@ export const MONEY_ASSIST = (price: number, money: number): AssistCopy => ({
 });
 
 /**
- * The slope fix. Once Level Ground (#456) lands, this reads its cost API and
- * becomes "level it for $40"; until then the fix is to find flat ground.
- * One seam, so the day it lands the copy changes in exactly one place.
+ * The slope fix's flat-ground fallback — what the card says when Level Ground
+ * cannot flatten the refused footprint at all (water, a building, rail, a road
+ * whose new slope would break, a cliff edge). Every slope row in the tables
+ * below reads this, and `slopeAssistFor` prices the ones that CAN be levelled.
  */
 export const SLOPE_ASSIST: AssistCopy = {
   reason: "Slope",
   fix: "find flat ground",
 };
+
+/** The money voice of the Level Ground fix: "level it for $40". */
+export const levelFix = (money: number): string =>
+  `level it for $${Math.max(0, money).toLocaleString("en-US")}`;
+
+/**
+ * The slope refusal's fix, PRICED (#456 landed, so the seam is now closed):
+ * "Slope — level it for $40" when Level Ground can flatten this whole
+ * footprint, because `levelCost` is exactly what the Level tool charges —
+ * the money is a promise, not an estimate. When the footprint has a tile that
+ * cannot be levelled, `levelCost` refuses and the fix falls back to finding
+ * flat ground, which is the only other way onto the tile.
+ *
+ * `tiles` is the refused FOOTPRINT, in the rule's own order: `levelCost`
+ * derives its target height from `tiles[0]`, exactly as the level drag's start
+ * tile carries it — so pass the same list the placement rule tested with
+ * (`depotTiles`, `plantFootprintTiles`, the rail structure's `footprintTiles`).
+ */
+export function slopeAssistFor(
+  grid: Grid, tiles: readonly TilePair[], opts: PlanLevelOptions = {},
+): AssistCopy {
+  const cost = levelCost(grid, tiles, opts);
+  // Nothing to charge means nothing to fix — a zero-price "level it" would be
+  // a promise the Level tool cannot keep.
+  if ("refusal" in cost || cost.money <= 0) return SLOPE_ASSIST;
+  return { reason: SLOPE_ASSIST.reason, fix: levelFix(cost.money) };
+}
 
 // ── the truck Depot's refusals (planDepotPlacement codes) ─────────────────
 /**
