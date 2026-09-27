@@ -223,3 +223,44 @@ The trainee's rows were added for FTUE-1 (#464) and only re-measured here:
 "the trainee never beats the novice" is a harness *target*, not a knob. The
 bots' plant budget (§ the bots in `docs/BALANCE.md`) is measuring-stick
 policy, not a game knob.
+
+## PLAY-FIX-1 (#544): overflow rent and a mid-game railway
+
+Buying above the per-cargo `storageCapFor(townLevel)` remains legal. Each
+cargo is charged independently, on the same simulated harvest clock as income:
+
+| Overflow band | Marginal $ / unit / economy minute |
+| --- | ---: |
+| First 25% of that cargo's cap | 0.20 |
+| Next 75% (up to twice the cap held) | 1.00 |
+| Anything beyond twice the cap held | 3.00 |
+
+At cap 100, holding 110 costs $2/min; 125 costs $5/min; 200 costs
+$80/min; 300 costs $380/min. A short overflow for an upgrade is cheap;
+an indefinite warehouse is not. The charge is fractional (`HARVEST_MS / 60000`),
+not rounded per tick. No charge while setup, battle, or the economy is paused;
+no wall-clock/offline catch-up. Dev unlimited bypasses rent. Both seats use
+`totalStorageRent`; BAL-1 uses the same function and clock. Rent can put money
+below zero (otherwise emptying the bank would make hoarding free); sales pay
+that balance back. Negative balances survive saves. Cargo is never confiscated.
+The first local charge writes a Feed notice; the purse, Market and Bank show
+per-cargo overflow and current rent. City upgrades immediately change the bands.
+
+Rail costs continue to derive from `BUILD_COSTS × BASE_PRICE`, shared by
+`RAIL_COSTS`, `BUILD_COSTS_MONEY`, placement, refunds and rival planning.
+There is no `TRANSPORT.rail` in this checkout (that table contains road/dirt);
+rail transport throughput is unchanged.
+
+| Build | Before $ | After $ | With planned Rail Baroness (×0.75), before rounding |
+| --- | ---: | ---: | ---: |
+| Track / tile | 15 | 5 | 3.75 |
+| Platform | 480 | 180 | 135 |
+| Rail depot | 258 | 112 | 84 |
+| Train | 168 | 84 | 63 |
+| Rail bridge / water tile | 45 | 45 | 33.75 |
+
+A starter line with 20 land tiles, one platform, one depot and one train falls
+from $1,206 to $476. Two-platform lines fall from $1,686 to $656. The manager
+perk is **not** implemented here: cast work should apply its 25% discount once,
+to the final shared money quote, with consistent placement/preview/refund rules.
+These are base prices, not already-discounted manager prices.

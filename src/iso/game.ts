@@ -1,3 +1,4 @@
+import { totalStorageRent, storageRentLabel } from "./storage-rent";
 // ══════════════════════════════════════════════════════════════════════════
 // E11 — the playable isometric game.
 //
@@ -9007,6 +9008,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *     passive trickle); the clock only re-reads the network so both boards'
    *     token gates follow blockades expiring.
    */
+  let rentAnnounced = false;
   function economyTick(now: number) {
     // B5 (#250): the economy clock stops for BOTH seats while a battle is up —
     // the fight is the whole world until it settles.
@@ -9040,6 +9042,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const rules = difficultyRules();
       const locks = industryLocks(eco);
       for (const seat of [me, rival]) {
+        if (!devUnlimited) {
+          const rent = totalStorageRent(seat.purse, storageCapFor(seat.townLevel));
+          seat.money -= rent * HARVEST_MS / 60_000;
+          if (seat === me && rent > 0 && !rentAnnounced) {
+            rentAnnounced = true;
+            ui.feed(`Storage rent started — ${storageRentLabel(seat.purse, storageCapFor(seat.townLevel))}. Sell cargo or upgrade your city.`);
+          }
+        }
         const owner = seat.id;
         const components = buildAllComponents(eco.track, ownerIdOf(eco, owner));
         for (const depot of eco.harvesters) {
@@ -10966,7 +10976,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ECON-1 (#421): the seat's money, and (once, off the host's record) the
     // market clock and its slippage — the guest prices the same minute.
     const mv = (wire as { money?: number }).money;
-    if (typeof mv === "number" && Number.isFinite(mv)) p.money = Math.max(0, mv);
+    if (typeof mv === "number" && Number.isFinite(mv)) p.money = mv;             // PLAY-FIX-1: rent may leave a seat in debt
     // CAST-1: the host's word on the seat's manager (null = none yet — the
     // guest then prices exactly as the host will) and the Fixer's allowance.
     const mg = (wire as { manager?: unknown }).manager;
@@ -14245,7 +14255,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // ECON-1 (#421): a pre-money save has no field — the seat keeps its
       // opening balance rather than restoring as bankrupt.
       const mv = (d.players[i] as { money?: number }).money;
-      if (typeof mv === "number" && Number.isFinite(mv)) players[i].money = Math.max(0, mv);
+      if (typeof mv === "number" && Number.isFinite(mv)) players[i].money = mv;    // PLAY-FIX-1: rent debt survives a save
       // CAST-1: the manager the match was started with. A pre-CAST save has
       // none and keeps the boot's (legacy "vex"/"you" read as Anne/James).
       const sm = (d.players[i] as { manager?: unknown }).manager;

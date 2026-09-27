@@ -37,3 +37,21 @@ extra arguments), fits the body into the compiler's box, and rewrites the
 master. Do not mirror or flip a master to save a drawing: every one of them is
 lit from the upper left, and a mirrored copy is lit from the upper right — the
 map has one sun.
+
+### PLAY-FIX-1 (#544)
+
+The four cardinal headings (`n/e/s/w`) are now supplied too, from OpenGFX
+`spr3132` in `base-3092-road-vehicles.pnml` (OpenTTD/OpenGFX's
+`sprites/png/roadvehicles/vehiclesroad01.png`, GPL-2.0 as the existing fallback
+art). They use the original pixel-art silhouette, with red company colour for
+the rival. The diagonal headings retain the painted branded art. No heading is
+faked by rotating a three-quarter image. Both families now have eight fallback
+cells. The compiled diagonal images were stale/mislabelled: rebuilding from the
+source masters restores the nose orientation.
+
+The keyed masters had a low-alpha rectangular matte. Run
+`node tools/clean-vehicle-alpha.mjs` before rebuilding to remove coverage below
+64/255 from the **sources**, not the resampled output. This preserves genuine
+higher-coverage body/contact shadows, then lets the compiler create new smooth
+alpha edges. The same cleanup covers the TRAFFIC-01 car sources. Rebuild with
+`node tools/make-truck-art.mjs` and `npm run slice-atlas`.

@@ -1,3 +1,4 @@
+import { totalStorageRent } from "../../../src/iso/storage-rent";
 // ─────────────────────────────────────────────────────────────────────────────
 // BAL-1 (#471) — the balance sim harness (not a test file; vitest only collects
 // `tests/unit/**/*.test.ts`). A headless match runner in the `l1d-race`
@@ -851,6 +852,7 @@ export function runBalanceMatch(
       // ── the harvest clock (economyTick's new-loop branch) ───────────────
       if (t - seat.lastHarvest >= HARVEST_MS) {
         seat.lastHarvest = t;
+        seat.money -= totalStorageRent(seat.goods, storageCapFor(seat.townLevel)) * HARVEST_MS / 60_000;
         loopIncome(eco, seat, rateCache, t);
       }
     }

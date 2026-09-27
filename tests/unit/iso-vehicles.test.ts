@@ -704,7 +704,7 @@ describe("RV-01 truck draw items", () => {
     for (const brand of ["blue", "red"] as const)
       for (const view of Object.values(TRUCK_VIEW))
         expect(veh.sprites[`truck_${brand}_${view}`], `truck_${brand}_${view}`).toBeDefined();
-    expect(Object.keys(TRUCK_VIEW).length).toBe(4);
+    expect(Object.keys(TRUCK_VIEW).length).toBe(8);
     expect(truckBrand(1)).toBe("blue");
     expect(truckBrand(2)).toBe("red");
     expect(truckBrand(0)).toBe("red");           // never the player's colours
@@ -901,7 +901,7 @@ describe("TRUCK-BRAND vehicle layers", () => {
 
   it("ships four headings for each of the two liveries", () => {
     expect(names.slice().sort()).toEqual(
-      ["blue", "red"].flatMap((c) => ["ne", "se", "sw", "nw"].map((v) => `truck_${c}_${v}`)).sort(),
+      ["blue", "red"].flatMap((c) => ["ne", "se", "sw", "nw", "n", "e", "s", "w"].map((v) => `truck_${c}_${v}`)).sort(),
     );
   });
 
@@ -910,7 +910,7 @@ describe("TRUCK-BRAND vehicle layers", () => {
     // def that disagrees with its own file crops the lorry at one zoom only —
     // the kind of bug no preview screenshot catches and no test of the art
     // alone would ever see.
-    expect(names.length).toBe(8);
+    expect(names.length).toBe(16);
     for (const name of names) {
       const d = veh.sprites[name];
       expect(d.footprint).toEqual([1, 1]);
@@ -919,7 +919,7 @@ describe("TRUCK-BRAND vehicle layers", () => {
       // GROUND it drives on — a 1×1 sprite may out-lean a tile (the shipped
       // 1×1 buildings are all ≥64 px wide) but a lorry must never cover a whole
       // tile plus its neighbour, or the road reads as a car park.
-      expect(d.w).toBeGreaterThanOrEqual(20);        // at least the legacy cell (20×16)
+      expect(d.w).toBeGreaterThanOrEqual(/_(n|s)$/.test(name) ? 8 : 20);        // at least the legacy cell (20×16)
       expect(d.w).toBeLessThanOrEqual(TILE_W);
       expect(d.h).toBeGreaterThanOrEqual(12);
       expect(d.h).toBeLessThanOrEqual(TILE_H * 1.5);  // low-slung, not a building
@@ -952,6 +952,21 @@ describe("TRUCK-BRAND vehicle layers", () => {
       const type = b[25];
       expect([3, 6], name).toContain(type);
       if (type === 3) expect(b.includes(Buffer.from("tRNS")), `${name}: indexed without tRNS`).toBe(true);
+    }
+  });
+});
+
+ describe("PLAY-FIX-1 eight headings, outbound and return", () => {
+  const cases: [number, number, string, string][] = [
+    [0,-1,"ne","sw"], [1,0,"se","nw"], [0,1,"sw","ne"], [-1,0,"nw","se"],
+    [1,-1,"e","w"], [1,1,"s","n"], [-1,1,"w","e"], [-1,-1,"n","s"],
+  ];
+  for (const [dx,dy,out,back] of cases) it(`${out} / ${back}`, () => {
+    for (const reverse of [false,true]) {
+      const t: Truck = { ownerId: 1, route: [[10,10],[10+dx,10+dy]], leg: 0, t: .5, reverse };
+      const view = reverse ? back : out;
+      expect(truckItems({trucks:[t]})[0].sprite).toBe(`truck_goods_${view}`);
+      expect(truckItems({trucks:[t]}, { has: () => true })[0].sprite).toBe(`truck_blue_${view}`);
     }
   });
 });

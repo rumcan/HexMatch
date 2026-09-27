@@ -126,11 +126,11 @@ describe("cinematic ending screen", () => {
 
     const review = view.element.querySelector(".ending-review") as HTMLButtonElement;
     const rematch = view.element.querySelector(".ending-restart") as HTMLButtonElement;
-    review.focus();
+    rematch.focus();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
-    expect(document.activeElement).toBe(rematch);
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
     expect(document.activeElement).toBe(review);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(document.activeElement).toBe(rematch);
 
     review.click();
     expect(view.element.classList.contains("hidden")).toBe(true);
@@ -249,4 +249,19 @@ describe("RANK-01 the ending ledger's rating row", () => {
     expect(row.textContent).toContain("Promoted to Gold");
     view.destroy();
   });
+});
+
+it("offers one primary replay action with same-map as an option", () => {
+  const host = document.createElement("div");
+  const onRematch = vi.fn(), onSameMap = vi.fn(), onRestart = vi.fn();
+  const view = showEndingScreen(host, buildEnding(input({ variant: 0 })), { onRestart, onRematch, onSameMap });
+  expect(host.querySelectorAll(".ending-primary")).toHaveLength(1);
+  expect(host.querySelector(".ending-rematch, .ending-same-map")).toBeNull();
+  (host.querySelector(".ending-primary") as HTMLButtonElement).click();
+  expect(onRematch).toHaveBeenCalledOnce();
+  (host.querySelector(".ending-map-choice") as HTMLInputElement).checked = true;
+  (host.querySelector(".ending-primary") as HTMLButtonElement).click();
+  expect(onSameMap).toHaveBeenCalledOnce();
+  expect(onRestart).not.toHaveBeenCalled();
+  view.destroy();
 });

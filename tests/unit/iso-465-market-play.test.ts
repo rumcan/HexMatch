@@ -462,3 +462,18 @@ describe("MKT-2 > the game prints the next slot's rumour", () => {
     expect(host.market.rumour()).toBe(rumourAt(SEED, ms, "normal")?.label ?? null);
   });
 });
+
+it("arms and clears an alert through the actual Market DOM", async () => {
+  const host = await boot({ newLoop: true });
+  const root = roots[0];
+  const input = root.querySelector<HTMLInputElement>('[data-alert="ore"]')!;
+  expect(input.getAttribute("aria-label")).toBe("Ore alert at $");
+  input.value = "1";
+  root.querySelector<HTMLButtonElement>('[data-alert-btn="ore"]')!.click();
+  expect(host.checkAlerts()).toEqual(["ore"]);
+  expect(host.checkAlerts()).toEqual([]);
+  expect([...root.querySelectorAll(".feed-row")].filter(n => n.textContent?.includes("Price alert — Ore"))).toHaveLength(1);
+  root.querySelector<HTMLButtonElement>('[data-alert-clear="ore"]')!.disabled = false;
+  root.querySelector<HTMLButtonElement>('[data-alert-clear="ore"]')!.click();
+  expect(host.checkAlerts()).toEqual([]);
+});

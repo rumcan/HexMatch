@@ -87,6 +87,8 @@ function stubImage() {
 /** The storage slice of `window.__iso` this file drives. */
 interface StorageHook {
   readonly newLoop: boolean;
+  moneys: number[];
+  setSeatMoney: (i: number, v: number) => void;
   grid: Grid;
   track: Track;
   eco: EconomyState;
@@ -573,4 +575,22 @@ describe("L16 (#231) the cap rides the save — derived, not stored", () => {
     expect(back.storageCap(), "the raised cap survived the reload").toBe(storageCapFor(0) + row.storage);
     expect(back.players[0].storageCap).toBe(storageCapFor(0) + row.storage);
   });
+});
+
+it("PLAY-FIX-1 charges both seats rent on the economy clock and shows it", async () => {
+  const h = await boot({ newLoop: true });
+  h.finishSetup();
+  const cap = h.storageCap()!;
+  for (let i = 0; i < 2; i++) {
+    h.setSeatMoney(i, 100);
+    h.purses[i].ore = cap + 10;
+  }
+  const before = h.moneys;
+  h.econTick(performance.now() + 10_000);
+  expect(h.moneys[0]).toBeLessThan(before[0]);
+  expect(before[0] - h.moneys[0]).toBeCloseTo(before[1] - h.moneys[1], 8);
+  expect(h.purses[0].ore).toBe(cap + 10);
+  await settle();
+  expect(root.querySelector('.chip-money .storage-rent')?.textContent).toContain('Over cap: +10 ore');
+  expect([...root.querySelectorAll('.feed-row')].filter(n => n.textContent?.includes('Storage rent started'))).toHaveLength(1);
 });

@@ -2172,8 +2172,13 @@ export class IsoRenderer {
     // TRAFFIC-02: ambient cars fade in/out at town access points.
     const alpha = (p as Placed & { alpha?: number }).alpha;
     const needsAlpha = typeof alpha === "number" && alpha >= 0 && alpha < 1;
+    const moving = isMoving(p);
+    if (needsAlpha || moving) ctx.save();
+    if (moving) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.filter = "none";
+    }
     if (needsAlpha) {
-      ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
     }
     ctx.drawImage(
@@ -2181,7 +2186,7 @@ export class IsoRenderer {
       src.x, src.y, src.w, src.h,
       Math.floor(sx), Math.floor(sy), dst.w, dst.h,
     );
-    if (needsAlpha) ctx.restore();
+    if (needsAlpha || moving) ctx.restore();
     if (this.logRender) this.trace("blit", {
       sprite: p.sprite, tile: [p.tx, p.ty], def: p.def,
       z, sampled: az, context: p.ref != null ? "world" : "overlay",

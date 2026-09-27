@@ -974,10 +974,10 @@ export const BUILD_COSTS: Readonly<Record<
   // One of every cargo but gold — about half a processing plant (owner, 2026-09).
   depot: { grain: 3, wood: 3, stone: 3, ore: 3, oil: 3 },
   plant: { wood: 6, stone: 6, grain: 6, ore: 9 },
-  rail: { stone: 3 },
-  platform: { wood: 12, stone: 12, ore: 36, oil: 6 },
-  trainDepot: { wood: 9, stone: 9, ore: 12, oil: 6 },
-  train: { ore: 12, oil: 6 },
+  rail: { stone: 1 },
+  platform: { wood: 6, stone: 6, ore: 12, oil: 2 },
+  trainDepot: { wood: 4, stone: 4, ore: 6, oil: 2 },
+  train: { ore: 6, oil: 3 },
   // R2 (#266): a BRIDGE deck, charged PER WATER TILE it spans. Deliberately
   // the priciest per-tile number on the board — a river crossing is an
   // investment, not a shortcut — and deliberately no Ore: the road deck is

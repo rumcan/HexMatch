@@ -8,31 +8,10 @@
   },
   "sprites": {
     "truck_blue_ne": {
-      "w": 42,
-      "h": 20,
-      "anchor": [
-        18,
-        19
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        84,
-        40
-      ],
-      "bodyTop1x": 1,
-      "owner": 1,
-      "view": "ne",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 84×40 at 2×."
-    },
-    "truck_blue_se": {
-      "w": 32,
+      "w": 28,
       "h": 18,
       "anchor": [
-        20,
+        9,
         17
       ],
       "footprint": [
@@ -41,20 +20,41 @@
       ],
       "moving": true,
       "box2x": [
-        64,
+        56,
         36
       ],
+      "bodyTop1x": 0,
+      "owner": 1,
+      "view": "ne",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 56×36 at 2×."
+    },
+    "truck_blue_se": {
+      "w": 30,
+      "h": 16,
+      "anchor": [
+        20,
+        15
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        60,
+        32
+      ],
       "bodyTop1x": 1,
       "owner": 1,
       "view": "se",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 64×36 at 2×."
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 60×32 at 2×."
     },
     "truck_blue_sw": {
-      "w": 44,
-      "h": 22,
+      "w": 24,
+      "h": 18,
       "anchor": [
-        19,
-        20
+        8,
+        17
       ],
       "footprint": [
         1,
@@ -62,61 +62,19 @@
       ],
       "moving": true,
       "box2x": [
-        88,
-        44
+        48,
+        36
       ],
-      "bodyTop1x": 2,
+      "bodyTop1x": 0,
       "owner": 1,
       "view": "sw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 88×44 at 2×."
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 48×36 at 2×."
     },
     "truck_blue_nw": {
-      "w": 46,
-      "h": 24,
-      "anchor": [
-        29,
-        22
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        48
-      ],
-      "bodyTop1x": 4,
-      "owner": 1,
-      "view": "nw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 92×48 at 2×."
-    },
-    "truck_red_ne": {
-      "w": 46,
-      "h": 24,
-      "anchor": [
-        23,
-        22
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        48
-      ],
-      "bodyTop1x": 4,
-      "owner": 2,
-      "view": "ne",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 92×48 at 2×."
-    },
-    "truck_red_se": {
-      "w": 40,
+      "w": 30,
       "h": 20,
       "anchor": [
-        25,
+        19,
         19
       ],
       "footprint": [
@@ -125,20 +83,146 @@
       ],
       "moving": true,
       "box2x": [
-        80,
+        60,
+        40
+      ],
+      "bodyTop1x": 1,
+      "owner": 1,
+      "view": "nw",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 60×40 at 2×."
+    },
+    "truck_blue_n": {
+      "w": 8,
+      "h": 18,
+      "anchor": [
+        4,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        16,
+        36
+      ],
+      "bodyTop1x": 0,
+      "owner": 1,
+      "view": "n",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), north. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+    },
+    "truck_blue_e": {
+      "w": 28,
+      "h": 12,
+      "anchor": [
+        15,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        56,
+        24
+      ],
+      "bodyTop1x": 0,
+      "owner": 1,
+      "view": "e",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), east. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+    },
+    "truck_blue_s": {
+      "w": 8,
+      "h": 18,
+      "anchor": [
+        4,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        16,
+        36
+      ],
+      "bodyTop1x": 0,
+      "owner": 1,
+      "view": "s",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), south. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+    },
+    "truck_blue_w": {
+      "w": 28,
+      "h": 12,
+      "anchor": [
+        13,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        56,
+        24
+      ],
+      "bodyTop1x": 0,
+      "owner": 1,
+      "view": "w",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), west. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+    },
+    "truck_red_ne": {
+      "w": 26,
+      "h": 20,
+      "anchor": [
+        11,
+        19
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        52,
+        40
+      ],
+      "bodyTop1x": 1,
+      "owner": 2,
+      "view": "ne",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 52×40 at 2×."
+    },
+    "truck_red_se": {
+      "w": 26,
+      "h": 20,
+      "anchor": [
+        18,
+        18
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        52,
         40
       ],
       "bodyTop1x": 1,
       "owner": 2,
       "view": "se",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 80×40 at 2×."
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 52×40 at 2×."
     },
     "truck_red_sw": {
-      "w": 44,
-      "h": 22,
+      "w": 28,
+      "h": 18,
       "anchor": [
-        18,
-        20
+        10,
+        17
       ],
       "footprint": [
         1,
@@ -146,20 +230,20 @@
       ],
       "moving": true,
       "box2x": [
-        88,
-        44
+        56,
+        36
       ],
-      "bodyTop1x": 2,
+      "bodyTop1x": 0,
       "owner": 2,
       "view": "sw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 88×44 at 2×."
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 56×36 at 2×."
     },
     "truck_red_nw": {
-      "w": 42,
-      "h": 20,
+      "w": 26,
+      "h": 18,
       "anchor": [
-        25,
-        19
+        17,
+        17
       ],
       "footprint": [
         1,
@@ -167,13 +251,97 @@
       ],
       "moving": true,
       "box2x": [
-        84,
-        40
+        52,
+        36
       ],
-      "bodyTop1x": 1,
+      "bodyTop1x": 0,
       "owner": 2,
       "view": "nw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 84×40 at 2×."
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 52×36 at 2×."
+    },
+    "truck_red_n": {
+      "w": 8,
+      "h": 18,
+      "anchor": [
+        4,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        16,
+        36
+      ],
+      "bodyTop1x": 0,
+      "owner": 2,
+      "view": "n",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), north. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+    },
+    "truck_red_e": {
+      "w": 28,
+      "h": 12,
+      "anchor": [
+        15,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        56,
+        24
+      ],
+      "bodyTop1x": 0,
+      "owner": 2,
+      "view": "e",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), east. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+    },
+    "truck_red_s": {
+      "w": 8,
+      "h": 18,
+      "anchor": [
+        4,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        16,
+        36
+      ],
+      "bodyTop1x": 0,
+      "owner": 2,
+      "view": "s",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), south. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+    },
+    "truck_red_w": {
+      "w": 28,
+      "h": 12,
+      "anchor": [
+        13,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        56,
+        24
+      ],
+      "bodyTop1x": 0,
+      "owner": 2,
+      "view": "w",
+      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), west. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
     }
   }
 }

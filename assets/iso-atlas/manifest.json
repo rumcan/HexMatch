@@ -2500,11 +2500,11 @@
         11,
         14
       ],
-      "w": 23,
+      "w": 22,
       "moving": true
     },
     "car1_nw": {
-      "x": 703,
+      "x": 702,
       "y": 1822,
       "h": 14,
       "footprint": [
@@ -2512,14 +2512,14 @@
         1
       ],
       "anchor": [
-        11,
+        10,
         13
       ],
-      "w": 23,
+      "w": 21,
       "moving": true
     },
     "car2_ne": {
-      "x": 730,
+      "x": 727,
       "y": 1822,
       "h": 14,
       "footprint": [
@@ -2534,22 +2534,22 @@
       "moving": true
     },
     "car2_se": {
-      "x": 758,
+      "x": 755,
       "y": 1822,
-      "h": 16,
+      "h": 15,
       "footprint": [
         1,
         1
       ],
       "anchor": [
-        12,
-        15
+        11,
+        14
       ],
-      "w": 24,
+      "w": 23,
       "moving": true
     },
     "car2_sw": {
-      "x": 786,
+      "x": 782,
       "y": 1822,
       "h": 16,
       "footprint": [
@@ -2564,37 +2564,22 @@
       "moving": true
     },
     "car2_nw": {
-      "x": 814,
+      "x": 810,
       "y": 1822,
-      "h": 14,
+      "h": 13,
       "footprint": [
         1,
         1
       ],
       "anchor": [
         11,
-        13
+        12
       ],
       "w": 23,
       "moving": true
     },
     "car3_ne": {
-      "x": 841,
-      "y": 1822,
-      "h": 16,
-      "footprint": [
-        1,
-        1
-      ],
-      "anchor": [
-        12,
-        15
-      ],
-      "w": 25,
-      "moving": true
-    },
-    "car3_se": {
-      "x": 870,
+      "x": 837,
       "y": 1822,
       "h": 16,
       "footprint": [
@@ -2608,8 +2593,23 @@
       "w": 24,
       "moving": true
     },
+    "car3_se": {
+      "x": 865,
+      "y": 1822,
+      "h": 15,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        11,
+        14
+      ],
+      "w": 23,
+      "moving": true
+    },
     "car3_sw": {
-      "x": 898,
+      "x": 892,
       "y": 1822,
       "h": 15,
       "footprint": [
@@ -2624,7 +2624,7 @@
       "moving": true
     },
     "car3_nw": {
-      "x": 926,
+      "x": 920,
       "y": 1822,
       "h": 16,
       "footprint": [
@@ -2635,11 +2635,11 @@
         12,
         15
       ],
-      "w": 25,
+      "w": 24,
       "moving": true
     },
     "dirt_road_0002": {
-      "x": 955,
+      "x": 948,
       "y": 1822,
       "h": 32,
       "footprint": [
@@ -3547,6 +3547,66 @@
         31
       ],
       "w": 64
+    },
+    "truck_goods_n": {
+      "x": 276,
+      "y": 2117,
+      "h": 18,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        4,
+        17
+      ],
+      "w": 8,
+      "moving": true
+    },
+    "truck_goods_e": {
+      "x": 288,
+      "y": 2117,
+      "h": 12,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        14,
+        11
+      ],
+      "w": 28,
+      "moving": true
+    },
+    "truck_goods_s": {
+      "x": 320,
+      "y": 2117,
+      "h": 17,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        4,
+        16
+      ],
+      "w": 8,
+      "moving": true
+    },
+    "truck_goods_w": {
+      "x": 332,
+      "y": 2117,
+      "h": 12,
+      "footprint": [
+        1,
+        1
+      ],
+      "anchor": [
+        14,
+        11
+      ],
+      "w": 28,
+      "moving": true
     }
   }
 }
