@@ -291,6 +291,23 @@
 .ui-root .aside.right .pane .quest .q-reward { color: #182126; }
 .ui-root .aside.right .pane .quest button { border-radius: 0; }
 
+/* ── MOB-1 (#474): the confirm-to-place sheet is a paper popup ──────── */
+.ui-root .confirm-sheet {
+  background: #f0e6d1; color: #182126; border-top: 4px solid #ef7c17;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, .35);
+  --sa-bone: #172126; --sa-bone-dim: #3d474a; --sa-panel-2: #e7dbc2;
+  --sa-line: #c7b795; --sa-line-hi: #8e7f66; --sa-aqua: #00aeb8;
+}
+.ui-root .confirm-sheet__title { color: #d1640e; font: 700 13px var(--px-display); letter-spacing: .15em; }
+.ui-root .confirm-sheet__close { border-radius: 0; }
+.ui-root .confirm-sheet__preview-icon { background: #fbf5e8; border: 2px solid #11191d; color: #182126; }
+.ui-root .confirm-sheet__preview-name { color: #182126; font-family: var(--px-display); }
+.ui-root .confirm-sheet__preview-cost { color: #bd570c; font-weight: 700; }
+.ui-root .confirm-sheet__actions .post-btn { border-radius: 0; font: 700 14px var(--px-display); letter-spacing: .08em; text-transform: uppercase; }
+.ui-root .confirm-sheet__actions .post-btn:first-child { background: #fbf5e8; color: #182126; border: 1.5px solid #1e2527; }
+.ui-root .confirm-sheet__actions .post-btn:last-child { background: #ed7414; color: #fff8ec; border: 0; }
+.ui-root .confirm-sheet__actions .post-btn:last-child:hover { background: #d1640e; }
+
 /* ── phones: the Economy sheet is paper too (owner: mobile colours) ── */
 @media (max-width: 760px) {
   .ui-root #iso-aside-right { background: #f0e6d1 !important; border-top: 4px solid #ef7c17; }
