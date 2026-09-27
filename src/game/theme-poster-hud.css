@@ -206,3 +206,79 @@
 .ui-root .aside.right .pane .market-spark { background: #fbf5e8; border: 1px solid #111b2033; border-radius: 0; }
 .ui-root .aside.right .pane .sell-btn { border-radius: 0; font: 700 13px var(--px-display) !important; letter-spacing: .08em; }
 @media (max-width: 760px) { .ui-root .topbar .logo { display: none; } }
+
+/* ── the rules popup: three paper columns with orange heads ──────── */
+.modal.box:has(.help-cols) { width: min(1120px, calc(100vw - 48px)); max-width: min(1120px, calc(100vw - 48px)); }
+.modal.box .help-cols { gap: 28px; margin: 6px 0 4px; }
+.modal.box .help-col {
+  flex: 1 1 0; padding: 0; border: 0 !important; border-top: 4px solid #ef7c17 !important; border-radius: 0; outline: 0;
+  background: transparent !important; box-shadow: none;
+}
+.modal.box .help-col h3 {
+  margin: 12px 0 8px; padding: 0 0 6px; border: 0 !important; border-bottom: 1px solid #111b202c !important;
+  color: #d1640e !important; font: 700 14px var(--px-display) !important; letter-spacing: .15em !important;
+}
+.modal.box .help-col p { margin: 0 0 10px; color: #354144 !important; font: 400 14px/1.5 var(--px-body) !important; }
+.modal.box .help-col p b { color: #162024 !important; font-weight: 700; }
+.modal.box .help-col p:empty { display: none; }
+
+/* ── How battles work (and the tut-card family): the paper dialog ── */
+#iso-battle-howto, #iso-tutorial { background: rgba(4, 10, 14, .76) !important; backdrop-filter: blur(5px); }
+:is(#iso-battle-howto, #iso-tutorial) .tut-card {
+  --txt: #172126; --txt-dim: #3d474a; --txt-mute: #6c665b; --sa-bone: #172126; --sa-bone-dim: #3d474a; --c-bone: 23 33 38;
+  width: min(880px, calc(100vw - 32px)); max-width: none; padding: 32px 38px 28px;
+  border: 3px solid #11191d !important; border-radius: 0 !important; background: #f0e5ce !important; color: #162024;
+  box-shadow: 0 25px 65px rgba(0, 0, 0, .6) !important; text-align: left; font-family: var(--px-body);
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-card::before, :is(#iso-battle-howto, #iso-tutorial) .tut-card::after { content: none !important; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-head { position: relative; border: 0; padding: 0; text-align: left; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-kicker { margin: 0 0 8px; color: #e06e13 !important; font: 700 14px var(--px-display) !important; letter-spacing: .14em !important; text-align: left; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-title {
+  margin: 0; color: #162024 !important; text-align: left; text-shadow: none;
+  font: 400 clamp(38px, 4.4vw, 56px)/.98 var(--px-poster) !important; letter-spacing: 0 !important; text-transform: uppercase;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-x {
+  position: absolute; top: -8px; right: -10px; width: 34px; height: 34px; padding: 0;
+  border: 1px solid #222c2d; border-radius: 0; background: transparent; color: #172125;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-x:hover { background: #e26a0e; border-color: #e26a0e; color: #fff; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-lede { margin: 16px 0 18px; color: #354144 !important; font: 400 18px/1.4 var(--px-body) !important; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-lede b { color: #162024; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-fig {
+  padding: 18px 16px 12px; border: 0; border-top: 4px solid #ef7c17; border-radius: 0; background: #10191e; box-shadow: none;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-chain { gap: 10px; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-chain-node {
+  border: 1px solid #daa141; border-radius: 0; background: #16252b; color: #fff1cc;
+  font: 700 13px var(--px-display) !important; letter-spacing: .1em; text-transform: uppercase;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-chain-ic { color: #f39826; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-chain-arrow { color: #ec8124; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-fig-cap { color: #d3c6ae !important; font: 600 12px var(--px-display) !important; letter-spacing: .1em; text-transform: uppercase; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-points { margin: 18px 0 14px; padding: 0; list-style: none; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-points li {
+  position: relative; padding: 8px 0 9px 22px; border-bottom: 1px solid #111b202c;
+  color: #162024 !important; font: 400 16px/1.4 var(--px-body) !important;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-points li::before {
+  content: ""; position: absolute; left: 0; top: 15px; width: 10px; height: 10px; background: #e46b0e; border-radius: 0;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-points li b { color: #bd570c !important; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-tip {
+  margin: 0; padding: 10px 14px; border: 0 !important; border-left: 4px solid #e46b0e !important; border-radius: 0;
+  background: #e7dbc2 !important; color: #162024 !important; font: 600 15px/1.35 var(--px-body) !important;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-foot { margin-top: 20px; padding: 0; border: 0; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-nav { display: flex; justify-content: flex-end; gap: 10px; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-nav .big-btn { margin: 0; min-height: 46px; padding: 0 22px; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-nav .big-btn.ghost:disabled { opacity: .35; }
+@media (max-width: 760px) {
+  :is(#iso-battle-howto, #iso-tutorial) .tut-card { padding: 22px 18px 18px; }
+  :is(#iso-battle-howto, #iso-tutorial) .tut-lede { font-size: 16px !important; }
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-fig {
+  --txt: #fff1cc; --txt-dim: #e4d4bc; --txt-mute: #d3c6ae; --sa-bone: #fff1cc; --sa-bone-dim: #e4d4bc; --c-bone: 255 241 204; color: #fff1cc;
+}
+:is(#iso-battle-howto, #iso-tutorial) .tut-fig * { color: inherit; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-chain-node { padding: 10px 14px; font-size: 14px !important; }
+:is(#iso-battle-howto, #iso-tutorial) .tut-nav .big-btn { font-size: 16px !important; }
