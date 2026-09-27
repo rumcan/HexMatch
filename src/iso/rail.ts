@@ -40,7 +40,7 @@
 //   between the road graph and the rail graph at a crossing.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W } from "../game/config";
-import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, VICTORY, type Cargo } from "./config";
+import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, SLOPES, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
   OVERPASS_COST, OVERPASS_X, OVERPASS_Y, roadTierAt, roadRailDeckAxis, addCost, mergedPresent, octPath, crossingMasksOk, roadConnectionMask, roadDiagLinked,
@@ -53,9 +53,18 @@ import {
 import { TRUCK_SPEED } from "./vehicles";
 // E4 (#268): the slope rules — the local step, the drag's ramp/diagonal shape,
 // the flat-footprint rule for platforms and depots, and the uphill speed factor.
+// #429 adds the drag VERDICT (stop-tiles apart from red-mark tiles, run counted
+// across the joins) and the ramp-corner exception to the 45° turn rule.
 import {
-  footprintFlatTiles, railDragSlopeRefusals, railJoinSlopeRefusal, uphillFactor,
+  elevationActive,
+} from "./elevation";
+import {
+  climbLevels, footprintFlatTiles, railDragSlopeVerdict, railJoinSlopeRefusal,
+  railRampCornerOk, uphillFactor, type RailSlopeRun,
 } from "./slopes";
+// RAIL-SLOPE (#429): the slope-aware router a drag falls back to when the
+// geometric line breaks a slope rule.
+import { routeRailSlope } from "./rail-slope-route";
 import type { DrawItem } from "./depth";
 import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type TrainWire } from "./snapshot";
 
@@ -640,6 +649,10 @@ export function railComponents(state: RailState, ownerId: number): Map<number, n
 export function railPath(
   state: RailState, ownerId: number,
   from: [number, number][], goals: Set<number>, startOct = -1,
+  // #429: with a grid the search also drives through the 90° RAMP CORNER (a
+  // switchback's turn — `railTurnOkGrid`); without one (a synthetic test
+  // state, a caller with no map) it is exactly the 45° rule it always was.
+  grid?: Grid,
 ): [number, number][] | null {
   if (!goals.size || !from.length) return null;
   // Playtest (2026-09): the search state is (tile, heading) — a train turns at
@@ -666,7 +679,10 @@ export function railPath(
     const x = cur % MAP_W, y = (cur / MAP_W) | 0;
     for (const [nx, ny] of railNeighbours(state, ownerId, x, y)) {
       const o = octantOf(nx - x, ny - y);
-      if (oct !== 8 && !turnOk(oct, o)) continue;
+      // #429: `railTurnOkGrid` is the ONE rule — ≤45°, or the ramp corner on
+      // a map with height; without a grid, exactly the old `turnOk`.
+      if (oct !== 8 && !railTurnOkGrid(grid,
+        [x - OCT_STEPS[oct][0], y - OCT_STEPS[oct][1]], [x, y], [nx, ny])) continue;
       const nk = tIdx(nx, ny) * 9 + o;
       if (parent.has(nk)) continue;
       parent.set(nk, key);
@@ -708,23 +724,40 @@ export function railNeighbours(
  * continuation. This admits a WYE, not a right-angle corner or a sharp spur:
  * trains may choose only the <=45° transitions (railPath enforces those).
  * Headings here point OUT from the tile, so reverse the arriving arm first.
+ *
+ * #429: `cornerOk` relaxes exactly the RAMP CORNER — a 90° pair of arms that
+ * touches a level change, the switchback's turn (see `railTurnOkGrid`). A
+ * caller without elevation context passes nothing and gets the old rule.
  */
-function railArmsTurnOk(arms: number[]): boolean {
+function railArmsTurnOk(arms: number[], cornerOk?: (a: number, b: number) => boolean): boolean {
   return arms.length < 2 || arms.every((a) =>
-    arms.some((b) => a !== b && turnOk((a + 4) % 8, b)));
+    arms.some((b) => a !== b && (turnOk((a + 4) % 8, b) || cornerOk?.(a, b))));
 }
+
+/** #429: the corner test for a tile — two ARMS (directions pointing AT the
+ * neighbouring tiles) form a legal ramp corner when the move into this tile
+ * along one and out along the other turns 90° beside a level change. */
+const rampCornerAtArms = (
+  grid: Grid | undefined, x: number, y: number, a: number, b: number,
+): boolean => railRampCornerOk(grid,
+  [x + OCT_STEPS[a][0], y + OCT_STEPS[a][1]], [x, y],
+  [x + OCT_STEPS[b][0], y + OCT_STEPS[b][1]]);
 
 function railArms(state: RailState, ownerId: number, x: number, y: number): number[] {
   return railNeighbours(state, ownerId, x, y).map(([nx, ny]) => octantOf(nx - x, ny - y));
 }
 
-/** The planner's local join check, including both ends of a proposed edge. */
+/** The planner's local join check, including both ends of a proposed edge.
+ * `grid` carries the #429 ramp-corner exception on the edge's own turns. */
 export function railJoinTurnOk(
   state: RailState, ownerId: number, ax: number, ay: number, bx: number, by: number,
+  grid?: Grid,
 ): boolean {
   const o = octantOf(bx - ax, by - ay);
-  return railArmsTurnOk([...new Set([...railArms(state, ownerId, ax, ay), o])])
-    && railArmsTurnOk([...new Set([...railArms(state, ownerId, bx, by), (o + 4) % 8])]);
+  const cornerA = grid ? (a: number, b: number) => rampCornerAtArms(grid, ax, ay, a, b) : undefined;
+  const cornerB = grid ? (a: number, b: number) => rampCornerAtArms(grid, bx, by, a, b) : undefined;
+  return railArmsTurnOk([...new Set([...railArms(state, ownerId, ax, ay), o])], cornerA)
+    && railArmsTurnOk([...new Set([...railArms(state, ownerId, bx, by), (o + 4) % 8])], cornerB);
 }
 
 /**
@@ -734,7 +767,7 @@ export function railJoinTurnOk(
  * ownership AND revision exactly. Old sharp saves are not rewritten: only a
  * newly gained arm can cause a refusal.
  */
-function railEdit(state: RailState, tiles: [number, number][]) {
+function railEdit(state: RailState, tiles: [number, number][], grid?: Grid) {
   const before = new Map<number, { tile: number; owner: number; arms: number[] }>();
   const revision = state.rail.revision;
   for (const [x, y] of tiles) {
@@ -754,7 +787,10 @@ function railEdit(state: RailState, tiles: [number, number][]) {
       const owner = effectiveOwner(state, x, y);
       if (!owner) return false;
       const arms = railArms(state, owner, x, y);
-      return arms.some((a) => !old.arms.includes(a)) && !railArmsTurnOk(arms);
+      // #429: a newly gained arm may complete a RAMP CORNER — that turn is
+      // legal, and the drag build passes the grid so it can see one.
+      return arms.some((a) => !old.arms.includes(a))
+        && !railArmsTurnOk(arms, grid ? (a, b) => rampCornerAtArms(grid, x, y, a, b) : undefined);
     }),
     crossingRefusal: (track: Track, planned: ReadonlySet<number>, links: ReadonlyMap<number, number>): RailRefusal => {
       for (const [i, old] of before) {
@@ -835,8 +871,10 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "industry-taken": "That industry is already claimed — only one Depot may hold it.",
   "bridge-junction": "A bridge stays straight — no track can join its side.",
   "overpass-stop": "Overpasses are straight through; place the platform or depot beyond the deck.",
-  "too-steep": "Too steep for rail — a climb needs 3 tiles of run.",
-  "slope-diagonal": "Rail may not run diagonally across a slope.",
+  // #429: each sentence names the rule AND the fix, so a red tile is never a
+  // riddle. (The counts are pinned to `SLOPES.railRampRun` by a unit test.)
+  "too-steep": "Too steep — rail needs 2 flat tiles between climbs; end on level ground and climb again.",
+  "slope-diagonal": "Diagonals must be level — turn on flat ground, not across a slope.",
   "not-flat": "A flat footprint: the whole site must sit on one level.",
   "too-sharp": "Too sharp for rail: turns must be 45° or less",
 };
@@ -1004,6 +1042,82 @@ function sameOwnerRail(state: RailState, ownerId: number, x: number, y: number):
 }
 
 /**
+ * #429 — how much FLAT RUN the owner's standing rail carries INTO (tx,ty), in
+ * tile-levels: walk the standing line away from the tile (four-adjacent own
+ * rail, the same join set `railJoinSlopeRefusal` reads — and the same one the
+ * autotiler will connect on commit) and count the level tiles before the
+ * first LEVEL CHANGE on it. 0 means the line changes level at the join; the
+ * answer saturates at `SLOPES.railRampRun - 1`, because past that much run a
+ * change at the far end can no longer be too tight. Tiles of the drag itself
+ * (`exclude`) are not walked: a drag that re-draws part of its own line must
+ * measure the standing rail BEHIND the join, not its own tiles ahead of it.
+ *
+ * Fed to `railDragSlopeVerdict` at both ends of a drag, this is what lets the
+ * ramp rule count ACROSS the joins — two drags compose as one line, so
+ * "climb, one tile, climb" cannot be smuggled through as two drags of
+ * "climb, climb, stop" each half legal on its own.
+ */
+export function railJoinRunAt(
+  grid: Grid, state: RailState, ownerId: number, tx: number, ty: number,
+  exclude?: ReadonlySet<number>,
+): number {
+  if (!elevationActive(grid)) return SLOPES.railRampRun - 1;
+  const LIMIT = SLOPES.railRampRun - 1;
+  let best = LIMIT;
+  const seen = new Set<number>([tIdx(tx, ty), ...(exclude ?? [])]);
+  const walk = (x: number, y: number, depth: number): void => {
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+      const nx = x + dx, ny = y + dy;
+      if (!inMapT(nx, ny)) continue;
+      const i = tIdx(nx, ny);
+      if (seen.has(i)) continue;
+      if (!sameOwnerRail(state, ownerId, nx, ny)) continue;
+      if (Math.abs(climbLevels(grid, [x, y], [nx, ny])) >= 1) best = Math.min(best, depth);
+      else if (depth + 1 < LIMIT) { seen.add(i); walk(nx, ny, depth + 1); }
+    }
+  };
+  walk(tx, ty, 0);
+  return best;
+}
+
+/**
+ * #429 — the drag's slope run CONTEXT: the flat run the player's standing
+ * rail carries into each end of the drag (`railJoinRunAt`, with the drag's own
+ * tiles excluded). Returned for `railDragSlopeVerdict`'s fourth parameter, so
+ * the ramp rule judges a drag and the standing line together. Undefined on a
+ * map without elevation and for a one-tile gesture, which has no run to keep.
+ */
+const slopeRunAtEnds = (grid: Grid, state: RailState, ownerId: number,
+  tiles: readonly (readonly [number, number])[],
+): RailSlopeRun | undefined => {
+  if (!elevationActive(grid) || tiles.length < 2) return undefined;
+  const planned = new Set(tiles.map(([x, y]) => tIdx(x, y)));
+  const a = tiles[0], b = tiles[tiles.length - 1];
+  return {
+    before: railJoinRunAt(grid, state, ownerId, a[0], a[1], planned),
+    after: railJoinRunAt(grid, state, ownerId, b[0], b[1], planned),
+  };
+};
+
+/**
+ * #429 — rail's turn rule for a drag path and its trains: two consecutive
+ * steps may differ by at most 45° (`turnOk`), except for the RAMP CORNER — a
+ * 90° turn between axis steps where the shared tile touches a level change
+ * (the hillside's only other way to turn, and what makes a switchback
+ * drawable). No grid, or an elevation-off map: the rule is exactly the 45°
+ * one it always was.
+ */
+export function railTurnOkGrid(
+  grid: Grid | undefined, prev: readonly [number, number],
+  cur: readonly [number, number], next: readonly [number, number],
+): boolean {
+  return turnOk(
+    octantOf(cur[0] - prev[0], cur[1] - prev[1]),
+    octantOf(next[0] - cur[0], next[1] - cur[1]),
+  ) || railRampCornerOk(grid, prev, cur, next);
+}
+
+/**
  * Recompute the four bits of every rail tile in and around `tiles` — the same
  * "only the tile plus its neighbours" discipline `track.ts` uses, so a drag of
  * twenty tiles is twenty small writes and never a map scan.
@@ -1140,7 +1254,11 @@ function buildRailAttempt(
   // E4 (#268): the drag's slope SHAPE — the ramp run and the no-diagonal-on-a-
   // slope rule. Like the bridge plan it is a property of the whole gesture, and
   // a deck (bridge) is exempt because its approach is the bridge's own ramp.
-  const slopeWhy = railDragSlopeRefusals(grid, tiles, bridgeTiles);
+  // #429: the verdict separates the tiles the drag may not ENTER (it stops at
+  // the first one) from every tile of a bad step (the red ones), and the ramp
+  // run is counted across the joins — the standing line that feeds this drag
+  // at either end — so two drags compose as one line.
+  const slopeWhy = railDragSlopeVerdict(grid, tiles, bridgeTiles, slopeRunAtEnds(grid, state, ownerId, tiles));
   // The drag's tiles that will carry a diagonal link, known up front so the
   // first tile of a diagonal never joins its side neighbours on its own.
   const plannedDiag = new Set<number>();
@@ -1154,11 +1272,10 @@ function buildRailAttempt(
   for (let n = 0; n < tiles.length; n++) {
     const [tx, ty] = tiles[n];
     if (n > 0 && (Math.max(Math.abs(tx - tiles[n - 1][0]), Math.abs(ty - tiles[n - 1][1])) !== 1
-      || (n > 1 && !turnOk(octantOf(tx - tiles[n - 1][0], ty - tiles[n - 1][1]),
-        octantOf(tiles[n - 1][0] - tiles[n - 2][0], tiles[n - 1][1] - tiles[n - 2][1]))))) {
+      || (n > 1 && !railTurnOkGrid(grid, tiles[n - 2], tiles[n - 1], tiles[n])))) {
       return { ok: built.length > 0, why: "too-sharp", cost: railCostOf(charged, decks), built };
     }
-    const why = slopeWhy.get(n)
+    const why = slopeWhy.blocks.get(n)
       ?? (diagonalConflict(track, state, tiles, n) ? "diagonal-crossing"
         : railTileRefusal(grid, track, state, ownerId, tx, ty, planned, bridgeTiles, links));
     if (why !== "ok") return { ok: built.length > 0, why, cost: railCostOf(charged, decks), built };
@@ -1167,7 +1284,7 @@ function buildRailAttempt(
     // for the new tiles, exactly like a road drag over your own road.
     const already = (state.rail.tile[tIdx(tx, ty)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(tx, ty)] === ownerId;
-    const edit = railEdit(state, [[tx, ty]]);
+    const edit = railEdit(state, [[tx, ty]], grid);
     writeRailTile(state, ownerId, tx, ty);
     // A diagonal step from the previous tile of the drag is a diagonal link.
     const prev = n > 0 ? tiles[n - 1] : null;
@@ -1250,8 +1367,12 @@ export function railBridgePlan(
  *   • a tile the player ALREADY owns is stepped over free, so redrawing part of
  *     a line costs nothing;
  *   • the run stops at the first refused tile (`why`, in the shared refusal
- *     vocabulary) rather than routing around it — a drag lays the shape the
- *     player drew, and everything past an illegal tile is off;
+ *     vocabulary), and only the refused tiles are marked — but #429 came
+ *     before the refusal: a line that breaks a SLOPE rule first asks the
+ *     slope-aware search for a legal line between the same endpoints, so a
+ *     switchback on a hill is drawn, not refused. Obstacles (buildings, the
+ *     rival's rail, water a bridge cannot span) still simply cut the drag
+ *     short, as they always did;
  *   • a crossing is judged on the drag's FINAL shape, so `planned` is the whole
  *     gesture, not the tiles laid so far.
  */
@@ -1265,16 +1386,50 @@ export function railPreview(
   grid: Grid, track: Track, state: RailState, ownerId: number, purse: Purse,
   ax: number, ay: number, bx: number, by: number, xFirst = true, gradeSeparated = false,
 ): RailPreviewResult {
-  const path = octPath(ax, ay, bx, by, xFirst);
-  const probe = previewRailBuild(grid, track, state, ownerId, path, gradeSeparated);
-  const planned = new Set(path.map(([x, y]) => tIdx(x, y)));
-  const links = plannedRailLinks(path);
+  // #429: the drag's line. The gesture drawn between the endpoints is the
+  // first candidate; when it breaks a slope rule the search asks the better
+  // question — is there ANY legal line between these two tiles? — and takes
+  // it when one exists (a switchback finds itself). Only when none does,
+  // within the bound, the drag refuses — and it marks only the offending
+  // tile, never the whole line. A drawn line crossing water is a bridge
+  // attempt, not a routing request: `planBridges` stays its judge.
+  let path = octPath(ax, ay, bx, by, xFirst);
+  let planned = new Set(path.map(([x, y]) => tIdx(x, y)));
   // R2 (#266): the drag's crossing — the deck tiles, and the price each buys.
-  const bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
-  const bridgeTiles = bridgePlan.deckTiles;      // TILE indices — see `BridgePlan`
-  // E4 (#268): the drag's slope shape, judged once for the whole gesture (see
-  // `railDragSlopeRefusals`) — the ramp run and the no-diagonal-on-a-slope rule.
-  const slopeWhy = railDragSlopeRefusals(grid, path, bridgeTiles);
+  let bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
+  let bridgeTiles = bridgePlan.deckTiles;        // TILE indices — see `BridgePlan`
+  // E4 (#268) + #429: the drag's slope shape, judged once for the whole
+  // gesture — the ramp run (counted ACROSS the joins with standing rail) and
+  // the no-diagonal-on-a-slope rule.
+  let run = slopeRunAtEnds(grid, state, ownerId, path);
+  let slope = railDragSlopeVerdict(grid, path, bridgeTiles, run);
+  if (slope.blocks.size && elevationActive(grid)
+    && !path.some(([x, y]) => !railTerrainOk(grid, x, y))) {
+    const routed = routeRailSlope(grid, ax, ay, bx, by, {
+      runBefore: run?.before,
+      impassable: (x, y) => {
+        if (!railTerrainOk(grid, x, y)) return true;
+        const i = tIdx(x, y);
+        if (grid.occupancy[i] >= 0 || grid.occupancy[i] === FIELD_OCC) return true;
+        if (structureAt(state, x, y) || grid.builtAt?.(x, y)) return true;
+        if ((state.rail.tile[i] & RAIL_PRESENT) !== 0 && state.rail.owner[i] !== ownerId) return true;
+        return false;
+      },
+    });
+    if (routed) {
+      const rPlanned = new Set(routed.map(([x, y]) => tIdx(x, y)));
+      const rRun = slopeRunAtEnds(grid, state, ownerId, routed);
+      const rSlope = railDragSlopeVerdict(grid, routed, undefined, rRun);
+      if (!rSlope.flags.size && !rSlope.blocks.size) {
+        path = routed; planned = rPlanned; run = rRun; slope = rSlope;
+        bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
+        bridgeTiles = bridgePlan.deckTiles;
+      }
+    }
+  }
+  const probe = previewRailBuild(grid, track, state, ownerId, path, gradeSeparated);
+  const links = plannedRailLinks(path);
+  const slopeWhy = slope;
   const tiles: [number, number][] = [];
   const unaffordable: [number, number][] = [];
   const blocked: [number, number][] = [];
@@ -1297,7 +1452,7 @@ export function railPreview(
     const already = (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
       && state.rail.owner[tIdx(x, y)] === ownerId;
     if (i === probe.built.length && probe.why !== "ok") { noteObstacle(i, probe.why); break; }
-    const shape = slopeWhy.get(i);
+    const shape = slopeWhy.blocks.get(i);
     if (shape) { noteObstacle(i, shape); break; }
     if (!already) {
       const refusal = railTileRefusal(grid, track, state, ownerId, x, y, planned, bridgeTiles, links);
@@ -1915,13 +2070,15 @@ export function lineRefusal(state: RailState, ownerId: number, sourceId: number,
 }
 
 /** An owned depot whose exit can reach this platform, or null. */
-export function depotReaching(state: RailState, ownerId: number, platformId: number): RailStructure | null {
+export function depotReaching(
+  state: RailState, ownerId: number, platformId: number, grid?: Grid,
+): RailStructure | null {
   const platform = structureById(state, platformId);
   if (!platform) return null;
   const goals = new Set(platformTrack(platform).map(([x, y]) => tIdx(x, y)));
   for (const depot of structuresOf(state, ownerId, "depot")) {
     const exit = depotExit(depot);
-    if (railPath(state, ownerId, [[exit.tx, exit.ty]], goals)) return depot;
+    if (railPath(state, ownerId, [[exit.tx, exit.ty]], goals, -1, grid)) return depot;
   }
   return null;
 }
@@ -1942,13 +2099,13 @@ const cleanLineName = (name: string | undefined): string | null => {
 
 /** Can this depot's exit reach the platform's lane on the owner's own rail? */
 function depotReachesPlatform(
-  state: RailState, ownerId: number, depot: RailStructure, platformId: number,
+  state: RailState, ownerId: number, depot: RailStructure, platformId: number, grid?: Grid,
 ): boolean {
   const platform = structureById(state, platformId);
   if (!platform) return false;
   const goals = new Set(platformTrack(platform).map(([x, y]) => tIdx(x, y)));
   const exit = depotExit(depot);
-  return !!railPath(state, ownerId, [[exit.tx, exit.ty]], goals);
+  return !!railPath(state, ownerId, [[exit.tx, exit.ty]], goals, -1, grid);
 }
 
 /**
@@ -1996,12 +2153,12 @@ export function renameLine(state: RailState, ownerId: number, lineId: number, na
  * host debits its authoritative purse; a refusal here costs nothing.
  */
 export function buyTrain(
-  state: RailState, ownerId: number, depotId: number, lineId: number,
+  state: RailState, ownerId: number, depotId: number, lineId: number, grid?: Grid,
 ): { ok: boolean; train?: Train; why?: string } {
   const depot = state.structures.find((s) => s.id === depotId && s.kind === "depot" && s.ownerId === ownerId);
   const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
   if (!depot || !line) return { ok: false, why: RAIL_REFUSAL_TEXT.missing };
-  if (!depotReachesPlatform(state, ownerId, depot, line.source)) {
+  if (!depotReachesPlatform(state, ownerId, depot, line.source, grid)) {
     return { ok: false, why: "No depot of yours can reach that platform." };
   }
   const comp = railComponents(state, ownerId);
@@ -2041,14 +2198,14 @@ export function buyTrain(
  * rule needs no second check here: `buyTrain` and the rail merge guard already
  * keep a network to one train. Returns true when a train set off.
  */
-export function startLine(state: RailState, ownerId: number, lineId: number): boolean {
+export function startLine(state: RailState, ownerId: number, lineId: number, grid?: Grid): boolean {
   const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
   if (!line) return false;
   let started = false;
   for (const t of state.trains) {
     if (t.lineId !== lineId || t.ownerId !== ownerId || t.status !== "stored") continue;
     t.target = "source";
-    if (planLeg(state, t)) started = true;
+    if (planLeg(state, t, undefined, grid)) started = true;
   }
   return started;
 }
@@ -2067,22 +2224,22 @@ export function startLine(state: RailState, ownerId: number, lineId: number): bo
  * rule — no signals, so no collisions).
  */
 export function assignLine(
-  state: RailState, ownerId: number, sourceId: number, destId: number, name?: string,
+  state: RailState, ownerId: number, sourceId: number, destId: number, name?: string, grid?: Grid,
 ): LinePlan {
   const why = lineRefusal(state, ownerId, sourceId, destId);
   if (why !== "ok") return { ok: false, why: RAIL_REFUSAL_TEXT[why] };
-  const depot = depotReaching(state, ownerId, sourceId);
+  const depot = depotReaching(state, ownerId, sourceId, grid);
   if (!depot) return { ok: false, why: "No depot of yours can reach that platform." };
   const seq = state.seq;
   const created = createLine(state, ownerId, sourceId, destId, name);
   if (!created.ok || !created.line) return { ok: false, why: created.why ?? RAIL_REFUSAL_TEXT.missing };
-  const bought = buyTrain(state, ownerId, depot.id, created.line.id);
+  const bought = buyTrain(state, ownerId, depot.id, created.line.id, grid);
   if (!bought.ok || !bought.train) {
     state.lines.splice(state.lines.indexOf(created.line), 1);
     state.seq = seq;
     return { ok: false, why: bought.why ?? RAIL_REFUSAL_TEXT.missing };
   }
-  startLine(state, ownerId, created.line.id);
+  startLine(state, ownerId, created.line.id, grid);
   return { ok: true, line: created.line, train: bought.train };
 }
 
@@ -2097,6 +2254,9 @@ export function assignLine(
  */
 export function planLeg(
   state: RailState, train: Train, from?: { tile: [number, number]; oct: number } | null,
+  // #429: the leg is planned through the network a train may drive — with the
+  // grid the route may round ramp corners; without it, the 45° rule stands.
+  grid?: Grid,
 ): boolean {
   const line = state.lines.find((l) => l.id === train.lineId);
   const depot = depotOfTrain(state, train);
@@ -2142,10 +2302,10 @@ export function planLeg(
   // shed door — so a train parks inside the platform instead of on its port.
   const stop: [number, number] = train.target === "depot" ? [exit.tx, exit.ty] : stopTile(targetStruct);
   const goal = new Set([tIdx(stop[0], stop[1])]);
-  const route = railPath(state, train.ownerId, [start], goal, startOct)
+  const route = railPath(state, train.ownerId, [start], goal, startOct, grid)
     // Reversal is legal (recall / a platform departure), but dropping the
     // heading entirely let a train resume right on a legacy 90° corner.
-    ?? railPath(state, train.ownerId, [start], goal, startOct < 0 ? -1 : (startOct + 4) % 8);
+    ?? railPath(state, train.ownerId, [start], goal, startOct < 0 ? -1 : (startOct + 4) % 8, grid);
   if (!route) {
     train.status = "blocked";
     train.blockedWhy = train.target === "depot" ? "No route back to the depot"
@@ -2199,10 +2359,10 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
     // broken route is noticed. `planLeg` parks it where it stands if there is no
     // way through, and a train mid-dwell finishes its dwell first.
     if (train.status === "moving" || train.status === "departing" || train.status === "returning") {
-      if (train.planRevision !== state.rail.revision) planLeg(state, train);
+      if (train.planRevision !== state.rail.revision) planLeg(state, train, undefined, grid);
     }
     if (train.status === "blocked") {
-      if (train.planRevision !== state.rail.revision) planLeg(state, train);
+      if (train.planRevision !== state.rail.revision) planLeg(state, train, undefined, grid);
       if (train.status === "blocked") continue;
     }
     let ms = dtMs;
@@ -2212,7 +2372,7 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
         // A stored train with a live line departs on the next tick; a train the
         // player has parked (target "depot") stays in the shed.
         if (train.target === "depot" && !train.route.length) break;
-        if (!planLeg(state, train)) break;
+        if (!planLeg(state, train, undefined, grid)) break;
         continue;
       }
       if (train.status === "dwelling") {
@@ -2222,7 +2382,7 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
         // The dwell is over: reverse at the platform and run to the other stop.
         // The train turns round where it stands — its last car leads out.
         train.target = train.target === "source" ? "dest" : "source";
-        if (!planLeg(state, train, turnRound(state, train))) break;
+        if (!planLeg(state, train, turnRound(state, train), grid)) break;
         continue;
       }
       const cum = polyline(train.route);
@@ -2269,12 +2429,12 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
  * are dropped with their train. Returns true when anything changed.
  * (The Train Depot comes back when players can buy trains.)
  */
-export function autoTrains(state: RailState, ownerId: number): boolean {
+export function autoTrains(state: RailState, ownerId: number, grid?: Grid): boolean {
   let changed = false;
   const comp = railComponents(state, ownerId);
   const compOf = (s: RailStructure): number => comp.get(tIdx(...stopTile(s))) ?? 0;
   const drivable = (a: RailStructure, b: RailStructure): [number, number][] | null =>
-    railPath(state, ownerId, [stopTile(a)], new Set([tIdx(...stopTile(b))]));
+    railPath(state, ownerId, [stopTile(a)], new Set([tIdx(...stopTile(b))]), -1, grid);
   for (const line of state.lines.filter((l) => l.ownerId === ownerId)) {
     const src = structureById(state, line.source), dst = structureById(state, line.dest);
     const joined = !!src && !!dst && compOf(src) !== 0 && compOf(src) === compOf(dst);
@@ -2329,10 +2489,10 @@ export function autoTrains(state: RailState, ownerId: number): boolean {
 }
 
 /** Send a train home: `returning` first, and it stays there until re-assigned. */
-export function recallTrain(state: RailState, train: Train): boolean {
+export function recallTrain(state: RailState, train: Train, grid?: Grid): boolean {
   if (train.status === "stored") return false;
   train.target = "depot";
-  return planLeg(state, train);
+  return planLeg(state, train, undefined, grid);
 }
 
 /**
@@ -2359,11 +2519,11 @@ export function sellTrain(state: RailState, train: Train): { ok: boolean; why?: 
 }
 
 /** Stop running a line but keep the train: home to the depot and stay there. */
-export function stopLine(state: RailState, lineId: number): boolean {
+export function stopLine(state: RailState, lineId: number, grid?: Grid): boolean {
   let any = false;
   for (const t of state.trains.filter((t) => t.lineId === lineId)) {
     t.target = "depot";
-    any = planLeg(state, t) || any;
+    any = planLeg(state, t, undefined, grid) || any;
   }
   return any;
 }
