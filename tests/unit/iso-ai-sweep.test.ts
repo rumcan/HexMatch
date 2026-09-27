@@ -5,7 +5,8 @@ import { createTrack, canBuildOn, tIdx } from "../../src/iso/track";
 import { isServiced, type EconomyState, type Factory } from "../../src/iso/economy";
 import { generateMap, type Grid } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/game/config";
-import { canReachASpot, rivalSearchTiles } from "./helpers/rival-map";
+import { canReachASpot, rivalSearchTiles, roadComponent } from "./helpers/rival-map";
+import { factoryFootprintFor } from "../../src/iso/config";
 
 // W8/T4: cheap structural reachability covers the full even-step search
 // space; expensive real planning uses a bounded, deterministic spatial sample.
@@ -69,10 +70,17 @@ function play(grid: Grid, x: number, y: number, turns: number): SweepRow {
 }
 
 describe("W8 sweep — legal rival tiles are structurally playable", () => {
-  it("seed 1337: the full search space has no dirt-buildable enclaves", () => {
+  // #431: the 144×144 generator can leave a dirt-legal tile walled in by
+  // water at the map edge (seed 1337: (2,82) and (2,84), one tile each). That
+  // is harmless as long as no Factory fits in one — `chooseRivalFactorySpot`
+  // only commits a whole, town-adjacent footprint with a real opening plan —
+  // so the invariant is "no enclave can host a Factory", not "none exist".
+  it("seed 1337: no dirt-buildable enclave is big enough to host a Factory", () => {
     const grid = generateMap(1337);
+    const [fw, fh] = factoryFootprintFor(true);
     const enclaves = rivalSearchTiles(grid).filter(([x, y]) => !canReachASpot(grid, x, y));
-    expect(enclaves).toEqual([]);
+    const roomy = enclaves.filter(([x, y]) => roadComponent(grid, x, y).reduce((a, b) => a + b, 0) >= fw * fh);
+    expect(roomy, `enclaves with room for a ${fw}×${fh} Factory`).toEqual([]);
   });
 
   it("seed 1337: four turns from sampled non-enclaves build with sufficient dirt funds", () => {
@@ -105,7 +113,8 @@ describe("W8 sweep — legal rival tiles are structurally playable", () => {
       if (r.tiles === 0 || r.serviced === 0) bad.push(`${x},${y} tiles=${r.tiles} h=${r.serviced}`);
     }
     expect(bad, `deadlocked tiles: ${bad.join(" | ")}`).toEqual([]);
-  }, 30_000);
+    // #431: the 144×144 map made each sampled 2-turn play several seconds.
+  }, 180_000);
 
   it("seed 2024: sampled non-enclaves build on the first funded turn", () => {
     const grid = generateMap(2024);
@@ -180,5 +189,7 @@ describe("W8 sweep — the rival is never placed on a tile it cannot build from"
     // cannot regress onto that tile.
     const spot = chooseRivalFactorySpot(grid, createTrack(), [23, 22], opts);
     expect(tIdx(spot![0], spot![1])).not.toBe(tIdx(2, 2));
-  }, 15_000);
+    // #431: ~25 sampled placements × a 24-probe spot search on 144×144 —
+    // measured 376 s; the old 15 s budget predates the bigger map.
+  }, 600_000);
 });

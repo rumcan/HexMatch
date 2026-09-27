@@ -44,25 +44,24 @@ function nearestOre(g: ReturnType<typeof generateMap>, tx: number, ty: number) {
 }
 
 describe("E8 pass 2 — starting curve", () => {
-  it("still gates road behind an ore mine (pass 1 structure, PP-07 prices)", () => {
-    expect(START_PURSE.ore ?? 0).toBe(0);
-    expect(START_PURSE.stone).toBe(12);
-    expect(START_PURSE.wood).toBe(12);
-    expect(FREE_SETUP_TRACK).toBe(12);
-    expect(TRANSPORT.road.cost.ore).toBe(4);
-    expect(TRANSPORT.road.cost.stone).toBe(1);
-    expect(TRANSPORT.road.cost.wood).toBe(1);
-    expect(TRANSPORT.dirt.cost.stone).toBe(1);
-    expect(TRANSPORT.dirt.cost.wood).toBe(1);
-    expect(UPGRADE_COST.ore).toBe(4);  // dirt→road pays the difference only
+  // #431: this used to pin PP-07's prices (4 Ore a road, 12 of each to start,
+  // 5 ore mines, a 10★ line). The owner's balancing pass (52b11bf, costs ×3)
+  // and the 11-industry map (957faeb) moved every one of those numbers on
+  // purpose, and BAL-1 (#471's balance harness, `npm run balance`) now owns
+  // the prices. What E8 protects is the STRUCTURE, so that is what it pins.
+  it("still gates road behind an ore mine (pass 1 structure)", () => {
+    expect(START_PURSE.ore ?? 0, "no Ore to start: the first road waits on a mine").toBe(0);
+    expect(START_PURSE.stone, "the opening Dirt is affordable").toBeGreaterThan(0);
+    expect(START_PURSE.wood, "the opening Dirt is affordable").toBeGreaterThan(0);
+    expect(FREE_SETUP_TRACK).toBeGreaterThan(0);
+    expect(TRANSPORT.road.cost.ore ?? 0, "a paved Road costs Ore").toBeGreaterThan(0);
+    expect(TRANSPORT.dirt.cost.ore ?? 0, "Dirt never costs Ore").toBe(0);
+    expect(UPGRADE_COST.ore ?? 0, "dirt→road pays Ore").toBeGreaterThan(0);
+    expect(UPGRADE_COST.ore!, "…the difference only").toBeLessThanOrEqual(TRANSPORT.road.cost.ore!);
     expect(TRANSPORT.dirt.onRough).toBe(true);
     expect(TRANSPORT.road.onRough).toBe(false);
-    // VP-01 replaced the 12 connection points with VICTORY points; the line
-    // is back to 10★ after the AI-02 20★ experiment: 10★ is 40 paves
-    // (40×4 Ore) or 10 plants, which is a longer road than 12 dirt
-    // connections ever was — and specifically stops "first two spurs" wins.
-    expect(VP_TARGET).toBe(10);
-    expect(INDUSTRY_QUOTA.ore_mine).toBe(5);
+    expect(INDUSTRY_QUOTA.ore_mine, "every map can mine Ore").toBeGreaterThan(0);
+    expect(VP_TARGET).toBeGreaterThan(0);
   });
 
   it.skip("records distance-to-nearest-ore from the land centroid across 40 seeds", () => {

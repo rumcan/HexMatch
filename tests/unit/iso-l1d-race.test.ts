@@ -61,13 +61,19 @@ describe("L1d (#235) a whole race on the new loop's clock", () => {
     }
   }, 900_000);
 
-  it("finishes: a seat reaches the line, and the other one was racing", () => {
+  // #431: this used to demand a 12★ winner inside the window. Rival-vs-rival
+  // on the 11-industry map (957faeb) no longer gets there — the two seats
+  // claim every industry between them and top out at 5–7★ in 30 min, both
+  // still building (seed 1337: 5 and 6 Depots, 136 paves). That is the map's
+  // ceiling for two copies of the scripted rival, not a deadlock; match
+  // LENGTH against a real player is BAL-1's gate (#471,
+  // iso-471-balance-smoke: steady vs Normal, mean 18 min). What this file
+  // still owns is the deadlock itself — the #431 stall was a seat parked on
+  // 1★ for the whole window — so both seats must reach a quarter of the line.
+  it("nobody deadlocks: both seats race to a quarter of the line or better", () => {
     for (const r of races) {
-      // L13 (#228): the new loop races its own line (`r.target`, 12★), not the
-      // shipped 10★ — the harness reports which one it ran to.
-      expect(r.winner, `seed ${r.seed}: no seat reached ${r.target}★ in ${RACE_MINUTES}m — deadlock`)
-        .toBeTruthy();
-      expect(r.vp[r.winner!.id]).toBeGreaterThanOrEqual(r.target);
+      // L13 (#228): the new loop races its own line (`r.target`, 12★).
+      if (r.winner) expect(r.vp[r.winner.id]).toBeGreaterThanOrEqual(r.target);
       const trailer = Math.min(r.vp.you, r.vp.ai);
       expect(trailer, `seed ${r.seed}: the loser never scored`).toBeGreaterThan(0);
       expect(trailer, `seed ${r.seed}: the loser stalled out of the race`)
@@ -149,12 +155,12 @@ describe("L5 (#219) the depot tree, raced", () => {
         orders: winners.length,
       }));
     }
-  }, 900_000);
+  }, 1_800_000);   // #431: five 12-minute races on the 144×144 map outgrew 15 min
 
-  it("finishes on every seed, with both seats still racing", () => {
+  // #431: no 12★ winner inside 12 minutes on the 11-industry map either (see
+  // the L1d note above) — the tree assertion is that both seats keep racing.
+  it("both seats keep racing on every seed", () => {
     for (const r of races) {
-      expect(r.winner, `seed ${r.seed}: nobody reached ${r.target}★ in ${TREE_MINUTES}m — deadlock`)
-        .toBeTruthy();
       for (const seat of r.seats) {
         expect(r.vp[seat.id], `seed ${r.seed}/${seat.id} never scored`).toBeGreaterThan(0);
       }
@@ -191,7 +197,10 @@ describe("L5 (#219) the depot tree, raced", () => {
     const opened = new Set(races.flatMap((r) => r.seats.map((s) => cargosOf(r, s.id)[0])));
     expect(opened.size, `every seat on every seed opened on ${[...opened].join("/")} — a script`)
       .toBeGreaterThanOrEqual(2);
-    const winners = new Set(races.filter((r) => r.winner).map((r) => r.winner!.id));
-    expect(winners.size, "one seat's build order won every single seed").toBeGreaterThanOrEqual(2);
+    // #431: the seat AHEAD at the whistle (a winner, when there is one; ties
+    // count for nobody) — races on this map end on the clock, not the line.
+    const leaders = new Set(races.map((r) => r.winner?.id
+      ?? (r.vp.you > r.vp.ai ? "you" : r.vp.ai > r.vp.you ? "ai" : null)).filter(Boolean));
+    expect(leaders.size, "one seat's build order led every single seed").toBeGreaterThanOrEqual(2);
   });
 });

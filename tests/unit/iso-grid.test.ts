@@ -389,11 +389,14 @@ describe("F1 towns place and never strand an industry", () => {
 
 
 describe("T4 roomier map", () => {
-  it("triples both dimensions while keeping 25 industries and four towns", () => {
+  // #431: the count follows INDUSTRY_QUOTA (957faeb cut it to 2 of each + 1
+  // gold mine = 11); the per-type loop below already pinned the quota itself.
+  it("triples both dimensions while keeping the full industry quota and four towns", () => {
+    const quota = Object.values(INDUSTRY_QUOTA).reduce((a, b) => a + b, 0);
     for (const seed of [0, 1, 7, 42, 100, 123, 1337, 2026]) {
       const g = generateMap(seed);
       expect([g.w, g.h]).toEqual([144, 144]);
-      expect(g.industries).toHaveLength(25);
+      expect(g.industries).toHaveLength(quota);
       expect(g.towns).toHaveLength(4);
       for (const [type, count] of Object.entries(INDUSTRY_QUOTA)) {
         expect(g.industries.filter((i) => i.type === type)).toHaveLength(count);

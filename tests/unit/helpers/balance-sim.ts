@@ -41,7 +41,7 @@ import {
   type Purse, type Track,
 } from "../../../src/iso/track";
 import {
-  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades,
+  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades, planGoalPurchase, goalOutOfReach,
   executeCandidate, planUpgrades, executePaves, treeGoal, treeWants, scoreCargoWant,
   rivalPace,
   type Candidate, type PlanOptions,
@@ -69,7 +69,7 @@ import {
   depotYieldCap, START_MONEY, moneyValueOf, type Cargo, type DifficultyRules,
 } from "../../../src/iso/config";
 import {
-  createMarket, priceOf, movingAverage, rivalSellLot, sell, sellable,
+  createMarket, priceOf, movingAverage, rivalSellLot, sell, sellable, quoteBuy,
   type MarketState,
 } from "../../../src/iso/market";
 import {
@@ -628,6 +628,24 @@ function bankTowardGoal(seat: SimSeat, cost: Purse, budget: number): boolean {
   return traded > 0;
 }
 
+/** `rivalBuyTowardGoal` (game.ts, #431): spend money on the goal's whole
+ *  shortfall at the market's buy price, or not at all. */
+function buyTowardGoal(ctx: TurnCtx, seat: SimSeat, cost: Purse): boolean {
+  const earns = new Set(ctx.eco.harvesters.filter((h) => h.owner === seat.id)
+    .map((h) => depotCargo(ctx.eco, h)).filter((c): c is Cargo => !!c));
+  if (!goalOutOfReach(seat.goods, cost, earns)) return false;
+  const plan = planGoalPurchase(seat.goods, cost, seat.money, (cargo, units) => {
+    const q = quoteBuy(ctx.market, cargo, units, ctx.t);
+    return q.units === units ? q.cost : null;
+  });
+  if (!plan) return false;
+  seat.money -= plan.price;
+  for (const [cargo, n] of Object.entries(plan.buy) as [Cargo, number][]) {
+    seat.goods[cargo] = (seat.goods[cargo] ?? 0) + n;
+  }
+  return true;
+}
+
 /**
  * One seat's turn. Returns true when it achieved something (the caller's
  * clock then waits `buildMs`); false = the idle clock (`idleMs`).
@@ -696,6 +714,10 @@ function takeTurn(ctx: TurnCtx, seat: SimSeat): boolean {
   if (paveStep(ctx, seat, buildCfg.paveTiles,
     chooseAiPlantSpot(ctx.eco.grid, ctx.eco.track, ctx.eco, seat.id) && !canPayBuild(seat, PLANT_COST)
       ? (PLANT_COST.ore ?? 0) : 0)) acted = true;
+
+  // #431: the rival's idle tail — nothing landed, so it buys the goal's
+  // missing goods with its money (`rivalBuyTowardGoal` in game.ts).
+  if (!acted && !seat.bot && goal && buyTowardGoal(ctx, seat, goal.cost)) acted = true;
 
   return acted;
 }

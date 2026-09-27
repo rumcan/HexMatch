@@ -46,7 +46,7 @@ import {
 import {
   aiBuildStep, chooseRivalFactorySpot, planUpgrades, executePaves, paveCandidates,
   deepPlanCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants,
-  planRailMove, executeRailMove, planBankTrades,
+  planRailMove, executeRailMove, planBankTrades, planGoalPurchase, goalOutOfReach,
   type RivalPace, type TreeGoal,
 } from "../../../src/iso/ai";
 import { createRailState, tickTrains, type RailState } from "../../../src/iso/rail";
@@ -71,7 +71,7 @@ import {
   addPlant, canAffordPlant, chooseAiPlantSpot, PLANT_COST,
 } from "../../../src/iso/plants";
 import {
-  BASE_RATE, VICTORY, VP_TARGET, CARGOES, TOWN_UPGRADES,
+  BASE_RATE, BASE_PRICE, VICTORY, VP_TARGET, CARGOES, TOWN_UPGRADES,
   type Cargo, type DifficultyRules,
 } from "../../../src/iso/config";
 import { MAP_W, MAP_H } from "../../../src/game/config";
@@ -805,6 +805,25 @@ export function runRace(seed: number, opts: RaceOptions = {}): Race {
             const n = planBankTrades(seat.purse, cargo, goal.cost, { unlocked, budget, need: amount });
             budget -= n;
             if (n > 0) acted = true;
+          }
+          // #431: the bank could not close the gap — the live rival spends the
+          // money its market sales earned (`rivalBuyTowardGoal`). This harness
+          // has no money, so gold (outside the bank, PP-08, and the only thing
+          // a gold-mine opener earns) stands in for it at base prices: sell
+          // gold, buy the goal's shortfall, all or nothing.
+          const earns = new Set(eco.harvesters.filter((h) => h.owner === seat.id)
+            .map((h) => depotCargo(eco, h)).filter((c): c is Cargo => !!c));
+          if (!acted && goalOutOfReach(seat.purse, goal.cost, earns)) {
+            const gold = Math.floor(seat.purse.gold ?? 0);
+            const plan = planGoalPurchase(seat.purse, goal.cost, gold * BASE_PRICE.gold,
+              (cargo, units) => (cargo === "gold" ? null : BASE_PRICE[cargo] * units));
+            if (plan) {
+              seat.purse.gold = gold - Math.ceil(plan.price / BASE_PRICE.gold);
+              for (const [cargo, n] of Object.entries(plan.buy) as [Cargo, number][]) {
+                seat.purse[cargo] = (seat.purse[cargo] ?? 0) + n;
+              }
+              acted = true;
+            }
           }
         }
         if (!acted && !newLoop) {
