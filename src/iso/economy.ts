@@ -608,7 +608,7 @@ export function depotPathLength(state: EconomyState, h: Harvester): number | nul
     const src = line && rail!.structures.find((s) => s.id === line.source);
     const dst = line && rail!.structures.find((s) => s.id === line.dest);
     if (!rail || !src || !dst) return null;
-    const route = railPath(rail, h.ownerId, [stopTile(src)], new Set([tIdx(...stopTile(dst))]));
+    const route = railPath(rail, h.ownerId, [stopTile(src)], new Set([tIdx(...stopTile(dst))]), -1, state.grid);
     return route ? routeDistance(state.grid, route) - 1 : null;
   }
   // the Depot's ENTRANCE is where its road meets the network (depot.ts)
