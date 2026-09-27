@@ -216,7 +216,8 @@ import {
 import {
   createMarket, marketToWire, marketFromWire, priceOf,
   sell as sellOnMarket, eventsAt, trendPct, history as priceHistory,
-  rivalSellLot, sellable, money as moneyStr, quoteBuy,
+  rivalSellLot, sellable, money as moneyStr, quoteBuy, buyPrice,
+  rumourAt, createAlert, alertTick as priceAlertTick, type PriceAlert,
 } from "./market";
 import {
   DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
@@ -1207,6 +1208,46 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return quote.revenue;
   }
 
+  /**
+   * MKT-2 (#465): a seat buys goods with money at the price plus the spread.
+   * The mirror of `sellCargo`: the market owns the quote, this owns the purse
+   * and the money. Returns what it cost ($), or 0 when it refused.
+   */
+  function buyCargo(p: PlayerState, cargo: Cargo, n: number): number {
+    if (!sellable(cargo)) return 0;
+    const units = Math.max(0, Math.floor(n));
+    if (units <= 0) return 0;
+    const quote = quoteBuy(market, cargo, units, marketMs);
+    if (quote.units <= 0 || quote.cost <= 0 || p.money < quote.cost) return 0;
+    p.money -= quote.cost;
+    p.purse[cargo] = (p.purse[cargo] ?? 0) + quote.units;
+    return quote.cost;
+  }
+
+  /**
+   * MKT-2 (#465): the LOCAL seat's price alerts, one per cargo at most.
+   * Session-local and client-local — they evaluate against the mirrored
+   * prices, so a guest's alerts need no wire and ride no save.
+   */
+  const alerts = new Map<Cargo, PriceAlert>();
+
+  /**
+   * MKT-2 (#465): evaluate the local seat's alerts against the live price. A
+   * firing alert toasts and writes one Feed line, once per crossing (the
+   * re-arm rule is `priceAlertTick`'s). Returns what fired, for the tests.
+   */
+  function checkAlerts(): Cargo[] {
+    const fired: Cargo[] = [];
+    for (const alert of alerts.values()) {
+      if (!priceAlertTick(market, alert, marketMs)) continue;
+      fired.push(alert.cargo);
+      const p = priceOf(market, alert.cargo, marketMs);
+      toast(`🔔 ${CARGO[alert.cargo].name} hit ${moneyStr(p)} (above ${moneyStr(alert.above)}).`, "good");
+      ui.feed(`Price alert — ${CARGO[alert.cargo].name} hit ${moneyStr(p)} (above ${moneyStr(alert.above)}).`);
+    }
+    return fired;
+  }
+
   /** The exchange's rows for the HUD — one per sellable good. */
   const marketRows = () =>
     CARGOES.filter(sellable).map((cargo) => ({
@@ -1215,7 +1256,69 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       trend: trendPct(market, cargo, marketMs),
       spark: priceHistory(market, cargo, marketMs, 24),
       held: Math.floor(me.purse[cargo] ?? 0),
+      // MKT-2 (#465): what a Buy pays per unit, and the seat's alert line.
+      buy: buyPrice(market, cargo, marketMs),
+      alert: alerts.get(cargo)?.above ?? null,
     }));
+
+  /**
+   * MKT-2 (#465): the exchange's SELL door — the Market tab's Sell buttons and
+   * the `exchangeSell` test twin. A guest's sale is a HOST INTENT, like the
+   * bank's: the host owns the slippage, so the trade exists only once the
+   * host's delta says so (`"relayed"`). Solo and host apply it here and now.
+   */
+  const sellDoor = (cargo: Cargo, n: number | "all"): number | string => {
+    if (!sellable(cargo)) return "Gold is the Black Market's money — it is not sold here.";
+    if (isGuest()) {
+      if (!net?.sendIntent("build", { do: "sell", cargo, n })) return "Not connected.";
+      return "relayed";
+    }
+    const held = Math.floor(me.purse[cargo] ?? 0);
+    if (held <= 0) return `No ${CARGO[cargo].name} to sell.`;
+    const units = n === "all" ? held : Math.min(held, Math.max(1, Math.floor(n)));
+    const got = sellCargo(me, cargo, units);
+    if (got <= 0) return "That sale fetched nothing.";
+    ui.feed(`Sold ${units} ${CARGO[cargo].name} for ${moneyStr(got)}.`);
+    if (isMp()) publishNet(performance.now(), true);
+    return got;
+  };
+
+  /**
+   * MKT-2 (#465): the exchange's BUY door — Buy 1 / Buy 10 at price + spread,
+   * so a missing upgrade input can be bought. Same relay rule as selling: the
+   * host applies a guest's buy against the guest's own seat.
+   */
+  const buyDoor = (cargo: Cargo, n: number): number | string => {
+    if (!sellable(cargo)) return "Gold is the Black Market's money — it is not bought here.";
+    const units = Math.max(0, Math.floor(n));
+    if (units <= 0) return "Nothing to buy.";
+    if (isGuest()) {
+      if (!net?.sendIntent("build", { do: "buy", cargo, n: units })) return "Not connected.";
+      return "relayed";
+    }
+    const quote = quoteBuy(market, cargo, units, marketMs);
+    if (quote.units <= 0) return "Nothing to buy.";
+    if (me.money < quote.cost) return `Not enough money — ${units} ${CARGO[cargo].name} costs ${moneyStr(quote.cost)}.`;
+    buyCargo(me, cargo, units);
+    ui.feed(`Bought ${units} ${CARGO[cargo].name} for ${moneyStr(quote.cost)}.`);
+    if (isMp()) publishNet(performance.now(), true);
+    return quote.units;
+  };
+
+  /**
+   * MKT-2 (#465): the exchange's ALERT door — "notify me above $X", per cargo.
+   * Local to this client (it evaluates against the mirrored prices), so it
+   * works on a guest with no relay. `null` (or anything not a price) clears.
+   */
+  const alertDoor = (cargo: Cargo, above: number | null): string => {
+    if (!sellable(cargo)) return "Gold has no exchange price to watch.";
+    if (above === null || !Number.isFinite(above) || above <= 0) {
+      alerts.delete(cargo);
+      return `${CARGO[cargo].name} alert cleared.`;
+    }
+    alerts.set(cargo, createAlert(cargo, above));
+    return `${CARGO[cargo].name} alert set above ${moneyStr(above)}.`;
+  };
 
   /**
    * ECON-1 (#421): the RIVAL trades. It sells a good when the market is paying
@@ -1232,10 +1335,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     lastRivalSell = now;
     const upgrade = TOWN_UPGRADES[Math.min(rival.townLevel, TOWN_UPGRADES.length - 1)];
     const reserve = (upgrade?.cost ?? {}) as Purse;
+    // MKT-2 (#465): the rival reads the SAME rumours the Market tab prints —
+    // false ones included on Hard — and waits out a rumoured boom.
+    const rum = rumourAt(seed, marketMs, skillKey);
     for (const cargo of CARGOES) {
       if (!sellable(cargo)) continue;
       const held = Math.floor(rival.purse[cargo] ?? 0);
-      const lot = rivalSellLot(market, cargo, held, reserve[cargo] ?? 0, marketMs);
+      const lot = rivalSellLot(market, cargo, held, reserve[cargo] ?? 0, marketMs,
+        { rumourBoom: !!rum && rum.boom && rum.cargo === cargo });
       if (lot > 0) sellCargo(rival, cargo, lot);
     }
   }
@@ -1959,23 +2066,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return bankFor(me, give, want) ? "done" : "refused";
     },
-    /**
-     * ECON-1 (#421): sell goods for money. Host/solo only for now — a guest's
-     * sale would have to be relayed like a bank trade, and the host owns the
-     * market's slippage (see the follow-up note in docs/economy-money.md).
-     */
-    onSell: (cargo: Cargo, n: number | "all") => {
-      if (isGuest()) return "Selling is handled by the host in this room.";
-      if (!sellable(cargo)) return "Gold is the Black Market's money — it is not sold here.";
-      const held = Math.floor(me.purse[cargo] ?? 0);
-      if (held <= 0) return `No ${CARGO[cargo].name} to sell.`;
-      const units = n === "all" ? held : Math.min(held, Math.max(1, Math.floor(n)));
-      const got = sellCargo(me, cargo, units);
-      if (got <= 0) return "That sale fetched nothing.";
-      ui.feed(`Sold ${units} ${CARGO[cargo].name} for ${moneyStr(got)}.`);
-      if (isMp()) publishNet(performance.now(), true);
-      return got;
-    },
+    // ECON-1 (#421) + MKT-2 (#465): the exchange's doors. Selling and buying
+    // relay on a guest (the host owns the slippage); alerts are local.
+    onSell: sellDoor,
+    onBuy: buyDoor,
+    onAlert: alertDoor,
     // TRADE (owner call, 2026-09): the Market tab's three doors.
     onOfferPost: (give, giveN, want, wantN) => tradeRequest("post", { give, giveN, want, wantN }),
     onOfferAccept: (id) => tradeRequest("accept", { id }),
@@ -10595,6 +10690,41 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           bankTrade(p.purse, give, want, { unlocked: bankRungsFor(p) });
           toast(`Bank: ${BANK_RATE} ${CARGO[give].name} → 1 ${CARGO[want].name}.`, "good");
         }
+      } else if (what === "sell" || what === "buy") {
+        // MKT-2 (#465): a guest's exchange trade is a REQUEST, like the
+        // bank's. The host re-runs the whole rule against the GUEST's own
+        // seat — a sellable cargo, a sane lot, the purse/money to cover it —
+        // through the SAME `sellCargo` / `buyCargo` a local trade uses, so a
+        // relayed trade cannot drift from a local one; the forced publish
+        // below lands the delta back on the guest. (Note: this is
+        // `do: \"sell\"` on the market — the railway's sell is `do:
+        // \"railact\"` with `what: \"sell\"`, routed above.)
+        const cargo = isCargo(payload.cargo as string) ? payload.cargo as Cargo : null;
+        const rawN = payload.n;
+        const lot = rawN === "all" && what === "sell" ? "all"
+          : typeof rawN === "number" && Number.isFinite(rawN) ? Math.floor(rawN) : null;
+        if (cargo === null || !sellable(cargo) || lot === null) {
+          echoed.push("The exchange can't read that trade.");
+        } else if (what === "sell") {
+          const held = Math.floor(p.purse[cargo] ?? 0);
+          if (held <= 0) echoed.push(`No ${CARGO[cargo].name} to sell.`);
+          else {
+            const units = lot === "all" ? held : Math.min(held, Math.max(1, lot));
+            const got = sellCargo(p, cargo, units);
+            echoed.push(got > 0 ? `Sold ${units} ${CARGO[cargo].name} for ${moneyStr(got)}.`
+              : "That sale fetched nothing.");
+          }
+        } else {
+          const units = Math.max(0, lot === "all" ? 0 : lot);
+          const quote = units > 0 ? quoteBuy(market, cargo, units, marketMs) : null;
+          if (!quote || quote.units <= 0) echoed.push("Nothing to buy.");
+          else if (p.money < quote.cost) {
+            echoed.push(`Not enough money — ${units} ${CARGO[cargo].name} costs ${moneyStr(quote.cost)}.`);
+          } else {
+            buyCargo(p, cargo, units);
+            echoed.push(`Bought ${units} ${CARGO[cargo].name} for ${moneyStr(quote.cost)}.`);
+          }
+        }
       } else if (typeof payload.key === "string" || typeof (payload as any).do === "string" && ((payload as any).do === "protest_place" || (payload as any).key)) {
         // blackMarket intents — payload.key or protest_place
         const key = (payload as any).key as string;
@@ -11814,6 +11944,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       })(),
       market: marketRows(),
       marketEvent: eventsAt(seed, marketMs).map((e) => e.label).join(" · ") || null,
+      // MKT-2 (#465): the next slot's rumour, ~60 s before the event it names.
+      marketRumour: rumourAt(seed, marketMs, skillKey)?.label ?? null,
       // L16 (#231): the storage cap the resource bar prints its "amount / cap"
       // readout against — derived from the seat's city level, so the bar and
       // the clock can never disagree. Undefined when no cap applies: the
@@ -14177,6 +14309,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (marketLast > 0) marketMs += Math.max(0, Math.min(1_000, t - marketLast));
         marketLast = t;
         if (!isGuest()) marketEventTick();
+        // MKT-2 (#465): every seat evaluates its OWN alerts — the guest's run
+        // against the mirrored prices, so they need no host round-trip.
+        checkAlerts();
       } else marketLast = t;
       if (sim) economyTick(t);
       // END-1 (#472): sample ★ and $ every 10 s for the summary charts
@@ -14673,6 +14808,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get moneys() { return players.map((p) => p.money); },
     setSeatMoney: (i: number, v: number) => { const p = players[i]; if (p) p.money = Math.max(0, v); },
     /**
+     * MKT-2 (#465): the exchange's doors, exactly as the Market tab calls
+     * them — INCLUDING the guest relay (`"relayed"`: the host's delta is the
+     * confirmation). A guest's sale moving nothing locally until the host
+     * answers is asserted through these.
+     */
+    exchangeSell: sellDoor,
+    exchangeBuy: buyDoor,
+    setAlert: alertDoor,
+    /** MKT-2 (#465): evaluate the local seat's alerts now; what fired. */
+    checkAlerts: () => checkAlerts(),
+    /**
      * BUILD-1 (#460): the placement assist. `legalSpots` returns the WHOLE-MAP
      * set the armed tool paints (before the per-frame camera cull), so a test
      * can compare it field-for-field against the placement acceptance over a
@@ -14726,6 +14872,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       price: (cargo: Cargo) => unitPrice(cargo),
       advance: (ms: number) => { marketMs = Math.max(0, marketMs + ms); },
       sell: (cargo: Cargo, n: number) => sellCargo(me, cargo, n),
+      /** MKT-2 (#465): the next slot's rumour label, as the Market tab prints it. */
+      rumour: () => rumourAt(seed, marketMs, skillKey)?.label ?? null,
     },
     /** #186: the rules this match booted with, and whether a machine holds the
      *  opponent seat. Both are boot facts — a test reads them to prove the

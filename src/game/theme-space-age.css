@@ -542,10 +542,14 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 .market-trend.down { color: var(--sa-orange); }
 .market-spark { grid-area: spark; width: 96px; height: 22px; align-self: center;
   background: var(--sa-panel-2); image-rendering: pixelated; }
-.market-act { grid-area: act; display: flex; align-items: center; gap: 6px; }
+.market-act { grid-area: act; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .market-held { flex: 1; font-size: 12px; color: var(--sa-bone-dim); }
-.market-act .sell-btn { padding: 2px 8px; font-size: 12px; }
+.market-act .sell-btn, .market-act .buy-btn { padding: 2px 8px; font-size: 12px; }
 .market-event { color: var(--sa-lemon); }
+/* MKT-2 (#465): the next slot's rumour, and the per-row alert control. Flat, square, theme aqua. */
+.market-rumour { color: var(--sa-aqua); }
+.market-act .alert-in { width: 70px; padding: 2px 4px; font-size: 12px; }
+.market-act .alert-btn.on { background: var(--sa-orange); color: var(--sa-on-orange); }
 /* ══════════════════════════════════════════════════════════════════════
    TUT-03 (#422) — the in-game guide. Flat charcoal, lemon counter, square
    corners, no gradients, no glows, weight ≤ 500. The layer never takes a
@@ -1396,7 +1400,9 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 }
 
 /* Market row buttons on phone */
-.ui-root[data-phone="1"] .market-act .sell-btn {
+.ui-root[data-phone="1"] .market-act .sell-btn,
+.ui-root[data-phone="1"] .market-act .buy-btn,
+.ui-root[data-phone="1"] .market-act .alert-btn {
   min-height: 44px;
   padding: 10px 16px;
   font-size: 13px;

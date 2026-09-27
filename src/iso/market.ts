@@ -68,6 +68,12 @@ export const EVENT_MS = 120_000;
 export const DUMP_FLOOR = 40;
 /** The trend arrow compares against the price this long ago. */
 export const TREND_WINDOW_MS = 60_000;
+/**
+ * MKT-2 (#465): on Hard the rumours are right about this often. A fraction,
+ * not a count — the per-slot draw is deterministic, so the rate holds exactly
+ * the same way on every client and in every test run.
+ */
+export const RUMOUR_HARD_HIT_RATE = 0.7;
 
 /** The goods the exchange trades. Gold is the Black Market's money (PP-08). */
 export const SELLABLE: readonly Cargo[] = CARGOES.filter((c) => c !== "gold");
@@ -195,6 +201,69 @@ export function eventMult(seed: number, cargo: Cargo, clockMs: number): number {
   let m = 1;
   for (const ev of eventsAt(seed, clockMs)) if (ev.cargo === cargo) m *= ev.mult;
   return m;
+}
+
+// ── rumours (MKT-2 #465) ──────────────────────────────────────────────────
+export interface MarketRumour {
+  cargo: Cargo;
+  /** True for a boom, false for a glut. */
+  boom: boolean;
+  /** When the rumoured slot opens. */
+  startMs: number;
+  /** Tab copy, e.g. \"Steel boom rumoured: Ore +25–50% in ~1 min\". */
+  label: string;
+  /** Stable id, so the tab can tell one rumour from the next. */
+  id: string;
+}
+
+/**
+ * A false rumour is ALWAYS wrong, by construction: when the slot is quiet it
+ * invents an event, and when one is scheduled it names a different cargo —
+ * so the Hard hit rate is exactly the reliable fraction, with no accidental
+ * hits muddying it. Deterministic from (seed, slot), like everything here.
+ */
+function falseRumour(seed: number, slot: number, truth: MarketEvent | null): MarketEvent {
+  const pool = SELLABLE;
+  let cargo = pool[Math.floor(unit("rumour-false-c", seed, slot) * pool.length) % pool.length];
+  if (truth && cargo === truth.cargo) cargo = pool[(pool.indexOf(cargo) + 1) % pool.length];
+  const boom = unit("rumour-false-d", seed, slot) < 0.5;
+  const startMs = slot * EVENT_SLOT_MS;
+  const name = `${cargo[0].toUpperCase()}${cargo.slice(1)}`;
+  const pct = boom ? 25 + Math.floor(unit("rumour-false-s", seed, slot) * 26) : 20 + Math.floor(unit("rumour-false-s", seed, slot) * 16);
+  return {
+    cargo, mult: boom ? 1 + pct / 100 : 1 - pct / 100, startMs, endMs: startMs + EVENT_MS,
+    label: `${(boom ? BOOMS : GLUTS)[cargo]}: ${name} ${boom ? "+" : "−"}${pct}% for ${Math.round(EVENT_MS / 60_000)} min`,
+    id: `${seed}:${slot}`,
+  };
+}
+
+/**
+ * The rumour for the NEXT event slot (MKT-2 #465): what the Market tab prints
+ * about 60 s before the event it names. Events are deterministic from the
+ * seed (`eventForSlot`), so a forecast is just reading the schedule ahead —
+ * the only question is how honest it is. On Easy and Normal it always is; on
+ * Hard each slot's rumour is true with `RUMOUR_HARD_HIT_RATE` probability
+ * (one seeded draw per slot) and a false rumour otherwise, so playing the
+ * forecast stays a decision. Null when the next slot is quiet AND the rumour
+ * is honest — on Hard a quiet slot can still carry a (false) rumour.
+ *
+ * The copy quotes the scheduled SIZE RANGE (+25–50% / −20–35%), never the
+ * exact number: a rumour says what is coming, not to the percent.
+ */
+export function rumourAt(seed: number, clockMs: number, skill: string): MarketRumour | null {
+  const slot = Math.floor(Math.max(0, clockMs) / EVENT_SLOT_MS) + 1;
+  const truth = eventForSlot(seed, slot);
+  const reliable = skill !== "hard" || unit("rumour", seed, slot) < RUMOUR_HARD_HIT_RATE;
+  const ev = reliable ? truth : falseRumour(seed, slot, truth);
+  if (!ev) return null;
+  const boom = ev.mult > 1;
+  const name = `${ev.cargo[0].toUpperCase()}${ev.cargo.slice(1)}`;
+  const mins = Math.max(1, Math.round((ev.startMs - Math.max(0, clockMs)) / 60_000));
+  return {
+    cargo: ev.cargo, boom, startMs: ev.startMs,
+    label: `${(boom ? BOOMS : GLUTS)[ev.cargo]} rumoured: ${name} ${boom ? "+25–50%" : "−20–35%"} in ~${mins} min`,
+    id: `rumour:${seed}:${slot}`,
+  };
 }
 
 // ── market state (the only mutable part: slippage) ────────────────────────
@@ -343,7 +412,7 @@ export function movingAverage(
  */
 export function rivalSellLot(
   m: MarketState, cargo: Cargo, held: number, reserve: number, clockMs: number,
-  opts: { edge?: number; maxLot?: number } = {},
+  opts: { edge?: number; maxLot?: number; rumourBoom?: boolean } = {},
 ): number {
   if (!sellable(cargo)) return 0;
   const spare = Math.floor(held) - Math.max(0, Math.floor(reserve));
@@ -353,6 +422,10 @@ export function rivalSellLot(
   // whatever the market pays rather than hoarding a warehouse it cannot spend
   // (city upgrades only ever want the reserve above).
   if (spare < DUMP_FLOOR) {
+    // MKT-2 (#465): the rival reads the Market tab's rumours — the SAME ones
+    // the player sees, false ones included on Hard. A rumoured boom is worth
+    // waiting a minute for, so it holds what it would have sold.
+    if (opts.rumourBoom) return 0;
     const edge = opts.edge ?? 0.02;          // 2% over its own recent average
     const avg = movingAverage(m.seed, cargo, clockMs);
     if (priceOf(m, cargo, clockMs) < avg * (1 + edge)) return 0;
@@ -384,3 +457,29 @@ export function history(
 /** "$1,240" — one money formatter for the HUD, the rail and the toasts. */
 export const money = (n: number): string =>
   `$${Math.round(n).toLocaleString("en-US")}`;
+
+// ── price alerts (MKT-2 #465) ─────────────────────────────────────────────
+/**
+ * A per-cargo "notify me above $X". `armed` is the crossing memory: it starts
+ * armed, firing disarms it, and the price dropping back below the line
+ * re-arms it — so one crossing is one toast plus one Feed line, never a
+ * stream. The GAME owns the toast and the Feed; this owns the crossing rule.
+ */
+export interface PriceAlert { cargo: Cargo; above: number; armed: boolean }
+export const createAlert = (cargo: Cargo, above: number): PriceAlert =>
+  ({ cargo, above, armed: true });
+
+/**
+ * Evaluate one alert against the live price. Returns true exactly when it
+ * FIRES (the price at or above the line while armed). Pure except for the
+ * `armed` flip, which is the whole point.
+ */
+export function alertTick(m: MarketState, alert: PriceAlert, clockMs: number): boolean {
+  if (priceOf(m, alert.cargo, clockMs) >= alert.above) {
+    if (!alert.armed) return false;
+    alert.armed = false;
+    return true;
+  }
+  alert.armed = true;
+  return false;
+}
