@@ -37,6 +37,9 @@ import {
   setAudioVolume, toggleAudio, unlock,
 } from "./engine";
 import { CUE_NAMES, CUE_NOTES, isCue, playCue, type Cue, type CueOptions } from "./cues";
+// SFX-1 (#463): the recordings behind the catalogue. Prewarmed on the first
+// real gesture, so the synth only ever voices the opening bars.
+import { prewarmSamples } from "./samples";
 
 /** Every element that may make a sound when the pointer meets it. */
 const INTERACTIVE =
@@ -164,9 +167,22 @@ export interface SfxApi {
   stats(): ReturnType<typeof audioStats>;
 }
 
+/**
+ * SFX-1 (#463): record a real gesture AND start the recordings loading.
+ * Every path that arms the engine goes through here — the delegation below,
+ * the audition, the console hook — so the whole catalogue is decoded by the
+ * second bar of play. Idempotent and silent: `prewarmSamples` skips whatever
+ * is already cached, loading or failed, and a headless run (no decoder) does
+ * nothing at all.
+ */
+function arm(): void {
+  unlock();
+  prewarmSamples();
+}
+
 export const sfx: SfxApi = {
   play: (cue, opts) => playCue(cue, opts),
-  unlock: () => unlock(),
+  unlock: () => arm(),
   isArmed: () => isArmed(),
   isEnabled: () => isAudioEnabled(),
   setEnabled: (on) => { setAudioEnabled(on); paintSoundControls(); },
@@ -244,7 +260,7 @@ export function attachUiSound(
   const onDown = (e: Event) => {
     const pe = e as PointerEvent;
     if (!isReal(e)) return;
-    unlock();
+    arm();
     const cue = pressCueFor(pe.target);
     if (cue) playCue(cue);
   };
@@ -260,7 +276,7 @@ export function attachUiSound(
     hoverEl = el;
     hoverAt = t;
     if (!el) return;
-    unlock();
+    arm();
     const cue = hoverCueFor(el);
     if (cue) playCue(cue);
   };
@@ -275,13 +291,13 @@ export function attachUiSound(
       if (isTextEntry(ke.target)) return;
       // Safe to swallow: no control in the game is labelled "m".
       ke.preventDefault();
-      unlock();
+      arm();
       sfx.toggle();
       return;
     }
     if (ke.key !== "Enter" && ke.key !== " " && ke.key !== "Spacebar") return;
     if (isTextEntry(ke.target)) return;
-    unlock();
+    arm();
     const cue = pressCueFor(ke.target);
     if (cue) playCue(cue);
   };
@@ -293,7 +309,7 @@ export function attachUiSound(
     const el = e.target instanceof Element ? e.target : null;
     if (!el || el.tagName !== "SELECT") return;
     if (el.closest("[data-sfx='off']")) return;   // the opt-out covers the subtree
-    unlock();
+    arm();
     playCue("tab");
   };
 
@@ -327,7 +343,7 @@ export function attachUiSound(
  * a gesture and a context that was never started cannot be started by nothing.
  */
 export function audition(gapMs = 720): () => void {
-  unlock();
+  arm();
   cancelAudition();
   let i = 0;
   const step = () => {
@@ -386,7 +402,7 @@ export function installSfxDebug(): void {
     if (w.__sfx) return;
     w.__sfx = {
       play: (cue: string, opts?: CueOptions) => {
-        unlock();
+        arm();
         if (!isCue(cue)) return `unknown cue — try one of: ${CUE_NAMES.join(", ")}`;
         playCue(cue, opts);
         return `played ${cue}`;

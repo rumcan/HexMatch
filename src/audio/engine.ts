@@ -461,6 +461,51 @@ function contextOf(node: AudioNode): AudioContext | null {
   }
 }
 
+/**
+ * SFX-1 (#463) — one recorded sample. A buffer source through its own gain
+ * (the per-play scale), started now and stopped at the buffer's end so it
+ * tears itself down like every other layer. Returns the layer's length in ms
+ * for the voice budget; 0 when it could not be built.
+ *
+ * The buffer is the caller's: `src/audio/samples.ts` owns the fetch, the
+ * decode and the cache, and only calls this once a decoded buffer exists —
+ * so a missing file, a failed decode or half an API never reaches here at
+ * all, and the cue falls back to its synth recipe instead.
+ */
+export function sample(out: AudioNode, t0: number, buffer: AudioBuffer, gain = 1): number {
+  const c = contextOf(out);
+  if (!c) return 0;
+  if (typeof c.createBufferSource !== "function") return 0;
+  let dur = 0;
+  try { dur = buffer?.duration ?? 0; } catch { return 0; }
+  if (!Number.isFinite(dur) || dur <= 0) return 0;
+  const t = Math.max(0, t0);
+  if (!takeVoice(now() + (dur + 0.05) * 1000)) return 0;
+  try {
+    const src = c.createBufferSource();
+    src.buffer = buffer;
+    src.loop = false;
+    const g = c.createGain();
+    // A 3 ms fade-in so a sample that starts away from zero never clicks;
+    // the file itself owns its ending.
+    const peak = Math.max(0.0002, gain);
+    try {
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.003);
+    } catch {
+      try { g.gain.value = peak; } catch { /* a stubbed param */ }
+    }
+    src.connect(g);
+    g.connect(out);
+    src.start(t);
+    src.stop(t + dur + 0.02);
+    release(src, g);
+    return dur * 1000;
+  } catch {
+    return 0;
+  }
+}
+
 /** The standard AD-ish envelope: silence → peak → exponential tail. */
 function envelope(
   param: AudioParam, t: number, peak: number,
