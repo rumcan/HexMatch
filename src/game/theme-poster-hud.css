@@ -1,0 +1,208 @@
+/* ═══════════════════════════════════════════════════════════════════
+   UI-3 HUD — the in-game screen in the UIX design (owner, 2026-09-27)
+   Ports demo.css's GAME HUD (.game-topbar, .game-rail, .game-minimap,
+   .game-drawer, .game-notice) onto the live HUD. Loaded after
+   theme-poster.css. Flat colours only: the palette has no gradients.
+   ═══════════════════════════════════════════════════════════════════ */
+@media (min-width: 761px) {
+  :root { --topbar-h: 56px; --rail-w: 78px; --dock-h: 42px; }
+}
+
+/* ── top bar: ink, 3px orange rule, Anton + Yellowtail brand ─────── */
+.ui-root .topbar {
+  background: #0c161b; border-bottom: 3px solid #ed7414; box-shadow: 0 5px 24px #0911125c;
+  gap: 14px; padding-left: 16px; padding-right: 14px;
+}
+.ui-root .topbar .logo { display: flex; align-items: baseline; gap: 0; color: #fff0da;
+  font: 400 23px/1 var(--px-poster); letter-spacing: .005em; text-transform: uppercase; }
+.ui-root .topbar .logo .logo-script { margin-left: 6px; color: #f39826;
+  font: 400 23px/1 "Yellowtail", cursive; letter-spacing: 0; text-transform: none; }
+.ui-root .topbar .chipbar { gap: 0; align-items: center; }
+.ui-root .topbar .chip {
+  height: 32px; padding: 0 12px; gap: 6px; border: 0; border-left: 1px solid #67747770; border-radius: 0;
+  background: transparent; box-shadow: none;
+}
+.ui-root .topbar .chip:first-child { border-left: 0; padding-left: 4px; }
+.ui-root .topbar .chip:hover { background: #1c2a30; }
+.ui-root .topbar .chip.full { box-shadow: inset 0 -3px 0 #f29b39; }
+.ui-root .topbar .chip-n { color: #f7ecd6; font: 600 18px/1 var(--px-display) !important; letter-spacing: .01em; }
+.ui-root .topbar .chip-money .chip-n { color: #f29b39; }
+.ui-root .topbar .chip-ic { background: none; border: 0; }
+.ui-root .topbar .chip .chip-ic .cargo-ic { width: 20px; height: 20px; }
+.ui-root .topbar .chip-r { color: #aa9c86; font: 600 12px var(--px-display); }
+.ui-root .topbar .kingdoms { gap: 0; }
+.ui-root .topbar .king {
+  border: 0; border-left: 1px solid #67747770; border-radius: 0; background: transparent; box-shadow: none;
+}
+.ui-root .topbar .king-av { border: 2px solid #e77a1b; border-radius: 0; }
+.ui-root .topbar .king:not(.self) .king-av { border-color: #00aeb8; }
+.ui-root .topbar .king-name { font-family: var(--px-display) !important; }
+.ui-root .topbar .vp-badge {
+  height: 32px; padding: 0 12px; border: 1px solid #ec8124; border-radius: 0; background: transparent; box-shadow: none;
+  color: #fff0da; font: 700 15px var(--px-display) !important; letter-spacing: .1em;
+}
+.ui-root .topbar .vp-badge .vp-star { color: #ee842c; }
+.ui-root .topbar .icon-btn {
+  width: 32px; height: 32px; border: 1px solid #66706b; border-radius: 0; background: transparent; color: #f7ecd5;
+}
+.ui-root .topbar .icon-btn:hover, .ui-root .topbar .icon-btn[aria-expanded="true"] { background: #db6a10; border-color: #db6a10; color: #fff; }
+.ui-root .topbar .radio-pill {
+  height: 32px; border: 1px solid #66706b; border-radius: 0; background: transparent; box-shadow: none;
+  color: #f2e6cf; font-family: var(--px-display);
+}
+
+/* the ☰ menu: an ink sheet with orange rule, condensed type */
+.iso-topmenu { border: 1px solid #0c161b !important; border-top: 3px solid #ed7414 !important; border-radius: 0 !important;
+  background: #0c161b !important; box-shadow: 0 18px 40px rgba(0, 0, 0, .45) !important; }
+.iso-topmenu .tm-item { border-radius: 0; background: transparent; border: 0; border-bottom: 1px solid #75827834; font-family: var(--px-display); }
+.iso-topmenu .tm-item b, .iso-topmenu .tm-item strong { color: #f39826; font: 700 15px var(--px-display); letter-spacing: .08em; text-transform: uppercase; }
+.iso-topmenu .tm-item small, .iso-topmenu .tm-item span { font-family: var(--px-body); }
+.iso-topmenu .tm-item:hover { background: #344246; }
+
+/* ── left rail: BUILD heading, 70px buttons, orange selection ────── */
+@media (min-width: 761px) {
+  .ui-root .aside.left { background: #0c171d !important; border-right: 1px solid #768a7c50; box-shadow: none; }
+  .ui-root .aside.left .panel-title {
+    display: block; margin: 0; padding: 13px 0 9px; border: 0; background: none; text-align: center; text-shadow: none;
+    color: #f4a33b; font: 700 12px var(--px-display) !important; letter-spacing: .19em !important; text-transform: uppercase;
+  }
+  .ui-root .aside.left .panel-title::before, .ui-root .aside.left .panel-title::after { content: none; display: none; }
+  .ui-root .aside.left .build-list { border-top: 1px solid #75827834; }
+  .ui-root .aside.left .build-btn {
+    min-height: 66px; padding: 6px 2px; gap: 4px; border: 0; border-bottom: 1px solid #75827834; border-radius: 0;
+    background: transparent !important; color: #e8ddc7; box-shadow: none;
+  }
+  .ui-root .aside.left .build-btn:hover { background: #344246 !important; color: #fff4dc; }
+  .ui-root .aside.left .build-btn.active, .ui-root .aside.left .build-btn[aria-pressed="true"], .ui-root .aside.left .build-btn.on {
+    background: #e66d10 !important; color: #fff !important;
+  }
+  .ui-root .aside.left .bb-mid b { font: 700 12px/1.1 var(--px-display) !important; letter-spacing: .03em; text-transform: uppercase; }
+  .ui-root .aside.left .tool-flyout {
+    border: 0; border-left: 3px solid #ed7414; border-radius: 0; background: #0c171d; box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
+  }
+  .ui-root .aside.left .tool-flyout-head { color: #f4a33b; font: 700 12px var(--px-display); letter-spacing: .19em; border-bottom: 1px solid #75827834; }
+  .ui-root .aside.left .rail-panel { background: #0c171d; border: 0; border-left: 3px solid #ed7414; border-radius: 0; }
+}
+
+/* ── minimap: the demo frame ─────────────────────────────────────── */
+@media (min-width: 761px) {
+  .ui-root .minimap-dock {
+    padding: 0; border: 4px solid #172022; border-radius: 0; outline: 0; background: #172022;
+    box-shadow: 0 0 0 1px #ec9633, 0 8px 25px #08100dbb;
+  }
+}
+
+/* ── the drawer: paper content over ink tabs ─────────────────────── */
+@media (min-width: 761px) {
+  .ui-root .aside.right {
+    background: #f0e6d1 !important; border: 0 !important; border-top: 4px solid #ef7c17 !important; border-radius: 0;
+    box-shadow: 0 -12px 45px rgba(0, 0, 0, .35);
+  }
+  .ui-root[data-rail-right="1"] .aside.right { border-top-width: 0 !important; background: #121b20 !important; }
+  .ui-root #iso-aside-right > .panel { border-top: 0; background: none !important; }
+  .ui-root .aside.right .tabs { height: var(--dock-h); background: #121b20; }
+  .ui-root .aside.right .tab {
+    min-width: 106px; justify-content: center; padding: 0 14px; border: 0; border-right: 1px solid #3b4445; border-radius: 0;
+    background: transparent; color: #e4d4bc; font: 700 14px var(--px-display) !important; letter-spacing: .08em !important; text-transform: uppercase;
+  }
+  .ui-root .aside.right .tab:hover { background: #344044; color: #fff6e3; }
+  .ui-root:not([data-rail-right="1"]) .aside.right .tab.active { background: #efebe0; color: #171f20; }
+  .ui-root .aside.right .tab-ic { opacity: .85; }
+  .ui-root .aside.right .pane { padding: 16px 20px; background: #f0e6d1; color: #182126; font-family: var(--px-body); }
+}
+/* paper tokens inside the drawer panes and the Plant card */
+.ui-root .aside.right .pane, .ui-root .br-dock .plant-card, .ui-root .toast {
+  --txt: #172126; --txt-dim: #3d474a; --txt-mute: #6c665b;
+  --line: #b9a987; --line-hi: #8e7f66;
+  --brass: #e46b0e; --brass-hi: #b94c04; --brass-lo: #b9a987; --patina: #0a8b93;
+  --good: #2f7d4a; --danger2: #b8412b; --info: #1f6f8b;
+  --sa-bone: #172126; --sa-bone-dim: #3d474a; --sa-bone-mute: #6c665b;
+  --sa-panel: #e7dbc2; --sa-panel-2: #ddcfb2; --sa-line: #c7b795; --sa-line-hi: #8e7f66; --sa-ink: #fbf5e8;
+  --sa-aqua: #0a8b93; --sa-green: #2f7d4a; --sa-red: #b8412b; --sa-sky: #1f6f8b;
+  --c-bone: 23 33 38; --c-line: 142 127 102; --c-ink: 251 245 232;
+  --glass: #e7dbc2; --glass-hi: #ddcfb2; --glass-lo: #efe5d0;
+}
+.ui-root .aside.right .pane :is(select, input) { border: 2px solid #1e2527; border-radius: 0; background: #fbf5e8; color: #162024; }
+.ui-root .aside.right .pane .pane-note { color: #3d474a; }
+.ui-root .aside.right .pane :is(.mine-head, .panel-title) {
+  color: #d1640e; font: 700 12px var(--px-display) !important; letter-spacing: .15em !important; text-transform: uppercase; text-shadow: none;
+}
+.ui-root .aside.right .pane :is(.market-row, .offer, .sab-row, .feed-row, .quests-list li) {
+  border-radius: 0; background: transparent; border: 0; border-bottom: 1px solid #111b202c; color: #182126; box-shadow: none;
+}
+
+/* ── the Plant card: paper, ink frame, orange rule ───────────────── */
+.ui-root .br-dock .plant-card {
+  border: 2px solid #11191d; border-top: 4px solid #ef7c17; border-radius: 0;
+  background: #f0e6d1 !important; color: #182126; box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+}
+.ui-root .br-dock .plant-card > .panel-title {
+  color: #d1640e; border: 0; text-shadow: none; font: 700 12px var(--px-display) !important; letter-spacing: .15em !important;
+}
+.ui-root .br-dock .plant-card > .panel-title::before { content: none; display: none; }
+.ui-root .br-dock .plant-card :is(.tp-city, .tp-row, .tp-idle, .tp-retune) { border-radius: 0; }
+.ui-root .br-dock .plant-card .tuning-plate { border-radius: 0; background: transparent; border-color: #111b202c; }
+
+/* ── toasts and the hint pill: paper notices ─────────────────────── */
+.ui-root .toast {
+  border: 0; border-left: 4px solid #f28220; border-radius: 0; background: #f1e7d3; color: #172024;
+  box-shadow: 0 7px 25px #09110d78; font: 600 15px var(--px-body);
+}
+.ui-root .toast.success { border-left-color: #2f7d4a; }
+.ui-root .toast.danger { border-left-color: #b8412b; }
+.ui-root .toast.info { border-left-color: #00aeb8; }
+.ui-root .modebar { border: 0; border-left: 4px solid #f28220; border-radius: 0; background: #f1e7d3; color: #172024; }
+.ui-root .banner, .ui-root .banner.narrated {
+  border: 0; border-left: 4px solid #f28220; border-radius: 0; background: #f1e7d3; color: #172024;
+  font: 700 16px var(--px-display); letter-spacing: .04em;
+}
+.ui-root .banner b { color: #bd570c; }
+
+/* ── map labels: the demo's ink tags with a brass edge ───────────── */
+.ui-root .iso-label.label-industry {
+  border: 1px solid #daa141; border-radius: 0; background: #111b1cde; color: #fff1cc; box-shadow: 0 3px 10px #050d0c9b;
+  font-family: var(--px-display); letter-spacing: .1em;
+}
+
+/* ── the tutorial strip: paper, like every other notice ─────────── */
+#iso-guide .guide-strip {
+  border: 2px solid #11191d; border-top: 4px solid #ef7c17; border-radius: 0; background: #f0e6d1; color: #182126;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .4);
+}
+#iso-guide .guide-kicker { color: #d1640e; font: 700 13px var(--px-display); letter-spacing: .15em; }
+#iso-guide .guide-caption { color: #182126; font: 700 18px/1.25 var(--px-body); }
+#iso-guide .guide-hint { color: #3d474a; font: 500 14px var(--px-body); }
+#iso-guide .guide-count { border-radius: 0; background: #e46b0e; color: #fff; }
+#iso-guide .guide-key {
+  min-height: 36px; border: 1.5px solid #1e2527; border-radius: 0; background: transparent; color: #162024;
+  font: 700 14px var(--px-display); letter-spacing: .08em; text-transform: uppercase;
+}
+#iso-guide .guide-key:not(.ghost) { border-color: #e46b0e; background: #e46b0e; color: #fff; }
+#iso-guide .guide-key:hover { background: #10191e; border-color: #10191e; color: #f2e8d4; }
+.ui-root .topbar .kingdoms { flex: 0 0 auto; margin-left: auto; }
+.ui-root .topbar .king { flex-shrink: 0; }
+.ui-root .topbar .chipbar { min-width: 0; flex: 0 1 auto; }
+.ui-root .topbar .chip { padding: 0 9px; }
+@media (max-width: 1280px) { .ui-root .topbar .chip-n { font-size: 16px !important; } .ui-root .topbar .chip { padding: 0 6px; } }
+.ui-root .topbar .vp-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; }
+.ui-root .topbar .chip { padding: 0 7px; gap: 4px; }
+.ui-root .topbar .top-right { gap: 8px; }
+.ui-root .aside.right .pane .panel { background: transparent !important; border: 0 !important; box-shadow: none !important; color: inherit; padding: 0; }
+/* the Black Market's noir cards stay dark: light text inside them */
+.ui-root .aside.right .pane .sab-btn {
+  --txt: #f2e8d4; --txt-dim: #d3c6ae; --txt-mute: #aa9c86;
+  --sa-bone: #f2e8d4; --sa-bone-dim: #d3c6ae; --sa-bone-mute: #aa9c86; --c-bone: 242 232 212;
+  color: #f2e8d4; border: 2px solid #11191d; border-radius: 0;
+}
+.ui-root .aside.right .pane, .ui-root .br-dock .plant-card {
+  --felt: none; --ledger: none; --flat: none; --iron: none; --iron-big: none; --plate-body: none; --plate-wash-brass: none;
+}
+.ui-root .aside.right .pane .trade-form { padding: 12px 14px; border: 1.5px solid #1e2527; border-radius: 0; background: #fbf5e8 !important; box-shadow: none; }
+.ui-root .aside.right .pane .trade-form :is(label, span, b) { color: #182126; }
+.ui-root .aside.right .pane select option { background: #fbf5e8; color: #182126; }
+.ui-root .aside.right .pane :is(select, input) { background: #fbf5e8 !important; color: #162024 !important; border: 1.5px solid #1e2527 !important; }
+.ui-root .aside.right .pane :is(.market-row, .offer) { background: transparent !important; border: 0 !important; border-bottom: 1px solid #111b202c !important; padding-left: 0; padding-right: 0; }
+.ui-root .aside.right .pane .market-list { background: transparent !important; gap: 0; border-top: 1px solid #111b202c; }
+.ui-root .aside.right .pane .market-spark { background: #fbf5e8; border: 1px solid #111b2033; border-radius: 0; }
+.ui-root .aside.right .pane .sell-btn { border-radius: 0; font: 700 13px var(--px-display) !important; letter-spacing: .08em; }
+@media (max-width: 760px) { .ui-root .topbar .logo { display: none; } }
