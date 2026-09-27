@@ -1,0 +1,275 @@
+diff --git a/src/App.tsx b/src/App.tsx
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,4 +1,5 @@
+ import { useEffect, useRef, useState } from "react";
+ import "./game/styles.css";
+ import "./game/theme-space-age.css";
++import "./game/theme-industries.css";
+ import { startIsoGame } from "./iso/game";
+diff --git a/src/game/theme-industries.css b/src/game/theme-industries.css
+new file mode 100644
+--- /dev/null
++++ b/src/game/theme-industries.css
+@@ -0,0 +1,261 @@
++/*
++ * HEXMATCH INDUSTRIES / POSTER THEME
++ * A visual layer over the shipped Space Age layout. The live map, board,
++ * handlers and geometry stay in their existing owners. This file changes
++ * chrome and typography and reuses art already in src/assets/poster.
++ */
++:root {
++  --sa-ink: #10191e;
++  --sa-panel: #162329;
++  --sa-panel-2: #24343a;
++  --sa-line: #48565a;
++  --sa-line-hi: #8c9690;
++  --sa-bone: #f2e8d4;
++  --sa-bone-dim: #d3c6ae;
++  --sa-bone-mute: #aa9c86;
++  --sa-orange: #ec6c10;
++  --sa-orange-hi: #ff9c34;
++  --sa-orange-lo: #a84c0d;
++  --sa-on-orange: #fff7e7;
++  --sa-aqua: #04aeb8;
++  --sa-aqua-hi: #53d9d9;
++  --sa-aqua-lo: #116d73;
++  --sa-lemon: #ffb739;
++  --sa-on-lemon: #192024;
++  --c-orange: 236 108 16;
++  --c-bone: 242 232 212;
++  --c-ink: 16 25 30;
++  --c-line: 72 86 90;
++  --c-aqua: 4 174 184;
++  --bg: var(--sa-ink);
++  --walnut: var(--sa-panel);
++  --iron-hi: var(--sa-panel-2);
++  --glass: #162329f5;
++  --glass-hi: #24343af5;
++  --glass-lo: #0e191edc;
++  --line: #596968;
++  --line-hi: #c6ae87;
++  --brass: var(--sa-orange);
++  --brass-hi: #ffd49a;
++  --brass-lo: #965622;
++  --patina: var(--sa-aqua);
++  --txt: var(--sa-bone);
++  --txt-dim: var(--sa-bone-dim);
++  --txt-mute: var(--sa-bone-mute);
++  --gold: var(--sa-lemon);
++  --gold2: #ffd78a;
++  --gold-d: #9b5815;
++  --gold-glow: rgba(255, 174, 54, .3);
++  --danger: #9d3323;
++  --danger2: #dd6244;
++  --good: #78bb90;
++  --info: #68c5cb;
++  --display: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
++  --serif: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
++  --sans: "Jost", "Segoe UI", sans-serif;
++  --mono: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
++  --script: "Yellowtail", cursive;
++  --felt: linear-gradient(#17262b, #17262b);
++  --ledger: linear-gradient(#f1e7d3, #f1e7d3);
++  --room: url("../assets/poster/menu-bg.webp");
++  --flat: linear-gradient(#17262b, #17262b);
++  --iron: var(--flat);
++  --iron-big: var(--flat);
++  --plate-body: var(--flat);
++  --plate-wash-brass: linear-gradient(#533218, #362317);
++}
++
++/* Poster art belongs behind menus, never over the live map canvas. */
++:is(.menu-screen, .main-menu, .start-screen) {
++  background: linear-gradient(120deg, rgba(7, 15, 19, .54), rgba(7, 15, 19, .14) 48%, rgba(7, 15, 19, .58)),
++    url("../assets/poster/menu-bg.webp") center / cover no-repeat, #0e1c21;
++}
++:is(.menu-screen, .main-menu) {
++  background: url("../assets/poster/keyart-desktop.webp") center / cover no-repeat, #10191e;
++}
++:is(.menu-screen, .main-menu, .start-screen)::after {
++  content: "";
++  position: absolute;
++  inset: 0;
++  pointer-events: none;
++  background: radial-gradient(ellipse at center, transparent 52%, rgba(3, 10, 14, .35));
++}
++:is(.menu-screen, .main-menu, .start-screen) > * { position: relative; z-index: 1; }
++
++.menu-card, .start-panel {
++  color: #172126;
++  border: 3px solid #10191d;
++  border-radius: 10px;
++  background: radial-gradient(rgba(71, 47, 17, .07) .6px, transparent .7px) 0 0 / 5px 5px,
++    linear-gradient(115deg, #f3ead8, #eee1c8);
++  box-shadow: 0 4px 0 rgba(0, 0, 0, .28), 0 22px 60px rgba(0, 0, 0, .5);
++  animation: industries-arrive .55s cubic-bezier(.22, 1, .36, 1) both;
++}
++.menu-card::before {
++  content: "";
++  display: block;
++  width: min(260px, 68%);
++  height: 118px;
++  margin: 0 auto 13px;
++  background: url("../assets/poster/logo.webp") center / contain no-repeat;
++}
++.menu-card :is(h1, h2), .start-panel > h2, .start-modes-head h2 {
++  color: #172126;
++  font-family: "Anton", Impact, sans-serif;
++  font-weight: 400;
++  text-transform: uppercase;
++  letter-spacing: -.025em;
++  line-height: 1.04;
++}
++.menu-card :is(.menu-sub, .menu-campaign, .menu-job),
++.start-panel :is(.start-subtitle, .rank-block-note, .ms-note) { color: #354144; }
++.menu-actions button, .start-actions button {
++  border-radius: 0;
++  border: 1px solid #a86632;
++  background: #18282d;
++  color: #f7e9d1;
++  font-family: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: .045em;
++  transition: transform .18s ease, background .18s ease, border-color .18s ease;
++}
++.menu-actions button:hover, .start-actions button:hover { background: #33434a; border-color: #ed7818; transform: translateY(-2px); }
++.menu-actions > button:first-child, .start-actions > button:first-of-type { background: #e96c0e; border-color: #f7952c; color: #fff8e9; }
++.menu-actions > button:first-child:hover, .start-actions > button:first-of-type:hover { background: #fa8120; }
++.start-kicker, .start-actions-label, .portrait-label {
++  color: #df680c;
++  font-family: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
++  font-weight: 600;
++  text-transform: uppercase;
++  letter-spacing: .15em;
++}
++
++/* The mode picker keeps its real mode actions and two-column structure. */
++.start-panel.start-modes { overflow: hidden; }
++.start-modes-info {
++  position: relative;
++  isolation: isolate;
++  overflow: hidden;
++  background: linear-gradient(135deg, #ffa51e, #e96505 64%, #ca4d08);
++  color: #fff6e7;
++}
++.start-modes-info::before {
++  content: "";
++  position: absolute;
++  inset: 0;
++  z-index: -1;
++  pointer-events: none;
++  opacity: .27;
++  background: url("../assets/poster/hero-james.webp") right bottom / auto 100% no-repeat;
++  filter: grayscale(1) contrast(1.2);
++}
++:is(.start-modes-info:has(.portrait-picker button:last-child[aria-checked="true"]),
++    .start-modes-info:has(.portrait-picker button:last-child[aria-pressed="true"]),
++    .start-modes-info:has(.portrait-picker button:last-child.selected)) {
++  background: linear-gradient(135deg, #22cdd1, #00abb5 64%, #087f89);
++}
++:is(.start-modes-info:has(.portrait-picker button:last-child[aria-checked="true"]),
++    .start-modes-info:has(.portrait-picker button:last-child[aria-pressed="true"]),
++    .start-modes-info:has(.portrait-picker button:last-child.selected))::before {
++  background-image: url("../assets/poster/hero-anne.webp");
++}
++.start-modes-info :is(h2, .start-kicker, .start-subtitle, .portrait-label, .rank-block-note) { color: #fff5e0; }
++.start-modes-head h2 { font-size: clamp(42px, 5vw, 74px); }
++.start-actions { background: #efe3cd; color: #172126; }
++.portrait-picker button {
++  overflow: hidden;
++  border: 2px solid #18252a;
++  border-radius: 3px;
++  background: #1b292e;
++  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
++}
++.portrait-picker button:hover { transform: translateY(-3px); }
++.portrait-picker button[aria-checked="true"],
++.portrait-picker button[aria-pressed="true"],
++.portrait-picker button.selected { border-color: #fff5df; box-shadow: 0 0 0 3px #ed7512; }
++.portrait-picker img { object-fit: cover; }
++.start-panel.story, .start-panel.lobby, .start-panel.ladder-panel { background-color: #f0e5cf; }
++.start-panel.story :is(h2, h3), .start-panel.lobby :is(h2, h3), .start-panel.ladder-panel :is(h2, h3) { color: #172126; }
++.start-panel :is(input, select, textarea) { border-color: #776852; background: #fff9ea; color: #172126; }
++.start-panel :is(input, select, textarea):focus-visible { outline: 2px solid #dc640e; outline-offset: 2px; }
++
++/* The HUD keeps the shipped compact top bar, tool rail and bottom drawer. */
++.ui-root { background: var(--room) center / cover no-repeat, #112026; }
++.topbar { background: #111e24f7; border-bottom: 3px solid #ee7415; color: #f2e6cf; box-shadow: 0 6px 26px rgba(3, 10, 13, .4); }
++.logo { font-family: "Anton", Impact, sans-serif; font-weight: 400; letter-spacing: .03em; color: #f3e9d7; text-shadow: none; }
++.logo .logo-script { font-family: "Yellowtail", cursive; color: #f28c20; }
++.topbar .chip, .vp-badge { border: 1px solid #5a6563; background: #263439; color: #f8ecd6; }
++.topbar .chip.full { border-color: #f6b444; }
++.topbar .chip:hover, .icon-btn:hover { background: #35464a; border-color: #e77919; }
++.topbar .icon-btn { color: #f1e2c9; }
++.iso-topmenu, .radio-pill { border: 1px solid #ae6a31; border-top: 3px solid #ed7415; background: #15252bf7; color: #f3e7ce; }
++.tm-item:hover { background: #35464a; }
++.aside.left, .aside.right { background: #15242aef; border-color: #a56631; }
++.panel { background: #1b2b30; color: #f3e7d0; border: 1px solid #a56631; box-shadow: 0 10px 26px rgba(4, 12, 16, .28); }
++.panel::before, .aside.left .panel::after, .modal.box::after { content: none; }
++.panel-title { color: #f6b664; border-color: #96602d; text-shadow: none; }
++.panel-title::before { background: #e87917; box-shadow: none; }
++.build-btn { color: #eee0c7; transition: background .18s ease, color .18s ease; }
++.aside.left .build-btn:hover { background: #304148; color: #fff4dc; }
++.aside.left .build-btn.active, .aside.left .build-btn[aria-pressed="true"], .aside.left .build-btn.on { background: #e97011; color: #fff8e8; }
++.tool-card { background: #f0e4ce; border-left: 4px solid #e66c0e; color: #162025; box-shadow: 0 10px 26px rgba(4, 12, 16, .3); }
++.tool-card :is(b, small) { color: #19272b; }
++.minimap-dock { border: 2px solid #17242a; outline: 1px solid #df8528; background: #15242a; box-shadow: 0 8px 22px rgba(0, 0, 0, .34); }
++.aside.right .panel, .chat-dock { background: #1a2a2f; border-color: #9d6231; }
++.aside.right :is(.tabs, .tabbar), .drawer-tabs { background: #121f24; }
++.aside.right :is(.tabs, .tabbar) button:hover { color: #fff6e3; background: #304047; }
++.aside.right :is(.tabs, .tabbar) button.active,
++.aside.right :is(.tabs, .tabbar) button[aria-selected="true"] { background: #f0e5d0; color: #182226; }
++.modebar, .iso-inspect { background: #f0e5d0; color: #182226; border-left: 4px solid #e97414; box-shadow: 0 7px 22px rgba(0, 0, 0, .2); }
++.modebar :is(b, strong), .iso-inspect :is(b, strong) { color: #bd570c; }
++.banner, .instruction-banner { background: #15252aef; color: #f1e5cf; border-left: 4px solid #e87013; }
++.chat-input { border-color: #997044; background: #0f1d22; color: #f4e9d4; }
++.chat-input:focus-visible { outline: 2px solid #f29638; }
++
++/* Modal, session, battle and ledger chrome share one ink-and-paper system. */
++.modal.box, .battle-pq, #iso-session, #iso-tuning-results {
++  border: 2px solid #c48339;
++  border-top: 4px solid #ee7515;
++  border-radius: 4px;
++  background: #18292f;
++  color: #f3e8d4;
++  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
++}
++.modal.box :is(h1, h2, h3), .battle-pq :is(h1, h2, h3),
++#iso-session :is(h1, h2), #iso-tuning-results :is(h1, h2) {
++  color: #fff2dc;
++  font-family: "Anton", Impact, sans-serif;
++  font-weight: 400;
++  text-transform: uppercase;
++  letter-spacing: .015em;
++  text-shadow: none;
++}
++.modal.box :is(button, input, select):focus-visible,
++.start-screen button:focus-visible, .menu-card button:focus-visible,
++.ui-root button:focus-visible { outline: 2px solid #f5ac4b; outline-offset: 2px; }
++.modal.box button:hover, .battle-pq button:hover { border-color: #f39a34; }
++#iso-skill-prompt { background: #f0e5d0; color: #162126; border-color: #e47214; }
++#iso-skill-prompt :is(h1, h2, h3) { color: #172126; }
++.board-wrap { border-color: #b57939; background: #101b20; }
++.sabotage-event-window, .iso-topmenu { border-radius: 3px; }
++.sabotage-event-window { border-top: 4px solid #df6e18; }
++
++@keyframes industries-arrive {
++  from { opacity: 0; transform: translateY(14px); }
++  to { opacity: 1; transform: translateY(0); }
++}
++@media (max-width: 760px) {
++  .menu-card, .start-panel { border-width: 2px; border-radius: 6px; }
++  .menu-card::before { height: 92px; margin-bottom: 8px; }
++  :is(.menu-screen, .main-menu) { background-image: url("../assets/poster/keyart-mobile.webp"); }
++  .start-modes-info::before { opacity: .17; background-position: right bottom; }
++  .start-modes-head h2 { font-size: clamp(40px, 11vw, 66px); }
++  .topbar .logo { font-size: 12px; }
++  .topbar .logo .logo-script { font-size: 18px; }
++}
++@media (prefers-reduced-motion: reduce) {
++  .menu-card, .start-panel { animation: none; }
++  .menu-actions button, .start-actions button, .portrait-picker button,
++  .build-btn, .aside.left .build-btn { transition: none; }
++}
