@@ -122,7 +122,7 @@ import {
   type LevelPlan,
 } from "./level-ground";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
-import { IsoRenderer, composeRouteOverlay, type World, type RouteOverlayPath } from "./renderer";
+import { IsoRenderer, composeRouteOverlay, paintClaimFlags, type ClaimFlagView, type World, type RouteOverlayPath } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
 import { BRIDGE_REFUSAL_TEXT } from "./bridges";
@@ -181,10 +181,12 @@ import {
   damRefusal, damRiverAt, damSitesFor, damsFromWire, damsToWire,
   type Dam, type DamSide, DAMS_ENABLED } from "./dams";
 import {
-  aiBuildStep, chooseRivalFactorySpot, deepPlanCandidates, planBankTrades, planGoalPurchase, goalOutOfReach,
+  chooseRivalFactorySpot, deepPlanCandidates, planBankTrades, planGoalPurchase, goalOutOfReach,
   planUpgrades, executePaves,
   paveCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants, type RivalPace,
   planRailMove, executeRailMove,
+  planCandidates, executeCandidate, ClaimLedger, claimContested,
+  type ClaimSite, type RivalClaim, type PlayerIntent, type PlanOptions,
 } from "./ai";
 import {
   RIVAL_SKILLS, resolveSkillKey, skillKeyFromUrl, SKILL_STORAGE_KEY, type RivalSkill, type SkillKey,
@@ -412,7 +414,8 @@ import { recordScenarioResult, scenarioById, type ScenarioDef } from "../story/s
 import { showScene, type SceneHandle } from "../story/stage";
 import type { UiRivalryBeat, UiTuningResult } from "../game/ui";
 import {
-  OIL_DRILLING_SCENE, createBanterDirector, createGoldMineDirector, createRivalDirector,
+  OIL_DRILLING_SCENE, createBanterDirector, createClaimDirector, createComebackDirector,
+  createGoldMineDirector, createRivalDirector,
   type RivalryDirection, type RivalryScene, type RivalryTactic,
 } from "./rivalry";
 import {
@@ -1750,6 +1753,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const nextBanterScene = storyDirector
     ? (): RivalryScene => storyDirector("banter", "protest")
     : createBanterDirector(seed);
+  // RIVAL-3 (#467): the claim deck (the bark that goes UP with a claim flag)
+  // and the comeback line (the bark when a claim loses the race). Same rule
+  // as the decks above: deterministic and never the simulation RNG.
+  const nextClaimScene = createClaimDirector(seed);
+  const nextComebackLine = createComebackDirector(seed);
   let playerSabotage = 0;
   let rivalSabotageHits = 0;
   let oilBanterSeen = false;
@@ -3730,7 +3738,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         });
         contractOffersList = contractOffersList.filter((o) => o.id !== offer.id);
         ui.feed(`${rival.name} accepts tender: ${offer.amount} ${CARGO[offer.cargo].name} to ${offer.townName}`, rival.name);
-        // RIVAL-3 telegraph placeholder
+        // RIVAL-3 (#467): the acceptance IS the telegraph — a live tender is
+        // player intent on every site that serves it (`playerClaimIntents`),
+        // so the moment the rival takes this tender, any claim flag it has on
+        // a site of this cargo/town starts pulsing "Contested" and the Feed
+        // says it (`noteClaimContested`).
       }
     }
 
@@ -9794,12 +9806,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function aiNewLoopTurn(f: Factory, now: number): void {
+    /** The new loop's planner input — the tree's wants, live (see step 2). */
+    const depotOpts = (wantCargo: readonly Cargo[]): PlanOptions => ({
+      stock: rival.purse, purse: rival.purse,
+      free: rival.freeTrack, freeDepots: rival.freeDepots, now,
+      newLoop, depotTier: rival.depotTier, wantCargo,
+      // FTUE-1 (#464): the trainee never plans a Depot on the player's stakes.
+      contests: skill().contests,
+    });
     // #297: the rival is still "playing" its last tuning session. A Depot, a
     // city upgrade and a re-match each cost the player a real session on the
     // board, so each costs the rival `sessionMs` of turn time too. Before this
     // a Normal rival raised two Depots (and opened a rung) every build clock
     // and reached 12★ in about 35 seconds.
-    if (now < rivalSessionUntil) return;
+    if (now < rivalSessionUntil) {
+      // RIVAL-3 (#467): the session runs, the NEXT claim still telegraphs —
+      // commit-only (no build, no spend). The flag rides the whole session,
+      // well past the lead time, before the turn that builds behind it; one
+      // flag at a time, because one Depot is one session.
+      commitRivalDepotClaims(
+        f,
+        () => depotOpts(treeWants(treeGoal({ purse: rival.purse, tier: rival.depotTier }), scoreCargoWant(eco, rival.id))),
+        now,
+        1,
+      );
+      return;
+    }
     const startSession = () => { rivalSessionUntil = now + skill().sessionMs; };
     let acted = false;
     // #297: ONE city tier per turn, no matter which step buys it. Without
@@ -9848,6 +9880,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the rival buys one exactly as the shipped turn does — under the SAME
     // guard, restated in the new loop's terms: a plant may not eat the purse
     // the next Depot's price needs. `treeGoal` is that purse.
+    // RIVAL-3 (#467): the buy is telegraphed — the claim flag goes up first,
+    // the Factory build lands when the difficulty's lead has run.
+    let plantNow = false;
     if (canPayBuild(rival, PLANT_COST)) {
       const covers = (want: Purse): boolean =>
         (Object.entries(want) as [Cargo, number][]).every(
@@ -9861,55 +9896,39 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       };
       // Nothing to save for (no goal left) is a plant, as ever; otherwise the
       // goal's own price has to survive the purchase.
-      // F3: spot now carries rot.
-      if (!goal || covers(withPlant(goal.cost))) {
-        const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
-        if (spot && placePlant(spot[0], spot[1], rival, spot[2] ?? 0)) {
-          acted = true;
-          // placePlant rescores immediately; if that was the winning star the
-          // curtain is already up, and nothing may be added after the ledger.
-          if (winner !== null) return;
-        } else if (!spot && rivalLevelStep("plant")) {
-          // #456: every plant site is too bumpy to stand on — level one.
-          acted = true;
-        }
-      }
+      plantNow = !goal || covers(withPlant(goal.cost));
+    }
+    if (rivalPlantClaimStep(now, plantNow)) {
+      acted = true;
+      // placePlant rescores immediately; if that was the winning star the
+      // curtain is already up, and nothing may be added after the ledger.
+      if (winner !== null) return;
+    } else if (plantNow && rivalLevelStep("plant")) {
+      // #456: every plant site is too bumpy to stand on — level one.
+      acted = true;
     }
 
     // ── 2. depot — the tree's next rung, reached on free gravel ────────────
     // Same plan, same prices and same tree gate as the shipped turn
-    // (`aiBuildStep` → `planCandidates` → `priceDepot`); the new-loop input is
-    // `wantCargo`. `expandPerTurn` still paces how many it may raise in one
-    // clock, so a hard rival visibly spreads.
-    const depotBuild = (): boolean => {
-      const out = aiBuildStep(eco, f, {
-        stock: rival.purse, purse: rival.purse,
-        free: rival.freeTrack, freeDepots: rival.freeDepots, now,
-        newLoop, depotTier: rival.depotTier, wantCargo: want,
-        // FTUE-1 (#464): the trainee never plans a Depot on the player's stakes.
-        contests: skill().contests,
-      }, allocHarvesterId());
-      if (!out) return false;
-      rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
-      rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
-      chargeBuild(rival, out.spent);
-      for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
-      ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
-      voiceCue("rival:industry-taken");
-      return true;
-    };
+    // (`planCandidates` → `priceDepot`); the new-loop input is `wantCargo`.
+    // RIVAL-3 (#467): claim-gated — only a claim flagged for the difficulty's
+    // lead time may build, then exactly one flag is kept up (one Depot is one
+    // session here; the session-wait above tops it up mid-session).
     // #297: ONE Depot per turn on the new loop — each one is a tuning
     // session, and the session clock paces the next.
-    const builtDepot = depotBuild();
+    const builtDepot = rivalDepotClaimPass(f, () => depotOpts(want), now, 1, false);
     if (builtDepot) {
       acted = true;
       startSession();
-    } else if (rivalLevelStep("depot")) {
-      // #456: no flat Depot lot is left on the map — level the cheapest one
-      // toward flat instead (same rule, same price, its purse). Infrastructure
-      // is not a session: the turn goes on, and next turn's planner has a
-      // site again.
-      acted = true;
+    } else {
+      commitRivalDepotClaims(f, () => depotOpts(want), now, 1);
+      if (rivalLevelStep("depot")) {
+        // #456: no flat Depot lot is left on the map — level the cheapest one
+        // toward flat instead (same rule, same price, its purse). Infrastructure
+        // is not a session: the turn goes on, and next turn's planner has a
+        // site again.
+        acted = true;
+      }
     }
     // 3. tune — the simulated session each new Depot would have been built
     //    with, on the record before the income clock next reads it.
@@ -10019,6 +10038,256 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return traded > 0;
   }
 
+  // ══════════════════════ RIVAL-3 (#467): the claim telegraph ═════════════
+  // The readable rival. Every rival Depot/Factory build is PRECEDED by a
+  // claim flag (rival colour) over the site, up for the difficulty's lead
+  // time (`RivalSkill.claimLeadMs`), plus a bark from the claim deck. The
+  // player can pre-empt; the first valid build wins, the loser's plan
+  // re-targets and the rival barks a comeback line.
+  //
+  // The turn is two-phase: EXECUTE the claims whose lead has run (each one
+  // re-planned against its OWN site — the claim pins the planner's DECISION,
+  // never the path), then COMMIT the next targets (flag + bark). The
+  // pipeline refills every turn, so the steady-state build rate is exactly
+  // what it was — the rival is not slower, only legible. No RNG anywhere in
+  // this path: the telegraph IS the planner decision, and the barks ride the
+  // hash-picked decks in `rivalry.ts`.
+  const claimLedger = new ClaimLedger();
+  /** A claim whose execute keeps failing gets one minute of grace, then the
+   *  flag comes down and the planner re-targets on the next turn. */
+  const CLAIM_GIVE_UP_MS = 60_000;
+  /** Which claims have had their "Contested" Feed line, so it says it once.
+   *  GOAL-1 (#459): the "Next step" advisor may point at a contested site —
+   *  wiring that up is follow-up work. */
+  const contestAnnounced = new WeakSet<RivalClaim>();
+
+  const industryClaimSite = (ind: Industry): ClaimSite => {
+    const def = INDUSTRY_BY_KEY[ind.type];
+    return {
+      kind: "industry", id: ind.id,
+      tx: ind.tx + (ind.w >> 1), ty: ind.ty + (ind.h >> 1),
+      cargo: def.cargo, name: def.name,
+    };
+  };
+  const plantClaimSite = (tx: number, ty: number, rot = 0): ClaimSite => {
+    const town = adjacentTown(grid, tx, ty, rot);
+    return {
+      kind: "lot", id: ty * MAP_W + tx, tx, ty,
+      townId: town?.id ?? null,
+      name: town ? `a plant site at Town ${town.id + 1}` : "a plant site",
+    };
+  };
+  const siteLabel = (site: ClaimSite): string =>
+    site.name ?? (site.kind === "industry" ? "the industry" : "the plant site");
+
+  /**
+   * The player's half of every race: a placement tool ARMED near a site (the
+   * live hover while the Depot/Plant tool is out), or a live TENDER (a public
+   * offer both seats may race, or one either seat has accepted) — a tender's
+   * cargo/town is intent on every site that serves it. Pure inputs, one
+   * function, so the Contested rule is the same one the tests exercise.
+   */
+  const playerClaimIntents = (): PlayerIntent[] => {
+    const out: PlayerIntent[] = [];
+    if ((tool === "harvester" || tool === "plant") && hover) {
+      out.push({ kind: "armed", tx: hover.tx, ty: hover.ty });
+    }
+    for (const o of contractOffersList) {
+      if (o.kind === "tender") out.push({ kind: "tender", cargo: o.cargo, townId: o.townId });
+    }
+    for (const a of activeContracts) {
+      if (a.def.kind === "tender" && a.status === "active") {
+        out.push({ kind: "tender", cargo: a.def.cargo, townId: a.def.townId });
+      }
+    }
+    return out;
+  };
+
+  /** The flags the overlay draws (renderer.ts `paintClaimFlags`), live. */
+  const claimFlagViews = (): ClaimFlagView[] => {
+    const intents = playerClaimIntents();
+    return claimLedger.list().map((c) => ({
+      tx: c.site.tx, ty: c.site.ty,
+      colour: rival.colour,
+      label: c.site.name ?? null,
+      contested: claimContested(c, intents),
+    }));
+  };
+
+  /** The Feed says "Contested" once per claim while both seats are on it. */
+  function noteClaimContested(): void {
+    const intents = playerClaimIntents();
+    for (const claim of claimLedger.list()) {
+      const contested = claimContested(claim, intents);
+      if (contested && !contestAnnounced.has(claim)) {
+        contestAnnounced.add(claim);
+        ui.feed(`Contested — both seats are eyeing ${siteLabel(claim.site)}`);
+      } else if (!contested && contestAnnounced.has(claim)) {
+        contestAnnounced.delete(claim);
+      }
+    }
+  }
+
+  /** One wire bark per commit wave — the flag carries the rest. */
+  const claimBark = () => playRivalryScene(nextClaimScene(), "banter");
+  const comebackBark = () => ui.feed(`${rival.name}: ${nextComebackLine()}`, rival.name);
+
+  /**
+   * Commit the planner's next targets until `wantPending` Depot claims fly
+   * (top-up semantics: the pipeline is kept FULL, not flooded). Each new flag
+   * gets a Feed line; one bark per wave. Returns how many flags went up.
+   */
+  function commitRivalDepotClaims(
+    f: Factory, makeOpts: () => PlanOptions, now: number, wantPending: number,
+  ): number {
+    const want = Math.max(1, wantPending);
+    if (claimLedger.pending("depot").length >= want) return 0;
+    let committed = 0;
+    let barked = false;
+    for (const c of planCandidates(eco, f, makeOpts())) {
+      if (claimLedger.pending("depot").length >= want) break;
+      const site = industryClaimSite(c.industry);
+      const claim = claimLedger.commit("depot", site, now, skill().claimLeadMs);
+      if (!claim) continue;
+      committed++;
+      ui.feed(`Rival stakes a claim on ${siteLabel(site)}`, rival.name);
+      if (!barked) { claimBark(); barked = true; }
+    }
+    return committed;
+  }
+
+  /**
+   * Execute one ready Depot claim — the same planner decision, revalidated.
+   * "built" = the Depot landed (the claim's flag preceded it by the full
+   * lead); "lost" = the race is over (the site was taken — the plan
+   * re-targets and the rival barks); "wait" = the purse isn't ready yet and
+   * the flag stays up (one minute of grace, then re-target).
+   */
+  function tryRivalDepotClaim(
+    claim: RivalClaim, f: Factory, makeOpts: () => PlanOptions, now: number,
+  ): "built" | "lost" | "wait" {
+    const opts = makeOpts();
+    // PP-05: the same belt-and-braces gate `aiBuildStep` walked — a Depot
+    // placed for a purse that cannot pay would be a free Depot.
+    const fallbackDepotCost = priceDepot(opts.purse, opts.freeDepots ?? 0, {
+      tier: opts.depotTier, newLoop: opts.newLoop === true,
+    }).cost;
+    for (const c of planCandidates(eco, f, opts)) {
+      if (c.industry.id !== claim.site.id) continue;
+      if (!canAfford(opts.purse, addCost(c.cost, c.depotCost ?? fallbackDepotCost))) continue;
+      const out = executeCandidate(
+        eco, c, rival.id, rival.i + 1, allocHarvesterId(),
+        opts.free ?? 0, opts.freeDepots ?? 0, opts.newLoop === true,
+      );
+      if (out.built.length > 0 || out.harvester) {
+        rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
+        rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
+        chargeBuild(rival, out.spent);
+        for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
+        // A contested claim the rival WON is a race moment — say so before
+        // the ordinary expansion line, and clear the marker with it.
+        if (contestAnnounced.has(claim)) {
+          ui.feed(`Rival got there first — ${siteLabel(claim.site)} is claimed`, rival.name);
+        }
+        ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
+        voiceCue("rival:industry-taken");
+        claimLedger.drop(claim);
+        return "built";
+      }
+    }
+    // No executable plan on the claimed site: a lost race, its own earlier
+    // build, or a purse that hasn't caught up.
+    const holder = industryLocks(eco).get(claim.site.id);
+    if (holder && holder.ownerId !== rival.i + 1) {
+      claimLedger.drop(claim);
+      comebackBark();
+      return "lost";
+    }
+    if (holder) {
+      // Its own network already claims the site — nothing left to win there.
+      claimLedger.drop(claim);
+      return "wait";
+    }
+    if (now - claim.readyAt > CLAIM_GIVE_UP_MS) claimLedger.drop(claim);
+    return "wait";
+  }
+
+  /**
+   * The two-phase Depot pass: build what the flags have covered long enough,
+   * then raise flags on what comes next. Returns whether anything was built.
+   * The commit half keeps the pipeline two turns deep per build slot (the
+   * lead runs about two build clocks on every difficulty), so the steady
+   * state build rate is the one the rival always had. `commit` is off on the
+   * idle-retry path and on the new loop, which keeps exactly one flag up.
+   */
+  function rivalDepotClaimPass(
+    f: Factory, makeOpts: () => PlanOptions, now: number, maxBuilds: number, commit = true,
+  ): boolean {
+    let builtAny = false;
+    let budget = Math.max(1, maxBuilds);
+    for (const claim of [...claimLedger.ready(now)]) {
+      if (claim.kind !== "depot" || budget <= 0) continue;
+      if (tryRivalDepotClaim(claim, f, makeOpts, now) === "built") {
+        budget--;
+        builtAny = true;
+      }
+    }
+    if (commit) commitRivalDepotClaims(f, makeOpts, now, Math.max(2, Math.max(1, maxBuilds) * 2));
+    return builtAny;
+  }
+
+  /**
+   * The Factory (Processing Plant) half: one pending claim at a time, flagged
+   * over the lot it would stand on. `wantPlant` is each loop's own "should it
+   * buy a plant now" rule, unchanged — the telegraph only splits the buy into
+   * flag-then-build. The ready claim builds only under the same rule (it must
+   * not eat the purse the rule protects); until then the flag stays up, with
+   * the same grace as a Depot claim. Returns whether a plant landed this turn.
+   */
+  function rivalPlantClaimStep(now: number, wantPlant: boolean): boolean {
+    if (wantPlant) {
+      for (const claim of [...claimLedger.ready(now)]) {
+        if (claim.kind !== "plant") continue;
+        const { tx, ty } = claim.site;
+        const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
+        if (spot && spot[0] === tx && spot[1] === ty) {
+          if (placePlant(tx, ty, rival, spot[2] ?? 0)) {
+            if (contestAnnounced.has(claim)) {
+              ui.feed(`Rival got there first — ${siteLabel(claim.site)} is taken`, rival.name);
+            }
+            // AI-03c: the feed tells the player the rival JUST scored a ★ —
+            // an empty feed used to hide every move it made.
+            ui.feed(`Rival raises processing plant #${plantsOf(eco, rival.id).length} (+1★)`, rival.name);
+            claimLedger.drop(claim);
+            return true;
+          }
+          // Refused for money only — the flag stays up (grace applies).
+          if (now - claim.readyAt > CLAIM_GIVE_UP_MS) claimLedger.drop(claim);
+          continue;
+        }
+        // The planner no longer wants this lot — the plan re-targets. If the
+        // lot was TAKEN (the player pre-empted), the rival barks a comeback.
+        claimLedger.drop(claim);
+        if (buildingAt(eco, tx, ty) || plantRefusal(grid, track, eco, tx, ty) === "occupied") {
+          comebackBark();
+        }
+      }
+    }
+    // Grace for claims nothing will execute (want gone, or no legal build).
+    for (const claim of [...claimLedger.ready(now)]) {
+      if (claim.kind === "plant" && now - claim.readyAt > CLAIM_GIVE_UP_MS) claimLedger.drop(claim);
+    }
+    if (!wantPlant || claimLedger.pending("plant").length > 0) return false;
+    const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
+    if (!spot) return false;
+    const site = plantClaimSite(spot[0], spot[1], spot[2] ?? 0);
+    const claim = claimLedger.commit("plant", site, now, skill().claimLeadMs);
+    if (!claim) return false;
+    ui.feed(`Rival stakes a claim on ${siteLabel(site)}`, rival.name);
+    claimBark();
+    return false;
+  }
+
   function aiTick(now: number) {
     // B5 (#250): no AI action and no economy churn during a battle; the two
     // offer doors (rival challenges, fight-offs) expire here too.
@@ -10043,6 +10312,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // plays" and the guest never runs a line of it.
     if (!isSolo() && !aiOpponent) return;
     if (phase !== "play") return;
+    // RIVAL-3 (#467): the Contested announcement rides the AI clock too, so a
+    // headless sim that only drives `aiTick` sees the same Feed the frame does.
+    noteClaimContested();
     // AI-01: the two clocks come from the live difficulty. The turn that
     // follows is SHARED across presets — easy/hard pace the same policy.
     if (now - lastAi < skill().buildMs) return;
@@ -10095,22 +10367,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       } else {
         plantNow = true;   // nothing to save for
       }
-      if (plantNow) {
-        const spot = chooseAiPlantSpot(grid, track, eco, rival.id);
-        if (spot && placePlant(spot[0], spot[1], rival, spot[2] ?? 0)) {
-          acted = true;
-          // AI-03c: the feed tells the player the rival JUST scored a ★ —
-          // an empty feed used to hide every move it made.
-          ui.feed(`Rival raises processing plant #${plantsOf(eco, rival.id).length} (+1★)`, rival.name);
-          // placePlant rescores immediately. If this was the winning star, the
-          // curtain is already up; do not let the rest of the same AI turn add
-          // roads after the final ledger was photographed.
-          if (winner !== null) return;
-        } else if (!spot && rivalLevelStep("plant")) {
-          // #456: every plant site is too bumpy to stand on — level one.
-          acted = true;
-        }
-      }
+    }
+    // RIVAL-3 (#467): the plant buy is telegraphed — the claim flag goes up
+    // first (bark + Feed), the build lands when the difficulty's lead has run.
+    if (rivalPlantClaimStep(now, plantNow)) {
+      acted = true;
+      // placePlant rescores immediately. If this was the winning star, the
+      // curtain is already up; do not let the rest of the same AI turn add
+      // roads after the final ledger was photographed.
+      if (winner !== null) return;
+    } else if (plantNow && rivalLevelStep("plant")) {
+      // #456: every plant site is too bumpy to stand on — level one.
+      acted = true;
     }
 
     // 2. depot — W3: the same cost model as the player's preview, allowance
@@ -10127,23 +10395,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // FTUE-1 (#464): the trainee never plans a Depot on the player's stakes.
       contests: skill().contests,
     });
-    const depotBuild = (): boolean => {
-      const out = aiBuildStep(eco, f, opts(), allocHarvesterId());
-      if (!out) return false;
-      rival.freeTrack = Math.max(0, rival.freeTrack - out.free);
-      rival.freeDepots = Math.max(0, rival.freeDepots - out.freeDepots);
-      chargeBuild(rival, out.spent);
-      for (const [bx, by] of out.built) renderer?.invalidateTile(bx, by);
-      // AI-03c: expansion is the thing the player keeps asking the feed
-      // about — say exactly what appeared (depot + its road).
-      ui.feed(`Rival expands: a new Depot and ${out.built.length} road tile${out.built.length === 1 ? "" : "s"}`, rival.name);
-      voiceCue("rival:industry-taken");
-      return true;
-    };
-    for (let n = Math.max(1, skill().expandPerTurn); n > 0; n--) {
-      if (!depotBuild()) break;
-      acted = true;
-    }
+    // RIVAL-3 (#467): two-phase — build what the flags have covered for the
+    // lead time, then flag the next targets. `aiBuildStep` used to plan and
+    // build in one motion; the split is that same turn, re-timed so every
+    // build lands behind its claim flag.
+    if (rivalDepotClaimPass(f, opts, now, skill().expandPerTurn)) acted = true;
     // #456: when the planner found no flat Depot lot (the loop broke out on
     // its first try), level the cheapest lot toward flat — the rival's right
     // to the same tool, at the same price, from its own purse.
@@ -10184,12 +10440,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // wants (through the tree gate), then take the turn if the trade unlocked
     // it. Retry in one harvest tick, not one build clock.
     rivalBankTowardPlan(f, now);
-    const retry = aiBuildStep(eco, f, opts(), allocHarvesterId());
-    if (retry) {
-      rival.freeTrack = Math.max(0, rival.freeTrack - retry.free);
-      rival.freeDepots = Math.max(0, rival.freeDepots - retry.freeDepots);
-      chargeBuild(rival, retry.spent);
-      for (const [bx, by] of retry.built) renderer?.invalidateTile(bx, by);
+    // RIVAL-3 (#467): the retry is an execute-only claim pass — the flags are
+    // already up; banking may have just made one of them buildable.
+    if (rivalDepotClaimPass(f, opts, now, 1, false)) {
       // L4 (#218): the retry path raises a Depot too — tune it like any other.
       applyRivalTuning();
       noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
@@ -14655,7 +14908,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     renderer.setPerformanceMode(policy0.performance);
     renderer.setCloudsEnabled(policy0.clouds);   // AMB-1 (#390): the boot sky
     appliedPerf = policy0.performance;
-    renderer.overlayPainter = (ctx, c, t) => paintProtests(ctx, c, t);
+    renderer.overlayPainter = (ctx, c, t) => {
+      paintProtests(ctx, c, t);
+      // RIVAL-3 (#467): claim flags + the Contested pulse ride on top of the
+      // protest crowd — a claim is an announcement, it stands above.
+      paintClaimFlags(ctx, c, grid, claimFlagViews(), t);
+    };
     // AMB-2 (#391): the birds go through the renderer's shared
     // ABOVE-STRUCTURES hook — over the buildings, under the placement
     // feedback, on the overlay layer (which is repainted every frame, so a
@@ -14766,6 +15024,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (sim) rivalChitChat(t);
       if (sim) advisorTick(t);
       if (sim) phaseTick();   // BAL-1 (#471): Feed beats as the leader advances
+      if (sim) noteClaimContested();   // RIVAL-3 (#467): the Feed says "Contested"
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
@@ -16122,6 +16381,34 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     protestTick: (now = performance.now()) => expireProtests(now),
     /** W3: the e2e/unit twin of the AI build clock, with an injectable now. */
     aiTick: (now = performance.now()) => aiTick(now),
+    /**
+     * RIVAL-3 (#467): the rival's pending claim flags — the telegraph the
+     * overlay draws — as data: site anchor, kind, when the flag went up, when
+     * the build may land, and whether the site is Contested right now (the
+     * live hover/tool/tender intents, or the injected `intents` argument).
+     * This is the surface `tests/unit/iso-467-rival-telegraph.test.ts` pins
+     * "every build was flagged for the lead time" against.
+     */
+    rivalClaims: (intents?: PlayerIntent[]) => {
+      const live = intents ?? playerClaimIntents();
+      return claimLedger.list().map((c) => ({
+        kind: c.kind,
+        siteKind: c.site.kind,
+        siteId: c.site.id,
+        tx: c.site.tx,
+        ty: c.site.ty,
+        name: c.site.name ?? null,
+        cargo: c.site.cargo ?? null,
+        townId: c.site.townId ?? null,
+        committedAt: c.committedAt,
+        readyAt: c.readyAt,
+        contested: claimContested(c, live),
+      }));
+    },
+    /** RIVAL-3: the placement-hover twin — where the player's tool is pointing. */
+    hoverAt: (tx: number, ty: number) => {
+      hover = { tx, ty, ref: null };
+    },
     /** TRADE: one pass of offer expiry + the machine rival's answers/posts. */
     tradeTick: (now = performance.now()) => tradeTick(now),
     /** TRADE: the live offer book as this client sees it (own seat = 0). */
