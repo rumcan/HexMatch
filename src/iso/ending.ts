@@ -446,6 +446,13 @@ export interface EndingScreenOptions {
   /** STORY-01: present adds a third door — back to the campaign menu with the
    *  contract recorded. Absent (every sandbox match) the ledger keeps its two. */
   onContinue?: () => void;
+  /**
+   * PROG-1 (#475): present adds a "Next contract ▸" door beside it — a won
+   * contract's straight line into the next one, without the list in between.
+   * Offered only on a victory with a next chapter; END-1 (#472) re-checks
+   * this door when the Summary page lands.
+   */
+  onNextContract?: () => void;
   /** The portrait selected on the start screen, reused whenever the player
    * answers Torvin's final wire. */
   playerPortrait?: "vex" | "you";
@@ -470,8 +477,6 @@ export interface EndingScreenOptions {
   onRematch?: () => void;
   /** END-1: same map again — same seed. */
   onSameMap?: () => void;
-  /** END-1: next contract in the campaign. */
-  onNextContract?: () => void;
   /** END-1: back to main menu. */
   onMainMenu?: () => void;
 }

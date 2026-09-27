@@ -277,7 +277,7 @@ import {
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
-  saveKeyFor, SAVEGAME_VERSION, OLD_SAVE_TOAST,
+  saveKeyFor, scenarioSaveKey, SAVEGAME_VERSION, OLD_SAVE_TOAST,
   loadRecentSave, clearSave, trackSave, trackRestored,
   loopCarryToWire, savedLoopCarry,
   type SaveGamePayload,
@@ -367,10 +367,11 @@ import {
 // STORY-01 — the campaign seam: a contract names the rival, the voice, the
 // ★ line and the three scenes around the match; the guide rides the wire.
 import { CAST, FACE_FOR_DIRECTION, faceOf, type Expression } from "../story/cast";
-import { CHAPTERS, EMPLOYER, chapterById, type StoryChapter } from "../story/chapters";
+import { CHAPTERS, EMPLOYER, chapterAfter, chapterById, type StoryChapter } from "../story/chapters";
 import { createStoryDirector } from "../story/voices";
 import { advisorBeats, type AdvisorEvent } from "../story/advisor";
 import { advisorEnabled, recordChapterResult } from "../story/progress";
+import { recordScenarioResult, scenarioById, type ScenarioDef } from "../story/scenarios";
 import { showScene, type SceneHandle } from "../story/stage";
 import type { UiRivalryBeat, UiTuningResult } from "../game/ui";
 import {
@@ -628,6 +629,18 @@ export interface IsoGameOptions {
   /** STORY-01: the ending's "Continue the campaign" returns through here. */
   onStoryExit?: () => void;
   /**
+   * PROG-1 (#475): the scenario this match plays (`SCENARIOS[].id`). Solo
+   * only, like a contract: it names the seed, the map, the rival's fixed
+   * difficulty and the ★ line. An unknown id — or a networked seat — reads
+   * as no scenario at all.
+   */
+  scenario?: string;
+  /**
+   * PROG-1 (#475): the ending's "Next contract ▸" returns through here with
+   * the next chapter's id. Absent, the door is not offered.
+   */
+  onNextChapter?: (chapterId: string) => void;
+  /**
    * RAIL-05 (#182): force the railway feature flag. Absent, the flag is read
    * from `?rail=1` and is otherwise OFF in every mode until #179/#181 land
    * (the release gate in docs/railway-balance.md).
@@ -797,6 +810,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const storyChapter: StoryChapter | null =
     opts.story && isSolo() ? chapterById(opts.story) : null;
   const storyOn = storyChapter !== null;
+  /**
+   * PROG-1 (#475): the scenario this match plays. Solo only, and a contract
+   * wins over a scenario when both are named (the App never names both —
+   * this is the stale-link guard, mirroring the story one above).
+   */
+  const scenarioDef: ScenarioDef | null =
+    !storyChapter && opts.scenario && isSolo() ? scenarioById(opts.scenario) : null;
+  const scenarioOn = scenarioDef !== null;
+  /** PROG-1 (#475): where "Next contract ▸" walks (null past the ledger). */
+  const nextChapter = storyChapter ? chapterAfter(storyChapter.id) : null;
   // RAIL-05 (#182): the feature flag. OFF everywhere by default: the release
   // gate (docs/railway-balance.md) keeps the railway behind it until the
   // construction UI (#179) and multiplayer authority (#181) are done.
@@ -816,7 +839,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // The new loop is sandbox-only: a networked room or a story contract ignores
   // the request and says so — the toast waits until no boot overlay covers the
   // map (see the frame loop's `loopToastPending`).
-  const newLoop = newLoopRequested && isSolo() && !storyOn;
+  // PROG-1 (#475): scenarios play the contract's loop, like contracts.
+  const newLoop = newLoopRequested && isSolo() && !storyOn && !scenarioOn;
   // Only someone who named the loop gets told a room or a contract refused it.
   // A default boot is not a refusal, it is the game, and every MP/story seat
   // would otherwise open with an apology for the loop it is correctly on.
@@ -904,7 +928,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
   // line and lost on the first rescore.
-  const saveKey = saveKeyFor(storyChapter?.id);
+  // PROG-1 (#475): scenarios get their own slots the same way.
+  const saveKey = storyChapter
+    ? saveKeyFor(storyChapter.id)
+    : scenarioDef ? scenarioSaveKey(scenarioDef.id) : saveKeyFor(null);
   const foundSave = savesOff || mapParamsInUrl ? null : loadRecentSave(Date.now(), saveKey);
   // L15 (#230): old saves (v1 / snap 15) are from a different game — refuse
   // with a clear message and keep the slot untouched so the toast is honest.
@@ -917,7 +944,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // STORY-01: a contract is a PLACE — its map must not move between attempts —
   // so the chapter's seed sits in the chain between an explicit `?seed=`
   // (playtests, saved seeds) and the fresh random one. A resumed save keeps
-  // carrying its own seed, as always.
+  // carrying its own seed, as always. PROG-1 (#475): a scenario is a place
+  // the same way — its seed sits beside the chapter's.
   // FTUE-1 (#464): the STARTER ISLAND runs on a first launch (App's routing),
   // on the Tutorial menu's "Play the Starter Island" replay — and when a save
   // taken inside it resumes (its rival is cast `trainee`, a skill no ordinary
@@ -927,12 +955,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const starterIsland = opts.starterIsland === true || opts.firstRun === true || starterSaved;
   const seed = starterIsland
     ? STARTER_ISLAND_SEED
-    : (opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? resolveMapSeed());
+    : (opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? scenarioDef?.seed ?? resolveMapSeed());
+  // PROG-1 (#475): the match's wall clock, for scenario and contract best
+  // times — boot to final ledger, briefing included. A resumed save restarts
+  // it: a best time is a best sitting, not a best fortnight.
+  const matchWallStart = Date.now();
   // MAP-1 (#412): rivers + dams, elevation and shapes are ON for new games;
   // #440 puts 45° roads on the same list. See map-options.ts for who decides
-  // (save, room, story, URL, default). `diag` is deliberately absent from
-  // `mapParamsInUrl` above: it re-terrains nothing, so a `?diag=0` boot keeps
-  // the save in front of it instead of throwing the map away to honour it.
+  // (save, room, story, scenario, URL, default). `diag` is deliberately absent
+  // from `mapParamsInUrl` above: it re-terrains nothing, so a `?diag=0` boot
+  // keeps the save in front of it instead of throwing the map away to honour it.
   // FTUE-1 (#464): …except the Starter Island, which is tuned terrain (its
   // own map options, recorded on the save like any other game's).
   const mapOptions: MapOptions = starterIsland
@@ -943,11 +975,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
       room: isMp() ? settings : null,
       story: storyOn ? (storyChapter ?? {}) : null,
+      scenario: scenarioOn ? (scenarioDef ?? {}) : null,
     });
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
   const grid: Grid = starterIsland
     ? starterIslandGrid()
-    : generateMap(seed, { rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings });
+    : generateMap(seed, {
+      rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings,
+      ...(scenarioDef?.gen ?? {}),
+    });
   // #456: the seed-derived heights, kept as the baseline the edited-heights
   // diff is measured against (saves and the MP wire carry only the delta from
   // THIS, the way map options travel — the terrain itself regenerates).
@@ -1220,10 +1256,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // FTUE-1 (#464): the Starter Island CASTS its rival (the trainee), exactly
   // like a contract does — the resolver never gets a vote, and the pick is
   // not persisted: the player's own difficulty for normal games is theirs.
+  // PROG-1 (#475): a scenario casts its rival at its fixed difficulty, like a
+  // contract — the scenario IS the pacing.
   let skillKey: SkillKey = starterIsland
     ? "trainee"
     : storyChapter
       ? storyChapter.skill
+      : scenarioDef
+        ? scenarioDef.skill
       : aiOpponent
         ? settings.aiSeats[0]
         : resolveSkillKey();
@@ -1231,8 +1271,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // in the top-bar selector — so it persists for the next boot. Only the URL
   // path writes here: a plain boot must leave the storage key ABSENT or the
   // AI-02 start-of-game picker would never ask a fresh player again. A
-  // scenario cast (Starter Island) never writes the player's key at all.
-  if (!starterIsland && !storyChapter && skillKeyFromUrl()) {
+  // scenario cast (Starter Island, PROG-1) never writes the player's key at all.
+  if (!starterIsland && !storyChapter && !scenarioDef && skillKeyFromUrl()) {
     try { localStorage.setItem(SKILL_STORAGE_KEY, skillKey); } catch { /* private mode */ }
   }
   const skill = (): RivalSkill => RIVAL_SKILLS[skillKey];
@@ -1293,13 +1333,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // FTUE-1 (#464): the Starter Island is a SHORT, winnable race — the
   // trainee's own ★ line (6), read live like every other line, so the HUD,
   // the king bars and the win check all agree.
+  // PROG-1 (#475): a scenario races its own ★ line, like a contract.
   const winTarget = (): number => starterIsland
     ? skill().winTarget
     : (newLoop
       ? VICTORY.loop.target
       : (storyChapter
         ? storyChapter.target
-        : (isSolo() ? skill().winTarget : settings.winTarget)));
+        : scenarioDef
+          ? scenarioDef.winTarget
+          : (isSolo() ? skill().winTarget : settings.winTarget)));
 
   // R3 (#270): the standing dams live on the economy state — the clock reads
   // their bonus off it in `economyTick`, and the save/snapshot carry it as
@@ -3064,7 +3107,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // would make the campaign card offer "Continue" straight back into
         // this ledger instead of a fresh attempt. `restartArmed` stops the
         // teardown's autosave from rewriting the slot we just cleared.
-        ...(storyOn ? {
+        // PROG-1 (#475): scenario matches get the same door back to their list.
+        ...(storyOn || scenarioOn ? {
           onContinue: () => {
             restartArmed = true;
             clearSave(saveKey);
@@ -3087,6 +3131,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             };
           })(),
         } : {}),
+        // PROG-1 (#475): a won contract's straight line into the next one.
+        // The win is already recorded (below), so the next contract is open;
+        // the finished slot clears exactly as the list door clears it.
+        ...(storyOn && model.outcome === "victory" && nextChapter && opts.onNextChapter ? {
+          onNextContract: () => {
+            restartArmed = true;
+            clearSave(saveKey);
+            opts.onNextChapter?.(nextChapter.id);
+          },
+        } : {}),
       });
     };
     // STORY-01: the epilogue stands BEFORE the ledger — the rival concedes (or
@@ -3095,7 +3149,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // must not lose the contract.
     if (storyChapter) {
       const won = winner.id === me.id;
-      recordChapterResult(storyChapter.id, storyChapter.index, won, CHAPTERS.length);
+      // PROG-1 (#475): the win carries its margin and time for the chapter
+      // list's best-results line — floored exactly as the HUD prints them.
+      recordChapterResult(storyChapter.id, storyChapter.index, won, CHAPTERS.length,
+        undefined, undefined, {
+          margin: Math.floor(vpFor(score, me.id)) - Math.floor(vpFor(score, rival.id)),
+          timeMs: Date.now() - matchWallStart,
+        });
       // BACK TO WORK: a won contract is a promotion — say so where the job was named.
       if (won) ui.feed(`Promoted: ${storyChapter.promotion}, ${EMPLOYER}`, "Contract");
       // #123: the loss epilogue shows every line in full immediately — the
@@ -3109,6 +3169,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         storyView = null;
         if (!disposed) openLedger();
       });
+    } else if (scenarioDef) {
+      // PROG-1 (#475): the scenario is filed before the ledger stands — a
+      // refresh mid-ledger must not lose the win. No epilogue scenes: the
+      // Feed seals it, the list shows it.
+      const won = winner.id === me.id;
+      recordScenarioResult(scenarioDef.id, scenarioDef.index, won, {
+        margin: Math.floor(vpFor(score, me.id)) - Math.floor(vpFor(score, rival.id)),
+        timeMs: Date.now() - matchWallStart,
+      });
+      if (won) ui.feed(`Scenario filed: ${scenarioDef.name}`, "Scenario");
+      openLedger();
     } else {
       openLedger();
     }

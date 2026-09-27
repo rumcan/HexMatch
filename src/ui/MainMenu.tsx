@@ -42,6 +42,9 @@ export const CAST_KEY = "hexmatch:menu-character";
 import { loadStore } from "../game/store";
 import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
+// PROG-1 (#475): the Scenarios door — four tuned maps beyond the default
+// island, unlocked by winning. It stands whether Story mode is hidden or not.
+import { SCENARIOS, effectiveUnlocked, loadScenarioProgress } from "../story/scenarios";
 import { STORY_MODE_ENABLED } from "../story/flag";
 // CONTINUE-01 (#191): the front door names the save it can resume. Read once
 // per mount — returning from a match mounts the menu afresh, so a slot just
@@ -65,12 +68,17 @@ export interface MainMenuProps {
   onLadder?: () => void;
   /** FTUE-1 (#464): the Tutorial menu's "Play the Starter Island" replay door. */
   onStarterIsland?: () => void;
+  /**
+   * PROG-1 (#475): leave for the scenario list. Absent, the door is not
+   * offered — a surface with nowhere to list scenarios shows no dead door.
+   */
+  onScenarios?: () => void;
 }
 
 type LadderRow = { rank: number; username: string; rating: number; profileId?: string };
 type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
 
-export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland }: MainMenuProps) {
+export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland, onScenarios }: MainMenuProps) {
   const [panel, setPanel] = useState<"ladder" | "hextalls">("ladder");
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
 
@@ -88,6 +96,14 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
 
   const progress = loadStoryProgress();
   const filed = CHAPTERS.filter((c) => progress.results[c.id] === "win").length;
+  // PROG-1 (#475): the scenario shelf — how many maps are open, and the best
+  // margin anywhere on it. Read once per mount, like the campaign line.
+  const scenProgress = loadScenarioProgress();
+  const scenOpen = effectiveUnlocked(scenProgress, progress);
+  const scenPlayed = SCENARIOS.filter((s) => (scenProgress.results[s.id]?.wins ?? 0) > 0);
+  const scenBest = scenPlayed
+    .map((s) => scenProgress.results[s.id]!.bestMargin)
+    .filter((m): m is number => m !== null && m !== undefined);
   // CONTINUE-01 (#191): the freshest resumable solo save, if any, takes the
   // primary button and Play steps down beside it. Story mode hidden: only the
   // sandbox slot is offered.
@@ -122,10 +138,20 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
               </>
             ) : (
               <button type="button" className="px-btn-primary menu-btn primary" data-sfx="open" onClick={onPlay}>
-                Play<span className="mb-tag">{STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "sandbox · rooms"}</span><span className="px-arrow" aria-hidden="true">→</span>
+                Play<span className="mb-tag">{STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "scenarios · sandbox · rooms"}</span><span className="px-arrow" aria-hidden="true">→</span>
               </button>
             )}
+            {onScenarios ? (
+              <button type="button" className="px-btn-secondary menu-btn" data-sfx="open" onClick={onScenarios}>
+                Scenarios<span className="mb-tag">four maps · unlock by winning</span>
+              </button>
+            ) : null}
           </nav>
+          <p className="menu-scenarios">
+            {scenPlayed.length > 0 && scenBest.length > 0
+              ? `Scenarios: ${scenOpen} of ${SCENARIOS.length} open · best +${Math.max(...scenBest)}★`
+              : `Scenarios: ${scenOpen} of ${SCENARIOS.length} open`}
+          </p>
         </div>
         <section className="px-detail" aria-label="The ladder and the Hextalls">
           <div className="px-detail-head">

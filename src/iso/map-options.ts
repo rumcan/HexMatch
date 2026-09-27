@@ -13,7 +13,8 @@
 //      guest's own URL cannot split them;
 //   5. a story contract: OFF unless the chapter says otherwise (its map is
 //      tuned and must not move);
-//   6. otherwise the defaults: all ON (all OFF under the unit-test runner, so
+//   6. a scenario (PROG-1 #475): the scenario's tuned options, the same deal;
+//   7. otherwise the defaults: all ON (all OFF under the unit-test runner, so
 //      the seed-pinned tests about other things keep their maps).
 //
 // #440 note: `diag` is the one key here that generates nothing — no tile of
@@ -42,6 +43,8 @@ export interface MapOptionSources {
   room?: { map?: MapOptions } | null;
   /** A story contract's own override (undefined = the chapter's map as tuned: OFF). */
   story?: { mapOptions?: Partial<MapOptions> } | null;
+  /** PROG-1 (#475): a scenario's tuned options (a boot is never both). */
+  scenario?: { mapOptions?: Partial<MapOptions> } | null;
 }
 
 export function resolveMapOptions(src: MapOptionSources): MapOptions {
@@ -49,6 +52,7 @@ export function resolveMapOptions(src: MapOptionSources): MapOptions {
   if (src.save) base = readMapOptions(src.save.map) ?? { ...MAP_OPTIONS_OFF };
   else if (src.room) base = src.room.map ? { ...src.room.map } : defaultMapOptions();
   else if (src.story) base = { ...MAP_OPTIONS_OFF, ...(src.story.mapOptions ?? {}) };
+  else if (src.scenario) base = { ...MAP_OPTIONS_OFF, ...(src.scenario.mapOptions ?? {}) };
   else base = defaultMapOptions();
   let params: URLSearchParams | null = null;
   try { params = new URLSearchParams(src.search ?? ""); } catch { params = null; }

@@ -151,6 +151,31 @@ export interface MapGenOptions {
   /** Generate the seed-derived height map. OFF (default) keeps old maps flat. */
   elevation?: boolean;
   /**
+   * PROG-1 (#475): how rugged the seed-derived height map is. `strong`
+   * (the Highlands scenario) raises the interior sooner and rolls more
+   * jitter into it, so climbs are longer and flat footprints are scarce.
+   * Absent reads as `normal`: the historical field, byte for byte.
+   */
+  elevationStrength?: "normal" | "strong";
+  /**
+   * PROG-1 (#475): the River Valley scenario's waterfront rule — every
+   * industry spawns within WATERFRONT_REACH tiles of water (sea or a carved
+   * river). OFF (default) keeps every seed byte-identical.
+   */
+  waterfrontIndustries?: boolean;
+  /**
+   * PROG-1 (#475): how many towns the map seats. Absent reads as the
+   * historical 4 (the Twin Towns scenario seats 2).
+   */
+  townCount?: number;
+  /**
+   * PROG-1 (#475): the Archipelago scenario's sea channels — two
+   * edge-to-edge water cuts that split the island into pieces, so roads and
+   * rail must bridge between them. OFF (default) keeps every seed
+   * byte-identical.
+   */
+  archipelago?: boolean;
+  /**
    * F4 (#275): use the new non-square shapes. Towns merge pairs of blocks
    * along a street so 1×3/3×1 and 2×4/4×2 buildings fit (#273's art), and the
    * Factory stands on its long `factory_2x4` footprint. OFF (default) keeps
@@ -313,7 +338,58 @@ export function townObstacleTiles(
   return out;
 }
 
-function makeTerrain(rng: () => number): Uint8Array {
+/**
+ * PROG-1 (#475): the Archipelago's sea channels — two 3-wide meandering cuts
+ * across the whole map, sea to sea, so the island ends up in four pieces.
+ * The bases are shared constants: the town placer reads them to seat one
+ * town per quadrant.
+ */
+export const ARCHIPELAGO_VX = Math.floor(MAP_W * 0.38);
+export const ARCHIPELAGO_HY = Math.floor(MAP_H * 0.62);
+/** How far a channel may meander from its base (plus its 1-tile half-width). */
+const CHANNEL_WANDER = 11;
+
+function carveChannel(
+  t: Uint8Array, mask: Uint8Array | null, rng: () => number,
+  dir: "vertical" | "horizontal", base: number,
+): void {
+  // A random walk, one tile per row at most: consecutive rows always overlap
+  // (the cut is 3 wide), so the channel is one 4-connected strip, sea to sea.
+  // Independent jitter per row would outrun the width and leave land gaps —
+  // and `fillCoastalHoles` fills a disconnected segment with sand.
+  const len = dir === "vertical" ? MAP_H : MAP_W;
+  let off = 0;
+  for (let i = 0; i < len; i++) {
+    off = Math.max(-10, Math.min(10, off + Math.floor(rng() * 3) - 1));
+    for (let w = -1; w <= 1; w++) {
+      const x = dir === "vertical" ? base + off + w : i;
+      const y = dir === "vertical" ? i : base + off + w;
+      if (!inBounds(x, y)) continue;
+      t[idx(x, y)] = WATER;
+      if (mask) mask[idx(x, y)] = 1;
+    }
+  }
+}
+
+/**
+ * PROG-1 (#475): the Archipelago's four town quadrants — the rectangles
+ * between the channels, inset past the furthest a channel can wander, so a
+ * town seeded in one can never touch the water. Town `i` samples its centre
+ * in quadrant `i % 4`.
+ */
+export function archipelagoRegions(): Array<{ x0: number; y0: number; x1: number; y1: number }> {
+  const m = CHANNEL_WANDER + 2;
+  return [
+    { x0: 4, y0: 4, x1: ARCHIPELAGO_VX - m, y1: ARCHIPELAGO_HY - m },
+    { x0: ARCHIPELAGO_VX + m, y0: 4, x1: MAP_W - 5, y1: ARCHIPELAGO_HY - m },
+    { x0: 4, y0: ARCHIPELAGO_HY + m, x1: ARCHIPELAGO_VX - m, y1: MAP_H - 5 },
+    { x0: ARCHIPELAGO_VX + m, y0: ARCHIPELAGO_HY + m, x1: MAP_W - 5, y1: MAP_H - 5 },
+  ];
+}
+
+function makeTerrain(
+  rng: () => number, archipelago = false,
+): { terrain: Uint8Array; channels: Uint8Array | null } {
   const t = new Uint8Array(MAP_W * MAP_H).fill(GRASS);
   const set = (tx: number, ty: number, v: number) => {
     if (inBounds(tx, ty)) t[idx(tx, ty)] = v;
@@ -360,6 +436,16 @@ function makeTerrain(rng: () => number): Uint8Array {
     for (let i = 0; i < n; i++) if (t[i] !== WATER && !keep.has(i)) t[i] = WATER;
   }
 
+  // PROG-1 (#475): the Archipelago's sea channels go in while the map is
+  // still one island — the rough blobs below avoid the water and the beach
+  // ring lines the new banks like any other coast. Fully skipped when off:
+  // no draws, no tile moves, option-OFF seeds byte-identical.
+  const channels = archipelago ? new Uint8Array(MAP_W * MAP_H) : null;
+  if (archipelago && channels) {
+    carveChannel(t, channels, rng, "vertical", ARCHIPELAGO_VX);
+    carveChannel(t, channels, rng, "horizontal", ARCHIPELAGO_HY);
+  }
+
   // ── rough (rocky) terrain: blobs + mountain spine clumps ──
   const blobs = 14 + Math.floor(rng() * 8);
   for (let i = 0; i < blobs; i++) {
@@ -400,7 +486,7 @@ function makeTerrain(rng: () => number): Uint8Array {
     }
     for (const i of sand) t[i] = SAND;
   }
-  return t;
+  return { terrain: t, channels };
 }
 
 // ── R1 (#260): rivers ──────────────────────────────────────────────────────
@@ -421,8 +507,11 @@ function makeTerrain(rng: () => number): Uint8Array {
 // nothing when the `rivers` option is off, so option-OFF seeds generate
 // byte-identical maps to the pre-river generator.
 
-/** 4-connected component count of the land (non-WATER) tiles. */
-function landComponentCount(terrain: Uint8Array): number {
+/**
+ * 4-connected component count of the land (non-WATER) tiles. Exported for
+ * the Archipelago scenario's invariant (its channels split the island).
+ */
+export function landComponentCount(terrain: Uint8Array): number {
   const seen = new Uint8Array(terrain.length);
   let comps = 0;
   for (let i = 0; i < terrain.length; i++) {
@@ -583,9 +672,29 @@ export function carveRivers(terrain: Uint8Array, rng: () => number): Uint8Array 
   return mask;
 }
 
+/**
+ * PROG-1 (#475): how close to water a River Valley industry spawns — the
+ * footprint's edge within this many tiles (Chebyshev) of sea or river water.
+ */
+export const WATERFRONT_REACH = 6;
+
+/** True when a `w`×`h` footprint at (tx,ty) sits within `reach` of water. */
+export function footprintNearWater(
+  terrain: Uint8Array, tx: number, ty: number, w: number, h: number,
+  reach = WATERFRONT_REACH,
+): boolean {
+  for (let x = tx - reach; x < tx + w + reach; x++) {
+    for (let y = ty - reach; y < ty + h + reach; y++) {
+      if (!inBounds(x, y)) continue;
+      if (terrain[idx(x, y)] === WATER) return true;
+    }
+  }
+  return false;
+}
+
 function placeIndustries(
   terrain: Uint8Array, rng: () => number,
-  preset?: MapPreset, centre?: [number, number] | null,
+  preset?: MapPreset, centre?: [number, number] | null, waterfront = false,
 ): { list: Industry[]; occ: Int16Array } {
   const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
   const list: Industry[] = [];
@@ -624,6 +733,11 @@ function placeIndustries(
     }
     return true;
   };
+
+  // PROG-1 (#475): the waterfront test. Rivers are terrain WATER by now
+  // (carved before this stage), so a riverbank counts exactly like a shore.
+  const nearWater = (tx: number, ty: number, w: number, h: number): boolean =>
+    footprintNearWater(terrain, tx, ty, w, h);
 
   const defs = INDUSTRIES.map((d) => ({ d, n: INDUSTRY_QUOTA[d.key] ?? 0 }));
 
@@ -666,6 +780,10 @@ function placeIndustries(
   // T4: on the 144×144 map the same INDUSTRY_QUOTA has 9× the room, so start
   // from a much wider target sep (was 6) and let the fallback converge; this
   // spreads industries instead of letting them clump as the old sep would.
+  // PROG-1 (#475): the waterfront rule narrows the eligible ground, so it gets
+  // more attempts per industry; the rule itself never relaxes (a River Valley
+  // industry off the water is not a River Valley industry).
+  const tries = waterfront ? 250 : 90;
   for (const sep of [12, 8, 6, 4, 2, 1]) {
     let placedAny = true;
     while (placedAny) {
@@ -675,10 +793,11 @@ function placeIndustries(
         for (let k = have; k < n; k++) {
           const w = d.footprint[0], h = d.footprint[1];
           let done = false;
-          for (let attempt = 0; attempt < 90 && !done; attempt++) {
+          for (let attempt = 0; attempt < tries && !done; attempt++) {
             const tx = Math.floor(rng() * (MAP_W - w + 1));
             const ty = Math.floor(rng() * (MAP_H - h + 1));
-            if (footprintFree(tx, ty, w, h) && separated(tx, ty, w, h, sep)) {
+            if (footprintFree(tx, ty, w, h) && separated(tx, ty, w, h, sep)
+              && (!waterfront || nearWater(tx, ty, w, h))) {
               list.push({
                 id: list.length, type: d.key, tx, ty, w, h,
                 output: d.output, banditUntil: 0,
@@ -826,7 +945,10 @@ export function industriesInRoadBuffer(
 function applyRoadSpawnBuffer(
   terrain: Uint8Array, occ: Int16Array, list: Industry[],
   publicRoads: [number, number][],
+  opts: { waterfront?: boolean; connected?: boolean } = {},
 ): void {
+  const waterfront = opts.waterfront === true;
+  const connected = opts.connected !== false;
   // The buffer is measured from the HIGHWAY tiles only.
   //
   // The rule is that a resource node must not spawn in a verge a Depot can
@@ -860,12 +982,18 @@ function applyRoadSpawnBuffer(
   // inside a town. Flooded once from the first industry tile (which is on it by
   // construction) so a re-sited node is never stranded — the same guarantee
   // `placeTowns`' reachability check exists for.
+  // PROG-1 (#475): on a disconnected map (the Archipelago) every industry
+  // seeds its own island's flood, so a node on another island can still be
+  // re-sited. Connected maps flood from the first tile exactly as before.
   const open = new Uint8Array(MAP_W * MAP_H);
   {
-    const first = list[0];
-    const start = first ? idx(first.tx, first.ty) : -1;
-    if (start >= 0) {
-      const stack = [start];
+    const seeds = connected
+      ? (list[0] ? [idx(list[0].tx, list[0].ty)] : [])
+      : list.map((ind) => idx(ind.tx, ind.ty));
+    const stack: number[] = [];
+    for (const start of seeds) {
+      if (start < 0 || open[start]) continue;
+      stack.push(start);
       open[start] = 1;
       while (stack.length) {
         const cur = stack.pop()!;
@@ -900,6 +1028,7 @@ function applyRoadSpawnBuffer(
    */
   const nearestFit = (
     ox: number, oy: number, w: number, h: number, sep: number, sepField: Uint16Array,
+    wantWater = false,
   ): [number, number] | null => {
     for (let d = 1; d <= REPAIR_REACH; d++) {
       for (let dy = -d; dy <= d; dy++) {
@@ -917,6 +1046,10 @@ function applyRoadSpawnBuffer(
                 && (sep <= 1 || sepField[i] >= sep);
             }
           }
+          // PROG-1 (#475): on a waterfront map the repair keeps the rule —
+          // the re-sited industry stays on the water. Off maps never pass
+          // wantWater, so their search order is untouched.
+          if (ok && wantWater && !footprintNearWater(terrain, tx, ty, w, h)) ok = false;
           if (ok) return [tx, ty];
         }
       }
@@ -941,8 +1074,16 @@ function applyRoadSpawnBuffer(
     let found: [number, number] | null = null;
     // The placer's own relaxation ladder, floored at 2 so two footprints never
     // touch (the ≥1-gap rule the grid tests pin).
-    for (const sep of [12, 8, 6, 4, 2]) {
-      found = nearestFit(ind.tx, ind.ty, ind.w, ind.h, sep, sepField);
+    // PROG-1 (#475): on a waterfront map the ladder runs twice — first for a
+    // site that keeps the industry on the water, then (a hostile seed may
+    // have none within reach) for any legal site. The map stays valid either
+    // way; the quota is never dropped for the rule.
+    const ladders = waterfront ? [true, false] : [false];
+    for (const wantWater of ladders) {
+      for (const sep of [12, 8, 6, 4, 2]) {
+        found = nearestFit(ind.tx, ind.ty, ind.w, ind.h, sep, sepField, wantWater);
+        if (found) break;
+      }
       if (found) break;
     }
     if (!found) {
@@ -2094,14 +2235,34 @@ export function publicRoadTiles(
   return out;
 }
 
+/**
+ * PROG-1 (#475): the scenario half of town placement — how many towns the
+ * map seats, and whether they must all share one landmass. `connected: false`
+ * (the Archipelago) skips the reachability/enclave checks: its towns sit on
+ * different islands by design, and bridges are the gameplay.
+ */
+export interface TownGenOptions {
+  townCount?: number;
+  connected?: boolean;
+  /**
+   * Seat town `i` in `regions[i % regions.length]` (the Archipelago's
+   * quadrants). Absent, centres sample the whole map as always.
+   */
+  regions?: Array<{ x0: number; y0: number; x1: number; y1: number }>;
+}
+
 function placeTowns(
   terrain: Uint8Array, occ: Int16Array, industries: Industry[], rng: () => number,
   shapes = false, rings = false,
   /** FTUE-1 (#464): a preset's town count and neighbourhood (the ordinary map
    *  passes nothing and gets TOWN_COUNT scattered over the island). */
   preset?: { towns?: number; centre?: [number, number] | null; jitter?: number },
+  gen: TownGenOptions = {},
 ): Town[] {
   const towns: Town[] = [];
+  const want = gen.townCount === undefined ? TOWN_COUNT
+    : Math.max(1, Math.min(6, Math.floor(gen.townCount)));
+  const connected = gen.connected !== false;
 
   const tileFree = (tx: number, ty: number) => {
     if (!inBounds(tx, ty)) return false;
@@ -2220,7 +2381,7 @@ function placeTowns(
     return true;
   };
 
-  const wantTowns = preset?.towns ?? TOWN_COUNT;
+  const wantTowns = preset?.towns ?? want;
   // FTUE-1 (#464): a preset's towns sit at the cluster centre (± jitter) —
   // "1 town, 4 industries close by" means the town is the neighbourhood's
   // heart, not a settlement the seed happened to park near the ring.
@@ -2229,13 +2390,21 @@ function placeTowns(
   for (let t = 0; t < wantTowns; t++) {
     let placed = false;
     // try candidate centres at relaxing separation
+    // PROG-1 (#475): on a region map (the Archipelago) town `t` samples its
+    // centre inside its own quadrant, so the towns spread over the islands
+    // instead of clustering on one. Off maps sample the whole map, as ever.
+    const region = gen.regions?.length ? gen.regions[t % gen.regions.length] : null;
     for (const sep of [TOWN_TOWN_SEP, 6, 4, 2]) {
       for (let attempt = 0; attempt < 120 && !placed; attempt++) {
         const cx = townCentre
           ? Math.round(townCentre[0] + (rng() * 2 - 1) * townJitter)
-          : 4 + Math.floor(rng() * (MAP_W - 8));
+          : region
+            ? region.x0 + Math.floor(rng() * (region.x1 - region.x0 + 1))
+            : 4 + Math.floor(rng() * (MAP_W - 8));
         const cy = townCentre
           ? Math.round(townCentre[1] + (rng() * 2 - 1) * townJitter)
+          : region
+            ? region.y0 + Math.floor(rng() * (region.y1 - region.y0 + 1))
           : 4 + Math.floor(rng() * (MAP_H - 8));
         if (!tileFree(cx, cy)) continue;
         if (industrySep(cx, cy) < TOWN_INDUSTRY_SEP) continue;
@@ -2280,8 +2449,12 @@ function placeTowns(
         const blocked = new Set<number>();
         for (const [hx, hy] of houses) blocked.add(idx(hx, hy));
         for (const [rx, ry] of roads) blocked.add(idx(rx, ry));
-        if (!allIndustriesReachable(blocked)) continue;
-        if (!noEnclaves(blocked)) continue;
+        // PROG-1 (#475): skipped on a disconnected map (the Archipelago) —
+        // its industries are MEANT to be water apart.
+        if (connected) {
+          if (!allIndustriesReachable(blocked)) continue;
+          if (!noEnclaves(blocked)) continue;
+        }
 
         // Commit: mark tiles with TOWN_OCC so later towns/industries avoid them.
         // PP-10: the road tiles are stamped too — a later town's houses AND
@@ -2316,6 +2489,7 @@ function makeElevation(
   /** FTUE-1 (#464): flat apron tiles around every industry (0 = none — every
    *  ordinary map keeps today's terrain byte for byte). */
   industryApron = 0,
+  strength: "normal" | "strong" = "normal",
 ): Uint8Array {
   const n = MAP_W * MAP_H;
   const height = new Uint8Array(n);
@@ -2332,7 +2506,12 @@ function makeElevation(
       continue;
     }
     const edge = Math.min(x, y, MAP_W - 1 - x, MAP_H - 1 - y);
-    height[i] = Math.min(4, Math.max(1, Math.floor(edge / 10) + (rng() < 0.28 ? 1 : 0)));
+    // PROG-1 (#475): `strong` (the Highlands) raises the interior sooner and
+    // rolls more jitter into it. The normal line is untouched — historical
+    // seeds keep their heights byte for byte.
+    height[i] = strength === "strong"
+      ? Math.min(4, Math.max(1, Math.floor(edge / 5) + (rng() < 0.5 ? 1 : 0) + (rng() < 0.3 ? 1 : 0)))
+      : Math.min(4, Math.max(1, Math.floor(edge / 10) + (rng() < 0.28 ? 1 : 0)));
   }
 
   const flatten = (tiles: readonly [number, number][]) => {
@@ -2460,7 +2639,10 @@ function makeElevation(
 export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   const s = seed >>> 0;
   const rng = mulberry32(s);
-  const terrain = makeTerrain(rng);
+  // PROG-1 (#475): the scenario knobs thread through here. Every one defaults
+  // to the historical behaviour, so a default generateMap draws the same
+  // stream and stamps the same tiles as before.
+  const { terrain, channels } = makeTerrain(rng, opts.archipelago === true);
   // R1 (#260): rivers go in BEFORE industries/towns so every placement stage
   // routes around them as water. Off by default: no RNG is drawn and no tile
   // changes, so option-OFF seeds stay byte-identical to the old generator.
@@ -2473,21 +2655,35 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   const cluster: [number, number] | null = preset
     ? [Math.round(MAP_W / 2 + (rng() * 2 - 1) * 6), Math.round(MAP_H / 2 + (rng() * 2 - 1) * 6)]
     : null;
-  const { list, occ } = placeIndustries(terrain, rng, preset ?? undefined, cluster);
+  const { list, occ } = placeIndustries(terrain, rng, preset ?? undefined, cluster, opts.waterfrontIndustries === true);
   // TOWN-1: towns are placed AFTER industries (sequencing), using the same
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
   // TOWN_OCC in the occupancy array so roads/other structures route around.
   const towns = placeTowns(terrain, occ, list, rng, opts.shapes === true, opts.rings === true,
-    preset ? { towns: preset.towns, centre: cluster, jitter: 2 } : undefined);
+    preset ? { towns: preset.towns, centre: cluster, jitter: 2 } : undefined, {
+      townCount: opts.townCount,
+      connected: opts.archipelago === true ? false : undefined,
+      regions: opts.archipelago === true ? archipelagoRegions() : undefined,
+    });
   // PP-13: highways between the towns, derived from the towns that were
   // actually placed. No RNG draws, so the seeded stream the rest of the map
   // depends on is untouched — and the highway is a pure function of the seed.
   const publicRoads = publicRoadTiles(towns, terrain, occ);
-  // PP-14: industries keep out of the roads' verges. … (see the note above).
+  // PP-14: industries keep out of the roads' verges. The buffer cannot be a
+  // `placeIndustries` constraint — the roads it measures against are derived
+  // from the towns, which are derived from the industries — so it is repaired
+  // here, once the highways and the town streets are known. Uses the seeded
+  // stream (every earlier stage is done drawing from it), so the map is still a
+  // pure function of `seed`.
   // FTUE-1 (#464): a PRESET owns its layout — the ring IS the design, and the
   // repair's local nudge would quietly break "close by" — so it runs only for
   // the ordinary generator.
-  if (!preset) applyRoadSpawnBuffer(terrain, occ, list, publicRoads);
+  if (!preset) {
+    applyRoadSpawnBuffer(terrain, occ, list, publicRoads, {
+      waterfront: opts.waterfrontIndustries === true,
+      connected: opts.archipelago === true ? false : undefined,
+    });
+  }
   // FTUE-1 (#464): gentle terrain — no rough ground in a preset's industry
   // aprons. Buildable, flat-cost land all around the four industries, so the
   // Starter Island's first Depot sites are kind ground.
@@ -2548,6 +2744,10 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
     for (let y = 1; y < MAP_H - 1; y++) for (let x = 1; x < MAP_W - 1; x++) {
       if (prev[idx(x, y)] !== WATER) continue;
       if (riverNear(x, y)) continue;
+      // PROG-1 (#475): channel water is exempt like river water — a sharp
+      // meander would otherwise be \"repaired\" into a sand plug and the two
+      // islands it separates would rejoin.
+      if (channels && channels[idx(x, y)]) continue;
       const neighbours = [prev[idx(x - 1, y)], prev[idx(x + 1, y)],
         prev[idx(x, y - 1)], prev[idx(x, y + 1)]];
       if (neighbours.filter(v => v !== WATER).length >= 3) terrain[idx(x, y)] = SAND;
@@ -2568,7 +2768,8 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // generated industry and town footprint can be flat without changing the
   // placement RNG stream. Option-off still returns a flat compatibility map.
   const height = opts.elevation
-    ? makeElevation(s, terrain, riverMask, list, towns, preset?.industryApron ?? 0)
+    ? makeElevation(s, terrain, riverMask, list, towns, preset?.industryApron ?? 0,
+      opts.elevationStrength === "strong" ? "strong" : "normal")
     : new Uint8Array(MAP_W * MAP_H);
   // fillCoastalHoles only fills sea-disconnected WATER; rivers reach the sea so
   // they survive — but re-assert the mask as water regardless, so the layer
