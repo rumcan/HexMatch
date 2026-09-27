@@ -37,6 +37,8 @@ export interface MenuShellProps {
   onHome?: () => void;
   onPlay?: () => void;
   onLadder?: () => void;
+  /** FTUE-1 (#464): offered as a row in the Tutorial menu. */
+  onStarterIsland?: () => void;
   children: ReactNode;
 }
 
@@ -52,7 +54,7 @@ const HexMark = () => (
 const canFullscreen = (): boolean =>
   typeof document !== "undefined" && !!document.fullscreenEnabled && !!document.documentElement.requestFullscreen;
 
-export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, children }: MenuShellProps) {
+export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, onStarterIsland, children }: MenuShellProps) {
   const [popup, setPopup] = useState<Popup>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(() => typeof document !== "undefined" && !!document.fullscreenElement);
@@ -74,6 +76,7 @@ export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPl
           live: false,
           onRun: (id) => { queueGuideSection(id); return true; },
           onReset: () => { resetProgress(); },
+          onStarterIsland,
         });
     void handle.promise.then(() => setPopup((p) => (p === popup ? null : p)));
     return () => { handle.destroy(); };

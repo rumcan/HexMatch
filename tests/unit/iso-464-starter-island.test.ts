@@ -168,7 +168,7 @@ describe("FTUE-1 (#464) the trainee rival", () => {
       throw new Error("no open ground on the Starter Island?");
     })();
     const rivalF: Factory = { owner: "ai", ownerId: 2, tx: open[0], ty: open[1], id: 2, townId: null };
-    const eco: EconomyState = { grid, track, harvesters: [player], factories: [rivalF] };
+    const eco: EconomyState = { grid, track, harvesters: [player], factories: [rivalF], dams: [] };
     const purse = { wood: 999, stone: 999, grain: 999, oil: 999, ore: 999, gold: 999 };
     const catchesFarm = (c: { hx: number; hy: number }): boolean =>
       industriesInCatchment(grid, {
