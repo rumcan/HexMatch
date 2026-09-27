@@ -293,8 +293,8 @@ export interface GrowthMomentDeps {
   camera?(tx: number, ty: number): void;
   /** One Feed line. */
   feed?(text: string): void;
-  /** The city-upgrade sound — SFX-1 (#463) ships the recorded sample; until
-   *  then the game voices it with a synth cue. */
+  /** The city-upgrade sound — SFX-1 (#463): the recorded sample, falling back
+   *  to its synth recipe while the file is missing or loading. */
   sound?(tier: number): void;
   /** A world float, for the flourish's placeholder. */
   float?(text: string, tx: number, ty: number): void;
