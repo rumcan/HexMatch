@@ -78,6 +78,39 @@ describe("HUD-1 contextual panels", () => {
     expect(collapsed(ui)).toBe(true);
   });
 
+  it("the ▾ arrow collapses a card the context holds open (Retune ready), and it stays collapsed across repaints", () => {
+    const ui = mount();
+    const ready = state({ tuningIdle: { retune: { depotId: 1, cargo: "wood", yield: 1, risks: false } } });
+    ui.paint(ready);
+    expect(collapsed(ui)).toBe(false);
+    el(ui, ".plant-toggle").click();
+    expect(collapsed(ui)).toBe(true);
+    expect(el(ui, ".plant-toggle").getAttribute("aria-expanded")).toBe("false");
+    ui.paint(ready);
+    ui.paint(ready);
+    expect(collapsed(ui)).toBe(true);
+    expect(el(ui, ".plant-badge").textContent).toBe("Retune ready");
+    el(ui, ".plant-toggle").click();
+    ui.paint(ready);
+    expect(collapsed(ui)).toBe(false);
+  });
+
+  it("never shows an empty placement hint bar", () => {
+    const ui = mount();
+    const bar = el(ui, ".modebar");
+    ui.paint(state({ tool: "harvester", costInfo: null }));
+    expect(bar.classList.contains("hidden")).toBe(true);
+    ui.paint(state({ tool: "harvester", costInfo: '<span class="mb-txt"></span>' }));
+    expect(bar.classList.contains("hidden")).toBe(true);
+    ui.paint(state({ tool: "harvester", costInfo: '<span class="mb-txt">place it</span>' }));
+    expect(bar.classList.contains("hidden")).toBe(false);
+  });
+
+  it("poster theme inks the hint's words so they read on its paper", () => {
+    const css = readFileSync("src/game/theme-poster-hud.css", "utf8");
+    expect(css).toMatch(/\.ui-root \.modebar :is\(\.mb-txt, \.mb-txt i\) \{ color: #172024; \}/);
+  });
+
   it("expands for a selected Depot and folds when its action card closes", () => {
     const ui = mount();
     ui.paint(state());

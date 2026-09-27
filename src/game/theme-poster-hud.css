@@ -152,6 +152,8 @@
 .ui-root .toast.danger { border-left-color: #b8412b; }
 .ui-root .toast.info { border-left-color: #00aeb8; }
 .ui-root .modebar { border: 0; border-left: 4px solid #f28220; border-radius: 0; background: #f1e7d3; color: #172024; }
+/* The hint rides on paper: its words must be ink, not the dark theme's bone. */
+.ui-root .modebar :is(.mb-txt, .mb-txt i) { color: #172024; }
 .ui-root .banner, .ui-root .banner.narrated {
   border: 0; border-left: 4px solid #f28220; border-radius: 0; background: #f1e7d3; color: #172024;
   font: 700 16px var(--px-display); letter-spacing: .04em;

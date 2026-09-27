@@ -11938,6 +11938,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const label = plan.kind === "factory" ? "Factory" : "Depot";
       info = `<b>${label}</b> can't go here — <i>${plan.why ?? "not buildable"}</i>.`;
       infoTone = "bad";
+      // One message, one place: when the hint bar (bottom, with its ✕ cancel)
+      // already carries the refusal's reason + fix, the inspector stands down
+      // instead of repeating it top-right.
+      if (costInfo) { info = ""; infoTone = null; }
     } else {
       const ref = hover?.ref as { kind?: string; id?: number } | null;
       if (ref && ref.kind === "harvester") {
