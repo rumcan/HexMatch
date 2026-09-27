@@ -158,6 +158,8 @@ import {
   victoryBreakdown, revokeCityStars,
   type ScoreState, type VpEvent, type LoopScoring,
 } from "./victory";
+// BAL-1 (#471): the phase beats (the Feed's arc announcements).
+import { phaseBeatFor, type PhaseBeatId } from "./phases";
 // R3 (#270): the hydro dam — its site rule, its footprint, its bonus and its
 // wire shape all live in `dams.ts`; this file is where a dam is BUILT
 // (the tool, the click, the cost), DEMOLISHED (the usual 50% refund),
@@ -2776,6 +2778,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const theirs = vpFor(score, rival.id);
     if (mine > 0 && mine >= Math.ceil(winTarget() / 2) && mine < winTarget()) playAdvisor("halfway");
     if (elapsed > 120_000 && theirs - mine >= 3) playAdvisor("behind");
+  }
+
+  // BAL-1 (#471) — phase beats. The Feed names the arc as the ★ LEADER
+  // crosses each share of the line ("Mid-game: tenders open", "Final stretch:
+  // X★ to win") — once per beat, whichever seat is ahead. Pure rule in
+  // `phases.ts`; this is only the Feed and the seen-set.
+  const seenPhaseBeats = new Set<PhaseBeatId>();
+  function phaseTick() {
+    if (phase !== "play") return;
+    for (;;) {
+      const beat = phaseBeatFor(vpFor(score, me.id), vpFor(score, rival.id), winTarget(), seenPhaseBeats);
+      if (!beat) break;
+      seenPhaseBeats.add(beat.id);
+      ui.feed(beat.text(winTarget()));
+    }
   }
 
   const rivalSpeaks = (direction: RivalryDirection, tactic: RivalryTactic) => {
@@ -13982,6 +13999,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
       if (sim) rivalChitChat(t);
       if (sim) advisorTick(t);
+      if (sim) phaseTick();   // BAL-1 (#471): Feed beats as the leader advances
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
       // rest of the Black Market), so the sweep is a no-op on a guest — it
       // runs unguarded rather than splitting the heartbeat below.
