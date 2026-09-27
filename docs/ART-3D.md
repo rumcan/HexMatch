@@ -78,15 +78,10 @@ Run it with `node tools/meshy/submit.mjs --env ../hm-hud/.env.local
 
 ### Account
 
-The task list on 2026-09-27 showed many text-to-3D, retexture and remesh
-jobs on the same key that the pipeline did not create. Keep an eye on the
-balance, and rotate the key if those jobs are not the owner's.
-
-Vehicles and train cars use `drawOriginMoving` (anchor under the centre)
-and 8 headings. The renderer needs a `--moving` mode for them, with a
-heading list and no footprint fit. The fit scales them to a real length:
-truck 7 m, car 4.8 m, loco 16 m. Model files are named `veh_<name>`
-and `rail_<name>`.
+The Meshy account (and key) is shared with the owner's racing-game project,
+which runs its own text-to-3D, retexture and remesh jobs. Top-ups are
+shared too, so check the balance before a batch. The runner stops cleanly
+when the balance falls below one model, and a re-run resumes.
 
 ## Storage
 
