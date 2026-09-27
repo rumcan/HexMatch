@@ -48,6 +48,7 @@ out vec4 fragColor;
 // Per-map data ----------------------------------------------------------
 uniform sampler2D      uField;  // RGBA8 LINEAR  signed distances (tiles, /16+0.5): R shore, G rough, B river, A sand
 uniform sampler2D      uCodes;  // R8 NEAREST    bits 0-1 terrain code, bit 7 river flag
+uniform sampler2D      uLawn;   // R8 LINEAR     #437 tended ground: 1 on a town block / industry, fading over the apron
 uniform sampler2D      uNoise;  // RGBA8 REPEAT  R,G low fBm  B clump fBm  A fine fBm (seed enters via uSeedOff)
 uniform sampler2D      uGround; // RGBA8 LINEAR  elevation/erosion field on the corner lattice: R slope, G curvature, B flow, A erosion
 // Ground art: one 3-layer array per material — layers 0/1/2 are the A/B/C
@@ -77,6 +78,10 @@ const vec3 SEA_SHALLOW = vec3(0.247, 0.549, 0.580); // #3f8c94
 const vec3 SEA_DEEP    = vec3(0.106, 0.373, 0.447); // #1b5f72
 const vec3 SEA_ABYSS   = vec3(0.070, 0.275, 0.345);
 const vec3 RIVER_TINT  = vec3(0.230, 0.430, 0.400);
+// #437 Tended ground: a mown lawn is the same grass, a shade DARKER and a
+// shade greener than the meadow it is cut out of. Multiplicative, so the
+// grass/meadow grain survives instead of being flooded by a flat colour.
+const vec3 LAWN_TINT   = vec3(0.86, 0.97, 0.80);
 const vec3 SEABED      = vec3(0.560, 0.520, 0.400);
 const vec3 FOAM        = vec3(0.930, 0.950, 0.930);
 
@@ -209,6 +214,11 @@ void main() {
   float riverFlag = step(0.5, texture(uCodes, fuv).r);
   riverness = max(riverness, riverFlag);
 
+  // #437 How tended this ground is: 1 inside a town block or on an industry
+  // footprint, fading to 0 across the apron around it. LINEAR-filtered, so
+  // this is a smooth band and not a staircase of whole tiles.
+  float lawn = texture(uLawn, fuv).r;
+
   // Transition targets (0..1) that the dither thresholds against.
   float band   = mix(1.2, 0.35, riverness);                          // beach width in tiles
   float sandT  = max(smoothstep(band + 0.6, band - 0.6, dShore),     // band along every coast
@@ -271,7 +281,9 @@ void main() {
     float tMeadow = clamp(hollow * 0.85 + damp * 0.60 * (1.0 - steep)
                           + sed * 0.35 + drain * hollow * 0.6 - nudge, 0.0, 1.0);
 
-    float wDirt   = tDirt;
+    // #437 bare earth is SUPPRESSED on tended ground (town blocks, industry
+    // aprons, the Plant): at lawn = 1 the dirt weight is exactly 0.
+    float wDirt   = tDirt * (1.0 - lawn);
     float wMeadow = tMeadow * (1.0 - wDirt);
     float wGrass  = 1.0 - max(wDirt, wMeadow);
 
@@ -294,6 +306,10 @@ void main() {
     float top = max(hG, max(hM, hD)) - 0.22;
     float bG = max(hG - top, 0.0), bM = max(hM - top, 0.0), bD = max(hD - top, 0.0);
     land = (grass * bG + meadow * bM + dirt * bD) / (bG + bM + bD);
+
+    // #437 the tended ground is that same grass/meadow, mown: a slightly
+    // darker, greener lawn tint over the town blocks and the aprons.
+    land = mix(land, land * LAWN_TINT, lawn);
 
     // 3b. Rock: the generator's ROUGH distance field (edge perturbed by clump
     //     noise) merged with the slope target, so the steepest faces turn to

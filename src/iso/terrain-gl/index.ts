@@ -37,7 +37,7 @@ import { makeNoiseAtlas, makeProcedural, variantFromBase, type RawTexture, type 
 export const TERRAIN_GRASS = 0, TERRAIN_WATER = 1, TERRAIN_ROUGH = 2, TERRAIN_SAND = 3;
 
 export type { TerrainMapInput, ErosionField } from "./mesh";
-export { hash2, worldOfCorner, buildTerrainMesh, buildErosionField } from "./mesh";
+export { hash2, worldOfCorner, buildTerrainMesh, buildErosionField, encodeLawn, LAWN_FEATHER } from "./mesh";
 
 export interface TerrainCamera {
   x: number; y: number;
@@ -106,6 +106,8 @@ interface GLState {
   idxBuf: WebGLBuffer;
   fieldTex: WebGLTexture;
   codesTex: WebGLTexture;
+  /** #437: the tended-ground mask (town blocks + aprons), R8 LINEAR. */
+  lawnTex: WebGLTexture;
   noiseTex: WebGLTexture;
   groundTex: WebGLTexture;
   matTex: Record<MaterialSlot, WebGLTexture>;
@@ -116,13 +118,15 @@ interface GLState {
 
 /**
  * Texture unit assignment (fixed; bound once, rebound after uploads).
- * 11 of the 16 guaranteed fragment texture units: the five ground materials
+ * 12 of the 16 guaranteed fragment texture units (11 is #437's lawn mask): the five ground materials
  * are 3-layer ARRAYS (one unit each), which is what keeps the budget flat
  * while every material blends three variants.
  */
 const UNIT_FIELD = 0, UNIT_CODES = 1, UNIT_NOISE = 2, UNIT_GROUND = 3;
 const UNIT_MAT: Record<MaterialSlot, number> = { grass: 4, meadow: 5, dirt: 6, rock: 7, sand: 8 };
 const UNIT_SINGLE: Record<SingleSlot, number> = { detail: 9, waterNormal: 10 };
+/** #437: the tended-ground mask sits above every ground unit. */
+const UNIT_LAWN = 11;
 
 /** Flat placeholder colours shown until a slot's real texture arrives. */
 const PLACEHOLDER: Record<TextureSlot, [number, number, number]> = {
@@ -131,7 +135,7 @@ const PLACEHOLDER: Record<TextureSlot, [number, number, number]> = {
 };
 
 const UNIFORMS = [
-  "uCam", "uZoom", "uView", "uField", "uCodes", "uNoise", "uGround", "uGrassArr", "uMeadowArr",
+  "uCam", "uZoom", "uView", "uField", "uCodes", "uLawn", "uNoise", "uGround", "uGrassArr", "uMeadowArr",
   "uDirtArr", "uRockArr", "uSandArr", "uDetail", "uWaterN", "uMapSize", "uCornerSize", "uSeedOff",
   "uDetailAmt", "uWaterAnim", "uVariantAmt", "uTime", "uGrid", "uTilesPerRepeat", "uLumA",
 ] as const;
@@ -350,6 +354,7 @@ class TerrainRendererImpl implements TerrainRenderer {
 
     const fieldTex = must(gl.createTexture(), "createTexture");
     const codesTex = must(gl.createTexture(), "createTexture");
+    const lawnTex = must(gl.createTexture(), "createTexture");
     const noiseTex = must(gl.createTexture(), "createTexture");
     const groundTex = must(gl.createTexture(), "createTexture");
     const matTex = {} as Record<MaterialSlot, WebGLTexture>;
@@ -357,13 +362,17 @@ class TerrainRendererImpl implements TerrainRenderer {
     const slotTex = {} as Record<SingleSlot, WebGLTexture>;
     for (const slot of SINGLE_SLOTS) slotTex[slot] = must(gl.createTexture(), "createTexture");
 
-    this.st = { program, vao, posBuf, tileBuf, shadeBuf, idxBuf, fieldTex, codesTex, noiseTex, groundTex, matTex, slotTex, u, aniso };
+    this.st = { program, vao, posBuf, tileBuf, shadeBuf, idxBuf, fieldTex, codesTex, lawnTex, noiseTex, groundTex, matTex, slotTex, u, aniso };
 
     // Data textures: field + ground are LINEAR (smooth interpolation between
     // tile / corner centres is the whole point), codes is NEAREST (hard flags).
+    // #437's tended-ground mask is LINEAR too: the apron is a smooth band.
     this.setupDataTexture(fieldTex, true);
     this.setupDataTexture(groundTex, true);
     this.setupDataTexture(codesTex, false);
+    this.setupDataTexture(lawnTex, true);
+    // A map that never calls setMap still samples it: 1x1 of "wild ground".
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]));
 
     // Noise atlas: repeat + mipmaps so it never shimmers when zoomed out.
     gl.bindTexture(gl.TEXTURE_2D, noiseTex);
@@ -389,6 +398,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.useProgram(program);
     gl.uniform1i(u.uField, UNIT_FIELD);
     gl.uniform1i(u.uCodes, UNIT_CODES);
+    gl.uniform1i(u.uLawn, UNIT_LAWN);
     gl.uniform1i(u.uNoise, UNIT_NOISE);
     gl.uniform1i(u.uGround, UNIT_GROUND);
     for (const m of MATERIALS) gl.uniform1i(u[MAT_UNIFORM[m]], UNIT_MAT[m]);
@@ -444,6 +454,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     if (!st) return;
     gl.activeTexture(gl.TEXTURE0 + UNIT_FIELD); gl.bindTexture(gl.TEXTURE_2D, st.fieldTex);
     gl.activeTexture(gl.TEXTURE0 + UNIT_CODES); gl.bindTexture(gl.TEXTURE_2D, st.codesTex);
+    gl.activeTexture(gl.TEXTURE0 + UNIT_LAWN); gl.bindTexture(gl.TEXTURE_2D, st.lawnTex);
     gl.activeTexture(gl.TEXTURE0 + UNIT_NOISE); gl.bindTexture(gl.TEXTURE_2D, st.noiseTex);
     gl.activeTexture(gl.TEXTURE0 + UNIT_GROUND); gl.bindTexture(gl.TEXTURE_2D, st.groundTex);
     for (const m of MATERIALS) {
@@ -681,6 +692,8 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, map.w, map.h, 0, gl.RED, gl.UNSIGNED_BYTE, this.fields.codes);
     gl.bindTexture(gl.TEXTURE_2D, st.groundTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.ground.w, this.ground.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.ground.rgba);
+    gl.bindTexture(gl.TEXTURE_2D, st.lawnTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, map.w, map.h, 0, gl.RED, gl.UNSIGNED_BYTE, this.fields.lawn);
     this.bindAllTextures();
   }
 
@@ -729,6 +742,8 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, rw, rh, gl.RGBA, gl.UNSIGNED_BYTE, fields.rgba);
     gl.bindTexture(gl.TEXTURE_2D, st.codesTex);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, rw, rh, gl.RED, gl.UNSIGNED_BYTE, fields.codes);
+    gl.bindTexture(gl.TEXTURE_2D, st.lawnTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x0, r.y0, rw, rh, gl.RED, gl.UNSIGNED_BYTE, fields.lawn);
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
     gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
     gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
@@ -811,7 +826,7 @@ class TerrainRendererImpl implements TerrainRenderer {
       gl.deleteProgram(st.program);
       gl.deleteVertexArray(st.vao);
       gl.deleteBuffer(st.posBuf); gl.deleteBuffer(st.tileBuf); gl.deleteBuffer(st.shadeBuf); gl.deleteBuffer(st.idxBuf);
-      gl.deleteTexture(st.fieldTex); gl.deleteTexture(st.codesTex); gl.deleteTexture(st.noiseTex); gl.deleteTexture(st.groundTex);
+      gl.deleteTexture(st.fieldTex); gl.deleteTexture(st.codesTex); gl.deleteTexture(st.noiseTex); gl.deleteTexture(st.groundTex); gl.deleteTexture(st.lawnTex);
       for (const m of MATERIALS) gl.deleteTexture(st.matTex[m]);
       for (const slot of SINGLE_SLOTS) gl.deleteTexture(st.slotTex[slot]);
     }
