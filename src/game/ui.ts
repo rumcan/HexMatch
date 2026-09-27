@@ -1768,7 +1768,11 @@ export function createOriginalUi(
   let plantCard: HTMLElement | null = null;
   let plantToggle: HTMLButtonElement | null = null;
   let plantBadge: HTMLElement | null = null;
-  let plantManualOpen = false;
+  // The player's own ▾/▸ choice wins over the contextual default and sticks
+  // across repaints; null = follow the context (open while a Depot is picked
+  // or a Retune is owed). A plain boolean "open" flag could never COLLAPSE a
+  // card the context held open, so the arrow did nothing on "Retune ready".
+  let plantManual: "open" | "closed" | null = null;
   let plantDepotSelected = false;
   let plantRetuneReady = false;
   let plantCityReady = false;
@@ -1777,7 +1781,7 @@ export function createOriginalUi(
   function paintPlantContext(): void {
     if (!plantCard || !plantToggle || !plantBadge) return;
     const needed = plantDepotSelected || plantRetuneReady;
-    const collapsed = !isPhoneViewport() && !plantManualOpen && !needed;
+    const collapsed = !isPhoneViewport() && (plantManual ? plantManual === "closed" : !needed);
     // A ready city upgrade can stay tucked away, but never silently.
     const label = plantRetuneReady ? "Retune ready" : plantCityReady ? "Upgrade ready" : "";
     const inert = collapsed && tuningPlate.parentElement === plantCard;
@@ -1830,7 +1834,10 @@ export function createOriginalUi(
     plantToggle.title = "Plant details";
     plantBadge = h("span", "plant-badge hidden");
     plantToggle.appendChild(plantBadge);
-    plantToggle.onclick = () => { plantManualOpen = !plantManualOpen; paintPlantContext(); };
+    plantToggle.onclick = () => {
+      plantManual = plantCard?.classList.contains("plant-collapsed") ? "open" : "closed";
+      paintPlantContext();
+    };
     head.appendChild(plantToggle);
     card.appendChild(head);
     card.appendChild(tuningPlate);
@@ -5593,7 +5600,9 @@ export function createOriginalUi(
         modebar.appendChild(cancel);
       }
     }
-    modebar.classList.toggle("hidden", !info);
+    // Never a blank paper bar: markup with no readable words hides it too.
+    const words = (modebar.textContent ?? "").replace("✕", "").trim();
+    modebar.classList.toggle("hidden", !info || !words);
     const inspectHtml = state.inspect ?? "";
     if (inspectHtml !== lastInspectHtml) {
       inspectEl.innerHTML = inspectHtml;
