@@ -356,14 +356,14 @@ describe("PROG-1 campaign flow", () => {
         onContinue: () => {},
         onNextContract: onNext,
       });
-      const next = host.querySelector(".ending-next") as HTMLButtonElement | null;
+      const next = host.querySelector(".ending-next-contract") as HTMLButtonElement | null;
       expect(next?.textContent).toMatch(/next contract/i);
       next!.click();
       expect(onNext).toHaveBeenCalledTimes(1);
       handle.destroy();
       // absent without the callback — every sandbox ledger keeps its doors
       const plain = showEndingScreen(host, buildEnding(input), { onRestart: () => {} });
-      expect(host.querySelector(".ending-next")).toBeNull();
+      expect(host.querySelector(".ending-next-contract")).toBeNull();
       plain.destroy();
     } finally {
       host.remove();
