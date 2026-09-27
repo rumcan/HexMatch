@@ -2,7 +2,12 @@
 // ART-3D (#504) step 1 — turn painted masters into 3D models on Meshy.
 //
 //   node tools/meshy/submit.mjs [--env ../hm-hud/.env.local] [--model meshy-6]
-//        [--polycount 30000] [--src assets/buildings-src] <name> [<name> …]
+//        [--polycount 30000] [--src assets/buildings-src] [--min-credits 35]
+//        [--batch A_industries|B_depots|C_town|all] [<name> …]
+//
+// --batch reads names from tools/meshy/batch.json. Before each NEW task the
+// balance is read; below --min-credits the run stops cleanly (a task is
+// never started that the account cannot finish), and a re-run resumes.
 //
 // For each <name> it uploads <src>/<name>@2x.png (upscaled 4× with lanczos
 // first — the masters are small, and image-to-3D reads detail it is given),
@@ -22,13 +27,19 @@ const API = "https://api.meshy.ai/openapi/v1";
 const OUT = "tools/art-src/meshy";
 
 function parseArgs(argv) {
-  const opts = { env: null, model: "meshy-6", polycount: 30000, src: "assets/buildings-src", names: [] };
+  const opts = { env: null, model: "meshy-6", polycount: 30000, src: "assets/buildings-src", minCredits: 35, names: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") opts.env = argv[++i];
     else if (a === "--model") opts.model = argv[++i];
     else if (a === "--polycount") opts.polycount = Number(argv[++i]);
     else if (a === "--src") opts.src = argv[++i];
+    else if (a === "--min-credits") opts.minCredits = Number(argv[++i]);
+    else if (a === "--batch") {
+      const b = JSON.parse(fs.readFileSync("tools/meshy/batch.json", "utf8"));
+      const key = argv[++i];
+      for (const [k, v] of Object.entries(b)) if (!k.startsWith("_") && (key === "all" || k === key)) opts.names.push(...v);
+    }
     else opts.names.push(a);
   }
   return opts;
@@ -93,6 +104,11 @@ async function run() {
 
     let id = fs.existsSync(taskFile) ? JSON.parse(fs.readFileSync(taskFile, "utf8")).id : null;
     if (!id) {
+      const bal = await balance(key);
+      if (bal != null && bal < opts.minCredits) {
+        console.log(`${name}: stopping — balance ${bal} < ${opts.minCredits} credits. Top up and re-run to resume.`);
+        break;
+      }
       const src = path.join(opts.src, `${name}@2x.png`);
       const body = {
         image_url: await dataUri(src),

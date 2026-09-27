@@ -52,8 +52,9 @@ the same GLBs later, unchanged.
   roofs and chimneys all survive. The painted look is not blurred.
 - **Scale is now real.** House 7.0 m, flats 18.3 m (4 storeys), factory
   chimneys 17.3 m.
-- **Cost is about 77 credits per model, not the 30 in the #504 estimate.**
-  The pilot used 230 credits.
+- **Cost:** about 35 credits per model (30 for meshy-6 with textures, plus 5
+  for the remesh). The balance fell further during the pilot because
+  other tasks on the same key were running. See "Account" below.
 - Sheets: `tools/art-src/meshy/pilot.png` (master vs render),
   `tools/art-src/meshy/<name>/turns.png`.
 
@@ -67,9 +68,19 @@ the same GLBs later, unchanged.
 | D. Vehicles | truck (red/blue from one model), sedan, pickup, bus, delivery van | 5 models. The cars come from text-to-3D (image generation is paused); they serve #392. |
 | E. Railway | loco, tender, box, flat and tank cars, platform, train-depot | 7 models |
 
-About 67 models × 77 credits is **about 5,200 credits, or 6,000–6,500 with
-retries.** The account held 51 credits after the pilot, so the batch needs
-a top-up first.
+The buildings are 51 models (`tools/meshy/batch.json`: A industries 8, B
+depots 7, C town 36), about **1,800 credits**. Add the vehicles and rail
+(12) for about 2,400, or about 2,800 with retries.
+
+Run it with `node tools/meshy/submit.mjs --env ../hm-hud/.env.local
+--batch all`. It stops cleanly when the balance falls below one model
+(`--min-credits`, 35), and a re-run resumes where it stopped.
+
+### Account
+
+The task list on 2026-09-27 showed many text-to-3D, retexture and remesh
+jobs on the same key that the pipeline did not create. Keep an eye on the
+balance, and rotate the key if those jobs are not the owner's.
 
 Vehicles and train cars use `drawOriginMoving` (anchor under the centre)
 and 8 headings. The renderer needs a `--moving` mode for them, with a
