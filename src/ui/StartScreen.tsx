@@ -1,6 +1,7 @@
-import { MENU_CAST } from "./MainMenu";
+import { CAST_KEY, MENU_CAST } from "./MainMenu";
+import MenuShell, { type ShellTab } from "./MenuShell";
 import logoUrl from "../assets/poster/logo.webp";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   NO_ROOM_SERVER_MESSAGE,
   createRoom,
@@ -67,7 +68,7 @@ import {
   type AiSkillKey,
   type MatchSettings,
 } from "../net/match-settings";
-import { PORTRAITS, type Portrait } from "../iso/config";
+import { type Portrait } from "../iso/config";
 // CONTINUE-01 (#191): the menus name the saves they can resume, and starting
 // a new game deliberately clears the slot first instead of silently resuming.
 import { showConfirm } from "../iso/confirm-sheet";
@@ -227,7 +228,8 @@ interface StartScreenProps {
   /** STORY-01: the main menu's Back door, when the screen was reached from it. */
   onBack?: () => void;
   /** STORY-01: reopening on the campaign list (the ledger's third door). */
-  initial?: "choose" | "story";
+  /** UI-3: the main menu's Ladder tab opens straight on the full board. */
+  initial?: "choose" | "story" | "ladder";
 }
 
 /** The deliberately low-friction entry point: AI is always available without auth. */
@@ -238,7 +240,11 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   /** PP-14b: the player's tycoon portrait — Vex or You (Torvin is the rival). */
-  const [portrait, setPortrait] = useState<Portrait>("vex");
+  const [portrait, setPortrait] = useState<Portrait>(() => {
+    try { return localStorage.getItem(CAST_KEY) === "james" ? "you" : "vex"; } catch { return "vex"; }
+  });
+  /** UI-3: the roster card's PROFILE / HISTORY / RIVALS tabs. */
+  const [profileTab, setProfileTab] = useState<"profile" | "history" | "rivals">("profile");
   /** STORY-01: the campaign record, re-read each time the menu opens so a
    *  finished contract seals itself without a reload. */
   const [progress, setProgress] = useState<StoryProgress>(() => loadStoryProgress());
@@ -377,6 +383,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       .then((view) => setLadder(view))
       .catch(() => setLadder(null));
   }, []);
+  useEffect(() => { if (initial === "ladder") loadLadder(); }, [initial, loadLadder]);
 
   /**
    * Drop the room and everything derived from it — the SDK socket, the
@@ -987,59 +994,131 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
 
   useEffect(() => () => { /* room ownership moves to App after resolution */ }, []);
 
+  // UI-3: every state stands in the MenuShell frame. The header's Home, Play
+  // and Ladder tabs only work from the neutral screens; a lobby, a search or
+  // a rejoin offer keeps its own Leave / Cancel so no room is left dangling.
+  const free = state === "choose" || state === "story" || state === "ladder" || state === "join" || state === "error";
+  const shell = (tab: ShellTab | null, aria: string, cls: string, content: ReactNode) => (
+    <MenuShell tab={tab} ariaLabel={aria} className={cls}
+      onHome={free ? onBack : undefined}
+      onPlay={free ? () => { setError(""); setState("choose"); } : undefined}
+      onLadder={free ? () => { loadLadder(); setState("ladder"); } : undefined}>
+      {content}
+    </MenuShell>
+  );
+
   if (state === "choose") {
-    // Owner (2026-09-26): the Play screen is the Hextall character card.
-    // PORTRAITS: "vex" is Anne, the other is James.
+    // UI-3 (owner, 2026-09-27): the Play screen is the UIX roster card —
+    // sidebar (logo, scroll guide, portraits), the portrait stage, and the
+    // paper detail with PROFILE / HISTORY / RIVALS over the game modes.
+    // PORTRAITS: "vex" is Anne, "you" is James.
     const castOf = (p: Portrait) => MENU_CAST.find((c) => c.id === (p === "vex" ? "anne" : "james")) ?? MENU_CAST[0];
     const cast = castOf(portrait);
-    return (
-    <main className="start-screen menu play-card" aria-label="Hexmatch start screen">
-      <div className="mc" data-accent={cast.accent}>
-        <aside className="mc-strip">
-          <h1 className="menu-title menu-logo"><img src={logoUrl} alt="Hexmatch Industries" /></h1>
-          <div className="mc-cast portrait-picker" role="radiogroup" aria-label="Choose your manager">
-            <span className="mc-scroll" aria-hidden="true">Your manager</span>
-            {PORTRAITS.map((p) => {
-              const c = castOf(p);
-              return (
-                <button key={p} type="button" role="radio"
-                  className={`mc-thumb portrait-opt${portrait === p ? " on" : ""}`} data-accent={c.accent}
-                  aria-pressed={portrait === p} aria-checked={portrait === p}
-                  data-sfx="select" onClick={() => setPortrait(p)} aria-label={`${c.first} ${c.last}`}>
-                  <img src={c.thumb} alt="" />
-                  <span className="portrait-name">{c.first} {c.last}</span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
-        <div className="mc-hero" aria-hidden="true"><img key={cast.id} src={cast.hero} alt="" /></div>
-      <div className="start-panel start-modes menu-card">
-        <section className="start-modes-info mc-profile" aria-label="Manager and rating">
-          <p className="start-kicker mc-kicker">Back to work, Logistics Manager.</p>
-          <h2 className="mc-name">{cast.first}<br />{cast.last}</h2>
-          <p className="mc-quote">“{cast.quote}”</p>
-          <span className="mc-rule" aria-hidden="true" />
-          <p className="mc-bio">{cast.bio}</p>
-          {rank ? (
-            <div className="rank-block">
-              <RankChip model={chipFor(rank)} />
-              <p className="rank-block-note">
-                {rank.matches === 0
-                  ? "Play Auto Matchmaking to place on the ladder."
-                  : `${rank.wins}W · ${rank.losses}L · ${
-                      tierProgress(rank.rating).next
-                        ? `${tierProgress(rank.rating).toNext} rating to ${tierProgress(rank.rating).next!.label}`
-                        : "top of the ladder"}`}
-              </p>
+    const order: Portrait[] = ["you", "vex"];
+    const pick = (p: Portrait) => {
+      setPortrait(p);
+      setProfileTab("profile");
+      try { localStorage.setItem(CAST_KEY, castOf(p).id); } catch { /* private mode */ }
+    };
+    const flip = () => pick(portrait === "vex" ? "you" : "vex");
+    const idx = order.indexOf(portrait) + 1;
+    return shell("play", "Hexmatch start screen", "play-card", (
+      <div className="start-panel start-modes px-card px-roster" data-accent={cast.accent}>
+        <section className="start-modes-info" aria-label="Manager and rating">
+          <aside className="px-sidebar">
+            <button type="button" className="px-logo-button" onClick={onBack} disabled={!onBack} aria-label="Back to the main menu">
+              <img src={logoUrl} alt="Hexmatch Industries" draggable={false} />
+            </button>
+            <div className="px-roster-nav">
+              <div className="px-scroll-guide">
+                <button type="button" onClick={flip} aria-label="Previous manager" data-sfx="select">▲</button>
+                <span className="px-scroll-line" />
+                <span className="portrait-label px-scroll-word">Your manager</span>
+                <span className="px-scroll-line" />
+                <button type="button" onClick={flip} aria-label="Next manager" data-sfx="select">▼</button>
+              </div>
+              <div className="portrait-picker px-portraits" role="radiogroup" aria-label="Choose your manager">
+                {order.map((p) => {
+                  const c = castOf(p);
+                  return (
+                    <button key={p} type="button" role="radio"
+                      className={`px-portrait portrait-opt${portrait === p ? " on" : ""}`} data-accent={c.accent}
+                      aria-pressed={portrait === p} aria-checked={portrait === p}
+                      data-sfx="select" onClick={() => pick(p)} aria-label={`${c.first} ${c.last}`}>
+                      <img src={c.thumb} alt="" draggable={false} />
+                      <span className="portrait-name">{c.first} {c.last}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          ) : null}
+            <span className="px-count">{String(idx).padStart(2, "0")} / 02</span>
+          </aside>
+          <div className={`px-portrait-stage ${cast.id}`} aria-hidden="true">
+            <div className="px-art" key={cast.id}>
+              <img className="px-ghost" src={cast.hero} alt="" draggable={false} />
+              <img className="px-hero" src={cast.hero} alt="" draggable={false} />
+            </div>
+          </div>
+          <div className="px-profile">
+            <div className="px-detail-head">
+              <div className="px-subtabs" role="tablist" aria-label="Manager details">
+                {(["profile", "history", "rivals"] as const).map((t, i) => (
+                  <Fragment key={t}>
+                    {i > 0 ? <span className="px-divider" aria-hidden="true" /> : null}
+                    <button type="button" role="tab" aria-selected={profileTab === t}
+                      className={profileTab === t ? "active" : ""} data-sfx="tab" onClick={() => setProfileTab(t)}>{t}</button>
+                  </Fragment>
+                ))}
+              </div>
+              {rank ? (
+                <div className="rank-block px-rank">
+                  <RankChip model={chipFor(rank)} />
+                  <p className="rank-block-note">
+                    {rank.matches === 0
+                      ? "Unplaced — Auto Matchmaking places you."
+                      : `${rank.wins}W · ${rank.losses}L · ${
+                          tierProgress(rank.rating).next
+                            ? `${tierProgress(rank.rating).toNext} to ${tierProgress(rank.rating).next!.label}`
+                            : "top of the ladder"}`}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+            <h1 className="px-kicker">Back to work, Logistics Manager.</h1>
+            {profileTab === "profile" ? (
+              <div className="px-profile-body" key={`${cast.id}-profile`}>
+                <h2 className="px-name"><span>{cast.first}</span> <span>{cast.last}</span></h2>
+                <p className="px-quote">“{cast.quote}”</p>
+                <span className="px-rule" aria-hidden="true" />
+                <p className="start-subtitle px-bio">{cast.bio}</p>
+              </div>
+            ) : profileTab === "history" ? (
+              <div className="px-profile-body" key={`${cast.id}-history`}>
+                <h2 className="px-title">A life in motion</h2>
+                <span className="px-rule" aria-hidden="true" />
+                <div className="px-history">
+                  {cast.history.map(([year, title, text]) => (
+                    <div className="px-history-row" key={year}><span>{year}</span><div><strong>{title}</strong><p>{text}</p></div></div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="px-profile-body" key={`${cast.id}-rivals`}>
+                <h2 className="px-title">Know your rivals</h2>
+                <p className="px-quote">“{cast.rivalry}”</p>
+                <span className="px-rule" aria-hidden="true" />
+                <div className="px-rival-line"><span>01 / The Foundry Syndicate</span><strong>Own the roads.</strong></div>
+                <div className="px-rival-line"><span>02 / Your next move</span><strong>Build something bigger.</strong></div>
+              </div>
+            )}
+          </div>
         </section>
-        <nav className="start-actions" aria-label="Game modes">
+        <nav className="start-actions px-modes" aria-label="Game modes">
           <p className="start-actions-label">Solo</p>
-          {/* CONTINUE-01 (#191): a resumable sandbox save gets the gold door,
+          {/* CONTINUE-01 (#191): a resumable sandbox save gets the primary door,
               naming the rival, the score and when it was last saved. It boots
-              exactly as a refresh would; Play vs AI beneath it starts new. */}
+              exactly as a refresh would; Play vs AI beside it starts new. */}
           {sandboxSave ? (
             <button className="start-primary start-continue" data-sfx="open"
               aria-label={`Continue — ${describeSave(sandboxSave)}`}
@@ -1063,15 +1142,12 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </nav>
       </div>
-      </div>
-    </main>
-    );
+    ));
   }
   if (state === "story") {
     const pin = pinnedChapter();
-    return (
-      <main className="start-screen campaign" aria-label="Hexmatch campaign">
-        <div className="start-panel story">
+    return shell("play", "Hexmatch campaign", "campaign", (
+        <div className="start-panel story px-dialog-card">
           <p className="start-kicker">THE FOUNDRY SYNDICATE · BACK TO WORK</p>
           <h1>Five contracts, one career</h1>
           <p className="start-subtitle">1949. You take the job of Logistics Manager at {EMPLOYER} — a struggling firm, a bookkeeper who keeps it honest, and five tycoons waiting for you to fold. Every contract you win earns a promotion.</p>
@@ -1153,15 +1229,13 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             {onBack ? <button data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
           </div>
         </div>
-      </main>
-    );
+    ));
   }
 
   if (state === "ladder") {
     const mine = rank ? chipFor(rank) : null;
-    return (
-      <main className="start-screen" aria-label="Hexmatch ladder">
-        <div className="start-panel ladder-panel">
+    return shell("ladder", "Hexmatch ladder", "ladder", (
+        <div className="start-panel ladder-panel px-dialog-card">
           <p className="start-kicker">THE LADDER</p>
           <h1>Top ratings</h1>
           <p className="start-subtitle">Every rated quick match moves one number. The badge is the band it lands in.</p>
@@ -1193,8 +1267,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             <button onClick={() => { setState("choose"); loadLadder(); }}>Back</button>
           </div>
         </div>
-      </main>
-    );
+    ));
   }
 
   // #164: a match in progress this player was dropped from. Two ways in — the
@@ -1204,8 +1277,8 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   if (state === "rejoin" && rejoinable) {
     const ranked = rejoinable.memo?.ranked ?? false;
     const dismissLabel = rejoinNext === "matchmaking" ? "Cancel" : "Not now";
-    return (
-      <main className="start-screen"><div className="start-panel lobby">
+    return shell(null, "Hexmatch match in progress", "rejoin", (
+      <div className="start-panel lobby px-dialog-card">
         <p className="start-kicker">MATCH IN PROGRESS</p>
         <h1>You have a match in progress</h1>
         <p className="start-subtitle">
@@ -1224,12 +1297,12 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             {busy ? "Working…" : "Rejoin the match"}
           </button>
         </div>
-      </div></main>
-    );
+      </div>
+    ));
   }
 
-  if (state === "join") return (
-    <main className="start-screen"><div className="start-panel lobby">
+  if (state === "join") return shell("play", "Hexmatch join a match", "join", (
+    <div className="start-panel lobby px-dialog-card">
       <p className="start-kicker">JOIN A MATCH</p><h1>Enter room code</h1>
       <p className="start-subtitle">Ask the host for the six-character code.</p>
       <input className="code-input" aria-label="Room code" maxLength={6} autoFocus autoComplete="off" spellCheck={false} value={code}
@@ -1238,16 +1311,16 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
       {error ? <p className="lobby-error">{error}</p> : null}
       <div className="lobby-actions"><button disabled={busy} onClick={backToChoose}>Back</button>
         <button className="start-primary" data-sfx="open" disabled={busy || !isValidRoomCode(code)} onClick={() => void beginRoom("guest")}>{busy ? "Joining…" : "Join game"}</button></div>
-    </div></main>
-  );
+    </div>
+  ));
 
   if (state === "matchmaking") {
     const step = RANK_SEARCH_STEPS[searchRung] ?? RANK_SEARCH_STEPS[RANK_SEARCH_STEPS.length - 1];
     const window = rankSearch === "similar" && step.span > 0
       ? `Similar rank — within ${step.span} rating points${searchRung > 0 ? ", widening" : ""}.`
       : "Any rank — a fair match beats a perfect one.";
-    return (
-      <main className="start-screen"><div className="start-panel lobby matchmaking"><p className="start-kicker">AUTO MATCHMAKING</p><h1>Finding an opponent…</h1>
+    return shell(null, "Hexmatch matchmaking", "matchmaking", (
+      <div className="start-panel lobby matchmaking px-dialog-card"><p className="start-kicker">AUTO MATCHMAKING</p><h1>Finding an opponent…</h1>
         <p className="start-subtitle">{window} Searching for {searchClock} — we keep looking until you cancel.</p>
         <p className="portrait-label">Who to play</p>
         <div className="rank-search" role="radiogroup" aria-label="Who Auto Matchmaking pairs you with">
@@ -1262,12 +1335,12 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               </button>
             ))}
         </div>
-        <button className="matchmaking-cancel" onClick={abandonMatch}>Cancel</button></div></main>
-    );
+        <button className="matchmaking-cancel" onClick={abandonMatch}>Cancel</button></div>
+    ));
   }
-  if (state === "error") return (
-    <main className="start-screen"><div className="start-panel lobby"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => beginAiNew(false)}>Play vs AI</button></div></div></main>
-  );
+  if (state === "error") return shell("play", "Hexmatch match unavailable", "error", (
+    <div className="start-panel lobby px-dialog-card"><p className="start-kicker">MATCH UNAVAILABLE</p><h1>Could not join</h1><p className="lobby-error">{error}</p><div className="lobby-actions"><button onClick={backToChoose}>Back</button><button className="start-primary" onClick={() => beginAiNew(false)}>Play vs AI</button></div></div>
+  ));
 
   const hosting = state === "host";
   const connecting = seed === null;
@@ -1405,7 +1478,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     </section>
   );
 
-  return <main className="start-screen"><div className="start-panel lobby">
+  return shell(null, hosting ? "Hexmatch host a game" : "Hexmatch room", "lobby-screen", <div className="start-panel lobby px-dialog-card px-lobby">
     <p className="start-kicker">{hosting ? "HOST GAME" : "MATCH READY"}{rankedRoom ? " · RANKED" : ""}</p><h1>{hosting ? "Invite a rival" : "Room found"}</h1>
     <div className="room-code"><b>{room?.roomCode ?? "——"}</b><button aria-label="Copy room code" onClick={() => room && void navigator.clipboard?.writeText(room.roomCode)}>Copy</button></div>
     <div className="seat-list">{roster.map((player) => <div className="seat filled" key={player.id}><span className="seat-name">{player.username}</span><RankChip model={chipBySeat(player)} /><span className="seat-status">Connected</span></div>)}<div className="seat"><span>{aiSeats.length > 0 && humanSeats < 2 ? "AI opponent" : "Open seat"}</span><span className="seat-status">{canStart ? "Ready" : "Waiting"}</span></div></div>
@@ -1418,5 +1491,5 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
         : hosting && humanSeats < 2 ? "An AI holds the second seat. Share the code before you start and a human takes it."
         : "Both players are ready."}</p>
     <div className="lobby-actions"><button onClick={backToChoose}>Leave</button><button className="start-primary" data-sfx="open" disabled={connecting || (hosting && !canStart)} onClick={() => startNetworkGame(hosting ? "host" : "guest", rankedRoom)}>{connecting ? "Connecting…" : hosting ? "Start game" : "Play"}</button></div>
-  </div></main>;
+  </div>);
 }

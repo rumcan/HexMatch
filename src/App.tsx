@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import "./game/styles.css";
 import "./game/theme-space-age.css";
 import "./game/theme-industries.css";
+import "./game/theme-poster.css";
 import { startIsoGame } from "./iso/game";
 import StartScreen, { type StartChoice } from "./ui/StartScreen";
 // STORY-01: the front door — Play / Settings / How to Play over a living
@@ -74,6 +75,8 @@ export default function App() {
   /** STORY-01: leaving a contract through the ledger's third door reopens the
    *  mode screen ON the campaign list, seals and all. */
   const [backToCampaign, setBackToCampaign] = useState(false);
+  /** UI-3: the main menu's Ladder tab opens the mode screen on the full board. */
+  const [toLadder, setToLadder] = useState(false);
   /** STORY-01: the reel, and what starts when it settles (null = the menu). */
   const [reel, setReel] = useState<{ next: StartChoice | null } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -218,7 +221,8 @@ export default function App() {
   if (choice) return <div ref={ref} className="game-root" />;
   if (atMenu) return (
     <MainMenu
-      onPlay={() => { setBackToCampaign(false); setAtMenu(false); }}
+      onPlay={() => { setBackToCampaign(false); setToLadder(false); setAtMenu(false); }}
+      onLadder={() => { setBackToCampaign(false); setToLadder(true); setAtMenu(false); }}
       // CONTINUE-01 (#191): the front door's gold button jumps straight into
       // the freshest resumable solo save — sandbox slot or a contract — by
       // handing `begin` the same choice the mode screen would. The boot finds
@@ -232,7 +236,7 @@ export default function App() {
     <StartScreen
       onStart={begin}
       onBack={() => setAtMenu(true)}
-      initial={backToCampaign ? "story" : "choose"}
+      initial={backToCampaign ? "story" : toLadder ? "ladder" : "choose"}
     />
   );
 }

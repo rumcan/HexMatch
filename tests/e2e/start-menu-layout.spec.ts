@@ -59,14 +59,15 @@ test.describe("start menu two-column layout", () => {
       const panel = page.locator(".start-panel.start-modes");
       await expect(panel).toBeVisible();
 
-      // Two balanced columns, info left of actions.
+      // UI-3 (owner, 2026-09-27): the UIX roster card — sidebar, portrait
+      // stage, then the profile over the game modes in the third column.
       const tracks = await panel.evaluate((el) =>
         getComputedStyle(el).gridTemplateColumns.split(" ").length);
-      expect(tracks).toBe(2);
-      const infoBox = await page.locator(".start-modes-info").boundingBox();
+      expect(tracks).toBe(3);
+      const stageBox = await page.locator(".px-portrait-stage").boundingBox();
       const actionsBox = await page.locator(".start-actions").boundingBox();
-      expect(infoBox && actionsBox).toBeTruthy();
-      expect(infoBox!.x + infoBox!.width).toBeLessThanOrEqual(actionsBox!.x + 1);
+      expect(stageBox && actionsBox).toBeTruthy();
+      expect(stageBox!.x + stageBox!.width).toBeLessThanOrEqual(actionsBox!.x + 1);
 
       // No document scrolling and no internally scrolling card.
       const overflow = await page.evaluate(() => {
