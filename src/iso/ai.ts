@@ -3011,3 +3011,143 @@ function industryTiles(ind: Industry): [number, number][] {
     for (let x = ind.tx; x < ind.tx + ind.w; x++) out.push([x, y]);
   return out;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// RIVAL-3 (#467) — the claim telegraph: a readable rival.
+//
+// The rival used to just APPEAR: one turn a Depot stood where a player was
+// looking. Now the planner's decision travels with a flag first. When the
+// rival commits to a target industry (or to a plant lot), a claim is raised —
+// "committed target + ready-at time" — and the flag flies over the site in
+// the rival's colour until the build lands. The lead time is the difficulty's
+// (`RivalSkill.claimLeadMs`): the player's window to pre-empt.
+//
+// These are pure records and predicates — no clocks, no RNG, no drawing.
+// `game.ts` owns the ledger instance and the two-phase turn that reads it
+// (execute READY claims first — each one re-planned against its OWN site —
+// then commit the next targets); `renderer.ts` paints the flags; `rivalry.ts`
+// supplies the barks. Determinism: the claim IS the planner's decision (no
+// extra RNG draws anywhere in this path), so replays and the sim harnesses
+// that drive `aiBuildStep` directly are untouched.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Where a claim's flag stands. A Depot claim targets the INDUSTRY its plan
+ * would claim (the `Candidate.industry` the planner committed to); a plant
+ * ("Factory") claim targets the lot it would stand on, plus the town it
+ * would serve — that town id is what matches a live tender against it.
+ */
+export interface ClaimSite {
+  kind: "industry" | "lot";
+  /** Industry id, or a stable lot id (the caller's choice) for plants. */
+  id: number;
+  /** Flag anchor tile — the industry's centre / the lot's origin. */
+  tx: number;
+  ty: number;
+  /** Industry claims: the cargo the site produces. */
+  cargo?: Cargo;
+  /** Lot claims: the town the plant would serve (null/absent = unknown). */
+  townId?: number | null;
+  /** Feed name — "the Farm", "the Mill town", … Optional; the Feed falls back. */
+  name?: string;
+}
+
+/** A pending rival intention: what it will build, where the flag is, when. */
+export interface RivalClaim {
+  /** Depot = the industry claim; plant = the Processing Plant ("Factory"). */
+  kind: "depot" | "plant";
+  site: ClaimSite;
+  /** When the flag went up (the planner's decision moment). */
+  committedAt: number;
+  /** The build may only land from here on — `committedAt + claimLeadMs`. */
+  readyAt: number;
+}
+
+/**
+ * The player's half of a race: pending intent on a site. Two sources, exactly
+ * as the design reads: a placement tool ARMED near the site ("the player armed
+ * Depot near it"), or a live tender that wants what the site makes ("a tender
+ * is live" — both seats race a public tender, so it is intent for both).
+ */
+export type PlayerIntent =
+  | { kind: "armed"; tx: number; ty: number }
+  | { kind: "tender"; cargo: Cargo; townId?: number | null };
+
+/** Tiles of slack around a site anchor that still read as "armed near it". */
+export const CONTEST_REACH = 4;
+
+/**
+ * A claim is CONTESTED when the player has a pending intent on the same site:
+ * an armed placement tool within `reach` tiles of the flag, or a live tender
+ * on the site's cargo (an industry) / town (a plant lot). Pure — the game
+ * feeds it its live hover/tool/tender state; tests feed it literals.
+ */
+export function claimContested(
+  claim: RivalClaim,
+  intents: readonly PlayerIntent[],
+  reach = CONTEST_REACH,
+): boolean {
+  for (const it of intents) {
+    if (it.kind === "tender") {
+      if (claim.site.kind === "industry"
+        && claim.site.cargo != null && it.cargo === claim.site.cargo) return true;
+      if (claim.site.kind === "lot"
+        && claim.site.townId != null && it.townId != null && it.townId === claim.site.townId) return true;
+    } else if (Math.abs(it.tx - claim.site.tx) + Math.abs(it.ty - claim.site.ty) <= reach) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The ledger of pending claims — one per site, committed leadMs before any
+ * build on it. Pure bookkeeping: `commit` raises a flag, `ready` is what the
+ * turn may build now, `drop` is the build landing or the race being lost.
+ * The game re-plans at execute time; the claim only pins the DECISION (which
+ * site), never the path.
+ */
+export class ClaimLedger {
+  private items: RivalClaim[] = [];
+
+  /** Raise a flag over `site`. Null when a claim is already pending on it. */
+  commit(kind: RivalClaim["kind"], site: ClaimSite, now: number, leadMs: number): RivalClaim | null {
+    if (this.pendingFor(site.kind, site.id)) return null;
+    const claim: RivalClaim = {
+      kind, site,
+      committedAt: now,
+      readyAt: now + Math.max(0, leadMs),
+    };
+    this.items.push(claim);
+    return claim;
+  }
+
+  /** Every pending claim, in commit order (the flags on the map). */
+  list(): readonly RivalClaim[] {
+    return this.items;
+  }
+
+  /** Pending claims of one kind (the depot and plant passes stay separate). */
+  pending(kind: RivalClaim["kind"]): readonly RivalClaim[] {
+    return this.items.filter((c) => c.kind === kind);
+  }
+
+  pendingFor(siteKind: ClaimSite["kind"], siteId: number): RivalClaim | undefined {
+    return this.items.find((c) => c.site.kind === siteKind && c.site.id === siteId);
+  }
+
+  /** Claims whose lead has run — the builds a turn may commit now. */
+  ready(now: number): readonly RivalClaim[] {
+    return this.items.filter((c) => c.readyAt <= now);
+  }
+
+  /** Resolve a claim: the build landed, or the race was lost. */
+  drop(claim: RivalClaim): void {
+    const at = this.items.indexOf(claim);
+    if (at >= 0) this.items.splice(at, 1);
+  }
+
+  clear(): void {
+    this.items = [];
+  }
+}

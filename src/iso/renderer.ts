@@ -619,6 +619,105 @@ const TIER_RANK_OF: Record<string, number> = {
   Dirt: 0, Street: 1, Road: 2, Ramp: 2, Highway: 3, Overpass: 3,
 };
 
+// ── RIVAL-3 (#467): claim flags and contested markers ─────────────────────
+/**
+ * One flag on the map: the rival's claim over a site, drawn in the seat's
+ * colour (`ClaimSite` in ai.ts is the state; this is just the view). When
+ * `contested` is set, the pulsing marker rides on the same anchor.
+ */
+export interface ClaimFlagView {
+  tx: number;
+  ty: number;
+  /** The claiming seat's colour — the pennant's fill. */
+  colour: string;
+  /** Small name under the flag ("the Farm"); null draws just the flag. */
+  label?: string | null;
+  /** Both seats have intent on this site — draw the Contested pulse too. */
+  contested?: boolean;
+}
+
+/**
+ * The overlay pass for the claim telegraph: a pole + pennant per pending
+ * claim (feet on the tile's ground point, like the protest crowd), and the
+ * pulsing "Contested" ring + label wherever both seats are racing the site.
+ * Vector-drawn — no art assets, Space Age palette (charcoal #1f2427,
+ * lemon #f2d64b, bone #eee6d4). Called from the game's `overlayPainter`,
+ * after protests: a flag is a statement, it stands on top.
+ */
+export function paintClaimFlags(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  grid: Grid | null,
+  flags: readonly ClaimFlagView[],
+  nowMs: number,
+): void {
+  const z = cam.zoom;
+  for (const f of flags) {
+    const [bx, by] = tileCentre(cam, grid, f.tx, f.ty);
+    if (bx < -60 || by < -80 || bx > cam.vw + 60 || by > cam.vh + 40) continue;
+    // The pulse runs on wall time so the marker breathes even when the sim
+    // clock is frozen (tuning session open, battle up).
+    const pulse = 0.5 + 0.5 * Math.sin(nowMs / 240);
+    if (f.contested) {
+      // Pulsing ring on the ground + the label chip above the pennant.
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(bx, by, (13 + 5 * pulse) * z, (6 + 2.5 * pulse) * z, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = "#f2d64b";
+      ctx.globalAlpha = 0.45 + 0.45 * pulse;
+      ctx.lineWidth = Math.max(1.5, 2.5 * z);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      const px = Math.max(10, Math.round(11 * z));
+      ctx.font = `bold ${px}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(31,36,39,0.85)";
+      ctx.fillStyle = "#f2d64b";
+      const ly = by - 52 * z;
+      ctx.strokeText("Contested", bx, ly);
+      ctx.fillText("Contested", bx, ly);
+      ctx.restore();
+    }
+    // Pole, planted on the tile's ground point.
+    const poleTop = by - 30 * z;
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(bx, by, 5 * z, 2.5 * z, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(31,36,39,0.35)";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx, poleTop);
+    ctx.strokeStyle = "#1f2427";
+    ctx.lineWidth = Math.max(1.5, 2.5 * z);
+    ctx.stroke();
+    // Pennant flying right — the claiming seat's colour.
+    ctx.beginPath();
+    ctx.moveTo(bx, poleTop);
+    ctx.lineTo(bx + 17 * z, poleTop + 4.5 * z);
+    ctx.lineTo(bx, poleTop + 9 * z);
+    ctx.closePath();
+    ctx.fillStyle = f.colour;
+    ctx.fill();
+    ctx.strokeStyle = "#1f2427";
+    ctx.lineWidth = Math.max(1, 1.5 * z);
+    ctx.stroke();
+    if (f.label) {
+      const px = Math.max(10, Math.round(11 * z));
+      ctx.font = `500 ${px}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(31,36,39,0.75)";
+      ctx.fillStyle = "#eee6d4";
+      const ly = by + 12 * z;
+      ctx.strokeText(f.label, bx, ly);
+      ctx.fillText(f.label, bx, ly);
+    }
+    ctx.restore();
+  }
+}
+
 export class IsoRenderer {
   readonly atlas: Atlas;
   cam: Camera;

@@ -285,6 +285,76 @@ export const RIVAL_BANTER: readonly RivalryScene[] = [
   ),
 ];
 
+/**
+ * RIVAL-3 (#467) — the CLAIM deck: the bark that goes up WITH the claim flag,
+ * before the build lands. Torvin announces what he is staking like a man
+ * reading his own estate sale aloud; the player punctures it, as always.
+ * The sites are named by the caller (an industry, a town lot) — the scenes
+ * keep the site generic so one deck serves every claim.
+ */
+export const CLAIM_SCENES: readonly RivalryScene[] = [
+  conversation(
+    "You see that fine piece of ground? I've put my name on it. In ink.",
+    "Ink? I saw a flag and a nap scheduled around it.",
+    "A flag is a promise, sonny. A nap is a strategy.",
+    "Then I'll take the ground while you take the strategy.",
+  ),
+  exchange(
+    "Consider that site claimed. Officially. There may be paperwork.",
+    "There is never paperwork with you.",
+  ),
+  exchange(
+    "That's my new Depot site. I marked it with a flag, so it's legally mine now.",
+    "That is not how any of this works.",
+  ),
+  conversation(
+    "I'm staking that ground. You can watch the ceremony.",
+    "Is there a ceremony?",
+    "There's a flag and a sense of occasion. That's basically a ceremony.",
+    "That is neither a ceremony nor a claim.",
+  ),
+  exchange(
+    "See that flag? That flag means I was here first. Emotionally.",
+    "Emotionally is not a place.",
+  ),
+  conversation(
+    "That site has my flag on it now. My flag. Made it myself.",
+    "It's leaning.",
+    "It's leaning TOWARD the future.",
+    "It is leaning toward the ground.",
+  ),
+];
+
+/** The next claim announcement for this match (rotates through the pool). */
+export function createClaimDirector(seed = 0): () => RivalryScene {
+  return createPoolDirector(CLAIM_SCENES, seed);
+}
+
+/**
+ * RIVAL-3 (#467) — the COMEBACK lines: the bark when a claim LOSES the race
+ * and the rival's plan has to re-target. A comeback line is exactly what it
+ * sounds like — Torvin, deflated, insisting he meant to do that. Single
+ * lines (the wire stays closed for these; the Feed carries them), picked
+ * deterministically like the decks above.
+ */
+export const RIVAL_COMEBACKS: readonly string[] = [
+  "You took that site? Fine. I didn't want it. I've written it off. Already.",
+  "Hah! A feint. That site was a feint. The real site is elsewhere. You'll see.",
+  "First come, first served — and I am always first at arriving later.",
+  "Keep it. I'll take the next one, and the one after that. I have flags for days.",
+  "That was my backup site. My real site is a secret. Even from me.",
+  "You race like a young man. I lose like an old one — slowly, and elsewhere.",
+];
+
+/** The next comeback line, deterministic per (seed, call count). */
+export function createComebackDirector(seed = 0): () => string {
+  const pool = createPoolDirector(
+    RIVAL_COMEBACKS.map((text) => [{ speaker: "rival", text } as RivalryBeat]),
+    seed,
+  );
+  return () => pool()[0].text;
+}
+
 /** The original rival-only view remains useful to copy audits and callers. */
 const linesFor = (direction: RivalryDirection): Record<RivalryTactic, readonly string[]> => ({
   bandit: RIVALRY_SCENES[direction].bandit.map((scene) => scene[0].text),
