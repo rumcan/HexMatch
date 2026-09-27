@@ -1,0 +1,9 @@
+{
+  "id": "01a0e34a-95e7-749a-860e-0daed095bbce",
+  "name": "quarry",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790519714321,
+  "finished_at": 1790520018561
+}

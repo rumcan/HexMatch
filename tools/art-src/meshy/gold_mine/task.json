@@ -1,0 +1,9 @@
+{
+  "id": "01a0e354-978f-7745-9f08-173e052a54e3",
+  "name": "gold_mine",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790520370340,
+  "finished_at": 1790520608339
+}
