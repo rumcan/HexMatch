@@ -8,7 +8,7 @@
 import { MAP_H, MAP_W } from "../game/config";
 import { settledGroundBytes, type Grid } from "./grid";
 import { cornerHeight, elevationActive } from "./elevation";
-import { createTerrainRenderer, type TerrainCamera, type TerrainMapInput, type TerrainRenderer, type TerrainTextureUrls } from "./terrain-gl";
+import { createTerrainRenderer, type TerrainCamera, type TerrainGrade, type TerrainMapInput, type TerrainRenderer, type TerrainTextureUrls } from "./terrain-gl";
 import { meshRefreshWindow } from "./terrain-gl/mesh";
 
 /** Every PNG in the ground-art folder, keyed by path. A glob (not static
@@ -90,6 +90,8 @@ export interface TerrainGl {
   canvas: HTMLCanvasElement;
   renderer: TerrainRenderer;
   render(cam: TerrainCamera, timeMs: number): void;
+  /** LIGHT-1: the match-time grade. Identity until the game pushes one. */
+  setGrade(grade: TerrainGrade): void;
   resize(w: number, h: number): void;
   invalidateTiles(tiles: ReadonlyArray<readonly [number, number]>): void;
   /**
@@ -118,6 +120,7 @@ export function mountTerrainGl(host: HTMLElement, grid: Grid, seed: number, qual
   return {
     canvas, renderer: r,
     render: (cam, t) => r.render(cam, t),
+    setGrade: (grade) => r.setGrade(grade),
     resize: (w, h) => { canvas.width = w; canvas.height = h; r.resize(w, h); },
     invalidateTiles: (tiles) => { if (tiles.length) r.invalidateTiles(tiles); },
     heightsChanged: (grid, tiles) => {

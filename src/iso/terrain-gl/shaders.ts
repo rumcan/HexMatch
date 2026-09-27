@@ -72,6 +72,14 @@ uniform float uVariantAmt;     // how many variants blend per material: 1..3
 uniform float uTime;           // seconds
 uniform float uTilesPerRepeat; // ground texture repeat length in tiles (~5)
 uniform vec4  uLumA;           // mean luminance of grass, meadow, dirt, rock (variant A)
+// LIGHT-1 (#473): match-time colour grade. rgb is the multiply tint, a is
+// exposure. (0,0,0,0) — the uniform's default — is identity, so a missed
+// upload cannot black the island. uLight is the sun (toward the light); a
+// zero vector keeps the baked LIGHT. uSun is 0 late morning .. 1 dusk and
+// only stretches the slope factor. The azimuth stays upper-left.
+uniform vec4  uGrade;
+uniform vec3  uLight;
+uniform float uSun;
 
 const vec3 LIGHT       = normalize(vec3(-0.42, -0.5, 0.76)); // toward the light (screen upper-left)
 const vec3 SEA_SHALLOW = vec3(0.247, 0.549, 0.580); // #3f8c94
@@ -167,6 +175,12 @@ float dither(float target) {
 }
 
 void main() {
+  // LIGHT-1: resolve the sun once, in uniform flow. A zero uLight is the
+  // baked upper-left sun, so always-day is the shader this file shipped with.
+  vec3 sun = LIGHT;
+  if (dot(uLight, uLight) > 0.25) sun = normalize(uLight);
+  float sunDrop = clamp(uSun, 0.0, 1.0);
+
   // -------------------------------------------------------------------------
   // 1. Smooth per-tile fields. LINEAR filtering between tile centres turns the
   //    hard tile codes into continuous signed distances; every transition
@@ -339,10 +353,20 @@ void main() {
     //     Lit faces warm up, shaded faces cool down, both subtly.
     // Owner: the level changes must READ at a glance - slopes away from the
     // upper-left sun go clearly dark and cool, sunlit ones warm and bright.
-    vec3 tint = vShade >= 1.0
+    // LIGHT-1: a lower sun stretches that same factor. sunDrop 0 is the
+    // baked look, byte for byte. The azimuth stays left, so a face that was
+    // in shade stays in shade — the upper-left rule does not flip.
+    float shade = vShade;
+    if (sunDrop > 0.001) {
+      shade = mix(1.0, vShade, 1.0 + sunDrop * 0.55);
+      shade = clamp(shade, 0.32, 1.75);
+    }
+    vec3 warm = mix(vec3(1.55, 1.42, 1.12), vec3(1.72, 1.22, 0.68), sunDrop);
+    vec3 cool = mix(vec3(0.34, 0.40, 0.56), vec3(0.22, 0.26, 0.46), sunDrop);
+    vec3 tint = shade >= 1.0
       // sunlit faces: a clear warm highlight, not a faint lift
-      ? mix(vec3(1.0), vec3(1.55, 1.42, 1.12), clamp((vShade - 1.0) * 4.0, 0.0, 1.0))
-      : mix(vec3(0.34, 0.40, 0.56), vec3(1.0), pow(clamp(vShade, 0.0, 1.0), 1.8));
+      ? mix(vec3(1.0), warm, clamp((shade - 1.0) * 4.0, 0.0, 1.0))
+      : mix(cool, vec3(1.0), pow(clamp(shade, 0.0, 1.0), 1.8));
     land *= tint;
   }
 
@@ -381,8 +405,8 @@ void main() {
       vec2 nxy = (n1.xy + n2.xy) * 2.0 - 2.0;
       float amp = uWaterAnim * mix(1.0, 0.45, riverFlag);   // rivers are calmer
       vec3 nrm = normalize(vec3(nxy * amp, 2.2));
-      float diff = dot(nrm, LIGHT) - LIGHT.z;               // 0 for a flat surface
-      vec3  H    = normalize(LIGHT + vec3(0.0, 0.0, 1.0));
+      float diff = dot(nrm, sun) - sun.z;                   // 0 for a flat surface
+      vec3  H    = normalize(sun + vec3(0.0, 0.0, 1.0));
       float spec = pow(max(dot(nrm, H), 0.0), 48.0);
       water += diff * mix(0.35, 0.48, deepness);
       water += spec * mix(0.16, 0.24, deepness) * smoothstep(0.0, 1.5, depth + 0.4);
@@ -413,6 +437,17 @@ void main() {
     float gl = 1.0 - clamp(min(gd.x, gd.y), 0.0, 1.0);
     col = mix(col, col * 0.72, gl * uGrid);
   }
+  // LIGHT-1: colour grade on the composite (land, water, foam, grid) so the
+  // sea goes with the hour. A zero uniform is identity. The floor keeps dusk
+  // readable — never under 62% of the ungraded luma, and never under an
+  // absolute whisper of light.
+  vec3 grade = uGrade.rgb * uGrade.a;
+  if (dot(grade, vec3(1.0)) < 0.04) grade = vec3(1.0);
+  float baseL = lum(col);
+  col *= grade;
+  float outL = lum(col);
+  float floorL = max(baseL * 0.62, 0.15);
+  if (outL > 0.0001 && outL < floorL) col *= floorL / outL;
   fragColor = vec4(col, 1.0);
 }
 `;

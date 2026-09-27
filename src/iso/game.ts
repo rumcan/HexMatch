@@ -90,6 +90,12 @@ import {
   currentGraphics, setGraphics, subscribeGraphics, QUALITY_MAX_DETAIL,
   renderPolicy, type Quality, type RenderPolicy,
 } from "./graphics";
+// LIGHT-1 (#473): the match-time grade. Presentation only — not saved, not
+// on the wire. Both seats compute it from the scoreboard they already share.
+import {
+  ENDING_NIGHT_CLASS, currentLightingChoice, effectiveLighting, endingNightActive,
+  leaderProgress, setLightingChoice, smoothMatchProgress, urlLightingProgress,
+} from "./lighting";
 import { createTiltShiftPass } from "./miniature";
 import { createMinimap, minimapSceneOf, type MinimapMarker } from "./minimap";
 import {
@@ -3159,6 +3165,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           },
         } : {}),
       });
+      // LIGHT-1: night blue on the ending card. The card text is not recoloured.
+      // Always-day, performance mode and reduced motion leave the ledger as it was.
+      if (endingView && endingNightActive({ performance: currentGraphics().performance, reducedMotion })) {
+        endingView.element.classList.add(ENDING_NIGHT_CLASS);
+      }
     };
     // STORY-01: the epilogue stands BEFORE the ledger — the rival concedes (or
     // gloats) in person, Mabel closes the book, and only then does the match
@@ -12675,6 +12686,34 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * The overlay and clouds retain their own resting-frame policies.
    */
   let reducedMotion = false;
+  /**
+   * LIGHT-1 (#473): the grade the screen is showing, eased toward the
+   * leader's ★ share so a point landing does not pop the light. `lightingPin`
+   * is the debug snap (`__iso.lighting(0.6)`) the lead uses for the four
+   * stage screenshots; null follows the scoreboard.
+   */
+  let lightingShown = 0;
+  /** `?light=0.6` snaps the arc for a screenshot. Otherwise the scoreboard. */
+  let lightingPin: number | null = urlLightingProgress(
+    typeof location !== "undefined" ? location.search : undefined,
+  );
+  const pushMatchLighting = (dtMs: number) => {
+    const target = winTarget();
+    const goal = lightingPin != null
+      ? lightingPin
+      : leaderProgress(players.map((p) => vpFor(score, p.id)), target);
+    lightingShown = lightingPin != null ? Math.max(0, Math.min(1, lightingPin)) : smoothMatchProgress(lightingShown, goal, dtMs);
+    const L = effectiveLighting({
+      choice: currentLightingChoice(),
+      progress: lightingShown,
+      performance: currentGraphics().performance,
+      reducedMotion,
+    });
+    // The shader multiplies tint × exposure. Hand it the already-floored grade
+    // so the ground matches the 2D multiply on buildings and roads.
+    terrainGl?.setGrade({ tint: L.grade, exposure: 1, light: L.light, sunDrop: L.sunDrop });
+    renderer?.setLighting(L);
+  };
   const readMotion = () => {
     reducedMotion = !!motionQuery?.matches;
     birds.reducedMotion = reducedMotion;
@@ -14111,6 +14150,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer!.routeOverlay = composeRouteOverlay(
         networkView, networkView ? networkPaths() : [], focusRoute(),
       );
+      // LIGHT-1: grade the ground and the structures from the leader's ★ share.
+      // Cheap (a few numbers + two uniforms). Identity while always-day,
+      // performance mode or reduced motion is on, so those frames skip the tint.
+      pushMatchLighting(dt);
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
       mini.paint();
@@ -14290,6 +14333,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     graphics: (q?: Quality, miniature?: boolean, performance?: boolean, clouds?: boolean) =>
       setGraphics({ quality: q, miniature, performance, clouds }),
+    /**
+     * LIGHT-1: `__iso.lighting()` reads the grade the screen is easing toward.
+     * `__iso.lighting(0.6)` snaps to that progress (the four stage shots:
+     * 0 morning, 0.6 golden hour, 0.9 dusk, then the ending card for night).
+     * `__iso.lighting(null)` follows the scoreboard again.
+     * `__iso.lighting("day")` / `__iso.lighting("dynamic")` is the settings switch.
+     */
+    lighting: (arg?: number | null | "day" | "dynamic") => {
+      if (arg === "day" || arg === "dynamic") setLightingChoice(arg);
+      else if (arg === null) lightingPin = null;
+      else if (typeof arg === "number") lightingPin = arg;
+      const L = effectiveLighting({
+        choice: currentLightingChoice(),
+        progress: lightingShown,
+        performance: currentGraphics().performance,
+        reducedMotion,
+      });
+      return {
+        choice: currentLightingChoice(),
+        progress: lightingShown,
+        pin: lightingPin,
+        stage: L.stage,
+        identity: L.identity,
+        windows: L.windows,
+        grade: L.grade,
+      };
+    },
     get vp() { return { you: vpFor(score, "you"), ai: vpFor(score, "ai") }; },
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */

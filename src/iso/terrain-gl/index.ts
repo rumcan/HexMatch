@@ -71,11 +71,27 @@ export interface TerrainOptions {
   tilesPerRepeat?: number;
 }
 
+/**
+ * LIGHT-1 (#473): the match-time grade. `tint` × `exposure` is the multiply;
+ * `light` is toward the sun (a zero vector keeps the baked upper-left sun);
+ * `sunDrop` is 0 late morning .. 1 dusk and only stretches slope contrast.
+ * Identity — tint (1,1,1), exposure 1, light 0, sunDrop 0 — is the look the
+ * shader shipped with, and the default until the game pushes a grade.
+ */
+export interface TerrainGrade {
+  tint: readonly [number, number, number];
+  exposure: number;
+  light: readonly [number, number, number];
+  sunDrop: number;
+}
+
 export interface TerrainRenderer {
   setMap(map: TerrainMapInput): void;
   invalidateTiles(tiles: ReadonlyArray<readonly [number, number]>): void;
   render(cam: TerrainCamera, timeMs: number): void;
   resize(vw: number, vh: number): void;
+  /** LIGHT-1: optional. Never called → identity grade, the pre-#473 look. */
+  setGrade(grade: TerrainGrade): void;
   dispose(): void;
 }
 
@@ -138,6 +154,7 @@ const UNIFORMS = [
   "uCam", "uZoom", "uView", "uField", "uCodes", "uLawn", "uNoise", "uGround", "uGrassArr", "uMeadowArr",
   "uDirtArr", "uRockArr", "uSandArr", "uDetail", "uWaterN", "uMapSize", "uCornerSize", "uSeedOff",
   "uDetailAmt", "uWaterAnim", "uVariantAmt", "uTime", "uGrid", "uTilesPerRepeat", "uLumA",
+  "uGrade", "uLight", "uSun",
 ] as const;
 
 const MAT_UNIFORM: Record<MaterialSlot, string> = {
@@ -236,6 +253,14 @@ class TerrainRendererImpl implements TerrainRenderer {
   gridStrength = (() => { try { const g = new URLSearchParams(location.search).get("grid"); return g === null ? 0.5 : Math.max(0, Math.min(1, Number(g) || 0)); } catch { return 0.5; } })();
   /** How many texture variants blend (1..3). `?variants=1|2|3` pins it. */
   private readonly variantOverride: number | null = readVariantOverride();
+  /**
+   * LIGHT-1: the live grade. Identity until `setGrade` — a zero light vector
+   * tells the shader to keep its baked sun, so an untouched renderer matches
+   * the pre-#473 frame.
+   */
+  private grade: TerrainGrade = {
+    tint: [1, 1, 1], exposure: 1, light: [0, 0, 0], sunDrop: 0,
+  };
   private readonly noiseAtlas: RawTexture;
 
   // texture sources kept for context restore
@@ -781,6 +806,11 @@ class TerrainRendererImpl implements TerrainRenderer {
     if (this.canvas.height !== vh) this.canvas.height = vh;
   }
 
+  /** LIGHT-1: store the grade. Uploaded on the next `render` (and every frame after). */
+  setGrade(grade: TerrainGrade): void {
+    this.grade = grade;
+  }
+
   render(cam: TerrainCamera, timeMs: number): void {
     if (this.disposed || this.lost || !this.st) return;
     if (cam.vw !== this.vw || cam.vh !== this.vh) this.resize(cam.vw, cam.vh);
@@ -811,6 +841,11 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.uniform1f(st.u.uVariantAmt, variantAmt);
     gl.uniform1f(st.u.uTime, (timeMs % 3_600_000) / 1000);
     gl.uniform1f(st.u.uGrid, this.gridStrength);
+    // LIGHT-1: a few ALU ops in the shader, no mesh rebuild. Identity until set.
+    const g = this.grade;
+    gl.uniform4f(st.u.uGrade, g.tint[0], g.tint[1], g.tint[2], g.exposure);
+    gl.uniform3f(st.u.uLight, g.light[0], g.light[1], g.light[2]);
+    gl.uniform1f(st.u.uSun, g.sunDrop);
     gl.bindVertexArray(st.vao);
     gl.drawElements(gl.TRIANGLES, this.indices.length, gl.UNSIGNED_INT, 0);
     gl.bindVertexArray(null);

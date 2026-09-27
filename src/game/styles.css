@@ -4481,6 +4481,23 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   isolation: isolate;
   animation: ending-curtain-in .7s ease both;
 }
+/* LIGHT-1 (#473): night blue on the ending card. The card text is not
+   recoloured — only the curtain and the shade behind it — so the ledger
+   stays readable. Off with always-day, performance mode and reduced motion
+   (the class is simply not added). */
+.ending-screen.lighting-night {
+  background: #071628;
+}
+.ending-screen.lighting-night .ending-shade::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 22, 40, 0.62);
+  pointer-events: none;
+}
+.ending-screen.lighting-night .ending-card {
+  border-color: #6d8cb8;
+}
 .ending-screen.victory { --ending-accent: #ffd98a; }
 .ending-screen.defeat { --ending-accent: #d26a4e; }
 .ending-screen.path-paving .ending-card { --path-mark: "◆"; }

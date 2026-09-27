@@ -70,6 +70,12 @@ import {
   CLOUD_COUNT, CLOUD_SHADOW_ALPHA, cloudAlphaForZoom, cloudShadowAlphaForZoom, createCloudField, makeCloudSprites, paintCloudLayer,
   type CloudField, type CloudSprites,
 } from "./clouds";
+// LIGHT-1 (#473): the match-time grade. Identity until the game pushes one,
+// so a test that never calls setLighting draws exactly the noon frame.
+import {
+  DAY_LIGHTING, gradeCss, isLitBuilding, windowMaskPixels,
+  type Lighting,
+} from "./lighting";
 
 /**
  * Which placement-overlay implementation is live. Same A/B seam the roads
@@ -795,6 +801,18 @@ export class IsoRenderer {
   private cloudOverride: CloudSprites | undefined = undefined;
   private cloudBlits = 0;
   private cloudShadowBlits = 0;
+  /**
+   * LIGHT-1: the grade the last `setLighting` stored. Identity (always-day,
+   * performance, reduced motion, or a renderer nobody has graded) skips the
+   * tint pass and the window glow, so those frames cost nothing extra.
+   */
+  private lighting: Lighting = DAY_LIGHTING;
+  /** Procedural window masks, keyed by sprite + sampled zoom + frame. */
+  private windowMasks = new Map<string, HTMLCanvasElement | null>();
+  /** Lead-authored masks. A sprite here is not generated. */
+  private windowOverrides = new Map<string, CanvasImageSource | null>();
+  private tintScratch: { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: Ctx2D; w: number; h: number } | null = null;
+  private tintScratchFailed = false;
 
   /** The last depth-sorted structure order actually drawn (C5 dumps/picking). */
   get drawOrder(): Placed[] { return this.lastOrder; }
@@ -1102,6 +1120,7 @@ export class IsoRenderer {
     this.atlas.detailCap = cap;
     this.atlas.pruneDetail();
     this.overlayArt.clearCache();
+    this.windowMasks.clear();
     this.invalidateAll();
   }
 
@@ -1141,6 +1160,36 @@ export class IsoRenderer {
     this.cloudOverride = sprites ?? undefined;
   }
 
+  /**
+   * LIGHT-1: the match-time grade. A change that would show (tint or windows)
+   * dirties structures so a paused map still repaints; shadow-only changes
+   * ride the overlay, which already repaints every frame. Identity skips the
+   * extra passes.
+   */
+  setLighting(next: Lighting): void {
+    const prev = this.lighting;
+    this.lighting = next;
+    if (lightingPaintChanged(prev, next)) {
+      this.structuresDirty = true;
+      this.paintedValid = false;
+    }
+  }
+
+  /** The grade the next frame will paint. */
+  get matchLighting(): Lighting { return this.lighting; }
+
+  /**
+   * Install a lead-authored window mask for one sprite (`null` clears it and
+   * the procedural placeholder is used again). Same contract as the cloud
+   * sprites: art arrives later, the hook is already here.
+   */
+  setWindowMask(sprite: string, image: CanvasImageSource | null): void {
+    if (image) this.windowOverrides.set(sprite, image);
+    else this.windowOverrides.delete(sprite);
+    this.windowMasks.delete(sprite);
+    this.structuresDirty = true;
+  }
+
   /** The live sky (tests read the seed back through it). */
   get cloudSky(): CloudField { return this.cloudField; }
 
@@ -1170,6 +1219,15 @@ export class IsoRenderer {
     const fade = cloudShadowAlphaForZoom(this.cam.zoom);
     if (!(fade > 0)) { this.cloudShadowBlits = 0; return; }
     const t = this.cloudMotion ? timeMs : 0;
+    // LIGHT-1: a lower sun casts a longer, slightly stronger shadow, still
+    // lower-right. Identity (always-day) keeps the noon offset and alpha so
+    // the call is the one the cloud tests pin.
+    const cast = this.lighting.identity
+      ? undefined
+      : { dx: this.lighting.shadowDx, dy: this.lighting.shadowDy };
+    const shadowAlpha = this.lighting.identity
+      ? CLOUD_SHADOW_ALPHA
+      : this.lighting.shadowAlpha;
     // Owner: ONE flat transparency - overlapping shadows must not add up.
     // Paint every shadow opaque into a scratch buffer, then lay the buffer
     // on the ground once at the shadow alpha. Falls back to direct blits
@@ -1178,15 +1236,16 @@ export class IsoRenderer {
     if (!buf) {
       this.cloudShadowBlits = paintCloudLayer(
         this.ctxO, this.cam, this.cloudField, this.cloudSprites(), fade, t, this.cloudScratch, true,
+        cast ? fade * shadowAlpha : undefined, cast,
       );
       return;
     }
     buf.ctx.clearRect(0, 0, buf.w, buf.h);
     this.cloudShadowBlits = paintCloudLayer(
-      buf.ctx, this.cam, this.cloudField, this.cloudSprites(), fade, t, this.cloudScratch, true, 1,
+      buf.ctx, this.cam, this.cloudField, this.cloudSprites(), fade, t, this.cloudScratch, true, 1, cast,
     );
     if (this.cloudShadowBlits === 0) return;
-    this.ctxO.globalAlpha = fade * CLOUD_SHADOW_ALPHA;
+    this.ctxO.globalAlpha = fade * shadowAlpha;
     this.ctxO.drawImage(buf.canvas as unknown as CanvasImageSource, 0, 0);
     this.ctxO.globalAlpha = 1;
   }
@@ -1630,6 +1689,11 @@ export class IsoRenderer {
     }
     // 4. The surf: shallow swell + foam along every coast edge, animated.
     this.drawShore(ctx, cam, timeMs);
+    // LIGHT-1: the 2D fallback (no WebGL ground) takes the same multiply the
+    // shader applies. The terrain canvas is opaque, so a fill is enough, and
+    // it is painted onto a freshly drawn frame — it does not accumulate.
+    // The GL path returns above and grades in the shader instead.
+    this.applyOpaqueTint(ctx);
     if (this.logRender) this.trace("terrain-pass", { range: [r.x0, r.y0, r.x1, r.y1], blits, decals, z: cam.zoom });
   }
 
@@ -1735,6 +1799,10 @@ export class IsoRenderer {
       paintRoads();
       shadows = paintShadows();
       for (const p of order) if (this.blit(ctx, p, timeMs)) blits++;
+      // LIGHT-1: one multiply over the freshly drawn frame (roads and
+      // buildings together), then the window glow on top so it stays emissive.
+      this.applyStructureTint(ctx, null);
+      this.paintWindows(ctx, order, timeMs);
       this.paintedValid = true;
     } else {
       // Off-screen traffic leaves a still viewport untouched.
@@ -1755,6 +1823,10 @@ export class IsoRenderer {
           if (!rects.some((d) => rectsOverlap(box, d))) continue;
           if (this.blit(ctx, p, timeMs)) blits++;
         }
+        // Tint only the pixels just drawn. The rest of the canvas was graded
+        // on an earlier full pass; multiplying it again would crush it.
+        this.applyStructureTint(ctx, rects);
+        this.paintWindows(ctx, order, timeMs, rects);
         ctx.restore();
       } else {
         this.roadBlits = 0;
@@ -1779,6 +1851,139 @@ export class IsoRenderer {
     const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
     const x0 = Math.floor(sx), y0 = Math.floor(sy);
     return { x0: x0 - 1, y0: y0 - 1, x1: x0 + Math.ceil(p.w * z) + 1, y1: y0 + Math.ceil(p.h * z) + 1 };
+  }
+
+  /**
+   * LIGHT-1: multiply the opaque 2D ground. No-op for identity (the common
+   * path, and every test that never calls setLighting).
+   */
+  private applyOpaqueTint(ctx: Ctx2D): void {
+    if (this.lighting.identity) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = gradeCss(this.lighting.grade);
+    ctx.fillRect(0, 0, this.cam.vw, this.cam.vh);
+    ctx.restore();
+  }
+
+  /**
+   * Multiply the structures canvas, then restore its alpha so the transparent
+   * ground around a building stays transparent. `rects` is the damage just
+   * drawn (null = the whole canvas). A missing canvas — the node stubs — skips
+   * the pass rather than painting a black plate.
+   */
+  private applyStructureTint(ctx: Ctx2D, rects: ScreenRect[] | null): void {
+    if (this.lighting.identity) return;
+    const canvas = (ctx as Ctx2D & { canvas?: HTMLCanvasElement }).canvas;
+    if (!canvas || !(canvas.width > 0) || !(canvas.height > 0)) return;
+    const scratch = this.tintBuffer(canvas.width, canvas.height);
+    if (!scratch) return;
+    const regions = rects && rects.length
+      ? rects.map((d) => ({ x: d.x0, y: d.y0, w: d.x1 - d.x0, h: d.y1 - d.y0 }))
+      : [{ x: 0, y: 0, w: canvas.width, h: canvas.height }];
+    const css = gradeCss(this.lighting.grade);
+    for (const rc of regions) {
+      if (rc.w <= 0 || rc.h <= 0) continue;
+      scratch.ctx.clearRect(rc.x, rc.y, rc.w, rc.h);
+      try {
+        scratch.ctx.drawImage(canvas, rc.x, rc.y, rc.w, rc.h, rc.x, rc.y, rc.w, rc.h);
+      } catch {
+        return;
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rc.x, rc.y, rc.w, rc.h);
+      ctx.clip();
+      ctx.globalCompositeOperation = "multiply";
+      ctx.fillStyle = css;
+      ctx.fillRect(rc.x, rc.y, rc.w, rc.h);
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.drawImage(scratch.canvas as unknown as CanvasImageSource, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  private tintBuffer(w: number, h: number): { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: Ctx2D; w: number; h: number } | null {
+    if (this.tintScratchFailed) return null;
+    if (this.tintScratch && this.tintScratch.w === w && this.tintScratch.h === h) return this.tintScratch;
+    const canvas = makeSurface(w, h);
+    if (!canvas) { this.tintScratchFailed = true; return null; }
+    const ctx = (canvas as HTMLCanvasElement).getContext("2d") as Ctx2D | null;
+    if (!ctx) { this.tintScratchFailed = true; return null; }
+    this.tintScratch = { canvas, ctx, w, h };
+    return this.tintScratch;
+  }
+
+  /**
+   * Warm windows, after the tint, so they stay emissive. Procedural until the
+   * lead's mask is installed through `setWindowMask`. Skipped while the glow
+   * is off (morning, always-day) — no mask is built, no blit is issued.
+   */
+  private paintWindows(ctx: Ctx2D, order: Placed[], timeMs: number, rects?: ScreenRect[]): void {
+    const glow = this.lighting.windows;
+    if (!(glow > 0.02)) return;
+    const z = this.cam.zoom;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = Math.min(1, glow);
+    for (const p of order) {
+      if (!isLitBuilding(p.sprite, !!p.decor, p.fx != null)) continue;
+      if (rects) {
+        const box = this.screenRect(p);
+        if (!rects.some((d) => rectsOverlap(box, d))) continue;
+      }
+      const [sx, sy] = worldToScreen(this.cam, p.wx, p.wy);
+      const override = this.windowOverrides.get(p.sprite);
+      if (override) {
+        const dw = Math.ceil(p.w * z);
+        const dh = Math.ceil(p.h * z);
+        ctx.drawImage(override, Math.floor(sx), Math.floor(sy), dw, dh);
+        continue;
+      }
+      const az = this.atlas.sampleZoomFor(p.sprite, z);
+      const img = this.atlas.imageForSprite(p.sprite, z);
+      if (!img) continue;
+      const frame = p.frame ?? this.atlas.frameAt(p.def, timeMs);
+      const src = this.atlas.zoomFrameRect(p.def, frame, az);
+      const dst = az === z ? src : this.atlas.zoomFrameRect(p.def, frame, z);
+      const key = `${p.sprite}@${az}:${frame}:${src.x},${src.y},${src.w},${src.h}`;
+      const mask = this.windowMaskFor(img as CanvasImageSource, src, key);
+      if (!mask) continue;
+      ctx.drawImage(mask, Math.floor(sx), Math.floor(sy), dst.w, dst.h);
+    }
+    ctx.restore();
+  }
+
+  /** Bake one procedural mask. Null (and cached) when the pixels cannot be read. */
+  private windowMaskFor(
+    img: CanvasImageSource,
+    src: { x: number; y: number; w: number; h: number },
+    key: string,
+  ): HTMLCanvasElement | null {
+    const hit = this.windowMasks.get(key);
+    if (hit !== undefined) return hit;
+    const fail = (): null => { this.windowMasks.set(key, null); return null; };
+    if (!(src.w > 2 && src.h > 2) || typeof document === "undefined") return fail();
+    try {
+      const c = document.createElement("canvas");
+      c.width = src.w;
+      c.height = src.h;
+      const g = c.getContext("2d");
+      if (!g) return fail();
+      g.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, src.w, src.h);
+      const data = g.getImageData(0, 0, src.w, src.h);
+      const mask = windowMaskPixels(data.data, src.w, src.h);
+      let any = false;
+      for (let i = 3; i < mask.length; i += 16) if (mask[i] > 8) { any = true; break; }
+      if (!any) return fail();
+      const painted = g.createImageData(src.w, src.h);
+      painted.data.set(mask);
+      g.putImageData(painted, 0, 0);
+      this.windowMasks.set(key, c);
+      return c;
+    } catch {
+      return fail();
+    }
   }
 
   /** Overlay: cheap, cleared and redrawn every frame. */
@@ -2011,6 +2216,14 @@ export class IsoRenderer {
       warnings,
     };
   }
+}
+
+/** A grade change the structures canvas would actually show. Shadow-only moves do not. */
+function lightingPaintChanged(a: Lighting, b: Lighting): boolean {
+  if (a.identity !== b.identity) return true;
+  if (Math.abs(a.windows - b.windows) > 0.008) return true;
+  for (let i = 0; i < 3; i++) if (Math.abs(a.grade[i] - b.grade[i]) > 0.004) return true;
+  return false;
 }
 
 /** Same placements in the same order, by identity. */

@@ -325,6 +325,11 @@ export function paintCloudLayer(
   shadow: boolean,
   /** Paint at this alpha instead (the renderer's flat shadow buffer uses 1). */
   alphaOverride?: number,
+  /**
+   * LIGHT-1: a longer lower-right cast as the sun drops. Omitted → the noon
+   * offset, so every existing caller (and the always-day path) is unchanged.
+   */
+  cast?: { dx: number; dy: number },
 ): number {
   if (!sprites || !(fade > 0)) return 0;
   const set = shadow ? sprites.shadows : sprites.clouds;
@@ -341,8 +346,8 @@ export function paintCloudLayer(
     let wx = scratch[i * 2];
     let wy = scratch[i * 2 + 1];
     if (shadow) {
-      wx += CLOUD_SHADOW_DX;
-      wy += CLOUD_SHADOW_DY;
+      wx += cast?.dx ?? CLOUD_SHADOW_DX;
+      wy += cast?.dy ?? CLOUD_SHADOW_DY;
     }
     const w = c.w * z;
     const h = w * aspect;
