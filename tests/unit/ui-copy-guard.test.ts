@@ -279,3 +279,72 @@ describe("#383 How to Play and settings copy", () => {
     sheet.destroy();
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// BUILD-1 (#460) — placement assist copy: every refusal carries a reason AND
+// a fix line, in player-facing words with no developer notes, and the money
+// voice is the game's one build currency ($).
+// ────────────────────────────────────────────────────────────────────────────
+import {
+  DEPOT_ASSIST, PLANT_ASSIST, RAIL_ASSIST, SLOPE_ASSIST, MONEY_ASSIST, moneyFix, levelFix,
+} from "../../src/iso/placement-assist";
+
+describe("#460 placement-assist refusal copy", () => {
+  const tables: { name: string; rows: Readonly<Record<string, { reason: string; fix: string }>> }[] = [
+    { name: "depot", rows: DEPOT_ASSIST },
+    { name: "plant", rows: PLANT_ASSIST },
+    { name: "rail", rows: RAIL_ASSIST },
+  ];
+
+  it("every refusal has BOTH a reason and a fix line", () => {
+    const samples: Sample[] = [];
+    for (const { name, rows } of tables) {
+      expect(Object.keys(rows).length, name).toBeGreaterThan(3);
+      for (const [code, copy] of Object.entries(rows)) {
+        expect(copy.reason.length, `${name} ${code} reason`).toBeGreaterThan(0);
+        expect(copy.fix.length, `${name} ${code} fix`).toBeGreaterThan(0);
+        samples.push({ where: `${name} ${code}`, text: `${copy.reason} — ${copy.fix}` });
+      }
+    }
+    expect(samples.length).toBeGreaterThan(30);
+    assertClean(samples);
+  });
+
+  it("the slope refusal speaks both #456 voices — the level's price, or the flat-ground fallback", () => {
+    // Level Ground (#456) landed, so the seam closed: a levellable footprint
+    // quotes the Level tool's own price (`levelFix` / `slopeAssistFor`), and
+    // one that cannot be levelled still gets the flat-ground fallback. Both
+    // are player-facing, and the money voice is the game's one build currency.
+    expect(SLOPE_ASSIST.reason).toBe("Slope");
+    expect(SLOPE_ASSIST.fix).toBe("find flat ground");
+    expect(levelFix(40)).toBe("level it for $40");
+    expect(levelFix(1234)).toBe("level it for $1,234");
+    expect(levelFix(0)).toBe("level it for $0");
+    const samples: Sample[] = [
+      { where: "slope fallback", text: `${SLOPE_ASSIST.reason} — ${SLOPE_ASSIST.fix}` },
+      { where: "slope priced", text: `Slope — ${levelFix(40)}` },
+      { where: "slope priced (large)", text: `Slope — ${levelFix(12345)}` },
+    ];
+    for (const s of samples) expect(s.text.length).toBeGreaterThan("Slope — ".length);
+    assertClean(samples);
+    for (const money of [10, 40, 1234]) {
+      expect(levelFix(money)).toMatch(/^level it for \$[\d,]+$/);
+    }
+    // Never a cargo icon, never a negative price.
+    expect(levelFix(-50)).toBe("level it for $0");
+  });
+
+  it("the money voice quotes $, never cargo icons", () => {
+    const copy = MONEY_ASSIST(120, 0);
+    expect(copy.reason).toBe("Not enough money");
+    expect(copy.fix).toBe("$120 more");
+    expect(moneyFix(120, 0)).toBe("$120 more");
+    expect(moneyFix(500, 380)).toBe("$120 more");
+    // Never a cargo icon, never a negative shortfall.
+    expect(moneyFix(10, 999)).toBe("$0 more");
+    for (const t of [copy.fix, moneyFix(1234, 0)]) {
+      expect(t).toMatch(/^\$[\d,]+ more$/);
+      assertClean([{ where: "money assist", text: t }]);
+    }
+  });
+});

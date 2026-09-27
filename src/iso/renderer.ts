@@ -1222,7 +1222,7 @@ export class IsoRenderer {
     // Nothing painted yet (no frame since boot) still answers as a vector
     // overlay with an empty scene, rather than as "no overlay at all".
     return this.overlayArt.stats ?? {
-      mode: "vector", footprint: 0, blocked: 0, reach: 0, nodes: 0,
+      mode: "vector", footprint: 0, blocked: 0, legal: 0, reach: 0, nodes: 0,
       loops: 0, ghost: null, ghostDrawn: false,
     };
   }

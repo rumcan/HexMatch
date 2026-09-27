@@ -283,6 +283,13 @@ export interface UiState {
    * glance.
    */
   storageCap?: number;
+  /**
+   * BUILD-1 (#460): the 8-second Undo window on the seat's latest build, when
+   * one is open. `leftMs` counts the window down; `blocked` names why the chip
+   * is grey (null = a click refunds), and `kind` says what the build was.
+   * Omitted or null: no chip.
+   */
+  undo?: { leftMs: number; blocked: string | null; kind: string } | null;
   phase: string;
   tool: UiTool;
   freeTrack: number;
@@ -577,6 +584,12 @@ export interface UiHooks {
    * harnesses that mount the chrome without a camera behind it.
    */
   onZoom?: (dir: 1 | -1) => void;
+  /**
+   * BUILD-1 (#460): the Undo chip's click. The GAME owns the record, the
+   * 8-second window and the refund; the chrome only reports the click (and
+   * paints the countdown it is handed through `UiState.undo`).
+   */
+  onUndo?: () => void;
   onSwap: (r1: number, c1: number, r2: number, c2: number) => void;
   onReset: () => void;
   /**
@@ -1007,6 +1020,18 @@ export function createOriginalUi(
   // this file's markup.
   const radioHost = h("div", "radio-dock");
   radioHost.id = "iso-radio-dock";
+
+  // ── BUILD-1 (#460): the Undo chip — one small button, Space Age flat ─────
+  // It lives 8 seconds after each build and refunds it in full; blocked it
+  // stays up grey with its reason. The click reports to the game; the game
+  // owns the record and the window, and paints the countdown back through
+  // `UiState.undo`. Built ONCE here — paint() only rewrites the label and the
+  // classes, so the click handler never rebinds mid-window.
+  const undoChip = h("button", "undo-chip hidden", "Undo");
+  undoChip.type = "button";
+  undoChip.dataset.sfx = "click";
+  undoChip.onclick = () => hooks.onUndo?.();
+  root.appendChild(undoChip);
 
   // ── top bar ──────────────────────────────────────────────────────────────
   const top = h("header", "topbar");
@@ -4780,6 +4805,24 @@ export function createOriginalUi(
       const txt = `$${Math.round(state.money ?? 0).toLocaleString("en-US")}`;
       if (moneyNum.textContent !== txt) moneyNum.textContent = txt;
       moneyChip.classList.toggle("hidden", state.money === undefined);
+    }
+    {
+      // BUILD-1 (#460): the Undo chip — visible while a build's 8-second
+      // window is open, grey with its reason when something depends on it.
+      const u = state.undo ?? null;
+      if (!u || u.leftMs <= 0) {
+        undoChip.classList.add("hidden");
+      } else {
+        undoChip.classList.remove("hidden");
+        const secs = Math.ceil(u.leftMs / 1000);
+        const label = u.blocked ? `Undo ✕ ${u.blocked}` : `Undo build · ${secs}s · Ctrl+Z`;
+        if (undoChip.textContent !== label) undoChip.textContent = label;
+        undoChip.classList.toggle("blocked", !!u.blocked);
+        undoChip.disabled = !!u.blocked;
+        undoChip.title = u.blocked
+          ? `Can't undo — ${u.blocked}`
+          : "Refund the last build in full (Ctrl+Z)";
+      }
     }
     renderHUD(state.purse, state.players, state.portrait, state.vpTarget ?? VICTORY.target, state.incomeRates, state.storageCap);
 
