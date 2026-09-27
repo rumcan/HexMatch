@@ -24,12 +24,16 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W } from "../game/config";
 import {
-  NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, inMapT, tIdx,
-  roadDiagNeighbours, overpassJump, type Track,
+  NE, SE, SW, NW, PRESENT, inMapT, tIdx, type Track,
 } from "./track";
 import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
+import { ambientRoadGraph } from "./road-routing";
+import {
+  carModelOf, holdTForLight, modelSpriteName, townTrafficWeight,
+  type CarModel, type SignalMap,
+} from "./ambience";
 import {
   JAM_TIMEOUT_MS, YIELD_WAIT_MS, STATIONARY_SPEED,
   buildHash, laneOffsetFor, overpassLiftFor, approachingJunction,
@@ -61,6 +65,12 @@ export interface Car {
   name: string;
   /** 1-based art-slot index: car 1 drives car1_*, etc (cycles past 3). */
   carIndex: number;
+  /**
+   * AMB-3: 1950s–60s model (`sedan`, `pickup`, `bus`, `van`, …). Absent on
+   * a record written before the field existed — draw code derives it from
+   * `carIndex` and the map seed, so it never has to travel on the wire.
+   */
+  model?: CarModel;
 
   /** Trip endpoints derived from towns. Null when waiting with no trip. */
   originTownId: number | null;
@@ -135,29 +145,10 @@ function roadTiles(track: Track): number[] {
   return out;
 }
 
-function buildNeighbours(track: Track, tiles: number[]): Map<number, number[]> {
-  const out = new Map<number, number[]>();
-  const maskAt = (i: number): number => (track.road[i] || track.dirt[i]) & 0b1111;
-  for (const i of tiles) {
-    const x = i % MAP_W, y = (i / MAP_W) | 0;
-    const mask = maskAt(i);
-    const open: number[] = [];
-    for (const d of DIRS) {
-      if (!(mask & d)) continue;
-      const nx = x + DIR[d][0], ny = y + DIR[d][1];
-      if (!inMapT(nx, ny)) continue;
-      const ni = tIdx(nx, ny);
-      if (!(maskAt(ni) & OPPOSITE[d])) continue;
-      open.push(ni);
-    }
-    for (const [nx, ny] of roadDiagNeighbours(track, x, y)) open.push(tIdx(nx, ny));
-    for (const d of DIRS) { const jump = overpassJump(track, x, y, d); if (jump) open.push(tIdx(...jump)); }
-    out.set(i, open);
-  }
-  return out;
-}
-
-// Cache adjacency by track.revision
+// Cache adjacency by track.revision. The graph itself lives in road-routing
+// (`ambientRoadGraph`) so a car and a lorry walk the same edges — mutual
+// bits, diagonal legs, overpass jumps — while the car's walk stays unscoped
+// by owner (AMB-3: private cars are seen on every seat's road).
 let globalAdjCache: { track: Track | null; revision: number; neighbours: Map<number, number[]> } = {
   track: null,
   revision: -1,
@@ -168,8 +159,7 @@ function getNeighbours(track: Track): Map<number, number[]> {
   if (globalAdjCache.track === track && globalAdjCache.revision === track.revision) {
     return globalAdjCache.neighbours;
   }
-  const tiles = roadTiles(track);
-  const neighbours = buildNeighbours(track, tiles);
+  const neighbours = ambientRoadGraph(track);
   globalAdjCache = { track, revision: track.revision, neighbours };
   return neighbours;
 }
@@ -285,17 +275,42 @@ function tripKey(originIdx: number, destIdx: number): string {
   return `${originIdx}->${destIdx}`;
 }
 
+/** One rng() draw, biased toward busier towns. Falls back to uniform. */
+function weightedTown(ids: number[], weights: Map<number, number> | undefined, rng: () => number): number {
+  if (!weights || weights.size === 0) return ids[Math.floor(rng() * ids.length)]!;
+  let sum = 0;
+  for (const id of ids) sum += weights.get(id) ?? 1;
+  if (!(sum > 0)) return ids[Math.floor(rng() * ids.length)]!;
+  let r = rng() * sum;
+  for (const id of ids) {
+    r -= weights.get(id) ?? 1;
+    if (r <= 0) return id;
+  }
+  return ids[ids.length - 1]!;
+}
+
+function townWeights(grid: Grid | null | undefined): Map<number, number> | undefined {
+  if (!grid?.towns?.length) return undefined;
+  const m = new Map<number, number>();
+  for (const t of grid.towns) m.set(t.id, townTrafficWeight(t));
+  return m;
+}
+
 function findTrip(
   rng: () => number,
   townNodes: TownNodes,
   neighbours: Map<number, number[]>,
   lastTripKey: string | null,
+  weights?: Map<number, number>,
 ): FoundTrip | null {
   const townIds = [...townNodes.keys()];
   if (townIds.length === 0) return null;
 
-  // Helper to pick random element
+  // Helper to pick random element. Towns are weighted by size and tier
+  // (AMB-3) so a bigger, upgraded town is where more trips start; the
+  // streets inside a town stay uniform.
   const pick = <T>(arr: T[]): T => arr[Math.floor(rng() * arr.length)]!;
+  const pickTown = (ids: number[]): number => weightedTown(ids, weights, rng);
 
   // Try multiple attempts
   let best: FoundTrip | null = null;
@@ -306,7 +321,7 @@ function findTrip(
       // local: same town, distinct nodes
       const eligibleTowns = townIds.filter((id) => (townNodes.get(id)?.length ?? 0) >= 2);
       if (eligibleTowns.length === 0) continue;
-      const townId = pick(eligibleTowns);
+      const townId = pickTown(eligibleTowns);
       const nodes = townNodes.get(townId)!;
       // pick two distinct
       let a = pick(nodes), b = pick(nodes);
@@ -339,10 +354,10 @@ function findTrip(
     } else {
       // inter-town
       if (townIds.length < 2) continue;
-      const fromId = pick(townIds);
+      const fromId = pickTown(townIds);
       const toCandidates = townIds.filter((id) => id !== fromId);
       if (toCandidates.length === 0) continue;
-      const toId = pick(toCandidates);
+      const toId = pickTown(toCandidates);
       const fromNodes = townNodes.get(fromId)!;
       const toNodes = townNodes.get(toId)!;
       if (fromNodes.length === 0 || toNodes.length === 0) continue;
@@ -450,6 +465,7 @@ export function planCars(
   const rng = mulberry32(seedVal);
   const neighbours = getNeighbours(track);
   const townNodes = townAccessNodes(grid, track, neighbours);
+  const weights = townWeights(grid);
 
   const out: Car[] = [];
   // For route overlap avoidance (optional), keep set of adopted routes
@@ -467,6 +483,7 @@ export function planCars(
           ...p,
           name: `car ${i + 1}`,
           carIndex: i + 1,
+          model: p.model ?? carModelOf(i + 1, seedVal),
           // keep route as is, but ensure fade etc present
           waitMs: p.waitMs ?? 0,
           fadeMs: p.fadeMs ?? 0,
@@ -523,7 +540,7 @@ export function planCars(
 
     // Need new trip for this slot
     const lastKey = p?.lastTripKey ?? null;
-    const trip = findTrip(rng, townNodes, neighbours, lastKey);
+    const trip = findTrip(rng, townNodes, neighbours, lastKey, weights);
 
     if (trip) {
       // Avoid immediate identical repeat already handled in findTrip, but also avoid overlapping routes too much?
@@ -531,6 +548,7 @@ export function planCars(
       const car: Car = {
         name: `car ${i + 1}`,
         carIndex: i + 1,
+        model: carModelOf(i + 1, seedVal),
         originTownId: trip.originTownId,
         destTownId: trip.destTownId,
         origin: idxToXY(trip.originIdx),
@@ -573,6 +591,7 @@ export function planCars(
       const car: Car = {
         name: `car ${i + 1}`,
         carIndex: i + 1,
+        model: carModelOf(i + 1, seedVal),
         originTownId: null,
         destTownId: null,
         origin: null,
@@ -620,12 +639,77 @@ function carTierPace(t: Track | ReadonlySet<number> | undefined, a: readonly num
   return (at(a[0], a[1]) + at(b[0], b[1])) / 2;
 }
 
+/** A truck (or anything else) a car must give way to. Cars stop; the actor does not. */
+export interface YieldActor {
+  id: number | string;
+  route: readonly (readonly [number, number])[];
+  leg: number;
+  t: number;
+  reverse?: boolean;
+}
+
+/**
+ * AMB-3 extras. Every field is optional so existing callers (and every test
+ * written before the lights) keep today's motion: no lights, no truck yield.
+ */
+export interface CarTickOpts {
+  /** Trucks on the road. A car queues behind one and will not enter its tile. */
+  yieldTo?: readonly YieldActor[];
+  /** Town traffic lights. Absent = ignore lights. */
+  signals?: SignalMap | null;
+  /** The ambience clock the lights are read against. */
+  timeMs?: number;
+}
+
+/** World position of a yield actor. Reverse lorries still sit at `a + (b-a)*t`. */
+function actorPos(act: YieldActor): [number, number] {
+  const n = act.route.length;
+  if (n < 2) return act.route[0] ? [act.route[0][0], act.route[0][1]] : [0, 0];
+  const k = Math.min(Math.max(act.leg, 0), n - 2);
+  const a = act.route[k], b = act.route[k + 1];
+  return [a[0] + (b[0] - a[0]) * act.t, a[1] + (b[1] - a[1]) * act.t];
+}
+
+/**
+ * Tiles to the nearest vehicle this car must give way to, measured along its
+ * heading. `0` means "do not move" (overlapping, or a truck already in the
+ * junction ahead). Infinity when the lane is clear of them.
+ */
+export function gapToActors(
+  car: { route: readonly (readonly [number, number])[]; leg: number; t: number },
+  actors: readonly YieldActor[],
+): number {
+  const n = car.route.length;
+  if (n < 2 || actors.length === 0) return Infinity;
+  const k = Math.min(car.leg, n - 2);
+  const a = car.route[k], b = car.route[k + 1];
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const segLen = Math.hypot(dx, dy) || 1;
+  const ux = dx / segLen, uy = dy / segLen;
+  const cx = a[0] + dx * car.t, cy = a[1] + dy * car.t;
+  let best = Infinity;
+  for (const act of actors) {
+    if (act.route.length < 2) continue;
+    const [px, py] = actorPos(act);
+    const rx = px - cx, ry = py - cy;
+    const along = rx * ux + ry * uy;
+    const cross = Math.abs(rx * uy - ry * ux);
+    if (along > 0.02 && cross < 0.55 && along < best) best = along;
+    if (Math.hypot(rx, ry) < 0.38 && along > -0.08) best = Math.min(best, Math.max(0, along));
+    if (Math.hypot(px - b[0], py - b[1]) < 0.55 && (1 - car.t) * segLen < 0.9) {
+      best = Math.min(best, 0.02);
+    }
+  }
+  return best;
+}
+
 export function tickCars(
   state: CarState,
   dtMs: number,
   trackOrBlocked?: Track | ReadonlySet<number> | undefined,
   grid?: Grid | null,
   seed: number = 0x72af,
+  opts?: CarTickOpts,
 ): void {
   if (dtMs <= 0) return;
 
@@ -642,9 +726,11 @@ export function tickCars(
   let townNodes: TownNodes | null = null;
   let rng: (() => number) | null = null;
 
+  let weights: Map<number, number> | undefined;
   if (needsTripSearch) {
     neighbours = getNeighbours(track!);
     townNodes = townAccessNodes(grid!, track!, neighbours);
+    weights = townWeights(grid);
     rng = mulberry32(seed);
   }
 
@@ -726,7 +812,7 @@ export function tickCars(
             car._yieldMs = 0;
           } else if (track && grid && neighbours && townNodes && rng) {
             // Need to find a new trip now
-            const trip = findTrip(rng, townNodes, neighbours, car.lastTripKey);
+            const trip = findTrip(rng, townNodes, neighbours, car.lastTripKey, weights);
             if (trip) {
               car.originTownId = trip.originTownId;
               car.destTownId = trip.destTownId;
@@ -845,18 +931,40 @@ export function tickCars(
           // Tier pace: Dirt < Street < Road < Highway, relative to Road's pace.
           const pace = carTierPace(trackOrBlocked, a, b);
           const baseSpeed = CAR_SPEED * pace / segLen;
-          const aheadDist = distAhead(car);
+          const truckGap = opts?.yieldTo?.length ? gapToActors(car, opts.yieldTo) : Infinity;
+          const aheadDist = Math.min(distAhead(car), truckGap);
           const effSpeed = followSpeed(baseSpeed, aheadDist);
-          const need = (1 - car.t) / (effSpeed || 1e-9);
-          if (effSpeed <= 1e-9) {
-            // Blocked by car ahead — hold position
+          // AMB-3: a red or amber light ahead caps this step at the stop line.
+          // A green (or no signal) leaves the step exactly as it was.
+          const holdT = opts?.signals
+            ? holdTForLight(car.route, car.leg, car.t, opts.signals, opts.timeMs ?? 0)
+            : null;
+          if (holdT !== null && car.t >= holdT - 1e-4) {
+            car.t = holdT;
             car._lastSpeed = 0;
             break;
           }
-          if (remaining < need) {
+          const need = (1 - car.t) / (effSpeed || 1e-9);
+          if (effSpeed <= 1e-9) {
+            // Blocked by a car or a truck ahead — hold position. A light hold
+            // is not a jam (the cycle clears it); a truck that never moves is.
+            car._lastSpeed = 0;
+            break;
+          }
+          const room = holdT !== null ? Math.max(0, holdT - car.t) : 1;
+          const roomNeed = holdT !== null ? room / effSpeed : Infinity;
+          const stepNeed = Math.min(need, roomNeed);
+          if (remaining < stepNeed) {
             car.t += remaining * effSpeed;
             moved += remaining * effSpeed * segLen;
             remaining = 0;
+            break;
+          }
+          if (holdT !== null && roomNeed <= need) {
+            car.t = holdT;
+            moved += room * segLen;
+            remaining = 0;
+            car._lastSpeed = 0;
             break;
           }
           moved += (1 - car.t) * segLen;
@@ -966,7 +1074,19 @@ function dirBit(from: [number, number], to: [number, number]): number {
   return SE;
 }
 
-export function carItems(state: CarState, track?: Track | null): DrawItem[] {
+export function carItems(
+  state: CarState,
+  track?: Track | null,
+  atlas?: { has(name: string): boolean } | null,
+  seed = 0,
+): DrawItem[] {
+  const spriteFor = (car: Car, dir: number): string => {
+    const view = VIEW_OF[dir] ?? "se";
+    // `model` is not on the wire. A guest derives the same livery from the
+    // shared map seed, so the two clients agree without a new field.
+    const modelName = modelSpriteName(car.model ?? carModelOf(car.carIndex, seed), view);
+    return atlas?.has(modelName) ? modelName : carSprite(car.carIndex, dir);
+  };
   const out: DrawItem[] = [];
   for (const car of state.cars) {
     if (car.state === "waiting") continue;
@@ -988,7 +1108,7 @@ export function carItems(state: CarState, track?: Track | null): DrawItem[] {
         let fx = b[0];
         let fy = b[1];
         const dir = dirBit(a, b);
-        const sprite = carSprite(car.carIndex, dir);
+        const sprite = spriteFor(car, dir);
         // Lane offset on the arriving leg too so the arrival position is
         // consistent with the driving position.
         const tmpPos: VehiclePosLike = { route: car.route, leg: n - 2, t: 1 };
@@ -1023,7 +1143,7 @@ export function carItems(state: CarState, track?: Track | null): DrawItem[] {
     let fx = a[0] + (b[0] - a[0]) * car.t;
     let fy = a[1] + (b[1] - a[1]) * car.t;
     const dir = dirBit(a, b);
-    const sprite = carSprite(car.carIndex, dir);
+    const sprite = spriteFor(car, dir);
     // TRAFFIC-1: lane offset + overpass depth lift
     const tmpPos: VehiclePosLike = { route: car.route, leg: k, t: car.t };
     let lift = 0;
