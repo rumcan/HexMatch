@@ -4179,7 +4179,7 @@ export function createOriginalUi(
         const barWrap = h("div", "contract-bar-wrap");
         barWrap.style.cssText = "flex:1; height:8px; background:rgba(255,255,255,0.15); border-radius:4px; overflow:hidden; margin-right:8px; min-width:80px;";
         const bar = h("div", "contract-bar") as HTMLElement;
-        bar.style.cssText = `height:100%; width:${pct}%; background:linear-gradient(90deg, #4fc3f7, #29b6f6); transition:width 0.3s;`;
+        bar.style.cssText = `height:100%; width:${pct}%; background:#ed7414; transition:width 0.3s;`;
         barWrap.appendChild(bar);
         meta.appendChild(barWrap);
       }
