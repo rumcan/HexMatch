@@ -39,6 +39,9 @@ import { registerVoicePainter, voice } from "../game/voice";
 // MUSIC-1 (#377): the radio's own switch, its own volume, and the switch that
 // hides the player. Same storage shape as the voice pair right above it.
 import { radio } from "../audio/radio";
+// SFX-1 (#463): the island's own room tone — sea, town, birds, wind, distant
+// traffic, following the camera. Its own slider; the Sound switch still mutes it.
+import { ambience } from "../audio/ambience";
 // LIGHT-1 (#473): dynamic light follows the match; always-day pins noon.
 // Performance mode and reduced motion suppress it the way they suppress clouds.
 import {
@@ -127,6 +130,12 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
         <div class="gfx-copy"><h3>Show radio player</h3><p>Hide the player in the top-right corner. The music keeps playing.</p></div>
         <button type="button" class="gfx-switch" role="switch" aria-label="Show radio player" data-gfx="radio-show" data-sfx="click">ON</button>
       </div>
+      <div class="gfx-row">
+        <div class="gfx-copy"><h3>Ambience</h3><p class="gfx-ambience-note">Sea, town, birds, wind and distant traffic, following the camera and the zoom.</p></div>
+        <div class="gfx-voice-controls">
+          <input type="range" class="gfx-voice-vol" min="0" max="1" step="0.05" value="0.5" data-gfx="ambience-volume" aria-label="Ambience volume" />
+        </div>
+      </div>
       <div class="confirm-row">
         <button type="button" class="big-btn" data-gfx-close data-sfx="close">Done</button>
       </div>
@@ -151,6 +160,8 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const radioVol = root.querySelector("[data-gfx=\"radio-volume\"]") as HTMLInputElement;
   const radioShow = root.querySelector("[data-gfx=\"radio-show\"]") as HTMLButtonElement;
   const radioNote = root.querySelector(".gfx-radio-note") as HTMLElement;
+  const ambienceVol = root.querySelector("[data-gfx=\"ambience-volume\"]") as HTMLInputElement;
+  const ambienceNote = root.querySelector(".gfx-ambience-note") as HTMLElement;
   const stationSel = root.querySelector("[data-gfx=\"radio-station\"]") as HTMLSelectElement;
   const stationCredit = root.querySelector(".gfx-radio-credit") as HTMLElement;
   const stationTerms = root.querySelector(".gfx-radio-terms") as HTMLAnchorElement;
@@ -189,6 +200,9 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   radioBtn.onclick = () => { radio.setEnabled(!radio.settings.enabled); };
   radioVol.oninput = () => { radio.setVolume(Number(radioVol.value)); };
   radioShow.onclick = () => { radio.setShow(!radio.settings.show); };
+  // SFX-1 (#463): the island's own volume. No switch of its own — the Sound
+  // row above mutes everything, and 0 on this slider is silence.
+  ambienceVol.oninput = () => { ambience.setVolume(Number(ambienceVol.value)); };
   // RADIO-2: the dial. One row, the same store the chip's ‹ › writes.
   stationRow.hidden = radio.stations.length < 2;
   for (const st of radio.stations) {
@@ -261,6 +275,9 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     voiceNote.textContent = enabled
       ? "Narrator, rival and your own lines. A missing recording still shows the subtitle."
       : "Held silent while Sound is off. Subtitles still show.";
+    ambienceNote.textContent = enabled
+      ? "Sea, town, birds, wind and distant traffic, following the camera and the zoom."
+      : "Held silent while Sound is off.";
   });
   const unsubVoice = registerVoicePainter((s) => {
     voiceBtn.textContent = s.enabled ? "ON" : "OFF";
@@ -292,6 +309,13 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     stationSel.title = radio.station ? `${radio.station}. ${radio.genre}` : "Radio station";
     radioNote.textContent = s.enabled ? credit : RADIO_OFF_NOTE;
   });
+  // SFX-1 (#463): the island's own slider, painted from its own store — the
+  // same store the game probes and `__iso.ambience()` reads.
+  const unsubAmbience = ambience.register((s) => {
+    // Don't fight a thumb that is still on the slider.
+    if (document.activeElement !== ambienceVol) ambienceVol.value = String(s.volume);
+    ambienceVol.setAttribute("aria-valuenow", String(Math.round(s.volume * 100) / 100));
+  });
   paint(currentGraphics());
 
   const close = () => {
@@ -301,6 +325,7 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     unsubSound();
     unsubVoice();
     unsubRadio();
+    unsubAmbience();
     unsubLight();
     motionQuery?.removeEventListener?.("change", onMotion);
     document.removeEventListener("keydown", onKey, true);
