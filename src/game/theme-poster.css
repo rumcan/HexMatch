@@ -772,3 +772,25 @@
 .px-portrait-stage.james .px-hero { width: auto; max-width: none; height: 98%; }
 .start-screen.px .px-portrait img { object-fit: cover; object-position: center center; }
 .px-portrait-stage.anne .px-hero { right: 3%; width: 94%; }
+
+/* owner (2026-09-27): the title actions stay inside the stage at every width —
+   they share the row and shrink (tags ellipsise first, then hide), and on
+   phones they stack full width. */
+.px-title-actions { flex-wrap: wrap; justify-content: flex-end; }
+.px-title-actions .menu-btn { flex: 1 1 0; min-width: 0; max-width: 460px; justify-content: flex-start; }
+.px-title-actions .menu-btn .mb-tag { flex: 1 1 auto; min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; }
+.px-title-actions .menu-btn .px-arrow { margin-left: auto; flex: none; }
+@media (max-width: 640px) {
+  .px-title-actions { flex-direction: column; align-items: stretch; }
+  .px-title-actions .menu-btn { flex: none; width: 100%; max-width: none; min-height: 48px; }
+}
+
+/* owner (2026-09-27): the hero fills the whole blue stage like a CSS `cover`
+   background — as big as the panel allows, anchored on the floor, cropping
+   the sides rather than shrinking. */
+.px-portrait-stage .px-hero,
+.px-portrait-stage.anne .px-hero,
+.px-portrait-stage.james .px-hero {
+  inset: 0; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; max-width: none;
+  object-fit: cover; object-position: 60% bottom;
+}
