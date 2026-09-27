@@ -1,0 +1,9 @@
+{
+  "id": "01a0e35f-02df-740d-b89e-168e44d2f07f",
+  "name": "depot_1x2",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790521051273,
+  "finished_at": 1790521215153
+}
