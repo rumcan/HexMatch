@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+// ART-3D (#504) step 1 — turn painted masters into 3D models on Meshy.
+//
+//   node tools/meshy/submit.mjs [--env ../hm-hud/.env.local] [--model meshy-6]
+//        [--polycount 30000] [--src assets/buildings-src] <name> [<name> …]
+//
+// For each <name> it uploads <src>/<name>@2x.png (upscaled 4× with lanczos
+// first — the masters are small, and image-to-3D reads detail it is given),
+// polls the image-to-3d task, and downloads the result into
+// tools/art-src/meshy/<name>/ (model.glb, thumbnail.png, task.json).
+// Re-runnable: a name whose model.glb exists is skipped, and a task already
+// submitted (task.json without a model) is polled rather than paid for again.
+//
+// The key: MESHY_API_KEY from the environment, or from the dotenv file given
+// with --env (the lead keeps it in hm-hud/.env.local, git-ignored by *.local).
+// It is never printed, logged or written anywhere by this script.
+import fs from "node:fs";
+import path from "node:path";
+import sharp from "sharp";
+
+const API = "https://api.meshy.ai/openapi/v1";
+const OUT = "tools/art-src/meshy";
+
+function parseArgs(argv) {
+  const opts = { env: null, model: "meshy-6", polycount: 30000, src: "assets/buildings-src", names: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--env") opts.env = argv[++i];
+    else if (a === "--model") opts.model = argv[++i];
+    else if (a === "--polycount") opts.polycount = Number(argv[++i]);
+    else if (a === "--src") opts.src = argv[++i];
+    else opts.names.push(a);
+  }
+  return opts;
+}
+
+function loadKey(envFile) {
+  if (process.env.MESHY_API_KEY) return process.env.MESHY_API_KEY.trim();
+  if (envFile && fs.existsSync(envFile)) {
+    for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
+      const m = /^\s*MESHY_API_KEY\s*=\s*"?([^"\s]+)"?\s*$/.exec(line);
+      if (m) return m[1];
+    }
+  }
+  throw new Error("MESHY_API_KEY not set (env var, or --env <dotenv file>)");
+}
+
+async function api(key, method, url, body) {
+  const res = await fetch(`${API}${url}`, {
+    method,
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${method} ${url} → ${res.status}: ${text.slice(0, 300)}`);
+  return text ? JSON.parse(text) : {};
+}
+
+async function balance(key) {
+  try { return (await api(key, "GET", "/balance")).balance ?? null; } catch { return null; }
+}
+
+async function dataUri(file) {
+  const meta = await sharp(file).metadata();
+  const png = await sharp(file)
+    .resize(meta.width * 4, meta.height * 4, { kernel: "lanczos3" })
+    .png()
+    .toBuffer();
+  return `data:image/png;base64,${png.toString("base64")}`;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function download(url, file) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`download ${res.status}`);
+  fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+}
+
+async function run() {
+  const opts = parseArgs(process.argv.slice(2));
+  if (!opts.names.length) throw new Error("name at least one master");
+  const key = loadKey(opts.env);
+  const before = await balance(key);
+  console.log(`credits before: ${before ?? "?"}`);
+
+  for (const name of opts.names) {
+    const dir = path.join(OUT, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const glb = path.join(dir, "model.glb");
+    const taskFile = path.join(dir, "task.json");
+    if (fs.existsSync(glb)) { console.log(`${name}: model exists, skipped`); continue; }
+
+    let id = fs.existsSync(taskFile) ? JSON.parse(fs.readFileSync(taskFile, "utf8")).id : null;
+    if (!id) {
+      const src = path.join(opts.src, `${name}@2x.png`);
+      const body = {
+        image_url: await dataUri(src),
+        ai_model: opts.model,
+        should_texture: true,
+        enable_pbr: false,
+        should_remesh: true,
+        topology: "triangle",
+        target_polycount: opts.polycount,
+      };
+      id = (await api(key, "POST", "/image-to-3d", body)).result;
+      fs.writeFileSync(taskFile, JSON.stringify({ id, name, src, model: opts.model, polycount: opts.polycount }, null, 2));
+      console.log(`${name}: submitted ${id}`);
+    } else {
+      console.log(`${name}: resuming ${id}`);
+    }
+
+    let task;
+    for (;;) {
+      task = await api(key, "GET", `/image-to-3d/${id}`);
+      if (task.status === "SUCCEEDED" || task.status === "FAILED" || task.status === "CANCELED") break;
+      process.stdout.write(`  ${name}: ${task.status} ${task.progress ?? 0}%\r`);
+      await sleep(10_000);
+    }
+    if (task.status !== "SUCCEEDED") {
+      console.log(`\n${name}: ${task.status} ${JSON.stringify(task.task_error ?? {})}`);
+      continue;
+    }
+    await download(task.model_urls.glb, glb);
+    if (task.thumbnail_url) await download(task.thumbnail_url, path.join(dir, "thumbnail.png"));
+    const kept = { id, name, status: task.status, model: opts.model, polycount: opts.polycount, created_at: task.created_at, finished_at: task.finished_at };
+    fs.writeFileSync(taskFile, JSON.stringify(kept, null, 2));
+    console.log(`\n${name}: ${(fs.statSync(glb).size / 1e6).toFixed(1)} MB → ${glb}`);
+  }
+
+  const after = await balance(key);
+  console.log(`credits after: ${after ?? "?"}${before != null && after != null ? ` (used ${before - after})` : ""}`);
+}
+
+run().catch((e) => { console.error(e.message); process.exit(1); });
