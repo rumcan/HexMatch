@@ -45,10 +45,13 @@ export type TilePair = readonly [number, number];
 /** Every slope refusal, in one vocabulary (rail adds these to `RailRefusal`). */
 export type SlopeRefusal = "too-steep" | "slope-diagonal" | "not-flat";
 
-/** The one wording, so a toast, an overlay and a test can never disagree. */
+/**
+ * The one wording, so a toast, an overlay and a test can never disagree.
+ * #429: every sentence names the RULE and the FIX, not just the verdict.
+ */
 export const SLOPE_REFUSAL_TEXT: Record<SlopeRefusal, string> = {
-  "too-steep": "Too steep — that climb needs more run.",
-  "slope-diagonal": "Diagonal rail may not cross a slope.",
+  "too-steep": "Too steep — rail needs 2 flat tiles between climbs; end on level ground and climb again.",
+  "slope-diagonal": "Diagonals must be level — turn on flat ground, not across a slope.",
   "not-flat": "It needs flat ground — the whole footprint on one level.",
 };
 
@@ -129,6 +132,54 @@ const stepIsDiagonal = (ax: number, ay: number, bx: number, by: number): boolean
   Math.abs(ax - bx) === 1 && Math.abs(ay - by) === 1;
 
 /**
+ * #429 — the RAMP CORNER exception to rail's 45° turn rule. A switchback turns
+ * 180° on a hillside, and on a stair-stepped slope every diagonal straddles a
+ * level change (which rail may not link), so the ONLY turn available is a 90°
+ * corner between two axis steps. Those are allowed exactly where a ramp touches
+ * the corner tile: when the step into it or the step out of it changes level by
+ * one (the tile is the ramp's TOP or BOTTOM). Every other corner — on level
+ * ground, or involving a diagonal, or a reversal — stays refused.
+ */
+export function railRampCornerOk(
+  grid: Grid | null | undefined, prev: TilePair, cur: TilePair, next: TilePair,
+): boolean {
+  if (!grid || !elevationActive(grid)) return false;
+  const ax = cur[0] - prev[0], ay = cur[1] - prev[1];
+  const bx = next[0] - cur[0], by = next[1] - cur[1];
+  // Both steps must be axis steps (a diagonal turn keeps the old rule)…
+  if (Math.abs(ax) + Math.abs(ay) !== 1 || Math.abs(bx) + Math.abs(by) !== 1) return false;
+  // …perpendicular to one another (the 90° corner; straight on and reversals
+  // are the normal rule's business)…
+  if (ax * bx + ay * by !== 0) return false;
+  // …and one of the two steps must BE the ramp.
+  return Math.abs(climbLevels(grid, prev, cur)) === 1 || Math.abs(climbLevels(grid, cur, next)) === 1;
+}
+
+/**
+ * #429 — how much FLAT RUN the line a drag joins carries INTO its ends from the
+ * player's standing rail. `before` is the flat-step count behind the drag's
+ * first tile, `after` the count ahead of its last one; 0 means the standing
+ * line changes level at the join itself, and `SLOPES.railRampRun - 1` (or
+ * more) means the run is long enough to matter not at all. `rail.ts` measures
+ * both by walking the standing line (`railJoinRunAt`); without them the rules
+ * judge one drag at a time, and a climb could be split into drags to dodge the
+ * ramp-run rule.
+ */
+export interface RailSlopeRun { before?: number; after?: number }
+
+/** The drag-shape answer, split so the UI can separate "stop here" from "paint
+ * these red" (#429: colour only the offending tiles, never the whole drag). */
+export interface RailSlopeVerdict {
+  /** Every tile of a bad step — the tiles to paint red. Both ends of a step
+   * are flagged, so the answer does not depend on which way the drag was drawn. */
+  flags: Map<number, RailSlopeRefusal>;
+  /** The INDEX of each tile the drag may not ENTER — the step's "to" end. The
+   * preview and the commit stop here; the tile before a bad step is legal on
+   * its own, so it is still laid. */
+  blocks: Map<number, RailSlopeRefusal>;
+}
+
+/**
  * The SLOPE rules a rail DRAG's shape has to satisfy, answered for the whole
  * gesture at once — the way `planBridges` answers the bridge question, and for
  * the same reason: both rules are properties of a run of tiles, not of one
@@ -140,43 +191,49 @@ const stepIsDiagonal = (ax: number, ay: number, bx: number, by: number): boolean
  *   • a climb is a RAMP: a one-level step needs `railRampRun` tiles of run, so
  *     two level changes may not sit closer than `railRampRun` steps apart.
  *     A step of more than `railMaxStep` levels is refused outright.
+ *   • #429: that run is counted ACROSS the joins — `run` carries the flat run
+ *     of the player's standing rail into both ends of the drag, so two drags
+ *     compose as one line: a first climb tight against the drag's own first
+ *     change (head) and the drag's last change tight against a climb the
+ *     standing line continues into (tail) are both refused.
  *
  * `deckTiles` is a set of TILE indices (as `BridgePlan.deckTiles` returns)
  * covering the tiles this gesture lays as bridge decks: a deck and its
  * approaches are structure, not graded track (see the header), so steps onto,
  * off and along a deck neither climb nor count as run.
- *
- * Returns a map from the INDEX of the tile the drag steps into to the refusal
- * that stops it there — both ends of a bad step are flagged, so the answer does
- * not depend on which way the player drew the drag. Empty when nothing is
- * wrong, and empty (at no cost) when the map is flat.
  */
-export function railDragSlopeRefusals(
+export function railDragSlopeVerdict(
   grid: Grid,
   tiles: readonly TilePair[],
   deckTiles?: ReadonlySet<number>,
-): Map<number, RailSlopeRefusal> {
-  const out = new Map<number, RailSlopeRefusal>();
-  if (tiles.length < 2 || !elevationActive(grid)) return out;
+  run?: RailSlopeRun,
+): RailSlopeVerdict {
+  const flags = new Map<number, RailSlopeRefusal>();
+  const blocks = new Map<number, RailSlopeRefusal>();
+  const verdict = { flags, blocks };
+  if (tiles.length < 2 || !elevationActive(grid)) return verdict;
   const n = tiles.length;
+  const R = SLOPES.railRampRun;
   const deck = (i: number): boolean =>
     !!deckTiles?.has(tiles[i][1] * grid.w + tiles[i][0]) || isWaterTile(grid, tiles[i][0], tiles[i][1]);
   // What each step does: its level change (0 = flat, ±1 = one level, more is
   // refused outright), whether it is a diagonal, and whether it is exempt
   // because a deck is involved.
   const changes: number[] = [];          // step indices with a ±1 change
-  const exempt = new Array<boolean>(n).fill(false);
   for (let i = 1; i < n; i++) {
-    if (deck(i - 1) || deck(i)) { exempt[i] = true; continue; }
+    if (deck(i - 1) || deck(i)) continue;
     const d = Math.abs(climbLevels(grid, tiles[i - 1], tiles[i]));
     if (d === 0) continue;
-    const flag = (k: number, why: RailSlopeRefusal) => {
-      if (!out.has(k - 1)) out.set(k - 1, why);
-      if (!out.has(k)) out.set(k, why);
+    // The tile the drag steps INTO is the one it may not lay; the step's
+    // other end is legal on its own and is only painted to show the pair.
+    const mark = (k: number, why: RailSlopeRefusal) => {
+      if (!flags.has(k - 1)) flags.set(k - 1, why);
+      if (!flags.has(k)) flags.set(k, why);
+      if (!blocks.has(k)) blocks.set(k, why);
     };
-    if (d > SLOPES.railMaxStep) { flag(i, "too-steep"); continue; }
+    if (d > SLOPES.railMaxStep) { mark(i, "too-steep"); continue; }
     if (stepIsDiagonal(tiles[i - 1][0], tiles[i - 1][1], tiles[i][0], tiles[i][1])) {
-      flag(i, "slope-diagonal");
+      mark(i, "slope-diagonal");
       continue;
     }
     changes.push(i);
@@ -184,13 +241,45 @@ export function railDragSlopeRefusals(
   // Two level changes closer than `railRampRun` steps are a step, not a ramp.
   for (let c = 1; c < changes.length; c++) {
     const a = changes[c - 1], b = changes[c];
-    if (b - a >= SLOPES.railRampRun) continue;
+    if (b - a >= R) continue;
     for (const k of [a, b]) {
-      if (!out.has(k - 1)) out.set(k - 1, "too-steep");
-      if (!out.has(k)) out.set(k, "too-steep");
+      if (!flags.has(k - 1)) flags.set(k - 1, "too-steep");
+      if (!flags.has(k)) flags.set(k, "too-steep");
+    }
+    if (!blocks.has(b)) blocks.set(b, "too-steep");
+  }
+  // #429: the same rule counted ACROSS the joins, so two drags compose as one
+  // line. A standing line that changed level `before` flat steps behind the
+  // drag's start sits at composite index `-before`, so the drag's FIRST change
+  // (step k) is refused when k + before < R; a line that keeps climbing
+  // `after` flat steps ahead of the drag's end sits at index `n + after`, so
+  // the drag's LAST change is refused against the END TILE — the fix is to
+  // give the climb one tile more of level run, in either direction.
+  const before = run?.before ?? R;
+  const after = run?.after ?? R;
+  if (changes.length) {
+    const first = changes[0], last = changes[changes.length - 1];
+    if (first + before < R) {
+      if (!flags.has(first - 1)) flags.set(first - 1, "too-steep");
+      if (!flags.has(first)) flags.set(first, "too-steep");
+      if (!blocks.has(first)) blocks.set(first, "too-steep");
+    }
+    if (n + after - last < R) {
+      for (const k of [last - 1, last, n - 1]) if (k >= 0 && !flags.has(k)) flags.set(k, "too-steep");
+      if (!blocks.has(n - 1)) blocks.set(n - 1, "too-steep");
     }
   }
-  return out;
+  return verdict;
+}
+
+/** The drag's red tiles: every tile of a bad step, both ends included. */
+export function railDragSlopeRefusals(
+  grid: Grid,
+  tiles: readonly TilePair[],
+  deckTiles?: ReadonlySet<number>,
+  run?: RailSlopeRun,
+): Map<number, RailSlopeRefusal> {
+  return railDragSlopeVerdict(grid, tiles, deckTiles, run).flags;
 }
 
 /**
