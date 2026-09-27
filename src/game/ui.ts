@@ -265,6 +265,10 @@ export interface UiMarketRow {
   spark: number[];
   /** How many units the seat holds (what Sell all would sell). */
   held: number;
+  /** MKT-2 (#465): what one unit costs to BUY (price + spread). */
+  buy: number;
+  /** MKT-2 (#465): the seat's "notify me above $X" line, if one is set. */
+  alert: number | null;
 }
 
 export interface UiState {
@@ -276,6 +280,8 @@ export interface UiState {
   market?: UiMarketRow[];
   /** ECON-1 (#421): the demand event running right now, for the Market tab. */
   marketEvent?: string | null;
+  /** MKT-2 (#465): the next slot's rumour (~60 s out), for the Market tab. */
+  marketRumour?: string | null;
   /**
    * L16 (#231): the per-resource storage cap the local seat plays under, or
    * undefined when no cap applies (the shipped loop, and dev mode's unlimited
@@ -624,6 +630,17 @@ export interface UiHooks {
    * purse; it answers with what the sale fetched ($), or a refusal in words.
    */
   onSell?: (cargo: Cargo, n: number | "all") => number | string;
+  /**
+   * MKT-2 (#465): buy `n` units of a good at price + spread. The GAME owns
+   * the quote and the purse; it answers with the units bought, `"relayed"`
+   * (a guest's request — the host's delta confirms it) or a refusal in words.
+   */
+  onBuy?: (cargo: Cargo, n: number) => number | string;
+  /**
+   * MKT-2 (#465): set (`above` $) or clear (`null`) the seat's "notify me
+   * above $X" line for a good. Local to this client; answers in words.
+   */
+  onAlert?: (cargo: Cargo, above: number | null) => string;
   /**
    * TRADE (owner call, 2026-09): the offer board's doors. Each answers
    * "done" (applied here), "relayed" (a guest's request — the host's delta
@@ -4765,25 +4782,24 @@ export function createOriginalUi(
     else toast(r, "danger");
     lastMarketSig = "";
   };
-  // ── ECON-1 (#421): THE EXCHANGE ─────────────────────────────────────────
+  // ── ECON-1 (#421) + MKT-2 (#465): THE EXCHANGE ────────────────────────────
   // The Market tab's first section: sell goods for MONEY at a price that
   // moves. One row per sellable good — price, trend over the last minute, a
-  // sparkline of the last few minutes and Sell 1 / 10 / all. Gold is absent:
-  // it stays the Black Market's currency (PP-08, and docs/economy-money.md).
-  // Space Age: flat, square, no gradients, dark text on lemon for the primary
-  // action — the theme's own `.sab-btn` / `.post-btn` vocabulary.
+  // sparkline of the last few minutes, Sell 1 / 10 / all, Buy 1 / 10 at price
+  // + spread, and a "notify me above $X" alert. A Rumours line above the rows
+  // forecasts the NEXT event slot (~60 s out). Gold is absent: it stays the
+  // Black Market's currency (PP-08, and docs/economy-money.md). Space Age:
+  // flat, square, no gradients, dark text on lemon for the primary action —
+  // the theme's own `.sab-btn` / `.post-btn` vocabulary.
   const exHead = h("div", "mine-head");
   exHead.innerHTML = `<span>Exchange</span><span class="slot-count" data-f="market-money">$0</span>`;
   const exEvent = h("div", "pane-note market-event hidden");
+  const exRumour = h("div", "pane-note market-rumour hidden");
   const exList = h("div", "market-list");
-  marketPane.append(exHead, exEvent, exList);
+  marketPane.append(exHead, exEvent, exRumour, exList);
   marketPane.appendChild(h("div", "pane-note",
     "Prices drift, spike and come back. A big sale pushes the price down and it "
     + `recovers over the next minute — sell in lots. ${cargoIconHtml("gold")} ${GOLD_RULE}`));
-  const exRows = new Map<Cargo, {
-    root: HTMLElement; price: HTMLElement; trend: HTMLElement;
-    spark: HTMLCanvasElement; held: HTMLElement; btns: HTMLButtonElement[];
-  }>();
 
   /** Draw one sparkline — a flat polyline, theme aqua, no fill, no gradient. */
   function drawSpark(cv: HTMLCanvasElement, pts: number[]): void {
@@ -4808,10 +4824,35 @@ export function createOriginalUi(
   /** Sell `n` (or everything) and say what it fetched. */
   function doSell(cargo: Cargo, n: number | "all"): void {
     const r = hooks.onSell?.(cargo, n) ?? "The exchange is closed here.";
+    if (r === "relayed") { toast("Sale sent — it lands once the host confirms.", "info"); return; }
     if (typeof r === "string") { toast(r, "danger"); return; }
     toast(`Sold ${CARGO[cargo].name} for $${Math.round(r).toLocaleString("en-US")}.`, "success");
     lastExchangeSig = "";
   }
+
+  /** MKT-2 (#465): buy `n` at price + spread and say what landed. */
+  function doBuy(cargo: Cargo, n: number): void {
+    const r = hooks.onBuy?.(cargo, n) ?? "The exchange is closed here.";
+    if (r === "relayed") { toast("Buy sent — it lands once the host confirms.", "info"); return; }
+    if (typeof r === "string") { toast(r, "danger"); return; }
+    toast(`Bought ${r} ${CARGO[cargo].name}.`, "success");
+    lastExchangeSig = "";
+  }
+
+  /** MKT-2 (#465): set the row's "notify me above $X" line, or clear it. */
+  function doAlert(cargo: Cargo, input: HTMLInputElement): void {
+    const raw = input.value.trim();
+    if (raw !== "" && !(Number(raw) > 0)) { toast("Enter a price above $0.", "danger"); return; }
+    const r = hooks.onAlert?.(cargo, raw === "" ? null : Number(raw)) ?? "Alerts are not available here.";
+    toast(r, "info");
+    lastExchangeSig = "";
+  }
+
+  const exRows = new Map<Cargo, {
+    root: HTMLElement; price: HTMLElement; trend: HTMLElement;
+    spark: HTMLCanvasElement; held: HTMLElement; btns: HTMLButtonElement[];
+    buyBtns: HTMLButtonElement[]; alertIn: HTMLInputElement; alertBtn: HTMLButtonElement;
+  }>();
 
   function exchangeRow(cargo: Cargo) {
     const root = h("div", "market-row");
@@ -4833,16 +4874,34 @@ export function createOriginalUi(
       btns.push(b);
       act.appendChild(b);
     }
+    const buyBtns: HTMLButtonElement[] = [];
+    for (const [label, n] of [["Buy 1", 1], ["Buy 10", 10]] as [string, number][]) {
+      const b = h("button", "post-btn buy-btn", label) as HTMLButtonElement;
+      b.dataset.buy = `${cargo}:${n}`;
+      b.onclick = () => doBuy(cargo, n);
+      buyBtns.push(b);
+      act.appendChild(b);
+    }
+    const alertIn = h("input", "alert-in") as HTMLInputElement;
+    alertIn.type = "number"; alertIn.min = "1"; alertIn.placeholder = "Alert $";
+    alertIn.title = "Notify me above $X";
+    alertIn.dataset.alert = cargo;
+    const alertBtn = h("button", "mini alert-btn", "🔔") as HTMLButtonElement;
+    alertBtn.dataset.alertBtn = cargo;
+    alertBtn.title = "Set a price alert";
+    alertBtn.onclick = () => doAlert(cargo, alertIn);
+    alertIn.onkeydown = (e) => { if (e.key === "Enter") doAlert(cargo, alertIn); };
+    act.append(alertIn, alertBtn);
     act.insertBefore(held, act.firstChild);
     root.append(head, spark, act);
-    exRows.set(cargo, { root, price, trend, spark, held, btns });
+    exRows.set(cargo, { root, price, trend, spark, held, btns, buyBtns, alertIn, alertBtn });
     exList.appendChild(root);
   }
   for (const k of TRADE_GOODS) exchangeRow(k);
 
   let lastExchangeSig = "";
   /** Paint the exchange from the game's own numbers. */
-  function paintExchange(rows: UiState["market"], event: string | null | undefined, money: number | undefined): void {
+  function paintExchange(rows: UiState["market"], event: string | null | undefined, money: number | undefined, rumour: string | null | undefined): void {
     const on = !!rows && !!hooks.onSell;
     const nextAlert = on ? event ?? null : null;
     if (nextAlert !== marketAlert) marketSeen = null;
@@ -4850,15 +4909,18 @@ export function createOriginalUi(
     acknowledgeTab();
     exHead.classList.toggle("hidden", !on);
     exEvent.classList.toggle("hidden", !on || !event);
+    exRumour.classList.toggle("hidden", !on || !rumour);
     exList.classList.toggle("hidden", !on);
     if (!on || !rows) return;
-    const sig = `${Math.round(money ?? 0)}|${event ?? ""}|`
-      + rows.map((r) => `${r.cargo}${r.price.toFixed(2)}${r.trend.toFixed(3)}${r.held}`).join(",");
+    const sig = `${Math.round(money ?? 0)}|${event ?? ""}|${rumour ?? ""}|`
+      + rows.map((r) => `${r.cargo}${r.price.toFixed(2)}${r.trend.toFixed(3)}${r.held}${r.buy.toFixed(2)}${r.alert ?? ""}`).join(",");
     if (sig === lastExchangeSig) return;
     lastExchangeSig = sig;
     const chip = exHead.querySelector<HTMLElement>('[data-f="market-money"]');
     if (chip) chip.textContent = `$${Math.round(money ?? 0).toLocaleString("en-US")}`;
     if (event) exEvent.textContent = event;
+    if (rumour) exRumour.textContent = `🔮 ${rumour}`;
+    const cash = money ?? 0;
     for (const row of rows) {
       const el = exRows.get(row.cargo);
       if (!el) continue;
@@ -4873,6 +4935,19 @@ export function createOriginalUi(
         const want = b.dataset.sell?.split(":")[1] ?? "1";
         b.disabled = row.held <= 0 || (want !== "all" && row.held < Number(want));
       }
+      for (const b of el.buyBtns) {
+        const want = Number(b.dataset.buy?.split(":")[1] ?? "1");
+        b.disabled = !hooks.onBuy || cash < Math.ceil(row.buy * want);
+        b.title = `Buy ${want} for $${Math.ceil(row.buy * want).toLocaleString("en-US")} (price + spread)`;
+      }
+      // Never rewrite the alert box mid-typing — only when it is not focused.
+      if (document.activeElement !== el.alertIn) {
+        el.alertIn.value = row.alert != null ? String(row.alert) : "";
+      }
+      el.alertBtn.classList.toggle("on", row.alert != null);
+      el.alertBtn.title = row.alert != null
+        ? `Alert set above $${row.alert} — clear the box and press 🔔 to remove it`
+        : "Notify me above $X";
       drawSpark(el.spark, row.spark);
     }
   }
@@ -5150,7 +5225,7 @@ export function createOriginalUi(
     paintPlantContext();
     paintMarket(state.offers);
     // ECON-1 (#421): the exchange rows and the money chip's number.
-    paintExchange(state.market, state.marketEvent, state.money);
+    paintExchange(state.market, state.marketEvent, state.money, state.marketRumour);
     rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.
