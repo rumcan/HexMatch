@@ -101,7 +101,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     const play = findButton(/^Play vs AI/);
     expect(play.textContent).toMatch(/no login/);
     await click(play);
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
     expect(confirmPlate()).toBeNull();
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
   });
@@ -144,7 +144,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     await click(findButton(/^Play vs AI/));
     await click(confirmOk());
     await flush();
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
     expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBeNull();
   });
