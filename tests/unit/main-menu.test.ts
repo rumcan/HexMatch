@@ -103,9 +103,9 @@ describe("MainMenu — the front door", () => {
     expect(sheet!.querySelector(".modal.box[aria-label=\"Settings\"]")).not.toBeNull();
 
     // three-way quality segment + the miniature switch + sound, live-painted
-    const seg = [...sheet!.querySelectorAll(".gfx-seg button")].map((b) => b.textContent);
+    const seg = [...sheet!.querySelectorAll(".gfx-seg[aria-label=\"Texture detail\"] button")].map((b) => b.textContent);
     expect(seg).toEqual(["Low", "Medium", "High"]);
-    const quality = (q: string) => [...sheet!.querySelectorAll(".gfx-seg button")]
+    const quality = (q: string) => [...sheet!.querySelectorAll(".gfx-seg[aria-label=\"Texture detail\"] button")]
       .find((b) => b.textContent === q) as HTMLButtonElement;
     act(() => { quality("Medium").click(); });
     expect(JSON.parse(localStorage.getItem("hexmatch:graphics")!))
@@ -149,7 +149,7 @@ describe("MainMenu — the front door", () => {
     act(() => { button(/^Settings/).click(); });
     const again = document.querySelector(".settings-sheet")!;
     expect(again.querySelector("[data-gfx=\"miniature\"]")!.textContent).toBe("ON");
-    expect([...again.querySelectorAll(".gfx-seg button.on")].map((b) => b.textContent)).toEqual(["Medium"]);
+    expect([...again.querySelectorAll(".gfx-seg[aria-label=\"Texture detail\"] button.on")].map((b) => b.textContent)).toEqual(["Medium"]);
     act(() => { (again.querySelector("[data-gfx-close].modal-back") as HTMLElement).click(); });
     await act(async () => { await Promise.resolve(); });
     expect(document.querySelector(".settings-sheet")).toBeNull();
