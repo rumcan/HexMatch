@@ -549,7 +549,7 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 /* MKT-2 (#465): the next slot's rumour, and the per-row alert control. Flat, square, theme aqua. */
 .market-rumour { color: var(--sa-aqua); }
 .market-act .alert-in { width: 70px; padding: 2px 4px; font-size: 12px; }
-.market-act .alert-btn.on { background: var(--sa-lemon); color: var(--sa-ink); }
+.market-act .alert-btn.on { background: var(--sa-orange); color: var(--sa-on-orange); }
 /* ══════════════════════════════════════════════════════════════════════
    TUT-03 (#422) — the in-game guide. Flat charcoal, lemon counter, square
    corners, no gradients, no glows, weight ≤ 500. The layer never takes a

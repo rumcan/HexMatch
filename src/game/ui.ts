@@ -4789,7 +4789,7 @@ export function createOriginalUi(
   // + spread, and a "notify me above $X" alert. A Rumours line above the rows
   // forecasts the NEXT event slot (~60 s out). Gold is absent: it stays the
   // Black Market's currency (PP-08, and docs/economy-money.md). Space Age:
-  // flat, square, no gradients, dark text on lemon for the primary action —
+  // flat, square, no gradients, orange for the primary action (owner: never lemon) —
   // the theme's own `.sab-btn` / `.post-btn` vocabulary.
   const exHead = h("div", "mine-head");
   exHead.innerHTML = `<span>Exchange</span><span class="slot-count" data-f="market-money">$0</span>`;
