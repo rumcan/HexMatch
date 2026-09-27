@@ -140,8 +140,8 @@ describe("#184 two-column mode menu", () => {
     await renderModes();
     const order = buttonLabels(container.querySelector("main[aria-label=\"Hexmatch start screen\"]")!);
     const lastPortrait = Math.max(
-      order.findIndex((l) => l.includes("Anne Hextall")),
-      order.findIndex((l) => l.includes("James Hextall")),
+      order.findIndex((l) => l.includes("Anne Whitmore")),
+      order.findIndex((l) => l.includes("James Calloway")),
     );
     const firstAction = order.findIndex((l) => l.startsWith(STORY_MODE_ENABLED ? "Story Mode" : "Play vs AI"));
     expect(lastPortrait).toBeGreaterThanOrEqual(0);

@@ -27,7 +27,7 @@ import { CAST, EXPRESSIONS, type CastId, type Expression } from "./cast";
 import { BACKDROP_KEYS, type BackdropKey } from "./backdrops";
 
 export interface ScriptLine {
-  /** `player` is whoever the start screen chose (Anne or James Hextall); the
+  /** `player` is whoever the start screen chose (one of the five managers, CAST-1); the
    *  stage resolves it to the live portrait before the first beat paints. */
   who: CastId | "player" | "narrator" | "title";
   /** The mood the face wears (cast sheets only; ignored on a solo portrait). */

@@ -48,7 +48,7 @@ const conversation = (...lines: string[]): RivalryScene => lines.map((text, inde
 const MARROW: RivalVoice = {
   attack: [
     conversation(
-      "My thoughts are with your shareholders, Hextall. Truly. I have already sent flowers.",
+      "My thoughts are with your shareholders, Hexmatch. Truly. I have already sent flowers.",
       "Flowers? For a company that is still trading?",
       "Pre-emptively. It seemed fiscally responsible.",
       "That is the coldest thing anyone has ever shipped me.",
@@ -60,7 +60,7 @@ const MARROW: RivalVoice = {
       "Then my lorries take the scenic route. Scenic is cheaper.",
     ),
     conversation(
-      "I do not sabotage, Hextall. I adjust. The invoice arrives Thursday.",
+      "I do not sabotage, Hexmatch. I adjust. The invoice arrives Thursday.",
       "There is an invoice for freezing my depot?",
       "Line four: frost, industrial. Line five: handling.",
       "I will pay it in materials, Silas. Gold is for people I intend to hurt.",
@@ -76,7 +76,7 @@ const MARROW: RivalVoice = {
     conversation(
       "You have undone a quarter's work with one evening's driving. I note it in the minute book.",
       "The minute book? You keep a minute book of our feud?",
-      "Item seven: Hextall, insolence, ongoing.",
+      "Item seven: Hexmatch, insolence, ongoing.",
       "Read it at the funeral, Silas.",
     ),
   ],
@@ -96,7 +96,7 @@ const MARROW: RivalVoice = {
   ],
   banter: [
     conversation(
-      "A word of free advice, Hextall. Nothing in life is free, including this: build nothing I cannot toll.",
+      "A word of free advice, Hexmatch. Nothing in life is free, including this: build nothing I cannot toll.",
       "That is advice for you, not for me.",
       "Correct. It was a reminder to myself, read aloud.",
       "At least you are honest in the minute book.",
@@ -108,7 +108,7 @@ const MARROW: RivalVoice = {
       "I shall attend the anniversary. Alone.",
     ),
     conversation(
-      "Do you know what a toll is, Hextall?",
+      "Do you know what a toll is, Hexmatch?",
       "A tax on movement.",
       "A promise that the road ends and I am standing there.",
       "Sleep well, Silas.",
@@ -280,7 +280,7 @@ const GRIEV: RivalVoice = {
     conversation(
       "The minute book records a setback. The setback is you. I have initialled it.",
       "Initialled your own setback?",
-      "Everything is initialled, Hextall. Everything.",
+      "Everything is initialled, Hexmatch. Everything.",
       "Initial this: my stars, your setback, same page.",
     ),
     conversation(
@@ -312,7 +312,7 @@ const GRIEV: RivalVoice = {
       "I am hanging up on the minute book.",
     ),
     conversation(
-      "I have chaired forty-one boards, Hextall. Do you know what survives all of them?",
+      "I have chaired forty-one boards, Hexmatch. Do you know what survives all of them?",
       "Paperwork?",
       "Paperwork. Never forget: freight rots, stone erodes, paper persists.",
       "Paper persists, Chairman. So does asphalt. Mine.",

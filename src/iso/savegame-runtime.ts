@@ -146,6 +146,10 @@ export interface SaveGamePayload {
     depotTier?: number; townLevel?: number; townBonus?: number;
     /** ECON-1 (#421): the seat's money. Absent in a pre-money save. */
     money?: number;
+    /** CAST-1: the seat's manager (legacy "vex"/"you" map). Absent pre-CAST. */
+    manager?: string | null;
+    /** CAST-1: Rafael's free Black Market allowance. */
+    fixer?: { window: number; used: number };
   }[];
   clearedFields?: number[];
   /** 2026-09: conquest mode — no ★ line, play until a player is bankrupt. */

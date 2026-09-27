@@ -38,6 +38,12 @@ export interface LoadingScreen {
   readonly active: boolean;
   /** True once every task has settled. */
   readonly ready: boolean;
+  /**
+   * CAST-1: true while a mounted overlay is still inside its minimum showing
+   * time (`MIN_SHOW_MS`) — the loads may be done, but the poster stays up and
+   * the game is not revealed yet.
+   */
+  readonly holding: boolean;
   readonly progress: { done: number; total: number };
   dispose(): void;
 }
@@ -46,6 +52,17 @@ export interface LoadingScreen {
 export const MAX_WAIT_MS = 30_000;
 /** Matches the `.iso-loading-out` transition in styles.css. */
 export const FADE_MS = 380;
+/**
+ * CAST-1 (owner, 2026-09-27): the loading poster stays up at least this long
+ * once shown, even when every load has already settled — it is the key art,
+ * not a flash. The bar and the checklist keep reporting the real progress.
+ */
+export const MIN_SHOW_MS = 3_000;
+
+export interface LoadingScreenOptions {
+  /** The minimum time a mounted overlay stays up (default `MIN_SHOW_MS`). */
+  minShowMs?: number;
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // #302 — the reveal gate: the sim clocks start when the game is SHOWN.
@@ -86,7 +103,13 @@ export function createRevealGate(): RevealGate {
   };
 }
 
-export function createLoadingScreen(host: HTMLElement, tasks: readonly LoadingTask[]): LoadingScreen {
+export function createLoadingScreen(
+  host: HTMLElement, tasks: readonly LoadingTask[], options: LoadingScreenOptions = {},
+): LoadingScreen {
+  const minShowMs = Math.max(0, options.minShowMs ?? MIN_SHOW_MS);
+  /** CAST-1: the overlay is inside its minimum showing time. */
+  let held = false;
+  let holdTimer = 0;
   const settled = new Set<string>();
   const known = new Set(tasks.map((t) => t.id));
   let overlay: HTMLDivElement | null = null;
@@ -113,6 +136,7 @@ export function createLoadingScreen(host: HTMLElement, tasks: readonly LoadingTa
   };
 
   const lift = () => {
+    if (held) return;       // CAST-1: the hold's own timer lifts it when it ends
     window.clearTimeout(backstop);
     if (!overlay || overlay.classList.contains("iso-loading-out")) return;
     const el = overlay;
@@ -165,9 +189,17 @@ export function createLoadingScreen(host: HTMLElement, tasks: readonly LoadingTa
       status = overlay.querySelector(".iso-loading-status");
       host.appendChild(overlay);
       paint();
+      if (minShowMs > 0) {
+        held = true;
+        holdTimer = window.setTimeout(() => {
+          held = false;
+          if (ready()) lift();
+        }, minShowMs);
+      }
       backstop = window.setTimeout(() => {
         console.warn("[loading] lifted after", MAX_WAIT_MS, "ms; still pending:",
           tasks.filter((t) => !settled.has(t.id)).map((t) => t.id));
+        held = false;
         lift();
       }, MAX_WAIT_MS);
     },
@@ -176,9 +208,12 @@ export function createLoadingScreen(host: HTMLElement, tasks: readonly LoadingTa
     },
     get active() { return overlay !== null; },
     get ready() { return ready(); },
+    get holding() { return held && overlay !== null; },
     get progress() { return { done: settled.size, total: known.size }; },
     dispose() {
       window.clearTimeout(backstop);
+      window.clearTimeout(holdTimer);
+      held = false;
       window.clearTimeout(fadeTimer);
       overlay?.remove();
       overlay = null;

@@ -30,10 +30,10 @@ import faceMarrow from "../assets/story/face-marrow.webp";
 import faceRoque from "../assets/story/face-roque.webp";
 import faceGriev from "../assets/story/face-griev.webp";
 
-import soloVex from "../assets/ui/tycoon_vex.png";
-import soloYou from "../assets/ui/tycoon_you.png";
 import soloTorvin from "../assets/ui/tycoon_torvin.png";
 import soloKrag from "../assets/ui/tycoon_krag.png";
+// CAST-1: the player's managers answer in their poster faces (docs/CAST.md).
+import { MANAGERS, MANAGER_BY_ID, type ManagerId } from "./managers";
 
 /** The four moods a sheet paints, in quadrant order. */
 export type Expression = "calm" | "smile" | "mad" | "shock";
@@ -60,7 +60,8 @@ export interface FaceSpec {
 export type CastId =
   | "torvin" | "krag" | "marrow" | "roque" | "griev"   // the rivals
   | "mabel"                                            // the guide
-  | "vex" | "you";                                     // the player's tycoons
+  | ManagerId                                          // CAST-1: the player's managers
+  | "vex" | "you";                                     // legacy aliases: Anne, James
 
 export interface CastMember {
   id: CastId;
@@ -73,6 +74,17 @@ export interface CastMember {
   solo: string | null;
   /** Two sentences of voice direction — what every line of theirs obeys. */
   voice: string;
+}
+
+const PLAYER_VOICE = "The player. Dry, unimpressed, punctures every rival's bit with one line — the same voice the rivalry wire has always answered in.";
+
+/** CAST-1: a manager as the campaign casts them — the poster face, drawn `cover`. */
+function managerCast(id: CastId, manager: ManagerId): CastMember {
+  const m = MANAGER_BY_ID[manager];
+  return {
+    id, name: `${m.first} ${m.last}`, role: `${m.title} · Hexmatch Industries`,
+    colour: "#5aa8ff", sheet: null, solo: m.thumb, voice: PLAYER_VOICE,
+  };
 }
 
 export const CAST: Record<CastId, CastMember> = {
@@ -124,30 +136,16 @@ export const CAST: Record<CastId, CastMember> = {
   mabel: {
     id: "mabel",
     name: "Mabel Quill",
-    role: "Your bookkeeper · Hextall Freight",
+    role: "Your bookkeeper · Hexmatch Industries",
     colour: "#63c08a",
     sheet: faceMabel,
     solo: null,
     voice: "The uncle's bookkeeper who stayed on: warm, sharp, numbers-minded. Hints arrive as bookkeeping — she never lectures, she reconciles. Calls the player 'boss' and means it.",
   },
-  vex: {
-    id: "vex",
-    name: "Anne Hextall",
-    role: "Logistics Manager · Hextall Freight",
-    colour: "#5aa8ff",
-    sheet: null,
-    solo: soloVex,
-    voice: "The player. Dry, unimpressed, punctures every rival's bit with one line — the same voice the rivalry wire has always answered in.",
-  },
-  you: {
-    id: "you",
-    name: "James Hextall",
-    role: "Logistics Manager · Hextall Freight",
-    colour: "#5aa8ff",
-    sheet: null,
-    solo: soloYou,
-    voice: "The player. Dry, unimpressed, punctures every rival's bit with one line — the same voice the rivalry wire has always answered in.",
-  },
+  ...Object.fromEntries(MANAGERS.map((m) => [m.id, managerCast(m.id, m.id)])) as Record<ManagerId, CastMember>,
+  // Legacy aliases (PP-14b saves and scripts): "vex" was Anne, "you" James.
+  vex: managerCast("vex", "anne"),
+  you: managerCast("you", "james"),
 };
 
 export const CAST_IDS = Object.keys(CAST) as CastId[];
@@ -159,7 +157,8 @@ export const RIVALS: readonly CastId[] = ["torvin", "marrow", "roque", "krag", "
 export const GUIDE: CastId = "mabel";
 
 export const isRival = (id: CastId): boolean => RIVALS.includes(id);
-export const isPlayer = (id: CastId): boolean => id === "vex" || id === "you";
+export const isPlayer = (id: CastId): boolean =>
+  id === "vex" || id === "you" || (MANAGERS as readonly { id: string }[]).some((m) => m.id === id);
 
 /**
  * The one seam for "show me this character looking this way". A sheet gives
@@ -179,7 +178,7 @@ export function faceOf(id: CastId, expression: Expression = "calm"): FaceSpec {
  * tycoon the start screen chose, everyone else is themselves.
  */
 export const resolveSpeaker = (
-  who: CastId | "player", player: "vex" | "you",
+  who: CastId | "player", player: CastId,
 ): CastId => (who === "player" ? player : who);
 
 /** The mood a rivalry direction plays — attacks land angry, thwarted reads shocked. */

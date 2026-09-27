@@ -36,7 +36,7 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe("LOAD-01 loading screen", () => {
   it("fills as tasks settle, counts a failure as done, then lifts", async () => {
-    const ls = createLoadingScreen(host, TASKS);
+    const ls = createLoadingScreen(host, TASKS, { minShowMs: 0 });
     const a = deferred(), b = deferred();
     ls.track("a", a.promise);
     ls.track("b", b.promise);
@@ -63,7 +63,7 @@ describe("LOAD-01 loading screen", () => {
   });
 
   it("does not flash when everything landed before show()", () => {
-    const ls = createLoadingScreen(host, TASKS);
+    const ls = createLoadingScreen(host, TASKS, { minShowMs: 0 });
     ls.finish();
     ls.show();
     expect(host.querySelector("#iso-loading")).toBeNull();
@@ -72,7 +72,7 @@ describe("LOAD-01 loading screen", () => {
 
   it("lifts after MAX_WAIT_MS when a load never settles", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ls = createLoadingScreen(host, TASKS);
+    const ls = createLoadingScreen(host, TASKS, { minShowMs: 0 });
     ls.track("a", new Promise(() => {}));
     ls.show();
     vi.advanceTimersByTime(MAX_WAIT_MS + FADE_MS);
@@ -80,7 +80,7 @@ describe("LOAD-01 loading screen", () => {
   });
 
   it("ignores ids it was not told about", async () => {
-    const ls = createLoadingScreen(host, TASKS);
+    const ls = createLoadingScreen(host, TASKS, { minShowMs: 0 });
     ls.track("zzz", Promise.resolve());
     await flush();
     expect(ls.progress).toEqual({ done: 0, total: 2 });

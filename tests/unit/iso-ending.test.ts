@@ -120,9 +120,9 @@ describe("cinematic ending screen", () => {
     const finalBeats = [...view.element.querySelectorAll<HTMLElement>(".ending-final-beat")];
     expect(finalBeats.map((beat) => beat.classList.contains("player"))).toEqual([false, true]);
     expect(finalBeats[0].querySelector<HTMLElement>(".ending-final-face")!.style.backgroundImage)
-      .toMatch(/tycoon_torvin/i);
+      .toMatch(/thumb-graves/i);
     expect(finalBeats[1].querySelector<HTMLElement>(".ending-final-face")!.style.backgroundImage)
-      .toMatch(/tycoon_vex/i);
+      .toMatch(/thumb-anne/i);
 
     const review = view.element.querySelector(".ending-review") as HTMLButtonElement;
     const rematch = view.element.querySelector(".ending-restart") as HTMLButtonElement;

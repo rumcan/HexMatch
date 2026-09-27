@@ -10,9 +10,9 @@
 // easy to test; `showEndingScreen` is the small DOM projector used by game.ts.
 // ══════════════════════════════════════════════════════════════════════════
 
-import portraitTorvin from "../assets/ui/tycoon_torvin.png";
-import portraitVex from "../assets/ui/tycoon_vex.png";
-import portraitYou from "../assets/ui/tycoon_you.png";
+// CAST-1: the managers' poster faces and Cornelius Graves (docs/CAST.md).
+import { MANAGER_BY_ID, RIVAL, managerThumb } from "../story/managers";
+import { normalizeManager, type LegacyPortrait, type ManagerId } from "./managers";
 // RANK-01 (#147): the rating row. The badge art is derived from the painted
 // medallion master (`tools/make-rank-badges.mjs`) and bundled by Vite, so a
 // ledger never depends on a network fetch to show a player their tier.
@@ -453,9 +453,14 @@ export interface EndingScreenOptions {
    * this door when the Summary page lands.
    */
   onNextContract?: () => void;
-  /** The portrait selected on the start screen, reused whenever the player
-   * answers Torvin's final wire. */
-  playerPortrait?: "vex" | "you";
+  /** CAST-1: the manager the player chose, whose face answers the rival's
+   * final wire (legacy "vex"/"you" read as Anne/James). */
+  playerPortrait?: ManagerId | LegacyPortrait;
+  /** CAST-1: the rival's face on the final wire — Cornelius Graves unless a
+   * contract cast someone else. */
+  rivalPortrait?: string;
+  /** CAST-1: managers this result hired — "New manager unlocked!". */
+  unlocked?: readonly ManagerId[];
   /**
    * RANK-01: the rating row. Three states, and the difference matters:
    *
@@ -508,7 +513,8 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 function appendFinalWire(
   host: HTMLElement,
   model: EndingModel,
-  playerPortrait: "vex" | "you",
+  playerPortrait: ManagerId | LegacyPortrait | undefined,
+  rivalPortrait: string,
 ): void {
   const wire = el("div", "ending-final-wire");
   const addBeat = (
@@ -523,13 +529,37 @@ function appendFinalWire(
     beat.append(face, el("p", `ending-${speaker}-final`, text));
     wire.appendChild(beat);
   };
-  addBeat("rival", portraitTorvin, `${model.rivalName}'s final wire: “${model.rivalQuote}”`);
+  addBeat("rival", rivalPortrait, `${model.rivalName}'s final wire: “${model.rivalQuote}”`);
   addBeat(
     "player",
-    playerPortrait === "you" ? portraitYou : portraitVex,
+    managerThumb(normalizeManager(playerPortrait)),
     `Your reply: “${model.playerQuote}”`,
   );
   host.appendChild(wire);
+}
+
+/** CAST-1: "New manager unlocked!" — one paper strip per hire. */
+function appendUnlocked(host: HTMLElement, ids: readonly ManagerId[]): void {
+  const box = el("section", "ending-unlocked");
+  box.setAttribute("aria-label", "New manager unlocked");
+  box.setAttribute("role", "status");
+  for (const id of ids) {
+    const m = MANAGER_BY_ID[id];
+    const row = el("div", "ending-unlocked-row");
+    row.dataset.manager = id;
+    const img = el("img", "ending-unlocked-face");
+    img.src = m.thumb;
+    img.alt = "";
+    const copy = el("div", "ending-unlocked-copy");
+    copy.append(
+      el("b", "ending-unlocked-kicker", "New manager unlocked!"),
+      el("strong", "ending-unlocked-name", `${m.first} ${m.last} · ${m.title}`),
+      el("small", "ending-unlocked-perk", m.perk),
+    );
+    row.append(img, copy);
+    box.appendChild(row);
+  }
+  host.appendChild(box);
 }
 
 function appendCelebration(host: HTMLElement): void {
@@ -872,6 +902,8 @@ export function showEndingScreen(
   const method = el("p", "ending-method", model.method);
   const decisive = el("p", "ending-decisive", model.decisive);
   card.append(kicker, title, result, method, decisive);
+  // CAST-1: a win that hired someone says so before anything else.
+  if (options.unlocked?.length) appendUnlocked(card, options.unlocked);
 
   const ledger = el("section", "ending-ledger");
   const ledgerOwner = model.outcome === "victory" ? "your" : `${model.rivalName}'s winning`;
@@ -917,7 +949,7 @@ export function showEndingScreen(
   after.appendChild(el("h2", "ending-section-title", "The years that followed"));
   after.appendChild(el("p", "ending-epilogue", model.epilogue));
   if (model.coda) after.appendChild(el("p", "ending-coda", model.coda));
-  appendFinalWire(after, model, options.playerPortrait ?? "vex");
+  appendFinalWire(after, model, options.playerPortrait, options.rivalPortrait ?? RIVAL.thumb);
   card.appendChild(after);
   card.appendChild(el("p", "ending-the-end", "The End"));
 

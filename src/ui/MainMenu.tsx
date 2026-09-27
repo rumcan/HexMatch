@@ -1,40 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import logoUrl from "../assets/poster/logo.webp";
-import heroJames from "../assets/poster/hero-james.webp";
-import heroAnne from "../assets/poster/hero-anne.webp";
 import menuDuo from "../assets/poster/menu-duo.webp";
-import thumbJames from "../assets/poster/thumb-james.webp";
-import thumbAnne from "../assets/poster/thumb-anne.webp";
+// CAST-1 (docs/CAST.md): the five managers of Hexmatch Industries — faces,
+// stories, perks and who is hired live in src/story/managers.ts.
+import {
+  CAST_KEY, MANAGERS, fullName, loadManagerRecord, saveManagerPick, unlockLabel,
+} from "../story/managers";
+import { isUnlocked } from "../iso/managers";
 
-/** The two Hextalls (owner, 2026-09-26; copy from the UIX design). Presentation only. */
-export const MENU_CAST = [
-  { id: "james", first: "James", last: "Hextall", hero: heroJames, thumb: thumbJames, accent: "orange",
-    quote: "Build it first. Build it bigger. Then build the road to it.",
-    bio: "Founder of Hextall Freight. Came home from the war with one lorry and a plan to own every road on the island.",
-    history: [
-      ["1945", "The return", "One lorry, no depot, and no favors owed."],
-      ["1947", "Hextall Freight", "His first road contract changed the island."],
-      ["1949", "The race", "Every new mile puts a rival on notice."],
-    ],
-    rivalry: "He will outbuild anyone who thinks the island is already spoken for." },
-  { id: "anne", first: "Anne", last: "Hextall", hero: heroAnne, thumb: thumbAnne, accent: "aqua",
-    quote: "Anyone can build a factory. I read the ledger.",
-    bio: "Runs the books and the backroom deals. Knows the price of every ton of ore on the island before the market does.",
-    history: [
-      ["1944", "The ledger", "She learned what the numbers never said aloud."],
-      ["1947", "A quiet partner", "Every deal Hextall made crossed her desk."],
-      ["1949", "Her move", "The island's markets are hers to read."],
-    ],
-    rivalry: "The rival can keep the factory. Anne already knows where its cargo is going." },
-] as const;
-export const CAST_KEY = "hexmatch:menu-character";
+/** The roster, in menu order (owner, 2026-09-27). Presentation only. */
+export const MENU_CAST = MANAGERS;
+export { CAST_KEY };
 
 // ══════════════════════════════════════════════════════════════════════════
 // STORY-01 / UI-3 — the front door, in the UIX poster design.
 //
-// One card in the MenuShell frame: the two Hextalls back to back on the left
-// (the whole cut-out, never cropped), Continue and Play on the art's foot,
-// and a paper panel on the right with the ladder (top 10) and the Hextalls.
+// One card in the MenuShell frame: the key art on the left (the whole
+// cut-out, never cropped), Continue and Play on the art's foot, and a paper
+// panel on the right with the ladder (top 10) and the Managers (CAST-1).
 // Settings, Tutorial and the dev Store live in the shell's header tabs, the
 // same projectors the in-game ☰ menu raises.
 // ══════════════════════════════════════════════════════════════════════════
@@ -79,7 +62,7 @@ type LadderRow = { rank: number; username: string; rating: number; profileId?: s
 type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
 
 export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland, onScenarios }: MainMenuProps) {
-  const [panel, setPanel] = useState<"ladder" | "hextalls">("ladder");
+  const [panel, setPanel] = useState<"ladder" | "managers">("ladder");
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
 
   useEffect(() => { void loadStore(); }, []);
@@ -110,8 +93,12 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
   const resume: SoloSaveSummary | null = !onContinue ? null
     : STORY_MODE_ENABLED ? mostRecentSave() : saveForMode(null);
   const toLadder = onLadder ?? onPlay;
-  const pickCast = (id: string) => {
-    try { localStorage.setItem(CAST_KEY, id); } catch { /* private mode */ }
+  // CAST-1: who is hired — read once per mount (a win lands a new hire on
+  // the next visit to the menu).
+  const record = loadManagerRecord();
+  const pickCast = (id: (typeof MANAGERS)[number]["id"]) => {
+    if (!isUnlocked(record, id)) return;
+    saveManagerPick(id);
     onPlay();
   };
 
@@ -153,14 +140,14 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
               : `Scenarios: ${scenOpen} of ${SCENARIOS.length} open`}
           </p>
         </div>
-        <section className="px-detail" aria-label="The ladder and the Hextalls">
+        <section className="px-detail" aria-label="The ladder and the Managers">
           <div className="px-detail-head">
             <div className="px-subtabs" role="tablist" aria-label="Panel">
               <button type="button" role="tab" aria-selected={panel === "ladder"} className={panel === "ladder" ? "active" : ""}
                 data-sfx="tab" onClick={() => setPanel("ladder")}>The ladder</button>
               <span className="px-divider" aria-hidden="true" />
-              <button type="button" role="tab" aria-selected={panel === "hextalls"} className={panel === "hextalls" ? "active" : ""}
-                data-sfx="tab" onClick={() => setPanel("hextalls")}>The Hextalls</button>
+              <button type="button" role="tab" aria-selected={panel === "managers"} className={panel === "managers" ? "active" : ""}
+                data-sfx="tab" onClick={() => setPanel("managers")}>The Managers</button>
             </div>
             <button type="button" className="px-select" data-sfx="open" onClick={panel === "ladder" ? toLadder : onPlay}
               aria-label={panel === "ladder" ? "View the full ladder — top ratings" : "Choose your manager"}>
@@ -212,17 +199,29 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
             </div>
           ) : (
             <div className="px-body">
-              <p className="px-kicker">The Hextall files</p>
+              <p className="px-kicker">Hexmatch Industries · the managers</p>
               <h2 className="px-title">Pick your<br />manager</h2>
               <span className="px-rule" aria-hidden="true" />
               <div className="px-cast-list">
-                {MENU_CAST.map((c) => (
-                  <button key={c.id} type="button" className="px-cast" data-accent={c.accent} data-sfx="open"
-                    onClick={() => pickCast(c.id)} aria-label={`Play as ${c.first} ${c.last}`}>
-                    <img src={c.thumb} alt="" draggable={false} />
-                    <span><b>{c.first} {c.last}</b><i>“{c.quote}”</i></span>
-                  </button>
-                ))}
+                {MENU_CAST.map((c) => {
+                  const hired = isUnlocked(record, c.id);
+                  return (
+                    <button key={c.id} type="button" className={`px-cast${hired ? "" : " locked"}`} data-manager={c.id}
+                      data-sfx={hired ? "open" : undefined} aria-disabled={!hired}
+                      style={{ "--thumb": c.stage } as CSSProperties}
+                      onClick={() => pickCast(c.id)}
+                      aria-label={hired ? `Play as ${fullName(c.id)}` : `${fullName(c.id)} — locked: ${unlockLabel(c.id)}`}>
+                      <img src={c.thumb} alt="" draggable={false} />
+                      <span>
+                        <b>{c.first} {c.last}</b>
+                        <em className="px-cast-title">{c.title}</em>
+                        {hired
+                          ? <i className="px-cast-perk">{c.perk}</i>
+                          : <i className="px-cast-lock">Locked · {unlockLabel(c.id)}</i>}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

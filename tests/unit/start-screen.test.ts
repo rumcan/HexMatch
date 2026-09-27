@@ -493,7 +493,7 @@ describe("MP-06 join screen", () => {
     expect(text()).toContain("No room server behind this page");
     expect(mockCreate).not.toHaveBeenCalled();
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
   });
 
   it("refuses to join and to auto-matchmake when there is no room server", async () => {
@@ -529,7 +529,7 @@ describe("MP-06 join screen", () => {
     await click("Host a game");
     expect(text()).toContain("Sign in to play with friends");
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
   });
 });
 
@@ -640,7 +640,7 @@ describe("auto matchmaking: never time out, and the rank window", () => {
     expect(mockMatch).toHaveBeenCalledTimes(1);
     expect(text()).toContain("Sign in to play with friends");
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
   });
 
   it("Any rank opens at the widest rung and STAYS there — no criterion, no give-up", async () => {
