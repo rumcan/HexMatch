@@ -678,3 +678,84 @@
   .px-lobby > .match-settings { grid-column: 2; grid-row: 1 / span 12; margin-top: 0 !important; padding-top: 0 !important; border-top: 0 !important; }
   .px-lobby .lobby-actions { justify-content: flex-start !important; }
 }
+
+/* ── difficulty picker: poster backdrop, paper dialog, three rival cards ── */
+#iso-skill-prompt {
+  display: grid !important; place-items: center; padding: 24px; overflow-y: auto; border: 0 !important;
+  background: linear-gradient(rgba(6, 12, 16, .55), rgba(6, 12, 16, .72)),
+    url("../assets/poster/menu-bg.webp") center / cover no-repeat, #0e1519 !important;
+}
+#iso-skill-prompt .iso-skill-card {
+  --txt: #172126; --txt-dim: #3d474a; --brass: #e46b0e;
+  position: relative; box-sizing: border-box; width: min(1080px, 100%); max-width: none;
+  padding: 34px 40px 28px; border: 3px solid #11191d; border-radius: 0;
+  background-color: var(--px-paper);
+  background-image: radial-gradient(rgba(73, 52, 24, .095) .65px, transparent .7px), linear-gradient(115deg, var(--px-paper-hi), #ece0c7);
+  background-size: 5px 5px, auto; color: #162024; text-align: left;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .6);
+  animation: px-arrive .42s cubic-bezier(.22, 1, .36, 1) both;
+}
+#iso-skill-prompt .iso-skill-card::before {
+  content: "PICK YOUR RIVAL / 1949"; display: block; margin-bottom: 8px;
+  color: #e06e13; font: 700 14px var(--px-display); letter-spacing: .16em;
+}
+#iso-skill-prompt h2 {
+  margin: 0; color: #162024 !important; opacity: 1; text-align: left; text-shadow: none;
+  font: 400 clamp(44px, 5vw, 68px)/.95 var(--px-poster) !important; letter-spacing: -.01em !important; text-transform: uppercase;
+}
+#iso-skill-prompt .iso-skill-sub { max-width: 70ch; margin: 14px 0 24px; color: #354144; opacity: 1; font: 400 17px/1.4 var(--px-body); }
+#iso-skill-prompt .iso-skill-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+#iso-skill-prompt .iso-skill-choice {
+  --acc: #00aeb8; position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 0;
+  min-height: 0; padding: 0; overflow: hidden; border: 2px solid #11191d; border-radius: 0;
+  background: #fbf5e8; color: #162024; text-align: left; box-shadow: 0 4px 0 rgba(17, 25, 29, .85);
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+#iso-skill-prompt .iso-skill-choice:nth-child(2) { --acc: #ec6c10; }
+#iso-skill-prompt .iso-skill-choice:nth-child(3) { --acc: #c23b22; }
+#iso-skill-prompt .iso-skill-choice:hover, #iso-skill-prompt .iso-skill-choice:focus-visible {
+  transform: translateY(-6px); box-shadow: 0 10px 0 var(--acc), 0 18px 30px rgba(0, 0, 0, .25); border-color: #11191d; outline: none;
+}
+#iso-skill-prompt .iso-skill-label {
+  position: relative; display: block; padding: 22px 18px 16px;
+  background: radial-gradient(circle at 30% 20%, color-mix(in srgb, var(--acc) 70%, #fff), var(--acc) 60%, color-mix(in srgb, var(--acc) 75%, #000));
+  color: #fff; font: 400 44px/1 var(--px-poster) !important; letter-spacing: .01em; text-transform: uppercase;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, .2);
+}
+#iso-skill-prompt .iso-skill-choice:nth-child(1) .iso-skill-label::before { content: "01"; }
+#iso-skill-prompt .iso-skill-choice:nth-child(2) .iso-skill-label::before { content: "02"; }
+#iso-skill-prompt .iso-skill-choice:nth-child(3) .iso-skill-label::before { content: "03"; }
+#iso-skill-prompt .iso-skill-label::before {
+  display: block; margin-bottom: 6px; color: rgba(255, 255, 255, .8); font: 700 13px var(--px-display); letter-spacing: .2em;
+}
+#iso-skill-prompt .iso-skill-current .iso-skill-label::after {
+  content: "CURRENT"; position: absolute; top: 14px; right: 14px; padding: 3px 8px;
+  background: #11191d; color: #fff; font: 700 11px var(--px-display); letter-spacing: .16em; text-shadow: none;
+}
+#iso-skill-prompt .iso-skill-current { box-shadow: 0 4px 0 var(--acc), 0 0 0 3px var(--acc); }
+#iso-skill-prompt .iso-skill-blurb {
+  min-height: 0; margin: 0; padding: 16px 18px 0; opacity: 1; color: #162024;
+  font: italic 700 17px/1.25 var(--px-body);
+}
+#iso-skill-prompt .iso-skill-economy {
+  margin: 14px 18px 0; padding: 12px 0 0; border-top: 1px solid #111b202c; color: #354144;
+  font: 400 15px/1.35 var(--px-body); opacity: 1;
+}
+#iso-skill-prompt .iso-skill-pace {
+  margin-top: auto; padding: 14px 18px 16px; opacity: 1; color: var(--acc);
+  font: 700 13px/1.3 var(--px-display); letter-spacing: .08em; text-transform: uppercase;
+}
+#iso-skill-prompt .iso-skill-foot { margin: 20px 0 0; color: #6c665b; opacity: 1; font: 500 14px var(--px-body); }
+@media (max-width: 760px) {
+  #iso-skill-prompt { place-items: start center; }
+  #iso-skill-prompt .iso-skill-card { padding: 24px 18px 20px; }
+  #iso-skill-prompt .iso-skill-choices { grid-template-columns: 1fr; gap: 12px; }
+  #iso-skill-prompt .iso-skill-label { font-size: 34px !important; padding: 14px 16px 12px; }
+}
+
+/* tutorial strip: clears the drawer tabs (owner: it covered Bank/Market…) */
+@media (min-width: 761px) {
+  #iso-guide .guide-strip { bottom: 64px; }
+  #iso-guide.guide-top .guide-strip, .guide-top #iso-guide .guide-strip, #iso-guide .guide-top .guide-strip { bottom: auto; }
+  .ui-root[data-phone="1"] #iso-guide .guide-strip { bottom: 62px; }
+}
