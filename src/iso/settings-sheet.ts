@@ -39,6 +39,13 @@ import { registerVoicePainter, voice } from "../game/voice";
 // MUSIC-1 (#377): the radio's own switch, its own volume, and the switch that
 // hides the player. Same storage shape as the voice pair right above it.
 import { radio } from "../audio/radio";
+// LIGHT-1 (#473): dynamic light follows the match; always-day pins noon.
+// Performance mode and reduced motion suppress it the way they suppress clouds.
+import {
+  LIGHTING_DAY_NOTE, LIGHTING_MOTION_NOTE, LIGHTING_NOTE,
+  currentLightingChoice, prefersReducedMotion, setLightingChoice, subscribeLighting,
+  type LightingChoice,
+} from "./lighting";
 
 /** The miniature row's copy, live: the full description, or the reason it is
  *  unreachable while performance mode stands (PERF-01). */
@@ -87,6 +94,10 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
         <button type="button" class="gfx-switch" role="switch" aria-label="Clouds" data-gfx="clouds" data-sfx="click">ON</button>
       </div>
       <div class="gfx-row">
+        <div class="gfx-copy"><h3>Lighting</h3><p class="gfx-light-note">${LIGHTING_NOTE}</p></div>
+        <div class="gfx-seg" role="radiogroup" aria-label="Lighting" data-gfx-lighting></div>
+      </div>
+      <div class="gfx-row">
         <div class="gfx-copy"><h3>Sound</h3><p>Brass, felt and paper — every click, coin and cascade (the top bar&rsquo;s 🔊 keeps the same time).</p></div>
         <button type="button" class="gfx-switch" role="switch" data-gfx="sound" data-sfx="click">ON</button>
       </div>
@@ -130,6 +141,8 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const perfBtn = root.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
   const cloudBtn = root.querySelector("[data-gfx=\"clouds\"]") as HTMLButtonElement;
   const cloudNote = root.querySelector(".gfx-cloud-note") as HTMLElement;
+  const lightSeg = root.querySelector("[data-gfx-lighting]") as HTMLElement;
+  const lightNote = root.querySelector(".gfx-light-note") as HTMLElement;
   const soundBtn = root.querySelector("[data-gfx=\"sound\"]") as HTMLButtonElement;
   const voiceBtn = root.querySelector("[data-gfx=\"voice\"]") as HTMLButtonElement;
   const voiceVol = root.querySelector("[data-gfx=\"voice-volume\"]") as HTMLInputElement;
@@ -157,6 +170,17 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   miniBtn.onclick = () => { setGraphics({ miniature: !currentGraphics().miniature }); };
   perfBtn.onclick = () => { setGraphics({ performance: !currentGraphics().performance }); };
   cloudBtn.onclick = () => { setGraphics({ clouds: !currentGraphics().clouds }); };
+  for (const [id, label] of [["dynamic", "Dynamic"], ["day", "Always day"]] as const) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "gfx-q";
+    b.dataset.light = id;
+    b.setAttribute("role", "radio");
+    b.textContent = label;
+    b.title = id === "day" ? LIGHTING_DAY_NOTE : LIGHTING_NOTE;
+    b.onclick = () => { setLightingChoice(id); };
+    lightSeg.appendChild(b);
+  }
   soundBtn.onclick = () => { sfx.setEnabled(!sfx.isEnabled()); };
   voiceBtn.onclick = () => { voice.setEnabled(!voice.enabled); };
   voiceVol.oninput = () => { voice.setVolume(Number(voiceVol.value)); };
@@ -202,7 +226,33 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     cloudBtn.disabled = miniSuppressed;
     cloudBtn.setAttribute("aria-disabled", String(miniSuppressed));
     cloudNote.textContent = miniSuppressed ? SUPPRESSED_BY_PERF : CLOUDS_NOTE;
+    paintLighting(g.performance);
   };
+  // LIGHT-1: the segment is its own store. Performance mode and reduced
+  // motion both pin noon without forgetting the stored choice.
+  let motionQuery: MediaQueryList | null = null;
+  try { motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)"); } catch { motionQuery = null; }
+  const paintLighting = (performance: boolean) => {
+    const reduced = motionQuery?.matches ?? prefersReducedMotion();
+    const suppressed = performance || reduced;
+    const choice = currentLightingChoice();
+    lightNote.textContent = performance
+      ? SUPPRESSED_BY_PERF
+      : reduced
+        ? LIGHTING_MOTION_NOTE
+        : choice === "day" ? LIGHTING_DAY_NOTE : LIGHTING_NOTE;
+    for (const b of Array.from(lightSeg.children) as HTMLButtonElement[]) {
+      const id = b.dataset.light as LightingChoice;
+      const on = id === choice;
+      b.classList.toggle("on", on && !suppressed);
+      b.setAttribute("aria-checked", String(on));
+      b.disabled = suppressed;
+      b.setAttribute("aria-disabled", String(suppressed));
+    }
+  };
+  const onMotion = () => { paintLighting(currentGraphics().performance); };
+  motionQuery?.addEventListener?.("change", onMotion);
+  const unsubLight = subscribeLighting(() => { paintLighting(currentGraphics().performance); });
   const unsubGfx = subscribeGraphics(paint);
   const unsubSound = registerSoundPainter((enabled) => {
     soundBtn.textContent = enabled ? "ON" : "OFF";
@@ -251,6 +301,8 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
     unsubSound();
     unsubVoice();
     unsubRadio();
+    unsubLight();
+    motionQuery?.removeEventListener?.("change", onMotion);
     document.removeEventListener("keydown", onKey, true);
     root.remove();
     resolveClosed();
