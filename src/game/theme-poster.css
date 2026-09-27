@@ -646,3 +646,35 @@
 @media (max-width: 830px), (max-aspect-ratio: 4/5) {
   .start-screen.px .px-title-actions .menu-btn { min-height: 50px; padding: 0 14px; gap: 8px; font-size: 19px !important; }
 }
+
+/* ── desktop: two-column popups, no scrolling (owner, 2026-09-27) ── */
+@media (min-width: 900px) {
+  /* Settings: rows in two columns, title and Done span both */
+  .modal.box.small.gfx-modal {
+    width: min(1120px, calc(100vw - 48px)); max-width: min(1120px, calc(100vw - 48px));
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 44px; align-content: start;
+  }
+  .modal.box.gfx-modal > :is(h2, .sub, .confirm-row) { grid-column: 1 / -1; }
+  .modal.box.gfx-modal .gfx-row { border-bottom: 1px solid #111b202c !important; }
+  .modal.box.gfx-modal .confirm-row .big-btn { margin-top: 14px; }
+
+  /* Tutorial: sections left, the short version right */
+  .guide-menu .modal.box.guide-menu-box {
+    width: min(1120px, calc(100vw - 48px)); max-width: min(1120px, calc(100vw - 48px));
+    display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); column-gap: 44px; align-content: start;
+  }
+  .guide-menu-box > .guide-menu-head { grid-column: 1 / -1; }
+  .guide-menu-box > .guide-menu-list { grid-column: 1; grid-row: 2 / span 2; margin: 6px 0 0; }
+  .guide-menu-box > .guide-menu-ref { grid-column: 2; grid-row: 2; margin-top: 6px; }
+  .guide-menu-box > .guide-menu-foot { grid-column: 2; grid-row: 3; align-self: end; }
+
+  /* Host game / room: code, seats and actions left; the rules right */
+  .start-screen.px .start-panel.px-lobby {
+    width: min(1180px, calc(100vw - 48px)); max-height: none;
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); grid-auto-flow: row dense;
+    column-gap: 44px; align-content: start;
+  }
+  .px-lobby > * { grid-column: 1; }
+  .px-lobby > .match-settings { grid-column: 2; grid-row: 1 / span 12; margin-top: 0 !important; padding-top: 0 !important; border-top: 0 !important; }
+  .px-lobby .lobby-actions { justify-content: flex-start !important; }
+}
