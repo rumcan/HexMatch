@@ -26,3 +26,6 @@ assets/iso-atlas/footprint-check.png
 
 # Per-worktree Vitest transforms/results (never shared through node_modules).
 .cache/
+
+# ART-3D (#504): paid Meshy models live in the lead clone, not in git (docs/ART-3D.md)
+tools/art-src/meshy/**/*.glb

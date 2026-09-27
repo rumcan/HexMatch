@@ -1,0 +1,116 @@
+<!doctype html>
+<!-- ART-3D (#504): the headless sprite camera. Driven by tools/meshy/render.mjs. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>html, body { margin: 0; background: transparent; } canvas { display: block; }</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+// The game's projection: 2:1 isometric = a 30° elevation at 45° azimuth.
+// A tile is TILE_M metres; at 2× a tile is 128 px wide, so PX_PER_M follows.
+const TILE_M = 12;
+const PX_PER_M = 128 / (TILE_M * Math.SQRT2);
+const ELEV = Math.PI / 6;
+
+const loader = new GLTFLoader();
+
+/** Rotate `root` about Y so its footprint is square to the grid (min-area box). */
+function squareToGrid(root) {
+  const pts = [];
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position;
+    const v = new THREE.Vector3();
+    const step = Math.max(1, Math.floor(pos.count / 4000));
+    for (let i = 0; i < pos.count; i += step) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+      pts.push([v.x, v.z]);
+    }
+  });
+  let best = { area: Infinity, a: 0 };
+  for (let deg = 0; deg < 90; deg += 0.5) {
+    const a = (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of pts) {
+      const rx = x * c - z * s, rz = x * s + z * c;
+      if (rx < x0) x0 = rx; if (rx > x1) x1 = rx; if (rz < z0) z0 = rz; if (rz > z1) z1 = rz;
+    }
+    const area = (x1 - x0) * (z1 - z0);
+    if (area < best.area) best = { area, a };
+  }
+  return best.a;
+}
+
+window.renderSprite = async (p) => {
+  // p: { glb, fw, fh, turn, width, height, anchorX, anchorY, ss, fill, sun, ambient, yaw }
+  const gltf = await loader.loadAsync(p.glb);
+  const model = gltf.scene;
+  const holder = new THREE.Group();
+  holder.add(model);
+
+  // 1. square the footprint to the grid, then the chosen quarter turn
+  const auto = p.yaw == null ? squareToGrid(model) : (p.yaw * Math.PI) / 180;
+  model.rotation.y = auto + (p.turn * Math.PI) / 2;
+  holder.updateMatrixWorld(true);
+
+  // 2. fit: base on the ground, centred on the footprint, scaled uniformly
+  //    so the plan fills the footprint (`fill` leaves a margin)
+  let box = new THREE.Box3().setFromObject(holder);
+  const size = box.getSize(new THREE.Vector3());
+  const k = Math.min((p.fw * TILE_M * p.fill) / size.x, (p.fh * TILE_M * p.fill) / size.z);
+  holder.scale.setScalar(k);
+  holder.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(holder);
+  const c = box.getCenter(new THREE.Vector3());
+  holder.position.set(-c.x, -box.min.y, -c.z);
+  holder.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(holder);
+  const heightM = box.max.y - box.min.y;
+
+  // 3. the camera: orthographic, 1 world metre = PX_PER_M px at 2×; the
+  //    footprint centre (world origin) lands on the anchor pixel
+  const W = p.width, H = p.height;
+  const s = PX_PER_M;
+  const cam = new THREE.OrthographicCamera(
+    -p.anchorX / s, (W - p.anchorX) / s, p.anchorY / s, -(H - p.anchorY) / s, -1000, 1000);
+  const dir = new THREE.Vector3(Math.cos(ELEV) / Math.SQRT2, Math.sin(ELEV), Math.cos(ELEV) / Math.SQRT2);
+  cam.position.copy(dir.multiplyScalar(200));
+  cam.up.set(0, 1, 0);
+  cam.lookAt(0, 0, 0);
+
+  // 4. one sun, upper-LEFT on screen (the SW wall, facing +Z, is the lit one)
+  const scene = new THREE.Scene();
+  scene.add(holder);
+  scene.add(new THREE.HemisphereLight(0xfff4e0, 0x5a5040, p.ambient));
+  const sun = new THREE.DirectionalLight(0xfff1d6, p.sun);
+  sun.position.set(-0.25, 1.35, 1.0).multiplyScalar(100);
+  scene.add(sun);
+
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(p.ss);
+  renderer.setSize(W, H);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.setClearColor(0x000000, 0);
+  document.body.innerHTML = "";
+  document.body.appendChild(renderer.domElement);
+  renderer.render(scene, cam);
+  const url = renderer.domElement.toDataURL("image/png");
+  renderer.dispose();
+  return { url, heightM, planM: [size.x * k, size.z * k], autoYawDeg: (auto * 180) / Math.PI };
+};
+window.ready = true;
+</script>
+</body>
+</html>
