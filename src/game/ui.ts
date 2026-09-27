@@ -175,7 +175,7 @@ export interface ActionCardInfo {
   until?: number;
 }
 
-type TabName = "market" | "bank" | "black" | "plant" | "feed" | "quests";
+type TabName = "market" | "bank" | "black" | "plant" | "feed" | "quests" | "contracts";
 
 export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
@@ -229,7 +229,11 @@ export interface UiPlayer {
 
 /** L8 (#222): one optional quest, as the chrome prints it. The game owns the
  *  rule behind every string here (`progress` is computed by quests.ts); the
- *  chrome only paints. */
+ *  chrome only paints.
+ *  CONTRACT-1 (#466): town contracts replace Quests — deliveries with deadlines,
+ *  and a public tender both seats race. The same panel now shows contracts with
+ *  progress bars, timers, Space Age styling, and accept/dismiss.
+ */
 export interface UiQuestItem {
   /** Stable id — the handle "dismiss this one" travels back on. */
   id: string;
@@ -239,12 +243,26 @@ export interface UiQuestItem {
   text: string;
   /** How far along the player is ("2/3", "best ×2.4 · need ×2"). */
   progress: string;
-  /** What completing it pays ("2 ⛏️ Ore"). */
+  /** What completing it pays ("2 ⛏️ Ore" or "$120"). */
   reward: string;
+  /** CONTRACT-1: kind of contract */
+  kind?: "private" | "tender" | "active";
+  /** CONTRACT-1: delivered / amount for progress bar */
+  delivered?: number;
+  amount?: number;
+  /** CONTRACT-1: time left */
+  timeLeftMs?: number;
+  timeLeftText?: string;
+  /** CONTRACT-1: is active (accepted) or offer */
+  active?: boolean;
+  /** CONTRACT-1: tender race — who else is racing */
+  tender?: boolean;
 }
 
 /** L8 (#222): the quest panel's state. `hidden` is the player's own choice
- *  (the panel shrinks to a flag they can click back open). */
+ *  (the panel shrinks to a flag they can click back open).
+ *  CONTRACT-1: now the Contracts panel.
+ */
 export interface UiQuestPanel {
   hidden: boolean;
   items: UiQuestItem[];
@@ -697,8 +715,9 @@ export interface UiHooks {
    * offer for the rest of the game; `hide`/`show` put the whole panel away and
    * bring it back. The game owns both (they ride the save with the paid set),
    * and NOTHING in the rules reads them — the panel is the player's own.
+   * CONTRACT-1 (#466): `accept` takes a contract offer into active.
    */
-  onQuestAction?: (id: string, action: "dismiss" | "hide" | "show") => void;
+  onQuestAction?: (id: string, action: "dismiss" | "hide" | "show" | "accept") => void;
   /**
    * L6 (#220): the plate's Retune key. The chrome never decides whether a
    * re-match is allowed — it shows the key because `UiState.tuningIdle` said so,
@@ -1473,8 +1492,8 @@ export function createOriginalUi(
   // Playtest (2026-09): the optional quests live in their own tab after Feed
   // (they floated over the map and got in the way). A badge counts the
   // quests the player has not looked at yet; they are never required.
-  const tabQuests = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.quests}</i><span class="tab-l">Quests</span><span class="tab-badge hidden"></span>`);
-  tabQuests.onclick = () => drawerTab("quests");
+  const tabQuests = h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.quests}</i><span class="tab-l">Contracts</span><span class="tab-badge hidden"></span>`);
+  tabQuests.onclick = () => drawerTab("contracts");
   const questsBadge = tabQuests.querySelector(".tab-badge") as HTMLElement;
   const feedBadge = h("span", "tab-badge hidden");
   const marketBadge = h("span", "tab-badge hidden");
@@ -1497,7 +1516,7 @@ export function createOriginalUi(
   function acknowledgeTab(): void {
     if (tabVisible("feed")) feedUnread = 0;
     if (tabVisible("market")) marketSeen = marketAlert;
-    if (tabVisible("quests")) markQuestsSeen();
+    if (tabVisible("quests") || tabVisible("contracts")) markQuestsSeen();
     paintBadge(feedBadge, feedUnread, "unread messages");
     paintBadge(marketBadge, marketAlert && marketAlert !== marketSeen ? 1 : 0, "price alerts");
   }
@@ -1508,8 +1527,8 @@ export function createOriginalUi(
     : h("button", "tab", `<i class="tab-ic" aria-hidden="true">${HUD_ICONS.plant}</i><span class="tab-l">Processing Plant</span>`);
   if (tabPlant) tabPlant.onclick = () => drawerTab("plant");
   const tabDefs: [HTMLElement, TabName][] = sessionMode
-    ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"], [tabQuests, "quests"]]
-    : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"], [tabQuests, "quests"]];
+    ? [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabFeed, "feed"], [tabQuests, "contracts"]]
+    : [[tabBank, "bank"], [tabMarket, "market"], [tabBlack, "black"], [tabPlant!, "plant"], [tabFeed, "feed"], [tabQuests, "contracts"]];
   for (const [tab, name] of tabDefs) {
     tab.dataset.tab = name;
     tabs.appendChild(tab);
@@ -2038,12 +2057,12 @@ export function createOriginalUi(
   // the player opens it, a ✕ on every row and a Hide for the panel, because
   // the one thing this chrome must never look like is a to-do list that has to
   // be finished.
-  const questsEl = h("div", "quests hidden");
+  const questsEl = h("div", "quests hidden contracts");
   questsEl.id = "iso-quests";
   const questsHead = h("button", "quests-head") as HTMLButtonElement;
   questsHead.type = "button";
   questsHead.innerHTML = `<span class="q-flag" aria-hidden="true">⚑</span>`
-    + `<span class="q-title">Quests</span>`
+    + `<span class="q-title">Contracts</span>`
     + `<span class="q-count"></span>`
     + `<span class="q-caret" aria-hidden="true">▸</span>`;
   const questsCount = questsHead.querySelector(".q-count") as HTMLElement;
@@ -2905,8 +2924,9 @@ export function createOriginalUi(
     blackPane.classList.toggle("hidden", t !== "black");
     tabFeed.classList.toggle("active", t === "feed");
     feedPane.classList.toggle("hidden", t !== "feed");
-    tabQuests.classList.toggle("active", t === "quests");
-    questsPane.classList.toggle("hidden", t !== "quests");
+    const isContracts = t === "quests" || t === "contracts";
+    tabQuests.classList.toggle("active", isContracts);
+    questsPane.classList.toggle("hidden", !isContracts);
     acknowledgeTab();
     // MOBILE-02: the plant tab re-fits the board — the full-bleed sheet only
     // leaves a measurable slot once this pane is the visible one.
@@ -4110,6 +4130,9 @@ export function createOriginalUi(
    * player opened it. Every row carries its own ✕ and the list carries a Hide,
    * so the player can put the whole thing away — and the game remembers both,
    * because "ignoring the quests" has to survive a repaint.
+   * CONTRACT-1 (#466): Quests tab becomes Contracts — deliveries with deadlines,
+   * and a public tender both seats race. Space Age style with progress bars
+   * and timers, active contract feeds GOAL-1 advisor.
    */
   function renderQuests(panel: UiQuestPanel | null, bannerUp = false): void {
     questsPanel = panel;
@@ -4117,7 +4140,7 @@ export function createOriginalUi(
     void bannerUp;
     const live = !!panel && items.length > 0;
     questsEl.classList.toggle("hidden", !live);
-    if (tabVisible("quests")) markQuestsSeen();
+    if (tabVisible("quests") || tabVisible("contracts")) markQuestsSeen();
     else paintQuestsBadge();
     if (!live || !panel) {
       questsSig = null;
@@ -4133,30 +4156,64 @@ export function createOriginalUi(
     questsEl.classList.toggle("shut", shut);
     questsList.classList.toggle("hidden", !open);
     questsHead.setAttribute("aria-expanded", String(open));
-    questsHead.setAttribute("aria-label", shut ? "Show quests"
-      : open ? "Collapse the quest list" : "Expand the quest list");
+    questsHead.setAttribute("aria-label", shut ? "Show contracts"
+      : open ? "Collapse the contracts list" : "Expand the contracts list");
     questsHead.title = shut
-      ? "Quests hidden — click to show them again"
-      : "Optional quests — suggestions, never requirements";
+      ? "Contracts hidden — click to show them again"
+      : "Town contracts — deliveries with deadlines, and a public tender both seats race";
     const count = String(items.length);
     if (questsCount.textContent !== count) questsCount.textContent = count;
-    const sig = items.map((i) => `${i.id}|${i.who}|${i.text}|${i.progress}|${i.reward}`).join("\u0001");
+    const sig = items.map((i) => `${i.id}|${i.who}|${i.text}|${i.progress}|${i.reward}|${i.delivered}|${i.amount}|${i.timeLeftText}|${i.active}|${i.kind}`).join("\u0001");
     if (sig === questsSig) return;
     questsSig = sig;
     questsList.innerHTML = "";
     for (const item of items) {
-      const li = h("li", "quest") as HTMLLIElement;
+      const li = h("li", `quest contract ${item.kind ?? ""} ${item.active ? "active" : "offer"} ${item.tender ? "tender" : ""}`) as HTMLLIElement;
       li.dataset.quest = item.id;
+      const whoLine = h("div", "q-who", item.who + (item.kind === "tender" ? " — TENDER" : item.kind === "private" ? " — PRIVATE" : ""));
+      const textLine = h("div", "q-text", item.text);
       const meta = h("div", "q-meta");
+      // Progress bar for active contracts
+      if (item.active && typeof item.delivered === "number" && typeof item.amount === "number" && item.amount > 0) {
+        const pct = Math.min(100, Math.max(0, (item.delivered / item.amount) * 100));
+        const barWrap = h("div", "contract-bar-wrap");
+        barWrap.style.cssText = "flex:1; height:8px; background:rgba(255,255,255,0.15); border-radius:4px; overflow:hidden; margin-right:8px; min-width:80px;";
+        const bar = h("div", "contract-bar") as HTMLElement;
+        bar.style.cssText = `height:100%; width:${pct}%; background:#ed7414; transition:width 0.3s;`;
+        barWrap.appendChild(bar);
+        meta.appendChild(barWrap);
+      }
+      const prog = h("span", "q-prog", item.progress);
+      const reward = h("span", "q-reward", item.reward);
+      if (item.timeLeftText) {
+        const timer = h("span", "q-timer", item.timeLeftText) as HTMLElement;
+        timer.style.cssText = "margin-left:6px; font-variant-numeric:tabular-nums; opacity:0.9;";
+        // Space Age style: red when <30s
+        if (item.timeLeftMs !== undefined && item.timeLeftMs < 30000) {
+          timer.style.color = "#ff5252";
+        }
+        meta.append(prog, reward, timer);
+      } else {
+        meta.append(prog, reward);
+      }
+      // Accept button for offers
+      if (!item.active) {
+        const accept = h("button", "q-accept", "Accept") as HTMLButtonElement;
+        accept.type = "button";
+        accept.style.cssText = "margin-left:8px; padding:2px 8px; background:#4caf50; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px;";
+        accept.setAttribute("aria-label", `Accept contract from ${item.who}`);
+        accept.onclick = (ev) => { ev.stopPropagation(); hooks.onQuestAction?.(item.id, "accept"); };
+        meta.appendChild(accept);
+      }
       const x = h("button", "q-x", "✕") as HTMLButtonElement;
       x.type = "button";
-      x.setAttribute("aria-label", `Dismiss the quest from ${item.who}`);
+      x.setAttribute("aria-label", `Dismiss the contract from ${item.who}`);
       x.onclick = (ev) => { ev.stopPropagation(); hooks.onQuestAction?.(item.id, "dismiss"); };
-      meta.append(h("span", "q-prog", item.progress), h("span", "q-reward", item.reward), x);
-      li.append(h("div", "q-who", item.who), h("div", "q-text", item.text), meta);
+      meta.appendChild(x);
+      li.append(whoLine, textLine, meta);
       questsList.appendChild(li);
     }
-    questsList.appendChild(h("li", "quests-foot", "Optional — suggestions, never requirements."));
+    questsList.appendChild(h("li", "quests-foot", "Town contracts — deliver cargo to towns before the deadline. Private contracts pay $ + town growth; tenders are a race both seats can win."));
   }
 
   questsHead.onclick = () => {

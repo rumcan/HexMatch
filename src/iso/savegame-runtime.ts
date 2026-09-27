@@ -103,9 +103,36 @@ export interface SaveGamePayload {
    * what has been paid, what the player dismissed or hid. The quest DEFS are
    * data re-derived from the restored map, so only ids and choices travel; a
    * reload must not be able to re-earn a reward (the paid set is the proof).
+   * CONTRACT-1 (#466): town contracts replace Quests — same shape plus active
+   * contracts with progress and deadlines.
    */
   quests?: {
     offers?: string[];
+    spent?: string[];
+    paid?: string[];
+    hidden?: boolean;
+  };
+  contracts?: {
+    offers?: string[];
+    active?: {
+      def: {
+        id: string;
+        kind: "private" | "tender";
+        cargo: string;
+        amount: number;
+        townId: number;
+        townName: string;
+        rewardMoney: number;
+        rewardTown: number;
+        deadlineMs: number;
+        speaker: string;
+      };
+      acceptedAt: number;
+      expiresAt: number;
+      delivered: number;
+      owner: number;
+      status: "active" | "completed" | "expired" | "lost";
+    }[];
     spent?: string[];
     paid?: string[];
     hidden?: boolean;

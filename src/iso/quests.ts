@@ -1,79 +1,465 @@
 // ══════════════════════════════════════════════════════════════════════════
 // L8 (#222) — optional quests, voiced by the match's cast.
+// CONTRACT-1 (#466) — town contracts replace Quests — deliveries with
+// deadlines, and a public tender both seats race.
 //
-// Merge Gardens' deconstruction gave the loop one more job: tell the player
-// what they COULD do next, in a character's voice. HexMatch is a repeatable
-// Catan-style strategy game, so a quest here is a SUGGESTION and never a
-// requirement:
-//
-//   • 2–3 are offered at once, never two of the same strategy, so a breadth
-//     plan, a depth plan and a network plan sit on the board together and the
-//     player picks (or ignores) all of them;
-//   • they are generated from the CURRENT map and state — which cargo is still
-//     unclaimed, how many Depots the seat runs, what the city is worth — so
-//     two games offer different plans, and one game's offers move as it is
-//     played;
-//   • NOTHING outside the HUD reads them. No depot tier, no upgrade, no rung,
-//     no ★ and no win condition is gated by a quest, and a player who hides
-//     the panel and finishes zero quests can still win the match. The reward
-//     is small, paid once, and only on completion — quests are additive.
-//
-// Rewards are deliberately cargo and never ★: L13 (#228) owns the scoreboard
-// and lists "control/quest ★" as post-MVP, so a quest must not move the win
-// line. `QUEST_REWARDS` is the one table to retune when #228 gives it numbers;
-// the values here are the "small, optional, capped" line from that ticket's
-// doc (1–2 units of one cargo, once per quest).
-//
-// The texts are per SPEAKER — the match's rival, the guide (Mabel Quill in a
-// contract), or the sandbox's neutral foreman. Which one speaks is
-// `speakerFor()`: a story contract is voiced by its cast through
-// `src/story/cast.ts` + `advisor.ts`; the sandbox has no cast, so the foreman
-// talks the player through the same offers. (Today a contract plays the
-// shipped loop, where this whole panel is off — the voices are here so the
-// moment a contract runs the new loop, it speaks in character.)
+// This file evolves the old quest module: the old quest types/helpers are
+// kept for backward compat (saves, old tests) but the game now uses the
+// contract types/functions. Where #466 and an older ticket disagree, #466 wins.
 // ══════════════════════════════════════════════════════════════════════════
 import { CARGO, CARGOES, INDUSTRY_BY_KEY, type Cargo } from "./config";
 import type { Purse } from "./track";
 
-/** The plans a quest can push: claim ground, connect it, tune it, grow the
- *  city, or broaden the cargo mix. Distinct strategies are what makes the
- *  offer set a choice instead of a to-do list. */
-export type QuestStrategy = "claim" | "link" | "tune" | "city" | "breadth";
-
-/** Who says it. `rival`/`guide` resolve to the contract's cast; `foreman` is
- *  the sandbox's own voice (no portrait — it prints as a name and a line). */
+// ── shared speaker ──────────────────────────────────────────────────────
 export type QuestSpeaker = "rival" | "guide" | "foreman";
-
-export type QuestKind = "claim-cargo" | "connect-depots" | "tune-depot" | "city-tier" | "run-types";
-
-export type QuestRewardId = "ore-2" | "stone-2" | "grain-2" | "oil-1" | "gold-1";
-
-/** The sandbox foreman. No art, no sheet: a name and a voice, on purpose —
- *  the cast belongs to the campaign, and the sandbox is not a campaign. */
 export const FOREMAN_NAME = "Foreman Pike";
 export const GUIDE_NAME = "Mabel Quill";
 
-// ── rewards ───────────────────────────────────────────────────────────────
+// ── CONTRACT-1 types ────────────────────────────────────────────────────
+export type ContractKind = "private" | "tender";
+
+export interface ContractDef {
+  id: string;
+  kind: ContractKind;
+  cargo: Cargo;
+  amount: number;
+  townId: number;
+  townName: string;
+  rewardMoney: number;
+  /** Town-growth progress (0..1) awarded on completion, plus the $ reward. */
+  rewardTown: number;
+  /** How long after acceptance the contract must be finished (ms). */
+  deadlineMs: number;
+  speaker: QuestSpeaker;
+  text: Record<QuestSpeaker, string>;
+}
+
+export interface ContractView {
+  seed: number;
+  towns: { id: number; name: string; tx: number; ty: number }[];
+  cargoesRunning: Cargo[];
+  depotCount: number;
+  connected: number;
+  townLevel: number;
+  townLevels: number;
+  difficulty: "trainee" | "easy" | "normal" | "hard";
+  /** 0..1 progress to win line (for phase scaling). */
+  phase: number;
+  money: number;
+  unclaimed?: Partial<Record<Cargo, number>>;
+  rivalCargoes?: Cargo[];
+  /** Optional detailed depot cargo list for rival win check. */
+  depotCargoes?: { cargo: Cargo; connected: boolean }[];
+}
+
+export interface ActiveContract {
+  def: ContractDef;
+  acceptedAt: number;
+  expiresAt: number;
+  delivered: number;
+  owner: 0 | 1;
+  status: "active" | "completed" | "expired" | "lost";
+}
+
+export const CONTRACT_OFFER_MAX = 3;
+export const CONTRACT_PRIVATE_COUNT = 2;
+export const CONTRACT_TENDER_COUNT = 1;
+export const CONTRACT_BASE_DEADLINE_MS = 300_000; // 5 min
+export const CONTRACT_TENDER_DEADLINE_MS = 360_000; // 6 min
+
+const CONTRACT_BASE_AMOUNT: Record<Cargo, number> = {
+  grain: 40,
+  wood: 40,
+  stone: 30,
+  ore: 30,
+  oil: 20,
+  gold: 12,
+};
+
+const DIFFICULTY_AMOUNT_MULT: Record<ContractView["difficulty"], number> = {
+  trainee: 0.7,
+  easy: 0.8,
+  normal: 1.0,
+  hard: 1.3,
+};
+const DIFFICULTY_DEADLINE_MULT: Record<ContractView["difficulty"], number> = {
+  trainee: 1.4,
+  easy: 1.2,
+  normal: 1.0,
+  hard: 0.8,
+};
+const DIFFICULTY_REWARD_MULT: Record<ContractView["difficulty"], number> = {
+  trainee: 0.9,
+  easy: 1.0,
+  normal: 1.2,
+  hard: 1.5,
+};
+
+function contractAmountFor(cargo: Cargo, view: ContractView, rng: () => number): number {
+  const base = CONTRACT_BASE_AMOUNT[cargo] ?? 30;
+  const diff = DIFFICULTY_AMOUNT_MULT[view.difficulty] ?? 1;
+  const phase = 0.8 + view.phase * 0.6;
+  const jitter = 0.9 + rng() * 0.2;
+  const raw = base * diff * phase * jitter;
+  return Math.max(5, Math.round(raw / 5) * 5);
+}
+
+function contractRewardFor(cargo: Cargo, amount: number, view: ContractView): { money: number; town: number } {
+  const priceMap: Record<Cargo, number> = { grain: 6, wood: 5, stone: 5, ore: 8, oil: 12, gold: 40 };
+  const price = priceMap[cargo] ?? 5;
+  const mult = DIFFICULTY_REWARD_MULT[view.difficulty] ?? 1;
+  const money = Math.max(20, Math.round(amount * price * 1.2 * mult));
+  const town = 0.15;
+  return { money, town };
+}
+
+function contractDeadlineFor(kind: ContractKind, view: ContractView): number {
+  const base = kind === "tender" ? CONTRACT_TENDER_DEADLINE_MS : CONTRACT_BASE_DEADLINE_MS;
+  const mult = DIFFICULTY_DEADLINE_MULT[view.difficulty] ?? 1;
+  return Math.round(base * mult);
+}
+
+function townNameFor(id: number): string {
+  return `Town ${id + 1}`;
+}
+
+function contractTextFor(def: Omit<ContractDef, "text" | "speaker"> & { speaker: QuestSpeaker }): Record<QuestSpeaker, string> {
+  const cargoName = CARGO[def.cargo].name;
+  const town = def.townName;
+  const amt = def.amount;
+  const kind = def.kind;
+  if (kind === "tender") {
+    return {
+      rival: `Public tender: ${amt} ${cargoName} to ${town}. First to deliver takes the purse — I intend to be first.`,
+      guide: `Tender open, boss: ${amt} ${cargoName} to ${town}. The rival's already loading — beat them to it.`,
+      foreman: `Tender: ${amt} ${cargoName} to ${town}. Both seats race — first load wins.`,
+    };
+  }
+  return {
+    rival: `You have ${Math.round(def.deadlineMs / 60000)} minutes to get ${amt} ${cargoName} to ${town}. I doubt you have the line for it.`,
+    guide: `Boss, ${town} needs ${amt} ${cargoName} in ${Math.round(def.deadlineMs / 60000)} minutes. Deliver it to the Factory and the town grows with us.`,
+    foreman: `Contract: ${amt} ${cargoName} to ${town} in ${Math.round(def.deadlineMs / 60000)} min. Cargo arriving at the Factory counts after acceptance.`,
+  };
+}
+
+export function speakerForContract(kind: ContractKind, story: boolean): QuestSpeaker {
+  if (!story) return "foreman";
+  return kind === "tender" ? "rival" : "guide";
+}
+
+export function contractOffers(view: ContractView, rng: () => number): ContractDef[] {
+  const towns = view.towns.length ? view.towns : [{ id: 0, name: townNameFor(0), tx: 0, ty: 0 }];
+  const cargos = (Object.keys(CONTRACT_BASE_AMOUNT) as Cargo[]).filter((c) => c !== "gold" || view.phase > 0.3);
+  const pool: ContractDef[] = [];
+  let seq = 0;
+  for (const town of towns) {
+    for (const cargo of cargos) {
+      const kinds: ContractKind[] = ["private", "tender"];
+      for (const kind of kinds) {
+        const amount = contractAmountFor(cargo, view, rng);
+        const reward = contractRewardFor(cargo, amount, view);
+        const deadline = contractDeadlineFor(kind, view);
+        const id = `${kind}-${cargo}-${town.id}-${seq++}`;
+        const base = {
+          id,
+          kind,
+          cargo,
+          amount,
+          townId: town.id,
+          townName: town.name,
+          rewardMoney: reward.money,
+          rewardTown: reward.town,
+          deadlineMs: deadline,
+        };
+        const speaker = speakerForContract(kind, true);
+        const def: ContractDef = {
+          ...base,
+          speaker,
+          text: contractTextFor({ ...base, speaker }),
+        };
+        pool.push(def);
+      }
+    }
+  }
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
+}
+
+export interface SelectContractsOptions {
+  max?: number;
+  exclude?: Iterable<string>;
+  avoidCargoTown?: Set<string>;
+}
+
+function cargoTownKey(cargo: Cargo, townId: number): string {
+  return `${cargo}:${townId}`;
+}
+
+export function selectContracts(
+  pool: readonly ContractDef[],
+  rng: () => number,
+  opts: SelectContractsOptions = {},
+): ContractDef[] {
+  const max = opts.max ?? CONTRACT_OFFER_MAX;
+  const excluded = new Set(opts.exclude ?? []);
+  const avoid = opts.avoidCargoTown ?? new Set<string>();
+  const filtered = pool.filter((c) => !excluded.has(c.id) && !avoid.has(cargoTownKey(c.cargo, c.townId)));
+  const privates = filtered.filter((c) => c.kind === "private");
+  const tenders = filtered.filter((c) => c.kind === "tender");
+  const shuffle = <T>(arr: T[]): T[] => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+  const sPriv = shuffle(privates);
+  const sTend = shuffle(tenders);
+  const picked: ContractDef[] = [];
+  const seen = new Set<string>(avoid);
+  for (const c of sPriv) {
+    if (picked.length >= CONTRACT_PRIVATE_COUNT) break;
+    const key = cargoTownKey(c.cargo, c.townId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    picked.push(c);
+  }
+  for (const c of sTend) {
+    if (picked.length >= max) break;
+    const key = cargoTownKey(c.cargo, c.townId);
+    if (seen.has(key)) continue;
+    picked.push(c);
+    break;
+  }
+  if (picked.length < max) {
+    for (const c of filtered) {
+      if (picked.length >= max) break;
+      if (picked.some((p) => p.id === c.id)) continue;
+      picked.push(c);
+    }
+  }
+  return picked.slice(0, max);
+}
+
+export function contractProgressText(active: ActiveContract): string {
+  return `${Math.min(active.delivered, active.def.amount)}/${active.def.amount}`;
+}
+
+export function contractTimeLeft(active: ActiveContract, now: number): number {
+  return Math.max(0, active.expiresAt - now);
+}
+
+export function contractTimeLeftText(active: ActiveContract, now: number): string {
+  const left = contractTimeLeft(active, now);
+  const s = Math.ceil(left / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+export function isContractExpired(active: ActiveContract, now: number): boolean {
+  return now >= active.expiresAt && active.status === "active";
+}
+
+export function isContractCompleted(active: ActiveContract): boolean {
+  return active.delivered >= active.def.amount;
+}
+
+export function addContractDelivery(
+  active: ActiveContract,
+  cargo: Cargo,
+  amount: number,
+): ActiveContract {
+  if (active.status !== "active") return active;
+  if (active.def.cargo !== cargo) return active;
+  const delivered = active.delivered + amount;
+  const completed = delivered >= active.def.amount;
+  return {
+    ...active,
+    delivered,
+    status: completed ? "completed" : "active",
+  };
+}
+
+export function resolveTenderRace(
+  actives: ActiveContract[],
+  _now: number,
+): { actives: ActiveContract[]; winner?: ActiveContract; losers: ActiveContract[] } {
+  const completed = actives.filter((a) => a.def.kind === "tender" && a.status === "completed");
+  if (completed.length === 0) return { actives, losers: [] };
+  // Earliest acceptedAt wins, tie-break owner 0 then first in array
+  const winner = [...completed].sort((a, b) => {
+    if (a.acceptedAt !== b.acceptedAt) return a.acceptedAt - b.acceptedAt;
+    if (a.owner !== b.owner) return a.owner - b.owner;
+    return 0;
+  })[0];
+  const losers: ActiveContract[] = [];
+  const next = actives.map((a) => {
+    if (a.def.kind !== "tender") return a;
+    if (a.def.id !== winner.def.id) return a;
+    if (a.owner === winner.owner && a.def.id === winner.def.id && a.acceptedAt === winner.acceptedAt && a.delivered === winner.delivered) {
+      // This is the winner itself (reference equality not reliable, use owner+id)
+      // Keep winner as is
+      if (a.owner === winner.owner) return a;
+    }
+    if (a.owner !== winner.owner || (a.owner === winner.owner && a !== winner)) {
+      // Any other contract for same tender id loses, whether active or also completed
+      if (a.def.id === winner.def.id) {
+        const lost = { ...a, status: "lost" as const };
+        // Only count if not already lost/expired
+        if (a.status !== "lost" && a.status !== "expired") losers.push(lost);
+        return lost;
+      }
+    }
+    return a;
+  });
+  // Ensure winner stays completed
+  const finalActives = next.map((a) => {
+    if (a.def.id === winner.def.id && a.owner === winner.owner) return winner;
+    return a;
+  });
+  return { actives: finalActives, winner, losers };
+}
+
+export function rivalCanWinTender(
+  view: ContractView,
+  def: ContractDef,
+): boolean {
+  if (def.kind !== "tender") return false;
+  if (view.depotCargoes) {
+    return view.depotCargoes.some((d) => d.cargo === def.cargo && d.connected);
+  }
+  if (view.rivalCargoes?.includes(def.cargo)) return true;
+  return view.depotCount > 0;
+}
+
+export interface ContractWire {
+  id: string;
+  kind: ContractKind;
+  cargo: Cargo;
+  amount: number;
+  townId: number;
+  townName: string;
+  rewardMoney: number;
+  rewardTown: number;
+  deadlineMs: number;
+  speaker: QuestSpeaker;
+  acceptedAt?: number;
+  expiresAt?: number;
+  delivered?: number;
+  owner?: 0 | 1;
+  status?: ActiveContract["status"] | "offer";
+  leftMs?: number;
+}
+
+export function contractsToWire(offers: ContractDef[], actives: ActiveContract[], now: number): ContractWire[] {
+  const out: ContractWire[] = [];
+  for (const o of offers) {
+    out.push({
+      id: o.id,
+      kind: o.kind,
+      cargo: o.cargo,
+      amount: o.amount,
+      townId: o.townId,
+      townName: o.townName,
+      rewardMoney: o.rewardMoney,
+      rewardTown: o.rewardTown,
+      deadlineMs: o.deadlineMs,
+      speaker: o.speaker,
+      status: "offer",
+      leftMs: o.deadlineMs,
+    });
+  }
+  for (const a of actives) {
+    out.push({
+      id: a.def.id,
+      kind: a.def.kind,
+      cargo: a.def.cargo,
+      amount: a.def.amount,
+      townId: a.def.townId,
+      townName: a.def.townName,
+      rewardMoney: a.def.rewardMoney,
+      rewardTown: a.def.rewardTown,
+      deadlineMs: a.def.deadlineMs,
+      speaker: a.def.speaker,
+      acceptedAt: a.acceptedAt,
+      expiresAt: a.expiresAt,
+      delivered: a.delivered,
+      owner: a.owner,
+      status: a.status,
+      leftMs: Math.max(0, a.expiresAt - now),
+    });
+  }
+  return out;
+}
+
+export function contractsFromWire(wire: unknown, now: number): { offers: ContractDef[]; actives: ActiveContract[] } {
+  const offers: ContractDef[] = [];
+  const actives: ActiveContract[] = [];
+  if (!Array.isArray(wire)) return { offers, actives };
+  for (const x of wire as Partial<ContractWire>[]) {
+    if (!x || typeof x.id !== "string" || !x.cargo || typeof x.amount !== "number") continue;
+    const kind = x.kind === "tender" ? "tender" : "private";
+    const def: ContractDef = {
+      id: x.id,
+      kind,
+      cargo: x.cargo as Cargo,
+      amount: x.amount,
+      townId: typeof x.townId === "number" ? x.townId : 0,
+      townName: typeof x.townName === "string" ? x.townName : townNameFor(typeof x.townId === "number" ? x.townId : 0),
+      rewardMoney: typeof x.rewardMoney === "number" ? x.rewardMoney : 50,
+      rewardTown: typeof x.rewardTown === "number" ? x.rewardTown : 0.15,
+      deadlineMs: typeof x.deadlineMs === "number" ? x.deadlineMs : CONTRACT_BASE_DEADLINE_MS,
+      speaker: (x.speaker as QuestSpeaker) ?? "foreman",
+      text: {
+        rival: "",
+        guide: "",
+        foreman: "",
+      },
+    };
+    // rebuild text
+    def.text = contractTextFor({ ...def, speaker: def.speaker });
+    if (x.status === "offer" || x.status === undefined) {
+      offers.push(def);
+    } else {
+      const acceptedAt = typeof x.acceptedAt === "number" ? x.acceptedAt : now;
+      const expiresAt = typeof x.expiresAt === "number" ? x.expiresAt : now + def.deadlineMs;
+      actives.push({
+        def,
+        acceptedAt,
+        expiresAt,
+        delivered: typeof x.delivered === "number" ? x.delivered : 0,
+        owner: x.owner === 1 ? 1 : 0,
+        status: (x.status as ActiveContract["status"]) ?? "active",
+      });
+    }
+  }
+  return { offers, actives };
+}
+
+// ── Legacy quest compat (L8 #222) ─────────────────────────────────────────
+export type QuestStrategy = "claim" | "link" | "tune" | "city" | "breadth";
+export type QuestKind = "claim-cargo" | "connect-depots" | "tune-depot" | "city-tier" | "run-types";
+export type QuestRewardId = "ore-2" | "stone-2" | "grain-2" | "oil-1" | "gold-1";
+
 export interface QuestReward {
   id: QuestRewardId;
   purse: Purse;
-  /** What the chip prints, e.g. "2⛏️ Ore" — the HUD's own price grammar. */
   label: string;
 }
 
 const reward = (id: QuestRewardId, purse: Purse): QuestReward => ({
   id,
   purse,
-  // "2⛏️ Ore" — the count and the icon the price grammar uses, then the name.
   label: (Object.entries(purse) as [Cargo, number][])
     .map(([c, n]) => `${n}${CARGO[c].icon} ${CARGO[c].name}`).join(" + "),
 });
 
-/**
- * The reward table — SMALL and once-per-quest by construction. #228 (L13)
- * owns these values ("small, optional, capped"); the shapes below are one
- * cargo each, never enough to skip a rung or a city tier on their own.
- */
 export const QUEST_REWARDS: Record<QuestRewardId, QuestReward> = {
   "ore-2": reward("ore-2", { ore: 2 }),
   "stone-2": reward("stone-2", { stone: 2 }),
@@ -82,73 +468,47 @@ export const QUEST_REWARDS: Record<QuestRewardId, QuestReward> = {
   "gold-1": reward("gold-1", { gold: 1 }),
 };
 
-// ── the view: what the map and the seat say right now ─────────────────────
 export interface QuestView {
-  /** Unclaimed industries per cargo — ground still on the table. */
   unclaimed: Partial<Record<Cargo, number>>;
-  /** The cargos the RIVAL's network already runs (the race's context). */
   rivalCargoes: Cargo[];
-  /** This seat's Depots, and how many are on the clock. */
   depotCount: number;
   connected: number;
-  /** How many Depots hold a tuned yield, and the best of those yields. */
   tunedDepots: number;
   bestYield: number;
-  /** The cargos this seat's connected Depots run. */
   cargoesRunning: Cargo[];
   townLevel: number;
   townLevels: number;
 }
 
-// ── a quest, as data ──────────────────────────────────────────────────────
 export interface QuestDef {
-  /** Stable within a game: the save's handle for "paid" / "dismissed". */
   id: string;
   kind: QuestKind;
   strategy: QuestStrategy;
-  /** The cargo the quest names, when it names one. */
   cargo: Cargo | null;
-  /** How many (or which yield threshold) completes it. */
   need: number;
-  /** `tune-depot`: the yield level a Depot must hold. */
   threshold?: number;
   reward: QuestRewardId;
-  /** The line, per speaker. */
   text: Record<QuestSpeaker, string>;
 }
 
-/** A recipe as data: one per strategy, asked what it can offer on this map. */
 export interface QuestRecipe {
   kind: QuestKind;
   strategy: QuestStrategy;
-  /** Every concrete offer this recipe supports right now (often one, one per
-   *  cargo for a claim, and none at all when the map cannot support it). */
   offers: (v: QuestView) => QuestOption[];
 }
 
-/** What a recipe builds — the def minus the two fields the table owns. */
 export type QuestOption = Omit<QuestDef, "kind" | "strategy">;
 
-/** How many quests are offered at once. The ticket says 2–3. */
 export const QUEST_OFFER_MAX = 3;
 export const QUEST_OFFER_MIN = 2;
 
 const cargoName = (c: Cargo): string => CARGO[c].name;
-
-/** How many distinct cargos a seat runs — the breadth number, one rule. */
 export const typesRunning = (cargos: readonly Cargo[]): number => new Set(cargos).size;
 
-// ══════════════════════════════════════════════════════════════════════════
-// THE TABLE — one recipe per strategy. Everything a quest says or wants lives
-// here; the helpers below only rank, offer and score them.
-// ══════════════════════════════════════════════════════════════════════════
 export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "claim-cargo",
     strategy: "claim",
-    // One option per cargo still unclaimed, contested ground first (the cargo
-    // the rival already runs), then CARGOES order — deterministic on a given
-    // map, different between maps.
     offers: (v) => (Object.keys(v.unclaimed) as Cargo[])
       .filter((c) => (v.unclaimed[c] ?? 0) > 0)
       .sort((a, b) => {
@@ -180,8 +540,6 @@ export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "connect-depots",
     strategy: "link",
-    // "Connect three depots" — the network plan. The ask grows with what the
-    // seat already runs, so it is never already-done the moment it is offered.
     offers: (v) => {
       const need = Math.min(4, Math.max(2, v.connected + 1));
       return [{
@@ -200,8 +558,6 @@ export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "tune-depot",
     strategy: "tune",
-    // The depth plan: one Depot at or above a yield. The bar rises once the
-    // seat has shown it can clear ×2, so the offer keeps meaning something.
     offers: (v) => {
       const threshold = v.bestYield >= 2 ? 2.5 : 2;
       return [{
@@ -221,8 +577,6 @@ export const QUESTS: readonly QuestRecipe[] = [
   {
     kind: "city-tier",
     strategy: "city",
-    // Nothing to ask once the city is maxed (L17 ships three tiers; the
-    // table reads TOWN_UPGRADES rather than a count).
     offers: (v) => (v.townLevel >= v.townLevels ? [] : [{
       id: `city-${v.townLevel + 1}`,
       cargo: null,
@@ -255,31 +609,16 @@ export const QUESTS: readonly QuestRecipe[] = [
   },
 ];
 
-/** Every quest this map and seat support right now, in table order. */
 export function questOffers(v: QuestView): QuestDef[] {
   return QUESTS.flatMap((r) => r.offers(v).map((o) => ({ ...o, kind: r.kind, strategy: r.strategy })));
 }
 
-// ── the offer set: 2–3 at once, never two of the same strategy ────────────
 export interface SelectQuestsOptions {
-  /** Up to this many (default 3). */
   max?: number;
-  /** Ids to skip — the dismissed and already-paid ones. */
   exclude?: Iterable<string>;
-  /** Strategies already on the panel: prefer something else. */
   avoid?: Iterable<QuestStrategy>;
 }
 
-/**
- * Pick the offers: a deterministic shuffle of the candidates, then one per
- * strategy up to `max`. One per strategy is the whole point ("quests offer
- * different strategies at the same time" is an acceptance line), so the
- * shuffle only decides WHICH claim/breadth/network variant leads.
- *
- * `rng` is the game's seeded one (`mulberry32`), never `Math.random` — the
- * same seed offers the same quests, and a re-offer after a completion is
- * deterministic too.
- */
 export function selectQuests(
   pool: readonly QuestDef[], rng: () => number, opts: SelectQuestsOptions = {},
 ): QuestDef[] {
@@ -292,7 +631,6 @@ export function selectQuests(
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
   const preferred = shuffled.filter((q) => !avoid.has(q.strategy));
-  // A panel with nothing fresh would be worse than a repeat: fall back.
   const order = preferred.length ? preferred : shuffled;
   const seen = new Set<QuestStrategy>();
   const picked: QuestDef[] = [];
@@ -305,8 +643,6 @@ export function selectQuests(
   return picked;
 }
 
-// ── progress, completion, payment ─────────────────────────────────────────
-/** What the player has done toward this quest, in the quest's own units. */
 export function questHave(def: QuestDef, v: QuestView): number {
   switch (def.kind) {
     case "claim-cargo":
@@ -325,44 +661,27 @@ export function questHave(def: QuestDef, v: QuestView): number {
 }
 
 export const questDone = (def: QuestDef, v: QuestView): boolean => questHave(def, v) >= def.need;
-
-/** What a completed quest pays. Pure: the CALLER does the earning. */
 export const questReward = (def: QuestDef): QuestReward => QUEST_REWARDS[def.reward];
-
-/** The line in a given voice (the UI resolves the name and face). */
 export const questText = (def: QuestDef, speaker: QuestSpeaker): string => def.text[speaker];
 
-/**
- * Which voice speaks for a strategy. In a contract the rival pushes the
- * aggressive lines (a claim, the network) while the guide carries the how-to
- * ones; the sandbox has only the foreman, and he carries all five.
- */
 export const speakerFor = (strategy: QuestStrategy, story: boolean): QuestSpeaker => {
   if (!story) return "foreman";
   return strategy === "claim" || strategy === "link" ? "rival" : "guide";
 };
 
-/** The name to print beside a quest line. */
 export const speakerName = (speaker: QuestSpeaker, rivalName?: string | null): string => {
   if (speaker === "foreman") return FOREMAN_NAME;
   if (speaker === "guide") return GUIDE_NAME;
   return rivalName ?? "The rival";
 };
 
-/**
- * The progress the panel prints — "1/3", or the yield a tune quest is asking
- * for ("×1.8 of ×2"). Kept pure so the chrome never re-derives the rule it is
- * showing, and so the same text can be asserted from a probe.
- */
 export function questProgressText(def: QuestDef, v: QuestView): string {
   if (def.kind === "tune-depot") return `×${v.bestYield.toFixed(1)} of ×${def.threshold ?? 2}`;
   return `${Math.min(questHave(def, v), def.need)}/${def.need}`;
 }
 
-/** One line for the feed/toast: "Foreman Pike: 2 Depots ticking at once…". */
 export const questLine = (def: QuestDef, speaker: QuestSpeaker, rivalName?: string | null): string =>
   `${speakerName(speaker, rivalName)}: ${questText(def, speaker)}`;
 
-/** Every cargo an industry of this key produces — the claim rule's one read. */
 export const cargoOfIndustry = (type: string): Cargo | null =>
   INDUSTRY_BY_KEY[type]?.cargo ?? null;
