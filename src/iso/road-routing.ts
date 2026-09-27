@@ -1,6 +1,6 @@
 import { MAP_W } from "../game/config";
 import {
-  DIR, DIRS, OPPOSITE, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles, overpassJump,
+  DIR, DIRS, OPPOSITE, PRESENT, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles, overpassJump,
   roadDiagNeighbours, hasTrack, type Track, type TrackKind,
 } from "./track";
 import { DEFAULT_FACING, depotEntranceTiles, type DepotFacing } from "./depot";
@@ -190,6 +190,42 @@ export const depotShoulders = (
  * joined to that plant" (the economy's component test, the lorry's route goal,
  * the rival's pave pass) reads this, so the edge is one rule, not four.
  */
+/**
+ * AMB-3 (#392): the road graph ambient cars walk.
+ *
+ * Every mutual edge on dirt or paved track, any owner — town streets, player
+ * roads and the public highway are one cosmetic network. Diagonal legs and
+ * straight overpass jumps are included, the same edges `roadPath` crosses for
+ * the economy, but this walk is not owner-scoped: a private car may be seen
+ * on either seat's road. The economy keeps `roadPath`.
+ */
+export function ambientRoadGraph(track: Track): Map<number, number[]> {
+  const out = new Map<number, number[]>();
+  const maskAt = (i: number): number => ((track.road[i] | track.dirt[i]) & 0b1111);
+  const road = track.road, dirt = track.dirt;
+  for (let i = 0; i < road.length; i++) {
+    if ((road[i] & PRESENT) === 0 && (dirt[i] & PRESENT) === 0) continue;
+    const x = i % MAP_W, y = (i / MAP_W) | 0;
+    const mask = maskAt(i);
+    const open: number[] = [];
+    for (const d of DIRS) {
+      if (!(mask & d)) continue;
+      const nx = x + DIR[d][0], ny = y + DIR[d][1];
+      if (!inMapT(nx, ny)) continue;
+      const ni = tIdx(nx, ny);
+      if (!(maskAt(ni) & OPPOSITE[d])) continue;
+      open.push(ni);
+    }
+    for (const [nx, ny] of roadDiagNeighbours(track, x, y)) open.push(tIdx(nx, ny));
+    for (const d of DIRS) {
+      const jump = overpassJump(track, x, y, d);
+      if (jump) open.push(tIdx(jump[0], jump[1]));
+    }
+    out.set(i, open);
+  }
+  return out;
+}
+
 export function plantShoulders(
   track: Track, owner: number, tx: number, ty: number, rot = 0,
   // F4 (#275): the map's Factory span — defaults to the legacy square via
