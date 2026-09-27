@@ -101,7 +101,7 @@
 import { RAID_EVERY } from "../game/config";
 import { VICTORY } from "./config";
 
-export type SkillKey = "easy" | "normal" | "hard";
+export type SkillKey = "easy" | "normal" | "hard" | "trainee";
 
 export interface RivalSkill {
   key: SkillKey;
@@ -141,6 +141,24 @@ export interface RivalSkill {
    * `?rail` feature flag is down.
    */
   rail: boolean;
+  /**
+   * FTUE-1 (#464): does this rival CONTEST the player's industries — plan a
+   * Depot that could claim one the player's network already covers (serviced
+   * or not)? `true` is the shipped race: first come, first served. The
+   * trainee is `false`: it builds its own lane and never takes what the
+   * player has staked, so a first-timer's four industries stay theirs.
+   * Read by the planner (`planCandidates` in ai.ts) through the turn's
+   * options — the flag is data here, the behaviour is over there.
+   */
+  contests: boolean;
+  /**
+   * FTUE-1 (#464): does this rival ever CALL a challenge — start a battle
+   * over an industry or a town? `true` is the shipped cadence
+   * (`BATTLE_SKILLS[].challengeEveryMs`); the trainee is `false`, and its
+   * battle row never arms the clock either. It will still DEFEND if the
+   * player picks a fight — it just never starts one.
+   */
+  challenges: boolean;
   /**
    * L6 (#220): what this difficulty does to the PLAYER's side of the economy,
    * in one line. It is copy, not a rule — the numbers it describes are the
@@ -214,6 +232,9 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     urgencyBias: 0.75,
     // RAIL-05: the easy chair keeps to the road — no rail for it to learn.
     rail: false,
+    // FTUE-1 (#464): every pickable chair races the ordinary race.
+    contests: true,
+    challenges: true,
     // L4 (#218): a casual tuning hand — its depots land just above baseline.
     tuningSkill: 0.35,
     // L14 (#229): a careful steward — the city waits until the next Depot's
@@ -239,6 +260,9 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     urgencyBias: 1,
     // RAIL-05: normal builds and runs rail lines, one action per turn.
     rail: true,
+    // FTUE-1 (#464): every pickable chair races the ordinary race.
+    contests: true,
+    challenges: true,
     // L4 (#218): the shipped tuning hand — the middle of the multiplier.
     tuningSkill: 0.62,
     // L14 (#229): the shipped city timing — the next Depot stays funded.
@@ -262,6 +286,9 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     urgencyBias: 1.4,
     // RAIL-05: hard runs rail as hard as it paves — the spread lever.
     rail: true,
+    // FTUE-1 (#464): every pickable chair races the ordinary race.
+    contests: true,
+    challenges: true,
     // L4 (#218): reads the board — long matches and cascades.
     tuningSkill: 0.88,
     // L14 (#229): buys the upgrade early — the ×1.6 is worth more than the
@@ -270,9 +297,53 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     sessionMs: 55_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
   },
+  // FTUE-1 (#464) — the TRAINEE: the Starter Island's rival, and the only
+  // skill a first-timer meets. It is a real seat (it builds, it scores, the
+  // Feed has something in it, and there IS a race) played with its hands
+  // behind its back: slow on every clock, never a raid or a blockade, never
+  // a challenge, and never a Depot that could claim an industry the player's
+  // network has staked. Its ★ line is the Starter Island's own: 6.
+  //
+  // It is deliberately NOT in `SKILL_KEYS` — the picker and the top-bar
+  // selector show the three chairs a player may choose. The trainee is cast
+  // by the scenario (exactly like a contract casts its rival); `parseSkill`
+  // still reads it so a `?rival=trainee` playtest link and a Starter Island
+  // save round-trip.
+  trainee: {
+    key: "trainee",
+    label: "Trainee",
+    blurb: "A first-day rival: slow and polite — it never takes your industries and never starts a fight.",
+    // L6 (#220): the player's own half runs the EASY row (the clean board,
+    // the generous floor) — a first game is gentle on both sides of the map.
+    economyLine: "Match-3 still opens when you build a Depot, a weak session still lands a decent yield, and the yield you tune is yours to keep.",
+    buildMs: 15_000,
+    idleMs: 5_000,
+    expandPerTurn: 1,
+    paveTiles: 3,
+    raidEveryMs: 0,
+    blockades: false,
+    moveMs: 5_200,
+    urgencyBias: 0.5,
+    rail: false,
+    // FTUE-1 (#464): the two behaviour flags that make it a trainee.
+    contests: false,
+    challenges: false,
+    tuningSkill: 0.3,
+    townReserve: 1.25,
+    sessionMs: 120_000,
+    // FTUE-1 (#464): the Starter Island is a SHORT, winnable race — 6★.
+    winTarget: 6,
+  },
 };
 
+/**
+ * The pickable difficulties — the skill picker's and the top-bar selector's
+ * list. `trainee` is cast by the Starter Island and never offered (see its
+ * row above); `ALL_SKILL_KEYS` is the set every key is legal in (URL parses,
+ * save reads, tests).
+ */
 export const SKILL_KEYS: SkillKey[] = ["easy", "normal", "hard"];
+export const ALL_SKILL_KEYS: SkillKey[] = [...SKILL_KEYS, "trainee"];
 
 /**
  * AI-04: the ★ line a difficulty races to, for the callers that know only the
@@ -288,7 +359,7 @@ export const DEFAULT_SKILL: SkillKey = "normal";
 export const SKILL_STORAGE_KEY = "hexmatch:rival-skill";
 
 const parseSkill = (raw: string | null | undefined): SkillKey | null =>
-  raw && (SKILL_KEYS as string[]).includes(raw) ? (raw as SkillKey) : null;
+  raw && (ALL_SKILL_KEYS as string[]).includes(raw) ? (raw as SkillKey) : null;
 
 /**
  * Where the initial difficulty comes from, in order:

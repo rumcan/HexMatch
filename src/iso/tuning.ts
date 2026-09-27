@@ -74,9 +74,13 @@ export const clampYield = (y: number): number =>
 // from a Normal or Hard game.
 // ══════════════════════════════════════════════════════════════════════════
 
-/** The rules a session is played under, read off the live difficulty key. */
-export const difficultyRulesFor = (key: DifficultyKey): DifficultyRules =>
-  DIFFICULTY_RULES[key] ?? DIFFICULTY_RULES[DEFAULT_DIFFICULTY];
+/** The rules a session is played under, read off the live difficulty key.
+ *  FTUE-1 (#464): the `trainee` chair plays the EASY row's economy — the
+ *  Starter Island is gentle on the player's half too — so a scenario cast
+ *  reaches the same table without a fourth row (`DIFFICULTY_RULES` stays the
+ *  three difficulties the picker offers). */
+export const difficultyRulesFor = (key: DifficultyKey | "trainee"): DifficultyRules =>
+  DIFFICULTY_RULES[key === "trainee" ? "easy" : key] ?? DIFFICULTY_RULES[DEFAULT_DIFFICULTY];
 
 /**
  * The yield a score earns. Linear from `floor` (score 0 — the baseline an

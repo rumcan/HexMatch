@@ -21,7 +21,7 @@ export {
 } from "./progress";
 export { showTutorialMenu, queueGuideSection, takeQueuedSection } from "./menu";
 export type { TutorialMenuHandle, TutorialMenuOptions } from "./menu";
-export { createGuideHost } from "./host";
+export { createGuideHost, FIRST_GAME_CHAIN } from "./host";
 export type { GuideHost, GuideHostHooks, GuideRect } from "./host";
 export { createGuideRenderer, firstVisible, isVisible } from "./spotlight";
 export {
