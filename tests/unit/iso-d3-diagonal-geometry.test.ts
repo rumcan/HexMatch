@@ -85,8 +85,11 @@ describe("D3 all eight-direction junction figures", () => {
       expect(length(f.points[1], a)).toBeCloseTo(offset, 12);
       expect(right.map((r) => r.points[1])).toContainEqual(f.points[1]);
       for (const j of sidewalkJoints(f)) {
-        expect(length(j.points[0], j.points[1])).toBeCloseTo(SIDEWALK_WIDTH - 2 * SIDEWALK_JOINT_INSET, 12);
-        expect((j.points[1][0] - j.points[0][0]) * dx + (j.points[1][1] - j.points[0][1]) * dy).toBeCloseTo(0, 12);
+        // Joints follow the iso grid: along a ground axis, long enough to
+        // span the diagonal ribbon (its width over cos 45°).
+        const [p, q] = j.points;
+        expect(Math.min(Math.abs(q[0] - p[0]), Math.abs(q[1] - p[1]))).toBeCloseTo(0, 12);
+        expect(length(p, q)).toBeCloseTo((SIDEWALK_WIDTH - 2 * SIDEWALK_JOINT_INSET) * Math.SQRT2, 12);
       }
     }
   });

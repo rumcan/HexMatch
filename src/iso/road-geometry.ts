@@ -418,12 +418,13 @@ export const SIDEWALK_OFFSET = ROAD_WIDTH.paved / 2 + SHOULDER_WIDTH + SIDEWALK_
 /**
  * Distance between two transverse joints along a ribbon, in tile units.
  *
- * This is the "concrete slab" pitch. It is deliberately not a divisor of a
- * tile or of the arm's half length: a joint must never land exactly on a port
- * (see SIDEWALK_JOINT_PHASE), and the eye reads a pitch that ignores the grid
- * as a run of cast slabs rather than as a line of tiles.
+ * This is the "concrete slab" pitch: exactly four slabs per tile, so every
+ * tile carries the same joints and the pitch runs across a port with no seam.
+ * With SIDEWALK_JOINT_PHASE at half a pitch a joint lands 0.125 from a port
+ * or the tile centre (where two arms meet),
+ * never on one.
  */
-export const SIDEWALK_JOINT_SPACING = 0.18;
+export const SIDEWALK_JOINT_SPACING = 0.25;
 
 /**
  * Where the joint lattice sits in the world: joints on a straight run fall at
@@ -434,13 +435,9 @@ export const SIDEWALK_JOINT_SPACING = 0.18;
  *
  *   • two tiles, or two cache chunks, place the same joints, because the
  *     lattice is a property of the world and not of the tile being painted;
- *   • no joint is ever DRAWN on a port, and none spills across one. Ports sit
- *     at whole or half tile units and the lattice sits at 0.09 + k·0.18 —
- *     k·0.18 + 0.09 = m/2 has no integer solution, but it comes within 0.01 of
- *     one at 0.99. A joint that close is dropped rather than allowed to hang
- *     over the join into a neighbouring tile that may have no sidewalk at all
- *     (SIDEWALK_JOINT_MARGIN), and the nearest one actually drawn is 0.05
- *     short of the port.
+ *   • no joint ever lands on a port or a tile centre: those sit at whole or
+ *     half tile units and the lattice at 0.125 + k·0.25, a clear eighth of a
+ *     tile away, so every tile carries the same four slabs per flank.
  */
 export const SIDEWALK_JOINT_PHASE = SIDEWALK_JOINT_SPACING / 2;
 
@@ -667,69 +664,52 @@ function angledLampSpots(tx: number, ty: number, mask: number, diagonal: number,
  * SIDEWALK_JOINT_INSET at both ends so the light grey outline of the slab
  * survives around it (see that constant).
  *
- * A straight run's joints come off the world lattice, which is what keeps the
- * blocks of two neighbouring tiles — and of two cache chunks — in step. A
- * curved run has no axis to read the lattice on, so its joints are spaced by
- * arc length from its own start point, which is a world position and therefore
- * just as reproducible.
+ * Every joint lies along a ground AXIS (the iso grid's own lines on screen),
+ * placed on the absolute lattice of the segment's dominant axis — straights,
+ * diagonals and bends alike — so the joints of neighbouring tiles and cache
+ * chunks line up. Off-axis segments get a longer joint so it still spans the
+ * ribbon.
  */
 export function sidewalkJoints(path: RoadFigure): RoadFigure[] {
   const pts = path.points;
   const out: RoadFigure[] = [];
   if (pts.length < 2) return out;
   const half = (SIDEWALK_WIDTH - SIDEWALK_JOINT_INSET * 2) / 2;
-
-  if (pts.length === 2 && Math.abs(pts[1][0] - pts[0][0]) > 1e-9 && Math.abs(pts[1][1] - pts[0][1]) > 1e-9) {
-    const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1], len = Math.hypot(dx, dy);
-    const sign = dx < 0 ? -1 : 1, ux = dx / len * sign, uy = dy / len * sign;
-    const a = pts[0][0] * ux + pts[0][1] * uy, b = pts[1][0] * ux + pts[1][1] * uy;
-    const lo = Math.min(a, b), hi = Math.max(a, b);
-    const first = Math.ceil((lo + SIDEWALK_JOINT_MARGIN - SIDEWALK_JOINT_PHASE) / SIDEWALK_JOINT_SPACING)
-      * SIDEWALK_JOINT_SPACING + SIDEWALK_JOINT_PHASE;
-    for (let t = first; t < hi - SIDEWALK_JOINT_MARGIN; t += SIDEWALK_JOINT_SPACING) {
-      const x = pts[0][0] + (t - a) * ux, y = pts[0][1] + (t - a) * uy;
-      out.push({ points: [[x - uy * half, y + ux * half], [x + uy * half, y - ux * half]] });
-    }
-    return out;
-  }
-  if (pts.length === 2) {
-    const axis = Math.abs(pts[1][0] - pts[0][0]) > 1e-9 ? 0 : 1;
-    const across = 1 - axis;
-    const lo = Math.min(pts[0][axis], pts[1][axis]);
-    const hi = Math.max(pts[0][axis], pts[1][axis]);
-    const first = Math.ceil((lo + SIDEWALK_JOINT_MARGIN - SIDEWALK_JOINT_PHASE) / SIDEWALK_JOINT_SPACING)
-        * SIDEWALK_JOINT_SPACING + SIDEWALK_JOINT_PHASE;
-    for (let t = first; t < hi - SIDEWALK_JOINT_MARGIN; t += SIDEWALK_JOINT_SPACING) {
-      const from: number[] = [0, 0];
-      const to: number[] = [0, 0];
-      from[axis] = t; to[axis] = t;
-      from[across] = pts[0][across] - half;
-      to[across] = pts[0][across] + half;
-      out.push({ points: [[from[0], from[1]], [to[0], to[1]]] });
-    }
-    return out;
-  }
-
-  const total = pts.reduce((n, p, i) => i === 0 ? 0
-    : n + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]), 0);
-  let along = 0;
-  let next = SIDEWALK_JOINT_SPACING;
-  for (let i = 0; i + 1 < pts.length; i++) {
+  const last = pts.length - 2;
+  // Every joint lies along a GROUND axis, so on screen it runs at the iso
+  // grid's own ±0.5 slope, and it sits on the absolute lattice
+  // `SIDEWALK_JOINT_PHASE + k · SIDEWALK_JOINT_SPACING` of the segment's
+  // dominant axis — the same lattice on every tile, straight or curved.
+  for (let i = 0; i <= last; i++) {
     const [ax, ay] = pts[i];
     const [bx, by] = pts[i + 1];
-    const len = Math.hypot(bx - ax, by - ay);
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
     if (len < 1e-9) continue;
-    while (next <= along + len - 1e-9 && next <= total - SIDEWALK_JOINT_MARGIN) {
-      const f = (next - along) / len;
-      const px = ax + (bx - ax) * f, py = ay + (by - ay) * f;
-      // Across a curve the joint runs along the radius, not along an axis.
-      const nx = -(by - ay) / len, ny = (bx - ax) / len;
-      out.push({
-        points: [[px - nx * half, py - ny * half], [px + nx * half, py + ny * half]],
-      });
-      next += SIDEWALK_JOINT_SPACING;
+    const axis = Math.abs(dx) >= Math.abs(dy) - 1e-9 ? 0 : 1;
+    const a = axis === 0 ? ax : ay, b = axis === 0 ? bx : by, span = b - a;
+    if (Math.abs(span) < 1e-9) continue;
+    // Margins only at the ends of the whole path; interior segments are
+    // half-open so a shared vertex is never jointed twice.
+    const dir = Math.sign(span);
+    const from = a + dir * (i === 0 ? SIDEWALK_JOINT_MARGIN : 0);
+    const to = b - dir * (i === last ? SIDEWALK_JOINT_MARGIN : 0);
+    const lo = Math.min(from, to), hi = Math.max(from, to);
+    // The joint runs along the OTHER axis, long enough to span the ribbon.
+    const ux = dx / len, uy = dy / len;
+    const cross = axis === 0 ? Math.abs(ux) : Math.abs(uy);
+    const reach = half / Math.max(cross, 1e-6);
+    const k0 = Math.ceil((lo - SIDEWALK_JOINT_PHASE) / SIDEWALK_JOINT_SPACING - 1e-9);
+    for (let k = k0; ; k++) {
+      const t = SIDEWALK_JOINT_PHASE + k * SIDEWALK_JOINT_SPACING;
+      if (t > hi + 1e-9) break;
+      // Half-open toward b on interior vertices.
+      if (i !== last && Math.abs(t - b) < 1e-9) continue;
+      const f = (t - a) / span;
+      const x = ax + dx * f, y = ay + dy * f;
+      out.push(axis === 0
+        ? { points: [[x, y - reach], [x, y + reach]] }
+        : { points: [[x - reach, y], [x + reach, y]] });
     }
-    along += len;
   }
   return out;
 }

@@ -36,7 +36,7 @@
 // invalidates single tiles with `invalidateTile(..., "rail", 1)` when a rail
 // byte moves.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, HH, MAP_W, MAP_H, ZOOM_STEPS } from "../game/config";
+import { HW, HH, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
 import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
@@ -68,8 +68,6 @@ type Ctx2D = CanvasRenderingContext2D;
 /** The road layer's PRESENT bit (`track.ts`'s bit 4) — a lone stub still counts. */
 const PRESENT = 0b10000;
 
-/** The one-pixel softening baked into every road/rail chunk raster. */
-export const ROAD_SOFTEN_FILTER = "blur(1px)";
 type Surface = HTMLCanvasElement | OffscreenCanvas;
 
 /** Which road implementation the renderer is using. Never persisted. */
@@ -1410,21 +1408,8 @@ export class RoadCache {
       // Repaint only those deck tiles, inside the existing cached raster.
       if (gradeRoadDecks.length) paintRoadTiles(ctx, gradeRoadDecks, style, [], [], elev, diagonalsOn(world));
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      // Soften the vectors by a pixel so roads and rails sit with the pixel
-      // artwork instead of looking razor-cut. ONE filtered copy of the finished
-      // chunk: a filter set while painting would blur every one of the hundreds
-      // of fills/strokes separately and freeze the game whenever panning
-      // rasterises new chunks. Only at the closest zoom: further out the
-      // roads are already small enough to read as pixel art, and blurring
-      // them just makes them muddy.
-      const soft = zoom >= ZOOM_STEPS[ZOOM_STEPS.length - 1] ? makeSurface(w, h) : null;
-      const sctx = soft ? (soft as HTMLCanvasElement).getContext("2d") as Ctx2D | null : null;
-      if (soft && sctx && "filter" in sctx) {
-        sctx.filter = ROAD_SOFTEN_FILTER;
-        sctx.drawImage(surface as unknown as CanvasImageSource, 0, 0);
-        sctx.filter = "none";
-        surface = soft;
-      }
+      // No softening pass: the chunk is rasterised at the camera zoom in
+      // backing pixels and blitted 1:1, so it stays crisp at every zoom.
     }
 
     const bytes = surface ? w * h * 4 : 0;
