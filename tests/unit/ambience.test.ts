@@ -40,6 +40,9 @@ async function freshAudio(): Promise<void> {
   ambMod = await import("../../src/audio/ambience");
   engineMod = await import("../../src/audio/engine");
   sfxMod = await import("../../src/audio/sfx");
+  // The mix tests below exercise the beds through the baked loops; in the
+  // shipped game a bed stays silent until its recording exists (next test).
+  ambMod.setPlaceholderBeds(true);
 }
 
 const store = () => {
@@ -205,6 +208,16 @@ describe("SFX-1 its place in the mix", () => {
     expect(engineMod.liveVoices(), "loops are not layers").toBe(0);
     amb.stop();
     expect(fake.stopped(), "stop() really stops the loops").toBeGreaterThanOrEqual(5);
+  });
+
+  it("ships silent: no placeholder bed plays until its recording exists", () => {
+    ambMod.setPlaceholderBeds(false);
+    sfxMod.sfx.unlock();
+    const amb = ambMod.createAmbience({ storage: store() });
+    amb.setProbe({ zoom: 2, nearCoast: true, nearTown: true });
+    const ctx = fake.contexts()[0]!;
+    expect(ctx.sources.filter((s) => s.startedAt !== null).length, "no noise loop reaches players").toBe(0);
+    amb.stop();
   });
 
   it("keeps its own slider, persisted and repainted", () => {

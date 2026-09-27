@@ -183,6 +183,15 @@ export function ambienceFileUrl(bed: AmbienceBed, base = baseUrl()): string {
   return `${root}assets/ambience/${bed}.mp3`;
 }
 
+/**
+ * Lead (2026-09-27): no placeholder audio reaches players. Until a bed's
+ * recording ships in `assets/ambience/`, that bed is SILENT; the baked
+ * procedural loops below stay for local mixing only (flip this to hear them).
+ */
+let PLAY_PLACEHOLDER_BEDS = false;
+/** Tests (and a local mixing session) can turn the placeholder beds back on. */
+export function setPlaceholderBeds(on: boolean): void { PLAY_PLACEHOLDER_BEDS = on; }
+
 // ── the placeholder loops: baked procedural beds ──────────────────────────
 // Each bakes a seamless loop into an AudioBuffer: shaped, slowly-breathing
 // noise for sea/wind/traffic/town, sparse chirps on silence for birds. They
@@ -365,6 +374,7 @@ export function createAmbience(deps: AmbienceDeps = {}): Ambience {
   function bufferFor(ctx: AudioContext, bed: AmbienceBed): AudioBuffer | null {
     const file = files.get(bed);
     if (file) return file;
+    if (!PLAY_PLACEHOLDER_BEDS) return null;   // silent until its file ships
     if (bakedFor !== ctx) {
       bakedFor = ctx;
       baked.clear();
@@ -401,8 +411,18 @@ export function createAmbience(deps: AmbienceDeps = {}): Ambience {
   function swapBed(bed: AmbienceBed, buf: AudioBuffer): void {
     try {
       if (!graph || !active) return;
-      const slot = graph.beds[bed];
-      if (!slot) return;
+      let slot = graph.beds[bed];
+      if (!slot) {
+        // The bed started silent (no placeholder): give it a gain now, at 0,
+        // and let the next mix fade it up like any other bed.
+        const bctx = graph.master.context;
+        if (!bctx || typeof bctx.createGain !== "function") return;
+        const gain = bctx.createGain();
+        gain.gain.value = 0;
+        gain.connect(graph.master);
+        const stub = bctx.createBufferSource();
+        slot = graph.beds[bed] = { src: stub, gain };
+      }
       const ctx = slot.gain.context ?? null;
       if (!ctx || typeof ctx.createBufferSource !== "function") return;
       try { slot.src.stop(); } catch { /* already stopped */ }
