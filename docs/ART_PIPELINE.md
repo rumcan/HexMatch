@@ -232,6 +232,7 @@ three sizes and the manifest). Keep it re-runnable.
 | #270 Dams | `dam_x` / `dam_y` sprites, footprint 1×2 / 2×1 across the river | generate ONE view with the sprite template ("small concrete gravity dam with a gatehouse and a central spillway, white water, no ground block") + `--remove-background`, shear to 2:1, mirror for the other axis, `assets/rivers/manifest.json` |
 | #266 Bridges | road bridge + rail bridge, straight, both axes; piers | generate one view each, mirror; the deck must line up with the vector road/rail width (`ROAD_WIDTH`, `RAIL_GAUGE`) — check in game |
 | New buildings | per `docs/building-layers.md` | §5.2 |
+| #470 Town tier-up moment | the construction props a growing district wears for ~2.4 s — `scaffold_1x1`, `scaffold_2x2` (+ `scaffold_1x2` / `scaffold_2x1` for `shapes` maps), `crane_1x1`, `crane_2x2` — and the town-hall flourish `town_flag_2x2` (a flag going up) then `town_bunting_2x2` (bunting across the roof). Footprints must match the lot they stand on: scaffolds and cranes are drawn INSTEAD of the building, the flourish ON TOP of the 2×2 hall. | §5.2 building pipeline (one PNG per name per zoom + a `assets/buildings/manifest.json` entry carrying the footprint). `ART_NEEDED` in `src/iso/town-growth.ts` is the same list; every name is optional — until it lands a lot under construction draws its finished building at a rising alpha and the hall floats 🚩 instead of a flag. Check it with `__iso.setTownLevel(0, 2)` and `__iso.townGrowth`. |
 
 ## 8. Rules for agents
 
