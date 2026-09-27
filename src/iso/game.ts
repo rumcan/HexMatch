@@ -11517,9 +11517,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const owed = Object.keys(preview.cost).length
         ? moneyMarkup(preview.cost)
         : (preview.free > 0 ? `${preview.free} free` : "free");
+      // #429: a refused rail drag says the RULE and the FIX (the shared
+      // RAIL_REFUSAL_TEXT — "needs 2 flat tiles between climbs"), not just
+      // "blocked"; the road keeps its own vocabulary.
+      const whyTxt = preview.why
+        ? (tool === "rail" ? RAIL_REFUSAL_TEXT[preview.why as never] : roadDragRefusalText(preview.why))
+        : "blocked";
       costInfo = hintLine(
         `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated
-          ? ` · <i>${preview.why && tool !== "rail" ? roadDragRefusalText(preview.why) : "blocked"}</i>` : ""),
+          ? ` · <i>${whyTxt}</i>` : ""),
         `${vpTxt} · ${owed}`,
       );
     } else if (levelPlan && drag) {
@@ -12749,8 +12755,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           toast(why && why !== "ok" ? RAIL_REFUSAL_TEXT[why as never] : "Can't build rail there.", "bad");
           flashAt(drag.ax, drag.ay, "No rail here");
         } else {
-          const end = preview.tiles[preview.tiles.length - 1];
-          requestRailBuild(drag.ax, drag.ay, end[0], end[1], true);
+          // #429: the commit re-derives the drag from the ORIGINAL ends — a
+          // slope-routed zig-zag is a deterministic function of them, so the
+          // tiles the commit builds are the tiles the preview painted (the
+          // old "last previewed tile" end predates routing and would ask for
+          // a different shape).
+          requestRailBuild(drag.ax, drag.ay, drag.bx, drag.by, true);
         }
         drag = null; preview = null; downAt = null;
         g = pointerUp(g, e.pointerId);
@@ -14404,7 +14414,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           autoTrainSig = sig;
           const hadTrain = rail.trains.some((t) => t.ownerId === me.i + 1);
           let moved = false;
-          for (const p of [me, rival]) moved = autoTrains(rail, p.i + 1) || moved;
+          for (const p of [me, rival]) moved = autoTrains(rail, p.i + 1, grid) || moved;
           if (moved) {
             syncWorld();
             rescoreNow();
