@@ -340,6 +340,14 @@ import {
 import {
   CAR_COUNT, createCarState, planCars, tickCars, carItems,
 } from "./cars";
+// AMB-3 (#392): pedestrians, traffic lights and the car-density budget.
+// Cosmetic, seeded, and absent from the wire and from saves — each client
+// builds its own. Truck delivery ticks do not read any of it.
+import {
+  AMBIENT_ART_NEEDED, CAR_HARD_CAP, ambienceVisible, ambientCarBudget,
+  createAmbience, paintAmbience, tickAmbience, tickTruckGhosts,
+  type AmbienceState, type PaintCar,
+} from "./ambience";
 // RAIL-04 (#178): the railway's rules — its own layer, its own structures and
 // its own trains — and the loader for its PNGs. Every rule lives in `rail.ts`
 // and every cost in `rail.ts`/`config.ts`: this file is the one place those
@@ -1618,7 +1626,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  `carCount` is live-tunable from `__iso.setTraffic(n)` — the performance
    *  probe is "how many cars before it hurts", so the dial exists. */
   const cars = createCarState();
-  let carCount = CAR_COUNT;
+  /**
+   * AMB-3: `null` means "follow the town budget" (at least the shipped dozen,
+   * more when towns are big or upgraded, never over `CAR_HARD_CAP`).
+   * `__iso.setTraffic` pins a dial and the budget stops overriding it.
+   */
+  let trafficDial: number | null = null;
+  const carBudget = (): number => trafficDial ?? Math.max(
+    CAR_COUNT,
+    Math.min(CAR_HARD_CAP, ambientCarBudget(grid.towns)),
+  );
+  let carCount = carBudget();
+  // Named apart from the audio `ambience` import — that one is the island bed.
+  const streetLife: AmbienceState = createAmbience(seed);
   /** RV-03: monotonically increments on every network change (set in
    *  `rescoreNow`), so the hover route overlay cache can tell when a build or
    *  demolish may have opened a CLOSER route and must re-run `roadPath`. */
@@ -5718,6 +5738,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!newLoop) return null;
     const next = Math.max(townTier(t), Math.min(cityOf(t, p).level, TOWN_VISUAL_MAX));
     if (!setTownLevel(t, next)) return null;
+    noteTownGrew();
     // #470: `p` names the seat that grew — the moment's Feed line is posted for
     // the local seat only (the rival's growth says so where the rival buys it).
     if (fx) growTownArt(t, performance.now(), p);
@@ -5730,8 +5751,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!t) return null;
     const next = Math.max(townTier(t), Math.min(p.townLevel, TOWN_VISUAL_MAX));
     if (!setTownLevel(t, next)) return null;
+    noteTownGrew();
     if (fx) growTownArt(t, performance.now(), p);   // #470: the seat that grew
     return t;
+  }
+
+  /** AMB-3: a tier-up can raise the car budget. The perf dial, if set, wins. */
+  function noteTownGrew(): void {
+    if (trafficDial !== null) return;
+    const next = carBudget();
+    if (next === carCount) return;
+    carCount = next;
+    if (!isGuest()) cars.cars = planCars(track, grid, cars.cars, carCount, seed);
   }
 
   /**
@@ -11077,9 +11108,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     eco.dams = damsFromWire(applied.dams);
     if (applied.cars || applied.rail) {
       // Ensure guest renders vehicles
-      world.vehicles = (carItems(cars as any, track) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined, track))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = composeVehicles();
     }
     // L15 (#230): boards and crossPrompt are gone from the wire — the board
     // is tuning-only and blessings are retired, so nothing to restore here.
@@ -11167,17 +11196,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if ((msg as any).cars) {
       (cars as any).cars = (msg as any).cars.map((c: any) => ({ ...c, origin: c.origin ? [...c.origin] as [number, number] : null, dest: c.dest ? [...c.dest] as [number, number] : null, route: c.route.map((r: any) => [...r] as [number, number]) }));
-      world.vehicles = (carItems(cars as any, track) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined, track))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = composeVehicles();
     }
     // RAIL-04 (#178): a delta's rail field is present on every publish from a
     // host that HAS a railway; absent means "unchanged", so nothing is cleared
     // here (only a full state decides that).
     if ((msg as any).rail && applyRailWire(rail, (msg as any).rail)) {
-      world.vehicles = (carItems(cars as any, track) as any)
-        .concat(truckItems(trucks as any, atlasRef ?? undefined, track))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = composeVehicles();
       worldDirty = true;
     }
     // R3 (#270): the dams ride the delta whole, so a present field ALWAYS
@@ -14283,6 +14308,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const v = d.towns?.[i];
           if (typeof v === "number" && Number.isFinite(v)) setTownLevel(t, v);
         });
+        noteTownGrew();
       } else {
         growTownForSeat(me, false);
         growTownForSeat(rival, false);
@@ -14884,6 +14910,57 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return lorriesEnabled;
   }
 
+  // AMB-3: one place that builds the vehicle list, so a guest apply and the
+  // frame cannot disagree about zoom, performance mode, or a truck's visual
+  // hold. The hold is a copy — `trucks.trucks` itself is untouched. These
+  // live on the game function, not inside the boot IIFE: truckTick and the
+  // guest appliers call them too.
+  function paintCars(): PaintCar[] {
+    return cars.cars.map((c) => ({
+      name: c.name, model: c.model, carIndex: c.carIndex, state: c.state,
+      fade: c.fade, route: c.route, leg: c.leg, t: c.t,
+    }));
+  }
+  function ghostTruckState() {
+    if (!ambienceVisible("lights", cam.zoom, currentGraphics().performance) || streetLife.ghosts.size === 0) {
+      return trucks;
+    }
+    return {
+      trucks: trucks.trucks.map((t) => {
+        const g = streetLife.ghosts.get(t.depotId);
+        return g ? { ...t, leg: g.leg, t: g.t, reverse: g.reverse } : t;
+      }),
+    };
+  }
+  function composeVehicles() {
+    const atlas = atlasRef ?? undefined;
+    const showCars = ambienceVisible("cars", cam.zoom, currentGraphics().performance);
+    const hasModels = !!atlas?.has("car_sedan_se");
+      const carDraw = showCars && hasModels ? carItems(cars, track, atlas, seed) : [];
+    return carDraw
+      .concat(truckItems(ghostTruckState(), atlas, track))
+      .concat(trainItems(rail, atlas));
+  }
+  /** Lights, walkers, car yield, and the visual truck hold. Not the economy. */
+  function stepAmbience(dtMs: number): void {
+    if (currentGraphics().performance) {
+      streetLife.time += dtMs;
+      streetLife.pedsActive = false;
+      return;
+    }
+    tickAmbience(streetLife, dtMs, { track, grid, zoom: cam.zoom, performance: false });
+    if (!isGuest()) {
+      tickCars(cars, dtMs, track, grid, seed, {
+        yieldTo: trucks.trucks.map((t) => ({
+          id: t.depotId, route: t.route, leg: t.leg, t: t.t, reverse: t.reverse,
+        })),
+        signals: streetLife.signals,
+        timeMs: streetLife.time,
+      });
+    }
+    tickTruckGhosts(streetLife, trucks.trucks, dtMs);
+  }
+
   (async () => {
     // #302: the steps LOAD-01 never tracked. The map is sync-done (see the
     // task list); fonts resolve when the vendored woff2 the chrome paints
@@ -15092,6 +15169,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         vehicles: world.vehicles,
       });
       paintBirds(ctx, c, grid, birds);
+      // AMB-3: vector stand-ins for cars, walkers and lights. No-op at the
+      // wrong zoom, in performance mode, and once the model sprites land.
+      paintAmbience(ctx, c, grid, streetLife, paintCars(), {
+        performance: currentGraphics().performance,
+        view: visibleTileRange(c, 2),
+        atlasHasModels: !!atlasRef?.has("car_sedan_se"),
+      });
     };
     // QoL: the placement overlay animates (a breathing outline, a marching
     // reach band, a ghost that floats). A player who asks the OS to reduce
@@ -15223,13 +15307,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // frame only while a protest stands (usually it is undefined: no crowd,
         // no cost, no behaviour change).
         tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined, track);
-        // TRAFFIC-01: the ambient cars roll on the same frame, host/solo only.
-        tickCars(cars, dt, track, grid, seed);
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)
         // No ticking, no replan.
       }
+      // AMB-3: walkers, lights and the visual truck hold. Cars tick here too
+      // on the host (stepAmbience skips them for a guest, who already has the
+      // host's cars). Performance mode parks the whole layer.
+      if (sim) stepAmbience(dt);
       // RAIL-04 (#178): the trains advance on the same frame as the lorries.
       // BOTH seats run this: the state machine is a pure function of the shared
       // rail state, so a guest renders the host's trains without a new wire
@@ -15284,9 +15370,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
       // branded sprites only exist once `loadVehicleLayers` has installed them
       // (see below), and until then every truck draws the legacy goods cell.
-      world.vehicles = carItems(cars, track)
-        .concat(truckItems(trucks, atlasRef ?? undefined, track))
-        .concat(trainItems(rail, atlasRef ?? undefined));
+      world.vehicles = composeVehicles();
       const { items, ghost } = overlayFrame();
       // #462: route lines, set before the overlay pass so a frame never paints
       // a stale list. Geometry is cached on the network version.
@@ -15578,7 +15662,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const t = grid.towns[Math.floor(townId)];
       if (!t) return false;
       const ok = setTownLevel(t, level);
-      if (ok) growTownArt(t);
+      if (ok) { noteTownGrew(); growTownArt(t); }
       return ok;
     },
     /**
@@ -15932,7 +16016,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       refreshTruckRates();
       tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined, track);
-      tickCars(cars, dtMs, track, grid, seed);
+      stepAmbience(dtMs);
       collectDeliveries(now);
     },
     /** TRAFFIC-01 diagnostics: the ambient cars by NAME (car 1 / car 2 /
@@ -15948,7 +16032,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         origin: (c as any).origin ?? null,
         dest: (c as any).dest ?? null,
         fade: (c as any).fade ?? 1,
+        model: (c as any).model ?? null,
       }));
+    },
+    /** AMB-3: lights, walkers, and the sprite list the lead still has to draw.
+     *  Not `__iso.ambience` — that one is the audio bed. */
+    get streetLife() {
+      return {
+        cars: cars.cars.length,
+        carBudget: carCount,
+        pedestrians: streetLife.peds.length,
+        lights: streetLife.signals.junctions.size,
+        time: streetLife.time,
+        art: AMBIENT_ART_NEEDED,
+      };
     },
     /** TRAFFIC-01 perf dial: set the ambient-traffic volume (0 clears the
      *  streets, 3 is the default "a few"). Replans from the live road
@@ -15959,7 +16056,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  without hiding the trucks that show a connection. */
     setTraffic: (count: number) => {
       if (isGuest()) return [];
-      carCount = Math.max(0, Math.min(64, Math.trunc(count) || 0));
+      trafficDial = Math.max(0, Math.min(64, Math.trunc(count) || 0));
+      carCount = trafficDial;
       cars.cars = planCars(track, grid, cars.cars, carCount, seed);
       renderer?.setWorld(world);
       return cars.cars.map((c) => c.name);
