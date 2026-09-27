@@ -1131,12 +1131,12 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 }
 
 .confirm-sheet__actions .post-btn:last-child {
-  background: var(--sa-lemon);
-  color: var(--sa-on-lemon);
+  background: var(--sa-orange);
+  color: var(--sa-on-orange);
 }
 
 .confirm-sheet__actions .post-btn:last-child:hover {
-  background: #f7e27a;
+  background: var(--sa-orange-hi);
 }
 
 /* Enhanced placement highlight on phone */
