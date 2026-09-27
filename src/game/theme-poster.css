@@ -615,9 +615,6 @@
 .ui-root .objective:hover, .ui-root .objective:focus-visible { border-left-color: var(--px-aqua); }
 .ui-root .objective :is(b, strong) { color: #bd570c; }
 @media (max-width: 760px) { .ui-root .objective { font-size: 13px; } }
-@media (min-width: 761px) {
-  .ui-root #iso-aside-right > .panel { border-top: 4px solid #ef7c17; border-radius: 0; }
-}
 .ui-root .post-btn { border-radius: 0; font: 700 16px var(--px-display); letter-spacing: .08em; }
 /* short desktop windows (1366x768, the RUN iframe): the profile fits unscrolled */
 @media (min-width: 831px) and (max-height: 820px) {

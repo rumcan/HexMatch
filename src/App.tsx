@@ -3,6 +3,7 @@ import "./game/styles.css";
 import "./game/theme-space-age.css";
 import "./game/theme-industries.css";
 import "./game/theme-poster.css";
+import "./game/theme-poster-hud.css";
 import { startIsoGame } from "./iso/game";
 import StartScreen, { type StartChoice } from "./ui/StartScreen";
 // STORY-01: the front door — Play / Settings / How to Play over a living
