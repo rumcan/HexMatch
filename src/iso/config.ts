@@ -118,8 +118,11 @@ export const SLOPES = {
   roadMaxStep: 1,
   /** Levels a RAIL step may ever change by, ramp or not. */
   railMaxStep: 1,
-  /** Tiles of run a one-level rail climb needs (level changes ≥ this far apart). */
-  railRampRun: 3,
+  /** Tiles of run a one-level rail climb needs (level changes ≥ this far apart).
+   * #429: 3 → 2 — a run a player can actually draw on a hillside. The rule now
+   * also counts run ACROSS the join with standing rail, so two drags compose
+   * as one line (see `railDragSlopeVerdict` and `railJoinRunAt` in rail.ts). */
+  railRampRun: 2,
   /** Tile-equivalents of extra distance per level of climb, up or down. */
   climbTiles: 2,
   /** Speed divisor rate while climbing: speed × 1 / (1 + uphillSlow × levels). */

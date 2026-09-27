@@ -4847,7 +4847,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   function railAssign(sourceId: number, destId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "assign", source: sourceId, dest: destId }); return true; }
-    const plan = assignLine(rail, p.i + 1, sourceId, destId);
+    const plan = assignLine(rail, p.i + 1, sourceId, destId, undefined, grid);
     if (!plan.ok) {
       if (p.human) toast(plan.why ?? "That line cannot run.", "bad");
       return false;
@@ -4886,7 +4886,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
       return false;
     }
-    const bought = buyTrain(rail, p.i + 1, depotId, lineId);
+    const bought = buyTrain(rail, p.i + 1, depotId, lineId, grid);
     if (!bought.ok) {
       if (p.human) toast(bought.why ?? "That train cannot be bought.", "bad");
       return false;
@@ -4906,7 +4906,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "start", id: trainId }); return true; }
     const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
     if (!train) return false;
-    const ok = startLine(rail, p.i + 1, train.lineId);
+    const ok = startLine(rail, p.i + 1, train.lineId, grid);
     if (p.human) {
       toast(ok ? "Train started — it is leaving the depot." : (train.blockedWhy ?? "That train cannot start."), ok ? "good" : "bad");
     }
@@ -4927,7 +4927,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "recall", id: trainId }); return true; }
     const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
     if (!train) return false;
-    const ok = recallTrain(rail, train);
+    const ok = recallTrain(rail, train, grid);
     if (p.human && ok) toast("Train recalled to its depot.", "info");
     syncWorld();
     return ok;
@@ -11563,7 +11563,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         : (preview.free > 0 ? `${preview.free} free` : "free");
       costInfo = hintLine(
         `<b>${n}</b> ${n === 1 ? "tile" : "tiles"}` + (preview.truncated
-          ? ` · <i>${preview.why && tool !== "rail" ? roadDragRefusalText(preview.why) : "blocked"}</i>` : ""),
+          ? ` · <i>${preview.why ? (tool === "rail"
+              ? (RAIL_REFUSAL_TEXT[preview.why as keyof typeof RAIL_REFUSAL_TEXT] || "blocked")
+              : roadDragRefusalText(preview.why)) : "blocked"}</i>` : ""),
         `${vpTxt} · ${owed}`,
       );
     } else if (levelPlan && drag) {
@@ -14475,7 +14477,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           autoTrainSig = sig;
           const hadTrain = rail.trains.some((t) => t.ownerId === me.i + 1);
           let moved = false;
-          for (const p of [me, rival]) moved = autoTrains(rail, p.i + 1) || moved;
+          for (const p of [me, rival]) moved = autoTrains(rail, p.i + 1, grid) || moved;
           if (moved) {
             syncWorld();
             rescoreNow();

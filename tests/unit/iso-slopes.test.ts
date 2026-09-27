@@ -39,7 +39,7 @@ import {
 } from "../../src/iso/rail";
 import {
   SLOPE_REFUSAL_TEXT, climbLevels, climbTiles, footprintFlatTiles, railDragSlopeRefusals,
-  roadStepOk, roadStepRefusal, routeDistance, uphillSpeed,
+  railDragSlopeVerdict, roadStepOk, roadStepRefusal, routeDistance, uphillSpeed,
 } from "../../src/iso/slopes";
 import { depotPathLength, type EconomyState, type Harvester } from "../../src/iso/economy";
 import { depotRate, distanceFactor } from "../../src/iso/loop";
@@ -97,7 +97,7 @@ describe("E4 (#268) the road slope rule", () => {
   it("pins the shipped numbers", () => {
     expect(SLOPES.roadMaxStep).toBe(1);
     expect(SLOPES.railMaxStep).toBe(1);
-    expect(SLOPES.railRampRun).toBe(3);
+    expect(SLOPES.railRampRun).toBe(2);   // #429: loosened from 3 so a player can draw it
     expect(SLOPES.climbTiles).toBe(2);
     expect(SLOPES.uphillSlow).toBe(1);
   });
@@ -162,31 +162,47 @@ describe("E4 (#268) the rail slope rules", () => {
     expect(why.get(0)).toBe("slope-diagonal");
     // Level ground: the same diagonal is legal.
     expect(railDragSlopeRefusals(map(["00", "00"]), [[0, 0], [1, 1]]).size).toBe(0);
-    // …and the whole gesture says it too (the preview's `why`).
-    // (Rail costs 1 Stone a tile, so the preview needs a purse to lay any.)
-    const pv = railPreview(g, createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 2, 2);
-    expect(pv.why).toBe("slope-diagonal");
-    expect(pv.tiles.length).toBe(0);              // refused on its first tile
+    // …and the drawn gesture still carries the flag — but #429: the preview no
+    // longer dies on it. The slope-aware search finds the legal line between
+    // the same endpoints (here: climb the plateau's edge, drop off its far
+    // side), and lays that instead.
+    const pv = railPreview(g, createTrack(), createRailState(), 1, { stone: 99 }, 0, 0, 2, 2);
+    expect(pv.why).toBeNull();
+    expect(pv.tiles.length).toBeGreaterThan(2);
+    expect(pv.tiles[0]).toEqual([0, 0]);
+    expect(pv.tiles[pv.tiles.length - 1]).toEqual([2, 2]);
+    expect(railDragSlopeRefusals(g, pv.tiles).size).toBe(0);   // the line laid is legal
+    // A two-level cliff with no legal line anywhere is still refused — and
+    // ONLY the offending tile is marked, never the whole drag (#429).
+    const dead = railPreview(map(["002", "000"]), createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 2, 0);
+    expect(dead.why).toBe("too-steep");
+    expect(dead.tiles).toEqual([[0, 0]]);                       // stopped where a tile would autolink INTO the cliff
+    expect(dead.blocked).toEqual([[1, 0], [2, 0]]);             // the bad step's two tiles, nothing else
   });
 
   it("needs railRampRun steps of run between two level changes", () => {
     const tiles = (n: number): [number, number][] => Array.from({ length: n }, (_, x) => [x, 0] as [number, number]);
-    // Changes at steps 2 and 4: two steps apart — a cliff, not a ramp.
-    const tight = railDragSlopeRefusals(map(["001100000000"]), tiles(12));
-    expect(tight.get(3)).toBe("too-steep");
-    expect(tight.get(4)).toBe("too-steep");
-    // Changes at steps 2 and 5: exactly `railRampRun` apart → a ramp.
-    expect(railDragSlopeRefusals(map(["001110000000"]), tiles(12)).size).toBe(0);
-    // A two-level step is refused outright, ramp or not.
-    const cliff = railDragSlopeRefusals(map(["002200000000"]), tiles(12));
-    expect(cliff.get(1)).toBe("too-steep");
-    expect(cliff.get(2)).toBe("too-steep");
-    // The preview stops the drag at the tile the run rule refuses.
-    const pv = railPreview(map(["001100000000"]), createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 8, 0);
+    // #429: `railRampRun` is 2 — two changes ONE tile apart are still a cliff.
+    const tight = railDragSlopeRefusals(map(["010000000000"]), tiles(12));
+    expect(tight.get(1)).toBe("too-steep");
+    expect(tight.get(2)).toBe("too-steep");
+    // Changes at steps 2 and 4: exactly `railRampRun` apart → a ramp (at three
+    // apart it was too; #429 loosened only the pair that a player could not draw).
+    expect(railDragSlopeRefusals(map(["001100000000"]), tiles(12)).size).toBe(0);
+    // A two-level step is refused outright, ramp or not. #429: the verdict
+    // separates the red tiles (both ends of the step) from the tile the drag
+    // may not ENTER — only the latter stops the build.
+    const cliff = railDragSlopeVerdict(map(["002200000000"]), tiles(12));
+    expect(cliff.flags.get(1)).toBe("too-steep");
+    expect(cliff.flags.get(2)).toBe("too-steep");
+    expect(cliff.blocks.get(2)).toBe("too-steep");
+    expect(cliff.blocks.has(1)).toBe(false);
+    // The preview lays the legal prefix and marks only the refused tile — it
+    // does not kill the drag because tile 0 stood beside a bad step.
+    const pv = railPreview(map(["0002222222"]), createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 8, 0);
     expect(pv.why).toBe("too-steep");
-    // The drag stops at the tile before the first of the two changes: only (0,0)
-    // is laid, and the run it would need is the reason.
-    expect(pv.tiles).toEqual([[0, 0]]);
+    expect(pv.tiles).toEqual([[0, 0], [1, 0]]);                 // the legal prefix (the tile beside the cliff is unlayable)
+    expect(pv.blocked).toEqual([[2, 0], [3, 0]]);               // the refused step's tiles — only them
   });
 
   it("grades a platform's 1×3 and a rail Depot's 2×2 as one level", () => {

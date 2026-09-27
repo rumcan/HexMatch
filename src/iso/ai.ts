@@ -88,12 +88,12 @@ import {
 import {
   RAIL_COSTS, RAIL_PRESENT, RAIL_VIEWS, footprintFor,
   railCostOf, railTerrainOk, roadAt, railBridgePlan, buildRail,
-  railJoinTurnOk, previewRailBuild,
+  railJoinRunAt, railJoinTurnOk, railTurnOkGrid, previewRailBuild,
   platformRefusal, resolveAnchor, placePlatform,
   depotRefusal, placeDepot, depotExit, stopTile, railPorts,
   structureAt, structuresOf, railComponents, ownerRailTiles,
   footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, trainAtHome,
-  OCT_STEPS, octantOf, turnOk, layPlatformTrack,
+  OCT_STEPS, octantOf, layPlatformTrack,
   type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
 } from "./rail";
 
@@ -2347,7 +2347,14 @@ export function planRailRoute(
   const key = (t: number, o: number, run: number) => t * S + o * R + run;
   // The line starts AT a platform lane: whatever ran before it is the lane's
   // business (the drag begins here), so the first level change is free.
-  const start = key(tIdx(ax, ay), startOct < 0 ? 8 : startOct, FULL);
+  // #429: starting beside STANDING rail, the run that line carries to the
+  // join seeds the search — the same `railJoinRunAt` measure the player's
+  // preview and `validateRailDrag` count across the join, so a plan that
+  // would be refused on commit (a climb straight into a climb) is not drawn.
+  const startRun = startOct >= 0
+    ? FULL
+    : Math.min(FULL, railJoinRunAt(grid, rail, ownerId, ax, ay));
+  const start = key(tIdx(ax, ay), startOct < 0 ? 8 : startOct, startRun);
   const hasRoad = (x: number, y: number) => roadAt(track, x, y) !== 0;
   // R2 (#266): a tile that is water — a river deck's tile, or the sea.
   const onDeck = (x: number, y: number) => !railTerrainOk(grid, x, y);
@@ -2373,7 +2380,9 @@ export function planRailRoute(
     if (cur === -1) break;
     const tile = Math.floor(cur / S), rem = cur % S;
     const oct = Math.floor(rem / R), run = rem % R;
-    if (tile === goal && (goalOut < 0 || oct === 8 || turnOk(oct, goalOut))) {
+    if (tile === goal && (goalOut < 0 || oct === 8 || railTurnOkGrid(grid,
+      [bx - OCT_STEPS[oct][0], by - OCT_STEPS[oct][1]], [bx, by],
+      [bx + OCT_STEPS[goalOut][0], by + OCT_STEPS[goalOut][1]]))) {
       const tiles: [number, number][] = [];
       let n: number | undefined = cur;
       while (n !== undefined) {
@@ -2387,12 +2396,15 @@ export function planRailRoute(
     closed.add(cur);
     const cxn = tile % MAP_W, cyn = (tile / MAP_W) | 0;
     for (let o = 0; o < 8; o++) {
-      if (oct !== 8 && !turnOk(oct, o)) continue;
       const [sx, sy] = OCT_STEPS[o];
       const diag = sx !== 0 && sy !== 0;
       const nx = cxn + sx, ny = cyn + sy;
+      // #429: the 45° turn rule, with the ramp corner allowed where the
+      // player's own drags may now take one (the shared `railTurnOkGrid`).
+      if (oct !== 8 && !railTurnOkGrid(grid,
+        [cxn - OCT_STEPS[oct][0], cyn - OCT_STEPS[oct][1]], [cxn, cyn], [nx, ny])) continue;
       if (!inMapT(nx, ny) || !inBox(nx, ny)) continue;
-      if (!railJoinTurnOk(rail, ownerId, cxn, cyn, nx, ny)) continue;
+      if (!railJoinTurnOk(rail, ownerId, cxn, cyn, nx, ny, grid)) continue;
       // A level crossing is straight across: no diagonal on or off a road
       // tile, and no turn on one.
       if (diag && (hasRoad(cxn, cyn) || hasRoad(nx, ny))) continue;
@@ -2972,13 +2984,13 @@ export function executeRailMove(
       };
     }
     case "train": {
-      const plan = assignLine(rail, ownerId, move.sourceId, move.destId);
+      const plan = assignLine(rail, ownerId, move.sourceId, move.destId, undefined, grid);
       if (!plan.ok) return null;
       return { spent: { ...RAIL_COSTS.train }, tiles: [], label: `starts ${plan.line!.name}` };
     }
     case "recall": {
       const t = rail.trains.find((x) => x.id === move.trainId && x.ownerId === ownerId);
-      if (!t || !recallTrain(rail, t)) return null;
+      if (!t || !recallTrain(rail, t, grid)) return null;
       return { spent: {}, tiles: [], label: "recalls its blocked train" };
     }
     case "sell": {
