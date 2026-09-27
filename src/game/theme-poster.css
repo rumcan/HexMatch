@@ -638,3 +638,11 @@
 .px-title-actions .menu-btn.px-btn-secondary:hover { background: #1c2a30e6; border-color: #f2e5c9; }
 .px-title-actions .menu-btn .mb-tag { display: inline; margin: 0; color: inherit; font-family: var(--px-body); }
 .start-screen.px .px-dialog-card .ladder-mine { display: flex; align-items: center; gap: 10px; text-align: left; justify-content: flex-start; }
+.start-screen.px .px-title-actions .menu-btn {
+  display: inline-flex; flex-direction: row; align-items: center; justify-content: center; gap: 14px;
+  width: auto; min-height: 56px; padding: 0 20px; text-align: left;
+  font: 700 22px var(--px-display) !important; letter-spacing: .065em !important; text-transform: uppercase;
+}
+@media (max-width: 830px), (max-aspect-ratio: 4/5) {
+  .start-screen.px .px-title-actions .menu-btn { min-height: 50px; padding: 0 14px; gap: 8px; font-size: 19px !important; }
+}
