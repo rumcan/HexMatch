@@ -2472,7 +2472,6 @@ function placeTowns(
 }
 
 /**
-/**
  * #436 — the flat APRON every industry gets on every map: a ring this many
  * tiles wide around its footprint, levelled to the industry's own level
  * (water, rivers and other footprints keep theirs), blended back into the
