@@ -93,15 +93,15 @@ export const DISTANCE = {
  *     That is the generator's own limit, so a road may go anywhere the map
  *     can draw a new route; it is also the TTD convention (a road climbs a
  *     slope face per tile).
- *   • railMaxStep 1 / railRampRun 3 — rail climbs only on a GENTLE ramp: a
- *     level change needs 3 tiles of run, i.e. two level changes may never sit
- *     closer than 3 steps apart. Why 3: the map's own hillside rises one level
- *     every ~10 tiles of inland distance, so a 3-tile ramp is already three
- *     times steeper than the terrain ever needs, while the generator's ±1
- *     jitter (a one-tile cliff; 26% of adjacent pairs on seed 1337) is exactly
- *     what the rule refuses. With it, every tile of a 144×144 elevation map is
- *     still reachable by rail (measured — see docs/railway-balance.md), so the
- *     rule prices the sharp way up without ever walling a district off.
+ *   • railMaxStep 1 / railRampRun 2 — rail climbs only on a GENTLE ramp: a
+ *     level change needs 2 tiles of run, i.e. two level changes may never sit
+ *     closer than 2 steps apart (one flat tile between the two climbs). Why 2
+ *     and not 3 (#429): the 3-tile run made a switchback nearly undrawable —
+ *     the U-turn a zig-zag needs leaves no run before the next climb, so the
+ *     owner could not rail up the map's own hillsides. 2 keeps the ±1 jitter
+ *     cliffs (26% of adjacent pairs on seed 1337) refused while a drawn or
+ *     routed zig-zag composes; the run is counted ACROSS the join with
+ *     standing rail, so two drags are one line (see `slopes.ts`).
  *   • climbTiles 2 — the L3 distance factor (#217) counts every level a route
  *     climbs as extra distance: up or down (a loaded lorry pays for the hill
  *     either way), 2 tile-equivalents per level. Four levels is the whole map
@@ -119,7 +119,7 @@ export const SLOPES = {
   /** Levels a RAIL step may ever change by, ramp or not. */
   railMaxStep: 1,
   /** Tiles of run a one-level rail climb needs (level changes ≥ this far apart). */
-  railRampRun: 3,
+  railRampRun: 2,
   /** Tile-equivalents of extra distance per level of climb, up or down. */
   climbTiles: 2,
   /** Speed divisor rate while climbing: speed × 1 / (1 + uphillSlow × levels). */

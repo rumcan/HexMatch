@@ -45,10 +45,13 @@ export type TilePair = readonly [number, number];
 /** Every slope refusal, in one vocabulary (rail adds these to `RailRefusal`). */
 export type SlopeRefusal = "too-steep" | "slope-diagonal" | "not-flat";
 
-/** The one wording, so a toast, an overlay and a test can never disagree. */
+/** The one wording, so a toast, an overlay and a test can never disagree.
+ * #429: the name of the rule AND the fix, in the player's words. */
 export const SLOPE_REFUSAL_TEXT: Record<SlopeRefusal, string> = {
-  "too-steep": "Too steep — that climb needs more run.",
-  "slope-diagonal": "Diagonal rail may not cross a slope.",
+  // #429: name the rule AND the fix. Roads have no ramp run (they climb every
+  // step they may), so their "too-steep" is the step itself.
+  "too-steep": "Too steep — climbs one level at a time.",
+  "slope-diagonal": "Diagonals must be level — turn on flat ground.",
   "not-flat": "It needs flat ground — the whole footprint on one level.",
 };
 
@@ -74,6 +77,29 @@ export const isWaterTile = (grid: Grid, tx: number, ty: number): boolean =>
 export function climbLevels(grid: Grid, from: TilePair, to: TilePair): number {
   if (!elevationActive(grid)) return 0;
   return levelAt(grid, to[0], to[1]) - levelAt(grid, from[0], from[1]);
+}
+
+/**
+ * #429 — the ONE exception to the 45° turn rule: a perpendicular pair of
+ * ORTHOGONAL steps that turns on the top or bottom tile of a ramp. That is
+ * the corner a switchback makes on a hillside: climb the ramp and turn hard
+ * on the tile the ramp ends on (or turn hard onto the tile a ramp starts
+ * from). A single tile carries the 90°, so a train takes it as one move.
+ *
+ * Never qualifies: a leg that is a diagonal (the 45° link is a grade of its
+ * own, and it stays level), a turn on level ground (there is no ramp to turn
+ * on), and any tile of a bridge deck (a structure, not a grade — a bridge
+ * stays straight). Inert on a flat map.
+ */
+export function rampCornerOk(grid: Grid, f: TilePair, m: TilePair, t: TilePair): boolean {
+  if (!elevationActive(grid)) return false;
+  const fx = m[0] - f[0], fy = m[1] - f[1];
+  const tx = t[0] - m[0], ty = t[1] - m[1];
+  if (Math.abs(fx) + Math.abs(fy) !== 1 || Math.abs(tx) + Math.abs(ty) !== 1) return false;
+  if ((fx === 0) === (tx === 0)) return false;   // both on one axis: straight or a U, not a 90° corner
+  if (isWaterTile(grid, f[0], f[1]) || isWaterTile(grid, m[0], m[1]) || isWaterTile(grid, t[0], t[1])) return false;
+  // The corner sits on the ramp: one of its two legs crosses a level change.
+  return Math.abs(climbLevels(grid, f, m)) >= 1 || Math.abs(climbLevels(grid, m, t)) >= 1;
 }
 
 // ── roads ─────────────────────────────────────────────────────────────────
@@ -120,6 +146,88 @@ export function roadJoinSlopeRefusal(
 export type RailSlopeRefusal = Extract<SlopeRefusal, "too-steep" | "slope-diagonal">;
 
 /**
+ * #429 — the standing-rail context a drag's ramp rule counts run ACROSS.
+ * `at(x, y)` is the caller's "same-owner standing rail stands there, and it
+ * is NOT one of this drag's own tiles" (rail.ts's `sameOwnerRail`, minus the
+ * drag's planned set — a drag redrawing its own line is one line, not two).
+ * `diag(x, y, x2, y2)` says a standing DIAGONAL link joins the two. A
+ * diagonal join never changes level (that is the diagonal rule), so it only
+ * matters for the run behind the join.
+ */
+export interface RailStanding {
+  at: (x: number, y: number) => boolean;
+  diag?: (x: number, y: number, x2: number, y2: number) => boolean;
+}
+
+/**
+ * #429 — the nearest level change on the standing rail that the drag end
+ * `end` joins, as its position in the COMPOSED line (the end tile is 1, the
+ * join tile is 0, and the standing rail runs on to negative positions):
+ *
+ *   1      the join step itself climbs (standing rail → the end tile), the
+ *          change entering the end tile;
+ *   -1     the change entering the join tile itself (its step from the
+ *          standing rail one behind it);
+ *   -(m+1) the change entering the standing tile m steps behind the join.
+ *
+ * Null when no change sits close enough to constrain anything: only a change
+ * at position ≥ 3 - `railRampRun` could violate the run rule (the drag's own
+ * first change enters at 2 at the earliest), so the walk behind the join is
+ * bounded to `railRampRun - 2` steps and stops at a deck (water is exempt
+ * from grading, exactly like the drag rule's `deckTiles`).
+ */
+export function nearestStandingChange(
+  grid: Grid, end: TilePair, standing: RailStanding,
+): number | null {
+  const [ex, ey] = end;
+  const joins: TilePair[] = [];
+  for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+    const nx = ex + dx, ny = ey + dy;
+    if (!inMap(grid, nx, ny) || isWaterTile(grid, nx, ny) || !standing.at(nx, ny)) continue;
+    joins.push([nx, ny]);
+  }
+  for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+    const nx = ex + dx, ny = ey + dy;
+    if (!inMap(grid, nx, ny) || isWaterTile(grid, nx, ny) || !standing.diag?.(ex, ey, nx, ny)) continue;
+    joins.push([nx, ny]);
+  }
+  let best: number | null = null;
+  for (const [jx, jy] of joins) {
+    // The join step climbs → the change enters the end tile (position 1).
+    if (levelAt(grid, jx, jy) !== levelAt(grid, ex, ey)) return 1;
+    // Walk the standing rail behind the join. `depth` m = the tile is m steps
+    // behind the join (position -m); a change into it needs level P_{m+1}
+    // ≠ level P_m for some standing neighbour P_{m+1}.
+    const limit = SLOPES.railRampRun - 2;    // only positions ≥ 3 - run can bind
+    if (limit < 0) continue;
+    const frontier: TilePair[] = [[jx, jy]];
+    const seen = new Set<number>([jy * grid.w + jx]);
+    for (let m = 0; m <= limit && frontier.length; m++) {
+      const next: TilePair[] = [];
+      for (const [cx, cy] of frontier) {
+        const level = levelAt(grid, cx, cy);
+        let changed = false;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+          const nx = cx + dx, ny = cy + dy;
+          if (!inMap(grid, nx, ny) || isWaterTile(grid, nx, ny)) continue;
+          if (!standing.at(nx, ny)) continue;
+          const i = ny * grid.w + nx;
+          if (seen.has(i)) continue;
+          if (levelAt(grid, nx, ny) !== level) changed = true;
+          seen.add(i);
+          next.push([nx, ny]);
+        }
+        // The step P_{m+1}→P_m enters P_m, at position -(m+1).
+        if (changed && (best === null || -(m + 1) > best)) best = -(m + 1);
+      }
+      frontier.length = 0;
+      for (const p of next) frontier.push(p);
+    }
+  }
+  return best;
+}
+
+/**
  * The diamond's two diagonal steps — the same unit-both-axes test as rail.ts's
  * `isDiagStep`, restated here because rail.ts imports THIS module (a value
  * import back would close a runtime cycle; the same reason `crossingMasksOk`
@@ -146,6 +254,18 @@ const stepIsDiagonal = (ax: number, ay: number, bx: number, by: number): boolean
  * approaches are structure, not graded track (see the header), so steps onto,
  * off and along a deck neither climb nor count as run.
  *
+ * #429: when `standing` is given, the run rule is counted ACROSS the join
+ * with the player's standing rail, so two drags compose like one: the level
+ * change the standing rail made just behind a drag end is part of the same
+ * line, and the drag's own first (or last) change must leave `railRampRun`
+ * of run from it. `nearestStandingChange` answers where that change sits,
+ * relative to the end tile (the start end is position 1, the goal end is
+ * position n, and the standing rail runs on behind each): the START end's
+ * standing change is at position p, the GOAL end's at `n + max(1, 1 − p)`
+ * (a join-step climb and the first standing change both sit one step past
+ * the goal tile). The offending pair is a step, not a ramp, exactly when
+ * the distance between the two changes is < `railRampRun`.
+ *
  * Returns a map from the INDEX of the tile the drag steps into to the refusal
  * that stops it there — both ends of a bad step are flagged, so the answer does
  * not depend on which way the player drew the drag. Empty when nothing is
@@ -155,6 +275,7 @@ export function railDragSlopeRefusals(
   grid: Grid,
   tiles: readonly TilePair[],
   deckTiles?: ReadonlySet<number>,
+  standing?: RailStanding,
 ): Map<number, RailSlopeRefusal> {
   const out = new Map<number, RailSlopeRefusal>();
   if (tiles.length < 2 || !elevationActive(grid)) return out;
@@ -188,6 +309,34 @@ export function railDragSlopeRefusals(
     for (const k of [a, b]) {
       if (!out.has(k - 1)) out.set(k - 1, "too-steep");
       if (!out.has(k)) out.set(k, "too-steep");
+    }
+  }
+  // #429: the same rule, counted across the join with standing rail — the
+  // composed line is what a train rides, and the drag's end is where the two
+  // pieces meet. Only the nearest standing change on each end can bind.
+  if (standing && changes.length) {
+    const run = SLOPES.railRampRun;
+    // Start end (position 1): its standing change sits at position p, the
+    // drag's first change enters at changes[0] + 1.
+    const pStart = nearestStandingChange(grid, tiles[0], standing);
+    if (pStart !== null) {
+      const k = changes[0];
+      if (k + 1 - pStart < run) {
+        if (!out.has(k - 1)) out.set(k - 1, "too-steep");
+        if (!out.has(k)) out.set(k, "too-steep");
+      }
+    }
+    // Goal end (position n): its standing change sits one step past the goal
+    // tile (a join-step climb and the first change behind the join both do),
+    // i.e. at n + max(1, 1 − p); the drag's last change enters at
+    // changes[last] + 1.
+    const pGoal = nearestStandingChange(grid, tiles[n - 1], standing);
+    if (pGoal !== null) {
+      const k = changes[changes.length - 1];
+      if (n + Math.max(1, 1 - pGoal) - k - 1 < run) {
+        if (!out.has(k - 1)) out.set(k - 1, "too-steep");
+        if (!out.has(k)) out.set(k, "too-steep");
+      }
     }
   }
   return out;
