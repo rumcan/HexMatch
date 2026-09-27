@@ -245,10 +245,31 @@ import { nextStep as nextStepAdvisor, type AdvisorTool, type NextStep } from "./
 // generated from this map and this seat, never a requirement. The rules are
 // pure (`quests.ts`); this file owns which ones are on offer, what pays them,
 // and the player's own "hide" / "dismiss" choices.
+// CONTRACT-1 (#466): town contracts replace Quests — deliveries with deadlines,
+// and a public tender both seats race. The old quest imports are kept for
+// backward compat (saves) but the live game uses contracts.
 import {
-  questDone, questHave, questOffers as questOffersFor, questProgressText, questReward,
-  questText, selectQuests, speakerFor, speakerName, typesRunning,
-  QUEST_OFFER_MAX, type QuestDef, type QuestSpeaker, type QuestView,
+  questDone, questHave, questProgressText, questReward,
+  questText, speakerFor, speakerName,
+  type QuestDef, type QuestSpeaker, type QuestView,
+  // CONTRACT-1
+  contractOffers as contractOffersFor,
+  selectContracts,
+  contractProgressText,
+  contractTimeLeft,
+  contractTimeLeftText,
+  isContractExpired,
+  addContractDelivery,
+  resolveTenderRace,
+  rivalCanWinTender,
+  contractsToWire,
+  contractsFromWire,
+  CONTRACT_OFFER_MAX as CONTRACT_OFFER_MAX_NEW,
+  CONTRACT_PRIVATE_COUNT,
+  type ContractDef,
+  type ContractView,
+  type ActiveContract,
+  type ContractWire,
 } from "./quests";
 import { mulberry32 } from "../game/config";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
@@ -2053,7 +2074,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onTuningRetune: () => retuneNow(),
     // L8 (#222): the quest panel's own choices — a dismissed offer and a
     // hidden panel are the player's, and both ride the save.
-    onQuestAction: (id, action) => questAction(id, action),
+    // CONTRACT-1 (#466): contracts replace Quests — accept/dismiss/hide/show
+    onQuestAction: (id, action) => contractAction(id, action as any),
     // L5 (#219): …and the city upgrade's key. Same rule: it calls the game.
     onTownUpgrade: () => { buyTownUpgrade(); },
     // TUT-03 (#422): the ❔ card's Tutorial door opens the same menu ☰ does.
@@ -3398,34 +3420,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   // ══════════════════════════════════════════════════════════════════════════
-  // L8 (#222) — the optional quests, wired.
+  // CONTRACT-1 (#466) — town contracts replace Quests — deliveries with
+  // deadlines, and a public tender both seats race.
   //
-  // The rules live in `quests.ts` (pure, unit-tested); this is the half that
-  // knows about the live map, the purses and the player's own choices. The
-  // contract with the rest of the game is deliberately thin: a quest reads the
-  // world to see whether it is done, and writes exactly one thing when it is —
-  // `earn(me, reward)`. No tier, no rung, no upgrade, no ★ and no win check
-  // ever asks whether a quest exists.
+  // Old L8 (#222) quests were suggestions with small cargo rewards. Contracts
+  // give direction, use the market, and create head-to-head moments:
+  //   • 3 at a time: 2 private, 1 public tender that both seats race;
+  //   • delivery counted from cargo actually arriving at the seat's Factory
+  //     for that town, after acceptance;
+  //   • failing a private contract costs nothing but time;
+  //   • generation deterministic from seed and state, scaled by difficulty
+  //     and match phase;
+  //   • the rival accepts tenders it can plausibly win (RIVAL-3 telegraphs it).
   // ══════════════════════════════════════════════════════════════════════════
-  /** Which voice speaks for a strategy in THIS match. */
+
+  /** Legacy quest compat — kept for old saves, but no longer used for offers. */
   const questSpeakerFor = (def: QuestDef): QuestSpeaker => speakerFor(def.strategy, storyOn);
   const questSpeakerName = (speaker: QuestSpeaker): string =>
     speakerName(speaker, storyOn ? CAST[rivalCast].name : null);
-
-  /**
-   * The map and the seat, as the quest table asks for them: what is still
-   * unclaimed (and by which cargo), what the rival already runs, what this
-   * seat's Depots do. Derived every frame, never stored — a quest's progress
-   * is a question about the world, not a counter.
-   */
   function questViewNow(): QuestView {
     const locks = industryLocks(eco);
     const unclaimed: Partial<Record<Cargo, number>> = {};
     for (const ind of grid.industries) {
       if (locks.has(ind.id)) continue;
-      const def = INDUSTRY_BY_KEY[ind.type];
-      if (!def) continue;
-      unclaimed[def.cargo] = (unclaimed[def.cargo] ?? 0) + 1;
+      const idef = INDUSTRY_BY_KEY[ind.type];
+      if (!idef) continue;
+      unclaimed[idef.cargo] = (unclaimed[idef.cargo] ?? 0) + 1;
     }
     const cargosOf = (owner: string, onlyServiced: boolean): Cargo[] => {
       const out: Cargo[] = [];
@@ -3453,25 +3473,77 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     };
   }
 
-  /** What the panel and the reward both read — one derivation per frame. */
-  const questView = (): QuestView => questViewCache ?? (questViewCache = questViewNow());
+  // ── contract view ───────────────────────────────────────────────────────
+  function contractViewNow(): ContractView {
+    const cargosOf = (owner: string, onlyServiced: boolean): Cargo[] => {
+      const out: Cargo[] = [];
+      for (const h of eco.harvesters) {
+        if (h.owner !== owner) continue;
+        if (onlyServiced && !isServiced(eco.track, h, eco.rail)) continue;
+        const cargo = depotCargo(eco, h);
+        if (cargo) out.push(cargo);
+      }
+      return out;
+    };
+    const mine = eco.harvesters.filter((h) => h.owner === me.id);
+    const connected = mine.filter((h) => isServiced(eco.track, h, eco.rail)).length;
+    const vpNow = vpFor(score, "you");
+    const target = winTarget();
+    const phase = target > 0 ? Math.min(1, vpNow / target) : 0;
+    const townsForView = grid.towns.map((t) => ({
+      id: t.id,
+      name: `Town ${t.id + 1}`,
+      tx: t.tx,
+      ty: t.ty,
+    }));
+    const depotCargoes = eco.harvesters
+      .filter((h) => h.owner === me.id || h.owner === rival.id)
+      .map((h) => ({
+        cargo: depotCargo(eco, h) ?? "grain" as Cargo,
+        connected: isServiced(eco.track, h, eco.rail),
+      }));
+    return {
+      seed,
+      towns: townsForView,
+      cargoesRunning: cargosOf(me.id, true),
+      depotCount: mine.length,
+      connected,
+      townLevel: me.townLevel,
+      townLevels: TOWN_UPGRADES.length,
+      difficulty: skillKey as ContractView["difficulty"],
+      phase,
+      money: me.money ?? 0,
+      rivalCargoes: cargosOf(rival.id, true),
+      depotCargoes,
+    };
+  }
 
-  /**
-   * Pay a completed quest: the reward into the local purse, the toast in the
-   * speaker's name, the id into `paid`/`spent` so it can never be collected
-   * twice (the save carries both sets). One implementation, used by the frame
-   * and by the debug twin — the rule can never fork.
-   */
+  // ── contract state ──────────────────────────────────────────────────────
+  let contractOffersList: ContractDef[] = [];
+  let activeContracts: ActiveContract[] = [];
+  const contractSpent = new Set<string>();
+  const contractPaid = new Set<string>();
+  let contractsHidden = false;
+  const contractRng = mulberry32((seed ^ 0x5f3759df) >>> 0);
+  let contractPendingOffers: string[] | null = null;
+  let contractWorld: string | null = null;
+  let contractPendingActive: ActiveContract[] | null = null;
+
+  // legacy quest vars kept for save compat
+  let quests: QuestDef[] = [];
+  const questSpent = new Set<string>();
+  const questPaid = new Set<string>();
+  let questsHidden = false;
+
   function payQuest(def: QuestDef): boolean {
     if (questPaid.has(def.id)) return false;
     questPaid.add(def.id);
     questSpent.add(def.id);
-    const reward = questReward(def);
-    earn(me, reward.purse);
+    const rw = questReward(def);
+    earn(me, rw.purse);
     const speaker = questSpeakerFor(def);
-    toast(`Quest complete — ${questSpeakerName(speaker)}: +${reward.label}`, "good");
+    toast(`Quest complete — ${questSpeakerName(speaker)}: +${rw.label}`, "good");
     quests = quests.filter((q) => q.id !== def.id);
-    // END-1 (#472): contracts (quests) taken
     try {
       const t = (performance.now() - matchHistory.startMs) / 1000;
       recordEvent(matchHistory, { kind: "quest", seat: 0, questId: def.id, t });
@@ -3479,77 +3551,219 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
-  /**
-   * The quest clock: retire what the map has moved past, pay what is done
-   * (once), and keep 2–3 suggestions on the panel. Runs once a frame beside
-   * the economy tick; `phase !== "play"` leaves the panel empty, so the setup
-   * debt, the ending and a guest seat see none of it.
-   */
-  function syncQuests(): void {
-    if (!newLoop || phase !== "play" || isGuest()) {
-      if (quests.length) quests = [];
-      questViewCache = null;
-      return;
+  // ── contract pay ────────────────────────────────────────────────────────
+  function payContract(active: ActiveContract): boolean {
+    if (contractPaid.has(active.def.id + ":" + active.owner)) return false;
+    // For tender, only first deliverer pays; others already marked lost
+    if (active.status !== "completed") return false;
+    contractPaid.add(active.def.id + ":" + active.owner);
+    contractSpent.add(active.def.id);
+    const seat = active.owner === 0 ? me : rival;
+    // $ reward
+    const money = active.def.rewardMoney;
+    seat.money = (seat.money ?? 0) + money;
+    // Town-growth progress: for now, give a small townBonus bump and feed line
+    if (active.def.rewardTown > 0 && seat.townLevel < TOWN_UPGRADES.length) {
+      // We don't auto-upgrade town, but we give a bonus that the town growth moment can use
+      // For simplicity, add to townBonus (which multiplies income)
+      seat.townBonus = (seat.townBonus ?? 0) + active.def.rewardTown * 0.1;
     }
-    const view = questViewNow();
-    questViewCache = view;
-
-    // A restored panel comes back as it was saved (see `questPendingOffers`).
-    if (questPendingOffers) {
-      const pool = questOffersFor(view);
-      const byId = new Map(pool.map((q) => [q.id, q]));
-      quests = [
-        ...quests,
-        ...questPendingOffers
-          .map((id) => byId.get(id))
-          .filter((q): q is QuestDef => q !== undefined),
-      ];
-      questPendingOffers = null;
+    const whoName = active.owner === 0 ? me.name : rival.name;
+    const speaker = active.def.speaker;
+    const who = speakerName(speaker, storyOn ? CAST[rivalCast].name : null);
+    const tender = active.def.kind === "tender" ? "Tender won" : "Contract complete";
+    if (active.owner === 0) {
+      toast(`${tender} — ${who}: +$${money} for ${active.def.amount} ${CARGO[active.def.cargo].name} to ${active.def.townName}`, "good");
+      ui.feed(`${whoName} completed ${active.def.kind} contract: ${active.def.amount} ${CARGO[active.def.cargo].name} to ${active.def.townName} (+$${money})`, whoName);
+    } else {
+      // Rival won a tender — Feed and bark
+      ui.feed(`${whoName} wins tender: ${active.def.amount} ${CARGO[active.def.cargo].name} to ${active.def.townName} (+$${money})`, whoName);
+      // Rival bark via rivalry.ts if available
+      try {
+        const bark = active.def.kind === "tender"
+          ? `Tender ${active.def.townName} is mine. First to deliver takes it — and I delivered.`
+          : `${active.def.townName} contract done. My line runs.`;
+        ui.feed(`${rival.name}: ${bark}`, rival.name);
+      } catch {}
     }
-
-    // A reward lands exactly once — the id is the proof, and it rides the
-    // save, so a reload cannot collect it twice.
-    let paid = 0;
-    for (const def of [...quests]) {
-      if (!questDone(def, view) || !payQuest(def)) continue;
-      paid++;
-    }
-
-    // Retire the impossible: a claim quest whose last unclaimed industry went
-    // to the rival (and which this seat does not run) can never be finished, so
-    // it comes off the panel rather than sitting there as a reproach.
-    for (const def of [...quests]) {
-      if (def.kind !== "claim-cargo" || !def.cargo) continue;
-      if (view.cargoesRunning.includes(def.cargo)) continue;
-      if ((view.unclaimed[def.cargo] ?? 0) > 0) continue;
-      questSpent.add(def.id);
-      quests = quests.filter((q) => q.id !== def.id);
-    }
-
-    // ── when to draw again ────────────────────────────────────────────────
-    // The panel fills once, and then only when the SEAT has actually moved:
-    // a new Depot, a new cargo on the clock, a rung, a city tier — or when a
-    // quest was just paid (a completion earns the next suggestion). A
-    // DISMISSAL is the player's answer and refills nothing: the row goes away
-    // and stays away until the situation changes, which is what makes "hide"
-    // and "dismiss" honest rather than a whack-a-mole.
-    const world = `${view.depotCount}:${view.connected}:${typesRunning(view.cargoesRunning)}`
-      + `:${view.townLevel}:${me.depotTier}`;
-    const first = questWorld === null;
-    const moved = !first && world !== questWorld;
-    questWorld = world;
-
-    if (quests.length >= QUEST_OFFER_MAX) return;
-    if (!(first || moved || paid > 0)) return;
-    const next = selectQuests(questOffersFor(view), questRng, {
-      max: QUEST_OFFER_MAX - quests.length,
-      exclude: questSpent,
-      avoid: quests.map((q) => q.strategy),
-    });
-    if (next.length) quests = [...quests, ...next];
+    try {
+      const t = (performance.now() - matchHistory.startMs) / 1000;
+      recordEvent(matchHistory, { kind: "quest", seat: active.owner as 0 | 1, questId: active.def.id, t });
+    } catch {}
+    // Remove from active list
+    activeContracts = activeContracts.filter((a) => !(a.def.id === active.def.id && a.owner === active.owner));
+    return true;
   }
 
-  /** The quest panel's own slice of the save (ids + the player's choices). */
+  function addDeliveryToContracts(seatIdx: 0 | 1, cargo: Cargo, amount: number, now: number): void {
+    let changed = false;
+    activeContracts = activeContracts.map((a) => {
+      if (a.owner !== seatIdx) return a;
+      if (a.status !== "active") return a;
+      if (a.def.cargo !== cargo) return a;
+      if (now > a.expiresAt) return a;
+      const next = addContractDelivery(a, cargo, amount);
+      if (next.status === "completed") changed = true;
+      return next;
+    });
+    if (changed) {
+      // Resolve tender race: if a tender completed, mark losers
+      const res = resolveTenderRace(activeContracts, now);
+      if (res.winner) {
+        activeContracts = res.actives;
+        // Pay winner immediately
+        payContract(res.winner);
+        // Losers get feed
+        for (const loser of res.losers) {
+          if (loser.owner === 0) {
+            toast(`Tender lost — ${loser.def.townName} taken by ${rival.name}`, "bad");
+            ui.feed(`Tender ${loser.def.townName} lost to ${rival.name}`, me.name);
+          }
+        }
+        // Refresh offers after a tender resolves
+        contractWorld = null;
+      } else {
+        // Check private completions
+        for (const a of [...activeContracts]) {
+          if (a.status === "completed") payContract(a);
+        }
+      }
+    }
+  }
+
+  function syncQuests(): void {
+    syncContracts();
+  }
+
+  function syncContracts(): void {
+    if (!newLoop || phase !== "play") {
+      if (contractOffersList.length) contractOffersList = [];
+      if (activeContracts.length) activeContracts = [];
+      return;
+    }
+    // Guests don't generate; they mirror host via wire (see applyNetSnapshot/delta)
+    if (isGuest()) {
+      // Still need to handle expiry for guest's own view of its active contracts
+      const now = performance.now();
+      let expired = false;
+      activeContracts = activeContracts.map((a) => {
+        if (a.status === "active" && now >= a.expiresAt) {
+          expired = true;
+          return { ...a, status: "expired" as const };
+        }
+        return a;
+      });
+      if (expired) {
+        activeContracts = activeContracts.filter((a) => a.status !== "expired");
+        contractWorld = null;
+      }
+      return;
+    }
+
+    const view = contractViewNow();
+    const now = performance.now();
+
+    // Restore from save: offers + active
+    if (contractPendingOffers) {
+      const pool = contractOffersFor(view, contractRng);
+      const byId = new Map(pool.map((q) => [q.id, q]));
+      contractOffersList = [
+        ...contractOffersList,
+        ...contractPendingOffers.map((id) => byId.get(id)).filter((q): q is ContractDef => q !== undefined),
+      ];
+      contractPendingOffers = null;
+    }
+    if (contractPendingActive) {
+      // Merge saved active contracts (they already have progress)
+      for (const saved of contractPendingActive) {
+        if (!activeContracts.some((a) => a.def.id === saved.def.id && a.owner === saved.owner)) {
+          activeContracts.push(saved);
+        }
+      }
+      contractPendingActive = null;
+    }
+
+    // Expiry check for active
+    let hadExpiry = false;
+    activeContracts = activeContracts.map((a) => {
+      if (a.status === "active" && isContractExpired(a, now)) {
+        hadExpiry = true;
+        if (a.owner === 0 && a.def.kind === "private") {
+          toast(`Contract expired — ${a.def.townName} (${a.def.amount} ${CARGO[a.def.cargo].name})`, "info");
+          ui.feed(`Contract expired: ${a.def.amount} ${CARGO[a.def.cargo].name} to ${a.def.townName}`, me.name);
+        }
+        return { ...a, status: "expired" as const };
+      }
+      return a;
+    });
+    if (hadExpiry) {
+      const before = activeContracts.length;
+      activeContracts = activeContracts.filter((a) => a.status !== "expired");
+      if (activeContracts.length !== before) contractWorld = null;
+    }
+
+    // Pay any completed that haven't been paid yet (delivery counting may have marked completed)
+    for (const a of [...activeContracts]) {
+      if (a.status === "completed") payContract(a);
+    }
+
+    // Rival accepts tenders it can plausibly win
+    // Look at available tender offers
+    for (const offer of [...contractOffersList]) {
+      if (offer.kind !== "tender") continue;
+      if (activeContracts.some((a) => a.def.id === offer.id && a.owner === 1)) continue;
+      // Rival can win?
+      if (!rivalCanWinTender(view, offer)) continue;
+      // 70% chance to accept if plausible, scaled by difficulty
+      const chance = skillKey === "hard" ? 0.9 : skillKey === "normal" ? 0.7 : 0.4;
+      if (contractRng() < chance) {
+        // Accept for rival
+        const acceptedAt = now;
+        const expiresAt = acceptedAt + offer.deadlineMs;
+        activeContracts.push({
+          def: offer,
+          acceptedAt,
+          expiresAt,
+          delivered: 0,
+          owner: 1,
+          status: "active",
+        });
+        contractOffersList = contractOffersList.filter((o) => o.id !== offer.id);
+        ui.feed(`${rival.name} accepts tender: ${offer.amount} ${CARGO[offer.cargo].name} to ${offer.townName}`, rival.name);
+        // RIVAL-3 telegraph placeholder
+      }
+    }
+
+    // When to draw again: fill when seat moved or when a contract was paid/expired
+    const worldKey = `${view.depotCount}:${view.connected}:${view.cargoesRunning.join(",")}:${view.townLevel}:${me.depotTier}:${activeContracts.length}:${contractOffersList.length}`;
+    const first = contractWorld === null;
+    const moved = !first && worldKey !== contractWorld;
+    contractWorld = worldKey;
+
+    const needOffers = CONTRACT_OFFER_MAX_NEW - contractOffersList.length;
+    if (needOffers <= 0) return;
+    if (!(first || moved || hadExpiry)) {
+      // Also refill if we have less than max and no active change? For now only on first/moved/expiry
+      // But spec says offers refresh when one completes or expires — hadExpiry covers expiry,
+      // and payContract sets contractWorld to null, so moved will be true next tick after completion
+      if (contractOffersList.length >= CONTRACT_PRIVATE_COUNT) return;
+    }
+    const avoid = new Set<string>();
+    for (const a of activeContracts) {
+      avoid.add(`${a.def.cargo}:${a.def.townId}`);
+    }
+    for (const o of contractOffersList) {
+      avoid.add(`${o.cargo}:${o.townId}`);
+    }
+    const pool = contractOffersFor(view, contractRng);
+    const next = selectContracts(pool, contractRng, {
+      max: needOffers,
+      exclude: contractSpent,
+      avoidCargoTown: avoid,
+    });
+    if (next.length) contractOffersList = [...contractOffersList, ...next];
+  }
+
   const questsSave = () => ({
     offers: quests.map((q) => q.id),
     spent: [...questSpent],
@@ -3557,12 +3771,70 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     hidden: questsHidden,
   });
 
-  /** The player's ✕ on a single offer, and the panel's Hide / reopen. */
+  const contractsSave = () => ({
+    offers: contractOffersList.map((o) => o.id),
+    active: activeContracts.map((a) => ({
+      def: {
+        id: a.def.id,
+        kind: a.def.kind,
+        cargo: a.def.cargo,
+        amount: a.def.amount,
+        townId: a.def.townId,
+        townName: a.def.townName,
+        rewardMoney: a.def.rewardMoney,
+        rewardTown: a.def.rewardTown,
+        deadlineMs: a.def.deadlineMs,
+        speaker: a.def.speaker,
+      },
+      acceptedAt: a.acceptedAt,
+      expiresAt: a.expiresAt,
+      delivered: a.delivered,
+      owner: a.owner,
+      status: a.status,
+    })),
+    spent: [...contractSpent],
+    paid: [...contractPaid],
+    hidden: contractsHidden,
+  });
+
   function questAction(id: string, action: "dismiss" | "hide" | "show"): void {
     if (action === "hide") { questsHidden = true; return; }
     if (action === "show") { questsHidden = false; return; }
     questSpent.add(id);
     quests = quests.filter((q) => q.id !== id);
+  }
+
+  function contractAction(id: string, action: "dismiss" | "hide" | "show" | "accept"): void {
+    if (action === "hide") { contractsHidden = true; return; }
+    if (action === "show") { contractsHidden = false; return; }
+    if (action === "accept") {
+      const offer = contractOffersList.find((o) => o.id === id);
+      if (!offer) return;
+      const now = performance.now();
+      // Don't allow duplicate cargo+town active for same owner
+      if (activeContracts.some((a) => a.owner === 0 && a.def.cargo === offer.cargo && a.def.townId === offer.townId && a.status === "active")) {
+        toast(`Already have a contract for ${offer.townName} ${CARGO[offer.cargo].name}`, "info");
+        return;
+      }
+      activeContracts.push({
+        def: offer,
+        acceptedAt: now,
+        expiresAt: now + offer.deadlineMs,
+        delivered: 0,
+        owner: 0,
+        status: "active",
+      });
+      contractOffersList = contractOffersList.filter((o) => o.id !== id);
+      ui.feed(`Accepted ${offer.kind} contract: ${offer.amount} ${CARGO[offer.cargo].name} to ${offer.townName}`, me.name);
+      contractWorld = null;
+      if (isMp()) publishNet(now, true);
+      return;
+    }
+    // dismiss
+    contractSpent.add(id);
+    contractOffersList = contractOffersList.filter((o) => o.id !== id);
+    activeContracts = activeContracts.filter((a) => !(a.def.id === id && a.owner === 0));
+    if (isMp()) publishNet(performance.now(), true);
   }
 
   const factoryOf = (id: string) => eco.factories.find((f) => f.owner === id) ?? null;
@@ -8566,45 +8838,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  reaches one whole unit. Depot ids are unique, so one map serves both. */
   const loopCarry = new Map<number, number>();
 
-  // ── L8 (#222): the optional quests ──────────────────────────────────────
-  /**
-   * The offers on the panel right now (2–3, one per strategy). Refilled the
-   * frame after one completes or is dismissed.
-   */
-  let quests: QuestDef[] = [];
-  /**
-   * Ids the player is DONE with: paid out, dismissed, or retired because the
-   * map moved past them. One set for all three, because the rule they share
-   * is the same one — never offer this quest again in this game — and it is
-   * what rides the save (with the paid set) so a reload cannot re-earn a
-   * reward.
-   */
-  const questSpent = new Set<string>();
-  /** The rewards actually paid — the "once" half of a small reward. */
-  const questPaid = new Set<string>();
-  /** The player's own choice: the panel shrinks to a flag they can reopen. */
-  let questsHidden = false;
-  /** The seeded picker — never `Math.random`, so a seed offers the same plan. */
-  const questRng = mulberry32((seed ^ 0x5f3759df) >>> 0);
-  /**
-   * The view the last frame derived — the panel's progress strings and the
-   * pay/completion test both read THIS, so the chrome and the reward can never
-   * disagree about what the player has done.
-   */
-  let questViewCache: QuestView | null = null;
-  /**
-   * A restored panel's offer ids, waiting for the next `syncQuests` to resolve
-   * them against the freshly-derived pool. A save keeps the panel it had, and
-   * the defs themselves need not travel: the tables are data and the map is
-   * the same seed.
-   */
-  let questPendingOffers: string[] | null = null;
-  /**
-   * What the seat looked like when the panel last drew — depots, links, cargo
-   * types, city, rung. The panel redraws when this MOVES (and on a payout), so
-   * dismissing a quest cannot be undone by the next frame.
-   */
-  let questWorld: string | null = null;
+  // ── L8 (#222): legacy quests — definitions now in contract block above
+  // (kept for backward compat). Distance cache follows.
   /**
    * L3 (#217): each Depot's road distance, cached per NETWORK — the route
    * length in tiles (`depotPathLength`) and the banded factor the clock pays
@@ -8773,6 +9008,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             // for the integer credit and retain any sub-unit remainder per
             // depot (one map serves both seats: depot ids are unique).
             earn(seat, { [cargoes[0][0]]: whole } as Purse);
+            // CONTRACT-1 (#466): delivery counting at the Factory — cargo actually
+            // arriving after acceptance counts toward contracts.
+            try {
+              const seatIdx = seat.i === 0 ? 0 : 1;
+              addDeliveryToContracts(seatIdx as 0 | 1, cargoes[0][0] as Cargo, whole, now);
+            } catch {}
             // END-1 (#472): best route highlight — track per-depot totals
             try {
               const seatIdx = seat.i === 0 ? 0 : 1;
@@ -10091,6 +10332,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
     const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
     const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
+    const nowSnap = performance.now();
     return buildSnapshot({
       seed, track,
       harvesters: eco.harvesters,
@@ -10098,7 +10340,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       setupPhase: inSetup(),
       won: phase === "won",
       players: wirePlayers(),
-      t: performance.now(),
+      t: nowSnap,
       protests: protestsWire,
       battle: battleWire(),
       blockades: blockadesWire(),
@@ -10110,13 +10352,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       dams: damsToWire(eco.dams),
       winner: winner ? { id: winner.id, source: winningSource } : null,
       clearedFields: [...clearedFields],
-      offers: offersToWire(offerBook, performance.now()),
+      offers: offersToWire(offerBook, nowSnap),
+      // CONTRACT-1 (#466): contracts ride the snapshot
+      contracts: contractsToWire(contractOffersList, activeContracts, nowSnap),
       // #456: the edited heights ride the full state as the diff from the
       // seed map (absent = the unlevelled island, same as the save).
       ...(seedHeights && grid.height
         ? { heightEdits: heightDiffWire(grid.height, seedHeights, MAP_W, MAP_H) }
         : {}),
-    });
+    } as any);
   }
 
   /**
@@ -10159,6 +10403,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ? heightDiffWire(grid.height, seedHeights, MAP_W, MAP_H) : [],
       winner: winner ? { id: winner.id, source: winningSource } : null,
       offers: offersToWire(offerBook, now),
+      contracts: contractsToWire(contractOffersList, activeContracts, now),
     } as any);
   }
 
@@ -10404,6 +10649,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // conquests and cooldowns ARE (absent = none, the rail rule).
     // TRADE: a full state always says what the book IS (absent = empty).
     guestOffers = offersFromWire(applied.offers ?? [], true, performance.now());
+    // CONTRACT-1 (#466): contracts ride the snapshot
+    try {
+      const cw = (applied as any).contracts as ContractWire[] | undefined;
+      if (cw) {
+        const restored = contractsFromWire(cw, performance.now());
+        // Guest mirrors host's active contracts and offers
+        activeContracts = restored.actives;
+        contractOffersList = restored.offers;
+      }
+    } catch {}
     if (applied.battle) {
       eco.battleLocks = new Map(applied.battle.locks);
       challengeState.readyAt = new Map(applied.battle.readyAt);
@@ -10545,6 +10800,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (Array.isArray((msg as any).dams)) {
       eco.dams = damsFromWire((msg as any).dams);
       worldDirty = true;
+    }
+    // CONTRACT-1 (#466): contracts ride the delta whole
+    if (Array.isArray((msg as any).contracts)) {
+      try {
+        const cw = (msg as any).contracts as ContractWire[];
+        const restored = contractsFromWire(cw, performance.now());
+        activeContracts = restored.actives;
+        contractOffersList = restored.offers;
+      } catch {}
     }
     // L15 (#230): boards and crossPrompt are gone from the wire.
     if ((msg as any).winner !== undefined) {
@@ -11899,6 +12163,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (d) tuningTarget = { tx: d.tx + 1, ty: d.ty + 1 };
         }
       }
+      // CONTRACT-1: active contract feeds GOAL-1 advisor
+      const activeForAdvisor = activeContracts.find((a) => a.owner === 0 && a.status === "active") ?? null;
+      const advisorContract = activeForAdvisor
+        ? {
+            label: `${activeForAdvisor.def.amount - activeForAdvisor.delivered} ${CARGO[activeForAdvisor.def.cargo].name} → ${activeForAdvisor.def.townName} (${contractTimeLeftText(activeForAdvisor, now)})`,
+            target: (() => {
+              const t = grid.towns.find((tt) => tt.id === activeForAdvisor.def.townId);
+              return t ? { tx: t.tx, ty: t.ty } : null;
+            })(),
+          }
+        : null;
       const step = nextStepAdvisor({
         phase,
         playerId: me.id,
@@ -11922,7 +12197,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               target: tuningTarget,
             }
           : null,
-        activeContract: null,        // CONTRACT-1 (#466) plugs in later
+        activeContract: advisorContract,
         contestedIndustry: null,     // RIVAL-3 (#467) plugs in later
         winTarget: winTarget(),
         newLoop: true,
@@ -12029,21 +12304,52 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       incomeRates,
       // …and the optional quests: what a character suggests, in their voice,
       // with the progress and the reward the game has already computed. The
-      // panel is empty on the retired loop, on a guest seat and once the match
-      // is won.
+      // panel is empty on the retired loop and once the match is won.
+      // CONTRACT-1 (#466): town contracts replace Quests — deliveries with
+      // deadlines, and a public tender both seats race. Active contracts show
+      // progress bars/timers Space Age style, offers show Accept.
       quests: newLoop && phase !== "won"
         ? {
-            hidden: questsHidden,
-            items: quests.map((def) => {
-              const speaker = questSpeakerFor(def);
-              return {
-                id: def.id,
-                who: questSpeakerName(speaker),
-                text: questText(def, speaker),
-                progress: questProgressText(def, questView()),
-                reward: questReward(def).label,
-              };
-            }),
+            hidden: contractsHidden,
+            items: [
+              // Active contracts first (with progress)
+              ...activeContracts
+                .filter((a) => a.owner === 0 && a.status === "active")
+                .map((a) => {
+                  const now = performance.now();
+                  return {
+                    id: a.def.id,
+                    who: speakerName(a.def.speaker, storyOn ? CAST[rivalCast].name : null),
+                    text: `${a.def.amount} ${CARGO[a.def.cargo].name} → ${a.def.townName} (${a.def.kind})`,
+                    progress: contractProgressText(a),
+                    reward: `$${a.def.rewardMoney}${a.def.rewardTown ? ` + town growth` : ""}`,
+                    kind: a.def.kind,
+                    delivered: a.delivered,
+                    amount: a.def.amount,
+                    timeLeftMs: contractTimeLeft(a, now),
+                    timeLeftText: contractTimeLeftText(a, now),
+                    active: true,
+                    tender: a.def.kind === "tender",
+                  };
+                }),
+              // Then offers
+              ...contractOffersList.map((def) => {
+                return {
+                  id: def.id,
+                  who: speakerName(def.speaker, storyOn ? CAST[rivalCast].name : null),
+                  text: `${def.amount} ${CARGO[def.cargo].name} → ${def.townName} in ${Math.round(def.deadlineMs / 60000)}m — $${def.rewardMoney}${def.rewardTown ? " + town" : ""}`,
+                  progress: def.kind === "tender" ? "TENDER — both seats race" : "PRIVATE",
+                  reward: `$${def.rewardMoney}`,
+                  kind: def.kind,
+                  delivered: 0,
+                  amount: def.amount,
+                  timeLeftMs: def.deadlineMs,
+                  timeLeftText: `${Math.round(def.deadlineMs / 60000)}m`,
+                  active: false,
+                  tender: def.kind === "tender",
+                };
+              }),
+            ],
           }
         : null,
       reach: quarry.reach,
@@ -13371,7 +13677,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // what has been paid, what the player retired, and whether they put the
       // panel away. The DEFS are re-derived from the map on the next boot (the
       // tables are data), so only the ids and the choices travel.
+      // CONTRACT-1 (#466): town contracts replace Quests — same but with active
+      // contracts that have progress and deadlines.
       quests: newLoop ? questsSave() : undefined,
+      contracts: newLoop ? contractsSave() : undefined,
       eco: { harvesters: eco.harvesters, factories: eco.factories },
       clearedFields: [...clearedFields],
       // 2026-09: every city's own tier.
@@ -13475,17 +13784,59 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // `loopCarry`, and this reads as the empty map it always was.
     loopCarry.clear();
     for (const [id, rem] of savedLoopCarry(d)) loopCarry.set(id, rem);
-    // L8 (#222): the quest panel's own state, restored the same way — the
-    // player's choices come back and the offers themselves are resolved by the
-    // next `syncQuests`, off the map the save just rebuilt.
-    questPendingOffers = d.quests?.offers ?? null;
+    // L8 (#222): legacy quest state — only spent/paid/hidden kept for old saves
     questSpent.clear();
     for (const id of d.quests?.spent ?? []) questSpent.add(id);
     questPaid.clear();
     for (const id of d.quests?.paid ?? []) questPaid.add(id);
     questsHidden = d.quests?.hidden === true;
     quests = [];
-    questWorld = null;   // the next frame draws the restored panel afresh
+    // CONTRACT-1 (#466): contracts replace quests — same restore shape plus active
+    contractPendingOffers = (d as any).contracts?.offers ?? null;
+    contractSpent.clear();
+    for (const id of (d as any).contracts?.spent ?? []) contractSpent.add(id);
+    contractPaid.clear();
+    for (const id of (d as any).contracts?.paid ?? []) contractPaid.add(id);
+    contractsHidden = (d as any).contracts?.hidden === true;
+    contractOffersList = [];
+    activeContracts = [];
+    contractWorld = null;
+    // Rehydrate active contracts from save (if any)
+    try {
+      const rawActive = (d as any).contracts?.active as any[] | undefined;
+      if (rawActive?.length) {
+        const now = performance.now();
+        // We need a view to resolve town names etc — use current view after map gen
+        // For now store as pending and resolve in syncContracts; but we can attempt direct
+        const view = contractViewNow();
+        const pool = contractOffersFor(view, contractRng);
+        const byId = new Map(pool.map((c) => [c.id, c]));
+        const rebuilt: ActiveContract[] = [];
+        for (const ra of rawActive) {
+          const def = byId.get(ra.def?.id) ?? {
+            id: ra.def.id,
+            kind: ra.def.kind,
+            cargo: ra.def.cargo as Cargo,
+            amount: ra.def.amount,
+            townId: ra.def.townId,
+            townName: ra.def.townName,
+            rewardMoney: ra.def.rewardMoney,
+            rewardTown: ra.def.rewardTown,
+            deadlineMs: ra.def.deadlineMs,
+            speaker: ra.def.speaker as any,
+          } as ContractDef;
+          rebuilt.push({
+            def,
+            acceptedAt: ra.acceptedAt ?? now,
+            expiresAt: ra.expiresAt ?? (now + def.deadlineMs),
+            delivered: ra.delivered ?? 0,
+            owner: ra.owner ?? 0,
+            status: ra.status ?? "active",
+          });
+        }
+        contractPendingActive = rebuilt;
+      }
+    } catch {}
     for (let i = 0; i < players.length && i < d.players.length; i++) {
       Object.assign(players[i].purse, d.players[i].purse);
       players[i].freeTrack = d.players[i].freeTrack;
@@ -14653,7 +15004,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * own state here rather than parsing the chrome.
      */
     get quests() {
-      const view = questViewCache ?? questViewNow();
+      const view = questViewNow();
       return {
         hidden: questsHidden,
         offers: quests.map((def) => ({
