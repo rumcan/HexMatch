@@ -133,7 +133,7 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
                 <button type="button" className="px-btn-primary menu-btn primary" data-sfx="open"
                   aria-label={`Continue — ${describeSave(resume)}`}
                   onClick={() => onContinue?.(resume.chapterId)}>
-                  Continue<span className="mb-tag">{describeSave(resume)}</span><span className="px-arrow" aria-hidden="true">→</span>
+                  Continue<span className="px-arrow" aria-hidden="true">→</span>
                 </button>
               </>
             ) : (
