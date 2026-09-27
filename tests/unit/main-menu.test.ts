@@ -201,8 +201,11 @@ describe("MainMenu — Continue (#191)", () => {
     const { onPlay } = mount(vi.fn(), onContinue);
     const cont = button(/^Continue/);
     expect(cont.classList.contains("primary")).toBe(true);
-    expect(cont.textContent).toMatch(/vs AI \(Hard\)/);
-    expect(cont.textContent).toMatch(/saved 2 h ago/);
+    // Owner (2026-09-27): the button reads just "Continue"; the save it
+    // resumes is still named — to screen readers, in its accessible name.
+    expect(cont.textContent).not.toMatch(/vs AI/);
+    expect(cont.getAttribute("aria-label")).toMatch(/vs AI \(Hard\)/);
+    expect(cont.getAttribute("aria-label")).toMatch(/saved 2 h ago/);
     // Play stays on the menu but is no longer the gold door
     expect(button(/^Play/).classList.contains("primary")).toBe(false);
     expect(button(/^Play/).textContent).toMatch(/start a new game/i);
