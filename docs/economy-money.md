@@ -80,9 +80,26 @@ Demolishing refunds **money** at the same 50% the resource refund used to be
   1.2% of what is left, capped at −45%, and recovers exponentially with a
   50 s constant. Selling 10 costs you ~6% on average; dumping 60 in one click
   costs you ~25% and leaves the price down for the next minute.
-* **buying** — `quoteBuy` prices a purchase at the sale price **+15% spread**.
-  It is implemented and tested (`no infinite loop: buying back what you just
-  sold always loses money`) but **not wired into the UI yet** — see §7.
+* **buying** (MKT-2, #465) — the Market tab's Buy 1 / Buy 10 pays the sale
+  price **+15% spread** (`quoteBuy` / `buyPrice`), so a missing upgrade input
+  can be bought. It is still tested that buying back what you just sold always
+  loses money, and a guest's buy is a host intent, like a sale.
+* **rumours** (MKT-2, #465) — events are deterministic from the seed, so the
+  Market tab forecasts the NEXT slot about 60 s ahead (`rumourAt` in
+  `market.ts`): *"Steel boom rumoured: Ore +25–50% in ~1 min"*. The copy
+  quotes the scheduled size range (+25–50% / −20–35%), never the exact number.
+  Rumours are always honest on Easy and Normal; on Hard each slot's rumour is
+  true with 70% probability (one seeded draw per slot, `RUMOUR_HARD_HIT_RATE`)
+  and a deliberately wrong one otherwise — a quiet slot can carry a false
+  rumour, and a scheduled event can be misreported — so playing the forecast
+  stays a decision. In multiplayer each seat reads rumours at its own client's
+  difficulty (there is no match-wide difficulty there).
+* **price alerts** (MKT-2, #465) — an optional per-cargo "notify me above $X",
+  set from the Market tab row. When the live price crosses the line the seat
+  gets a toast and one Feed line, once per crossing: firing disarms the alert
+  until the price drops back below the line (`alertTick` in `market.ts`).
+  Alerts are session-local and client-local — they evaluate against the
+  mirrored prices, need no wire, and ride no save.
 
 ## 4. A simulated 20-minute game
 
@@ -119,7 +136,12 @@ money back except a 50% demolish refund.
 * it never sells more than **10 units** in one lot, so it pays slippage like
   the player,
 * above **40 spare units** it cashes out regardless of the price: a warehouse
-  it cannot spend is money it is not using.
+  it cannot spend is money it is not using,
+* (MKT-2, #465) it reads the **same rumours** the Market tab prints — false
+  ones included on Hard — and **waits out a rumoured boom** instead of selling
+  into the minute before it (`rumourBoom` in `rivalSellLot`, fed by
+  `rivalMarketTick`). The dump floor above still sells: patience is for the
+  edge sale, not for a warehouse.
 
 `game.ts` runs that every 5 s (`rivalMarketTick`) and pays for its builds with
 `spendBuild` / `chargeBuild`. The AI *planner* still prices plans in resources,
@@ -154,12 +176,12 @@ No economy prices or money knobs were changed for BAL-1. The new calibration har
 
 ## 8. Known gaps / follow-ups
 
-* **Buying is modelled but not wired.** `quoteBuy` / `buyPrice` exist and are
-  tested; the Market tab shows no Buy button yet.
-* **A guest cannot sell.** `onSell` refuses on a guest with "Selling is handled
-  by the host in this room" — the host owns the slippage, so a guest's sale
-  needs a relayed intent like the bank's. The guest *sees* live prices and the
-  host's money, because both ride the player wire.
+* ~~**Buying is modelled but not wired.**~~ Done in MKT-2 (#465): Buy 1 / Buy
+  10 at price + spread, including a guest's buy via a host intent.
+* ~~**A guest cannot sell.**~~ Done in MKT-2 (#465): a guest's sale is a host
+  intent like the bank's (`do: "sell"` / `do: "buy"` under the `build` action,
+  validated against the guest's own seat). The guest *sees* live prices and
+  the host's money, because both ride the player wire.
 * **The rival's planner is still resource-shaped** (see §5). A money-native
   planner would let it price a plan exactly instead of through `buildPurse`.
 * **Balance is a first pass.** `test:slow` (rival balance) is the lead's run:
