@@ -129,6 +129,10 @@ import { BRIDGE_REFUSAL_TEXT } from "./bridges";
 import { scatterScenery, type DecalImages, type Scenery } from "./scenery";
 import { loadDecalImages, loadScenerySprites } from "./scenery-art";
 import { loadVehicleLayers } from "./vehicle-art";
+// TOWN-2 (#470): the tier-up moment — scaffolds and cranes on the lots a city
+// upgrade adds, the flag and bunting flourish over the town hall, and the
+// timings/rules for both (see the module header for the whole contract).
+import { createGrowthMoment, type GrowthMoment } from "./town-growth";
 import {
   FIELD_OCC, WATER, generateMap, heightAt, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
   STARTER_ISLAND_SEED, starterIslandGrid,
@@ -3442,6 +3446,64 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return h.ownerId === me.i + 1 ? "depot_blue" : "depot_red";
   };
 
+  // ── TOWN-2 (#470): the tier-up moment ────────────────────────────────────
+  /**
+   * The town draw tiles as the LAST `syncWorld` laid them, per town. Read by
+   * `growTownArt` BEFORE it re-syncs, so the lots a tier-up just added are a
+   * diff of the town's own draw list rather than a second source of truth for
+   * its layout (the layout stays `townBuildings`' alone).
+   */
+  let townDrawnTiles = new Map<number, Set<string>>();
+  /**
+   * The seat a running moment belongs to. The Feed line is posted for the
+   * LOCAL seat only — the rival's growth already says so at its own call site
+   * (L14), and one event should not take two lines — so `growTownArt` sets
+   * this just before `start` and the `feed` dep below reads it.
+   */
+  let growthSeat: PlayerState | null = null;
+  /**
+   * The construction state the town draw items wear while a tier-up builds
+   * out. Created here, above `syncWorld`, because the town block asks it what
+   * every lot looks like; every dep is a lazy closure, so nothing below has to
+   * exist yet at this point in the boot.
+   */
+  const growthMoment: GrowthMoment = createGrowthMoment({
+    // The atlas decides whether the lead's scaffold / crane / bunting art has
+    // landed. A name it does not know falls back to the finished building at a
+    // rising alpha — an unknown sprite draws nothing at all (`place` in
+    // depth.ts), which would punch holes in a growing district.
+    hasArt: (name) => atlasRef?.has(name) ?? false,
+    // A stage change re-lays the town through the same door every build uses,
+    // and only on a stage change: `tick` compares a key, it never repaints per
+    // frame (#417's "no frame-rate drop when a town grows" still holds).
+    apply: () => syncWorld(),
+    // The camera eases to the town; `flyCameraTo` snaps under reduced motion
+    // and cancels on a pointer-down of its own, so this is safe to ask for.
+    camera: (tx, ty) => flyCameraTo(tx, ty),
+    feed: (text) => { if (growthSeat?.id === me.id) ui.feed(text, me.name); },
+    // SFX-1 (#463) ships the recorded `city-upgrade` sample; until it does the
+    // moment voices the beat with the catalogue's own "stamped up a grade" cue.
+    sound: (tier) => sfx.play("up", { step: tier }),
+    // The flag/bunting placeholder: a float over the hall while that art is
+    // missing, so the beat is visible on a checkout without the PNGs.
+    float: (text, tx, ty) => { floats.add(text, tx, ty, { cls: "delivery" }); },
+    reducedMotion: () => {
+      try {
+        return typeof matchMedia === "function"
+          && matchMedia("(prefers-reduced-motion: reduce)").matches;
+      } catch { return false; }
+    },
+    // "Skippable by any click": a capture-phase pointerdown ANYWHERE ends the
+    // sequence on the spot. It never prevents or swallows the click — the tool
+    // under the cursor still does its job — and it is armed only while a moment
+    // runs, so the map carries no permanent listener for a 3-second beat.
+    onSkip: (handler) => {
+      const on = (): void => handler();
+      window.addEventListener("pointerdown", on, { capture: true });
+      return () => window.removeEventListener("pointerdown", on, { capture: true });
+    },
+  });
+
   const syncWorld = () => {
     world.roadBits = drawBits(track, "road");
     world.dirtBits = drawBits(track, "dirt");
@@ -3513,6 +3575,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // here so the footprints match the art `townBuildings` just laid — a 2×2
     // tower claims both of its tiles, in whatever rotation the atlas gives it.
     townPlantTiles = new Set();
+    // #470: the tiles each town draws in THIS sync — the diff `growTownArt`
+    // reads to find the lots a tier-up just added.
+    const drawnNow = new Map<number, Set<string>>();
     const townItems = grid.towns.flatMap((t) => {
       const tier = newLoop ? townTier(t) : TOWN_TIER_LEGACY;
       // #417: the GROWN tiles are read while `built` still holds only the
@@ -3538,16 +3603,45 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }),
         (x, y) => ring.has(tIdx(x, y)),
       )) townPlantTiles.add(tIdx(x, y));
-      return laid.map((b) => ({
-        sprite: b.sprite,
-        tx: b.tx, ty: b.ty,
-        ref: { kind: "town", id: t.id } as unknown,
-      }));
+      drawnNow.set(t.id, new Set(laid.map((b) => `${b.tx},${b.ty}`)));
+      return laid.map((b) => {
+        // TOWN-2 (#470): a lot this tier-up just added wears its construction
+        // look while the moment runs — scaffold, then crane, then finished (or
+        // the finished sprite at a rising alpha until that art exists). The
+        // item keeps its tile and its town ref, so a district never loses a
+        // draw item mid-build and nothing here changes what `townBuildings`
+        // decided. Outside a moment `lookFor` is null and this is a pass-through.
+        const look = growthMoment.lookFor(t.id, b.tx, b.ty);
+        return {
+          sprite: look?.sprite ?? b.sprite,
+          tx: b.tx, ty: b.ty,
+          ref: { kind: "town", id: t.id } as unknown,
+          ...(look && look.alpha < 1 ? { alpha: look.alpha } : {}),
+        };
+      });
     });
+    townDrawnTiles = drawnNow;
     townPlantReady = true;
     world.sceneryBlocked = blocked;
+    // TOWN-2 (#470): the flag and bunting flourish over the town hall. It is an
+    // OVERLAY, not a town draw item — `decor` so picking ignores it (the bank
+    // underneath stays clickable while the flags are up), `lift` so it sorts
+    // over the hall it hangs on, and a `town-fx` ref so `townDrawItems` and
+    // everything else that reads the town's buildings never sees it. Empty
+    // while the art is missing (`flourishLookAt` answers null) or no moment is
+    // running — the float layer carries the beat until the PNGs land.
+    const flourish = growthMoment.flourish();
+    const flourishItems = flourish ? [{
+      sprite: flourish.sprite,
+      tx: flourish.tx, ty: flourish.ty,
+      alpha: flourish.alpha,
+      decor: true,
+      lift: 1,
+      ref: { kind: "town-fx", id: flourish.townId } as unknown,
+    }] : [];
     world.extra = [
       ...townItems,
+      ...flourishItems,
       ...factoryItems,
       // Every Depot is the same truck depot building, whatever it harvests.
       // Ownership shows in the inspector, the catchment overlays and the ref.
@@ -5040,8 +5134,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * the tier's grown rings can reach), which is what the ticket's "no frame
    * rate drop when a town grows" asks for. The float reuses the map's own
    * float layer.
+   *
+   * TOWN-2 (#470) hangs the tier-up MOMENT on the same door: the camera eases
+   * to the town, the lots this growth ADDED go up behind scaffolds and cranes
+   * for two and a half seconds, a flag and bunting flourish plays over the
+   * town hall, the city-upgrade sound plays and the Feed says so. `by` names
+   * the seat that grew (it decides the Feed line); the moment is presentation
+   * only — nothing here is saved and nothing goes on the wire, and the restore
+   * path never reaches this function at all (`fx = false`).
    */
-  function growTownArt(t: Town, now = performance.now()): void {
+  function growTownArt(t: Town, now = performance.now(), by: PlayerState = me): void {
+    // #470: what this town drew BEFORE the tier changed — read before the
+    // re-sync below overwrites it, so the new district is a diff of the town's
+    // own draw list.
+    const drawnBefore = townDrawnTiles.get(t.id) ?? new Set<string>();
+    // A growth inside a growth (two upgrades inside the same three seconds):
+    // land the running moment's district first, so the diff below sees finished
+    // buildings and the new moment never inherits a scaffold sprite as its
+    // "finished" art. No-op — and no sync — when nothing is running.
+    growthMoment.finish();
     syncWorld();
     let ext = 0;
     const note = (x: number, y: number) => {
@@ -5082,6 +5193,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     floats.add(`⬆ ${townTierLabel(townTier(t)).toUpperCase()}`, t.tx, t.ty - 1,
       { cls: "delivery", now });
+    // TOWN-2 (#470): the lots this growth ADDED — every town draw item whose
+    // tile the town did not draw before. At tier 2+ that is the new district
+    // (#425 made it drawable); a first upgrade adds none, and the moment is
+    // then just the camera, the hall flourish, the sound and the Feed line.
+    const tier = townTier(t);
+    const newLots = (world.extra ?? []).flatMap((e) => {
+      const ref = e.ref as { kind?: string; id?: number } | undefined;
+      if (ref?.kind !== "town" || ref.id !== t.id) return [];
+      if (drawnBefore.has(`${e.tx},${e.ty}`)) return [];
+      const [w, h] = atlasRef?.get(e.sprite)?.footprint ?? [1, 1];
+      return [{ tx: e.tx, ty: e.ty, sprite: e.sprite, w, h }];
+    });
+    growthSeat = by;
+    growthMoment.start(
+      { id: t.id, tx: t.tx, ty: t.ty, tier, label: townTierLabel(tier) },
+      newLots,
+      now,
+    );
   }
 
   /**
@@ -5096,7 +5225,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!newLoop) return null;
     const next = Math.max(townTier(t), Math.min(cityOf(t, p).level, TOWN_VISUAL_MAX));
     if (!setTownLevel(t, next)) return null;
-    if (fx) growTownArt(t);
+    // #470: `p` names the seat that grew — the moment's Feed line is posted for
+    // the local seat only (the rival's growth says so where the rival buys it).
+    if (fx) growTownArt(t, performance.now(), p);
     return t;
   }
 
@@ -5106,7 +5237,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!t) return null;
     const next = Math.max(townTier(t), Math.min(p.townLevel, TOWN_VISUAL_MAX));
     if (!setTownLevel(t, next)) return null;
-    if (fx) growTownArt(t);
+    if (fx) growTownArt(t, performance.now(), p);   // #470: the seat that grew
     return t;
   }
 
@@ -14193,6 +14324,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       mini.paint();
       // #461: camera ease back to Depot after tuning.
       tickCameraAnim(t);
+      // TOWN-2 (#470): the tier-up moment. One compare per frame — it repaints
+      // (through `syncWorld`) only when a lot's construction look or the hall's
+      // flourish actually changed, and lands the finished district by itself
+      // when the sequence runs out.
+      growthMoment.tick(t);
       floats.frame(t);
       // NAMES: re-anchor the name tags to the live camera (no-op while the
       // Names button has them hidden).
@@ -14476,8 +14612,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           tx: e.tx,
           ty: e.ty,
           townId: (e.ref as { kind: string; id: number }).id,
+          // TOWN-2 (#470): a lot under construction draws its scaffold or crane
+          // sprite — or, until that art exists, its FINISHED sprite at a rising
+          // alpha. The draw item reports the alpha either way, so a probe can
+          // see the construction state without knowing which art has landed.
+          ...(typeof e.alpha === "number" ? { alpha: e.alpha } : {}),
         }));
     },
+    /**
+     * TOWN-2 (#470): the tier-up moment, read-only — which town is building,
+     * the tier it reached, how many lots are going up, which stage the first
+     * wave is on, the hall's flourish stage, and whether the sequence was
+     * skipped by a click or collapsed by reduced motion. `active` is false once
+     * it has landed; the numbers then describe the moment that just ended.
+     *
+     *   __iso.townGrowth            what is building right now
+     *   __iso.finishTownGrowth()    land it at once (what a click does)
+     */
+    get townGrowth() { return growthMoment.state; },
+    /** #470: end the running tier-up moment now — the same door "skippable by
+     *  any click" uses, for a probe or an impatient console. False when nothing
+     *  was running. */
+    finishTownGrowth: () => growthMoment.skip(),
     /** VP-01: run the rival's pave pass on demand (the AI turn's third action,
      *  exposed so a test can assert the pave without waiting on the clock).
      *  Atomic like the real turn: it rescores, so `vp.ai` is current after it. */
@@ -15601,6 +15757,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     storyView?.destroy();
     storyView = null;
     floats.clear();
+    // TOWN-2 (#470): the tier-up moment's click listener goes with the game —
+    // a disposed game must not keep arming (or repainting) a build sequence.
+    growthMoment.dispose();
     labels.clear();
     upgradeMarkers.clear();
     flashLayer.clear();
