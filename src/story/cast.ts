@@ -82,7 +82,7 @@ const PLAYER_VOICE = "The player. Dry, unimpressed, punctures every rival's bit 
 function managerCast(id: CastId, manager: ManagerId): CastMember {
   const m = MANAGER_BY_ID[manager];
   return {
-    id, name: `${m.first} ${m.last}`, role: `${m.title} · Hexmatch Industries`,
+    id, name: `${m.first} ${m.last}`, role: "Logistics Manager · Hexmatch Industries",
     colour: "#5aa8ff", sheet: null, solo: m.thumb, voice: PLAYER_VOICE,
   };
 }

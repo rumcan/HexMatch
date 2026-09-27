@@ -160,7 +160,9 @@ export function createLoadingScreen(
       return promise;
     },
     show(subtitle) {
-      if (overlay || ready()) return;
+      // CAST-1: with a minimum showing time the poster mounts even when every
+      // load has already landed (a warm cache) — it is the key art, not a bar.
+      if (overlay || (ready() && minShowMs === 0)) return;
       overlay = document.createElement("div");
       overlay.id = "iso-loading";
       overlay.setAttribute("role", "status");

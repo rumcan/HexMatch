@@ -93,7 +93,7 @@ export function buildMultiplier(id: ManagerId | null | undefined, cls: BuildClas
 export function perkPrice(base: number, id: ManagerId | null | undefined, cls: BuildClass): number {
   const m = buildMultiplier(id, cls);
   if (m === 1 || base <= 0) return base;
-  return Math.max(1, m < 1 ? Math.floor(base * m) : Math.ceil(base * m));
+  return Math.max(1, m < 1 ? Math.floor(base * m + 1e-9) : Math.ceil(base * m - 1e-9));
 }
 
 /**
@@ -110,7 +110,7 @@ export function effectiveBalance(money: number, id: ManagerId | null | undefined
 /** Gold a sabotage card costs this manager (rounded up, like every surcharge). */
 export function sabotageGold(base: number, id: ManagerId | null | undefined): number {
   const m = perksOf(id).sabotageGold;
-  return m === 1 ? base : Math.ceil(base * m);
+  return m === 1 ? base : Math.ceil(base * m - 1e-9);
 }
 
 /** A Security Forces bill after the perk — `{}` when it is free. */
@@ -121,7 +121,7 @@ export function securityCost<K extends string>(
   if (m === 1) return { ...base };
   const out: Partial<Record<K, number>> = {};
   if (m === 0) return out;
-  for (const [k, v] of Object.entries(base) as [K, number][]) out[k] = Math.ceil(v * m);
+  for (const [k, v] of Object.entries(base) as [K, number][]) out[k] = Math.ceil(v * m - 1e-9);
   return out;
 }
 

@@ -9,7 +9,7 @@
 //   * the MAX_WAIT_MS backstop lifts it even when a load never settles.
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createLoadingScreen, FADE_MS, MAX_WAIT_MS } from "../../src/iso/loading-screen";
+import { createLoadingScreen, FADE_MS, MAX_WAIT_MS, MIN_SHOW_MS } from "../../src/iso/loading-screen";
 
 const TASKS = [
   { id: "a", label: "Alpha" },
@@ -84,5 +84,45 @@ describe("LOAD-01 loading screen", () => {
     ls.track("zzz", Promise.resolve());
     await flush();
     expect(ls.progress).toEqual({ done: 0, total: 2 });
+  });
+
+  it("CAST-1: stays up at least MIN_SHOW_MS (3 s) even when loading is instant", async () => {
+    expect(MIN_SHOW_MS).toBe(3000);
+    const ls = createLoadingScreen(host, TASKS);
+    const a = deferred(), b = deferred();
+    ls.track("a", a.promise); ls.track("b", b.promise);
+    ls.show();
+    a.resolve(); b.resolve(); await flush();
+    expect(ls.ready).toBe(true);
+    expect(ls.holding).toBe(true);
+    vi.advanceTimersByTime(MIN_SHOW_MS - 1);
+    expect(host.querySelector("#iso-loading.iso-loading-out")).toBeNull();
+    expect(host.querySelector("#iso-loading")!.textContent).toContain("Opening for business");
+    vi.advanceTimersByTime(1);
+    expect(ls.holding).toBe(false);
+    expect(host.querySelector("#iso-loading.iso-loading-out")).not.toBeNull();
+    vi.advanceTimersByTime(FADE_MS);
+    expect(ls.active).toBe(false);
+  });
+
+  it("CAST-1: a slow load past the hold lifts the moment it lands", async () => {
+    const ls = createLoadingScreen(host, TASKS);
+    const a = deferred();
+    ls.track("a", a.promise); ls.track("b", Promise.resolve());
+    ls.show();
+    vi.advanceTimersByTime(MIN_SHOW_MS + 500);
+    await flush();
+    expect(host.querySelector("#iso-loading.iso-loading-out")).toBeNull();
+    a.resolve(); await flush();
+    expect(host.querySelector("#iso-loading.iso-loading-out")).not.toBeNull();
+  });
+
+  it("CAST-1: a warm cache still shows the poster for MIN_SHOW_MS", () => {
+    const ls = createLoadingScreen(host, TASKS);
+    ls.finish();
+    ls.show();
+    expect(host.querySelector("#iso-loading")).not.toBeNull();
+    vi.advanceTimersByTime(MIN_SHOW_MS + FADE_MS);
+    expect(host.querySelector("#iso-loading")).toBeNull();
   });
 });

@@ -1147,22 +1147,23 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                 </div>
               ) : null}
             </div>
-            <h1 className="px-kicker">{cast.title} · Hexmatch Industries</h1>
+            <h1 className="px-kicker">Back to work, Logistics Manager.</h1>
             {profileTab === "profile" ? (
               <div className="px-profile-body" key={`${cast.id}-profile`}>
                 <h2 className="px-name"><span>{cast.first}</span> <span>{cast.last}</span></h2>
-                <p className="px-quote">“{cast.quote}”</p>
+                <p className="px-cast-role">{cast.title}</p>
                 {hired ? null : <p className="px-lock-note" role="note">Locked · {unlockLabel(cast.id)}</p>}
                 <dl className="px-perks">
                   <div className="px-perk"><dt>Perk</dt><dd>{cast.perk}</dd></div>
                   <div className="px-perk quirk"><dt>Quirk</dt><dd>{cast.quirk}</dd></div>
                 </dl>
+                <p className="px-quote">“{cast.quote}”</p>
                 <p className="start-subtitle px-bio">{cast.bio}</p>
               </div>
             ) : profileTab === "history" ? (
               <div className="px-profile-body" key={`${cast.id}-history`}>
                 <h2 className="px-title">A life in motion</h2>
-                <span className="px-rule" aria-hidden="true" />
+                <p className="start-subtitle px-bio px-bio-history">{cast.bio}</p>
                 <div className="px-history">
                   {cast.history.map(([year, title, text]) => (
                     <div className="px-history-row" key={year}><span>{year}</span><div><strong>{title}</strong><p>{text}</p></div></div>
