@@ -342,10 +342,16 @@ export interface DifficultyRules {
   obstacles: ObstacleRules;
 }
 
-export type DifficultyKey = "easy" | "normal" | "hard";
+export type DifficultyKey = "trainee" | "easy" | "normal" | "hard";
 
 /** The shipped rival-skills keys and these rows are ONE setting (L6). */
 export const DIFFICULTY_RULES: Record<DifficultyKey, DifficultyRules> = {
+  // BAL-1 (#471) / FTUE-1 (#464): the Starter Island's own row — the player's
+  // side of the FTUE match is as gentle as Easy's (raised floor, no decay, a
+  // quiet board). The trainee RIVAL's pace lives in `RIVAL_SKILLS.trainee`.
+  trainee: { matchEnabled: true, minYield: 1.5, decayRate: 0,
+             rematch: "open", yieldNeverDrops: true,
+             obstacles: { frost: 0, frostHard: 1, girders: 0 } },
   // Owner call (2026-09): yields never drop (no decay on any row) and a
   // Depot can be retuned any time, for a price (`DEPOT_LEVELS.retuneCost`).
   // The rows still differ by the floor and the board's obstacles.
