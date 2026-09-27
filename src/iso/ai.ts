@@ -55,7 +55,7 @@ import {
 import { FREE_SETUP_DEPOTS, depotCostFor, priceDepot } from "./construction";
 import { distanceFactorForPath } from "./loop";
 // E4 (#268): the slope rules and costs — the same ones the drag enforces.
-import { climbLevels, roadStepRefusal, routeDistance } from "./slopes";
+import { climbLevels, rampCornerOk, roadStepRefusal, routeDistance } from "./slopes";
 // L17 (#245): the bank is back (3:1) — the rival's planner is real again.
 import { BANK_RATE, bankAllowed, bankTrade, type CargoBag } from "./bank";
 import {
@@ -94,6 +94,7 @@ import {
   structureAt, structuresOf, railComponents, ownerRailTiles,
   footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, trainAtHome,
   OCT_STEPS, octantOf, turnOk, layPlatformTrack,
+  railSlopeJoinChange, railSlopeGoalRun,
   type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
 } from "./rail";
 
@@ -2345,9 +2346,17 @@ export function planRailRoute(
   const FULL = R - 1;
   const S = 9 * R;
   const key = (t: number, o: number, run: number) => t * S + o * R + run;
-  // The line starts AT a platform lane: whatever ran before it is the lane's
-  // business (the drag begins here), so the first level change is free.
-  const start = key(tIdx(ax, ay), startOct < 0 ? 8 : startOct, FULL);
+  // #429: the line composes with the seat's standing rail at its ends, so the
+  // run it starts with is the standing rail's (a lane that climbed into the
+  // start tile is part of the same line) and the run it must finish with is
+  // the goal's — the same `railSlopeJoinChange`/`railSlopeGoalRun` the
+  // player's preview reads. The search walks away from both ends, so none of
+  // its own tiles is "planned" context.
+  const NO_PLANNED: ReadonlySet<number> = new Set();
+  const startP = railSlopeJoinChange(grid, rail, ownerId, ax, ay, NO_PLANNED);
+  const startRun = startP === null || startP === 0 ? FULL : Math.min(FULL, Math.max(0, -startP));
+  const goalRun = railSlopeGoalRun(grid, rail, ownerId, bx, by, NO_PLANNED);
+  const start = key(tIdx(ax, ay), startOct < 0 ? 8 : startOct, startRun);
   const hasRoad = (x: number, y: number) => roadAt(track, x, y) !== 0;
   // R2 (#266): a tile that is water — a river deck's tile, or the sea.
   const onDeck = (x: number, y: number) => !railTerrainOk(grid, x, y);
@@ -2373,7 +2382,9 @@ export function planRailRoute(
     if (cur === -1) break;
     const tile = Math.floor(cur / S), rem = cur % S;
     const oct = Math.floor(rem / R), run = rem % R;
-    if (tile === goal && (goalOut < 0 || oct === 8 || turnOk(oct, goalOut))) {
+    // #429: the goal's join to standing rail leaves its own run requirement.
+    if (tile === goal && run >= goalRun
+      && (goalOut < 0 || oct === 8 || turnOk(oct, goalOut))) {
       const tiles: [number, number][] = [];
       let n: number | undefined = cur;
       while (n !== undefined) {
@@ -2387,12 +2398,18 @@ export function planRailRoute(
     closed.add(cur);
     const cxn = tile % MAP_W, cyn = (tile / MAP_W) | 0;
     for (let o = 0; o < 8; o++) {
-      if (oct !== 8 && !turnOk(oct, o)) continue;
+      // #429: the one 45° exception — a 90° corner on the top or bottom tile
+      // of a ramp (the switchback's turn). Same rule the player's drag reads.
+      if (oct !== 8 && !turnOk(oct, o)
+        && !rampCornerOk(grid,
+          [cxn - OCT_STEPS[oct][0], cyn - OCT_STEPS[oct][1]],
+          [cxn, cyn],
+          [cxn + OCT_STEPS[o][0], cyn + OCT_STEPS[o][1]])) continue;
       const [sx, sy] = OCT_STEPS[o];
       const diag = sx !== 0 && sy !== 0;
       const nx = cxn + sx, ny = cyn + sy;
       if (!inMapT(nx, ny) || !inBox(nx, ny)) continue;
-      if (!railJoinTurnOk(rail, ownerId, cxn, cyn, nx, ny)) continue;
+      if (!railJoinTurnOk(rail, ownerId, cxn, cyn, nx, ny, grid)) continue;
       // A level crossing is straight across: no diagonal on or off a road
       // tile, and no turn on one.
       if (diag && (hasRoad(cxn, cyn) || hasRoad(nx, ny))) continue;
