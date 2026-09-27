@@ -13534,9 +13534,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       seenDeliveries.set(truck.depotId, truck.deliveries);
       if (truck.deliveries <= seen) continue;
       const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
-      // SFX-1 (#463): a lorry-load landed at a Factory — a soft horn, either
-      // seat's. The cue's own 6 s gap is the rate limit across the whole map.
-      if (due > 0) sfx.play("truck-horn", { gain: 0.5 });
+      // No horn on deliveries: SFX-1 honked every lorry-load (every few
+      // seconds with a few routes) and the owner asked for it gone entirely.
       // BUILD-1 (#460): a lorry-load landed from this depot — cargo moved, so
       // an open undo on its build dies (shipped loop; the new loop flags the
       // same thing from its clock in `economyTick`).

@@ -111,7 +111,8 @@ describe("lightingFor", () => {
     expect(DAY_LIGHTING.windows).toBe(0);
     expect(effectiveLighting({ choice: "day", progress: 0.9 }).identity).toBe(true);
     expect(effectiveLighting({ choice: "dynamic", progress: 0.9, performance: true }).identity).toBe(true);
-    expect(effectiveLighting({ choice: "dynamic", progress: 0.9, reducedMotion: true }).identity).toBe(true);
+    // Reduced motion no longer blanks the grade: a colour fade is not motion.
+    expect(effectiveLighting({ choice: "dynamic", progress: 0.9, reducedMotion: true }).identity).toBe(false);
     const live = effectiveLighting({ choice: "dynamic", progress: 0.6 });
     expect(live.identity).toBe(false);
     expect(live.stage).toBe("golden");
@@ -256,7 +257,7 @@ describe("Lighting setting", () => {
     resetLightingForTests();
     expect(endingNightActive({ performance: false, reducedMotion: false })).toBe(true);
     expect(endingNightActive({ performance: true, reducedMotion: false })).toBe(false);
-    expect(endingNightActive({ performance: false, reducedMotion: true })).toBe(false);
+    expect(endingNightActive({ performance: false, reducedMotion: true })).toBe(true);
     setLightingChoice("day");
     expect(endingNightActive({ performance: false, reducedMotion: false })).toBe(false);
     expect(ENDING_NIGHT_CLASS).toBe("lighting-night");
