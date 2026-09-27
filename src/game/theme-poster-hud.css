@@ -282,3 +282,47 @@
 :is(#iso-battle-howto, #iso-tutorial) .tut-fig * { color: inherit; }
 :is(#iso-battle-howto, #iso-tutorial) .tut-chain-node { padding: 10px 14px; font-size: 14px !important; }
 :is(#iso-battle-howto, #iso-tutorial) .tut-nav .big-btn { font-size: 16px !important; }
+
+/* ── quests on paper: readable ink, not the old light-on-dark greys ─ */
+.ui-root .aside.right .pane .quest { border-radius: 0; background: transparent; border: 0; border-bottom: 1px solid #111b202c; }
+.ui-root .aside.right .pane .quest .q-who { color: #d1640e; font: 700 13px var(--px-display); letter-spacing: .12em; text-transform: uppercase; }
+.ui-root .aside.right .pane .quest .q-text { color: #182126; font: 500 15px/1.35 var(--px-body); }
+.ui-root .aside.right .pane .quest .q-prog { color: #2f7d4a; font-weight: 700; }
+.ui-root .aside.right .pane .quest .q-reward { color: #182126; }
+.ui-root .aside.right .pane .quest button { border-radius: 0; }
+
+/* ── phones: the Economy sheet is paper too (owner: mobile colours) ── */
+@media (max-width: 760px) {
+  .ui-root #iso-aside-right { background: #f0e6d1 !important; border-top: 4px solid #ef7c17; }
+  .ui-root #iso-aside-right > #iso-trade.panel,
+  .ui-root #iso-aside-right > .plant-card {
+    background: #f0e6d1 !important; border: 0 !important; border-radius: 0; box-shadow: none; color: #182126;
+  }
+  .ui-root #iso-aside-right > .plant-card { border-top: 2px solid #11191d !important; margin: 0; }
+  .ui-root #iso-aside-right .panel-title {
+    color: #d1640e !important; border-color: #111b202c !important; text-shadow: none;
+    font: 700 13px var(--px-display) !important; letter-spacing: .15em !important;
+  }
+  .ui-root #iso-aside-right .panel-title::before { content: none; display: none; }
+  .ui-root #iso-aside-right .tabs { background: #121b20; }
+  .ui-root #iso-aside-right .tab { border-radius: 0; color: #e4d4bc; font: 700 12px var(--px-display) !important; letter-spacing: .06em; text-transform: uppercase; }
+  .ui-root #iso-aside-right .tab.active { background: #efebe0; color: #171f20; }
+  .ui-root #iso-aside-right .pane { background: transparent; color: #182126; }
+}
+.ui-root #iso-aside-right > .plant-card {
+  --txt: #172126; --txt-dim: #3d474a; --txt-mute: #6c665b;
+  --line: #b9a987; --line-hi: #8e7f66; --brass: #e46b0e; --brass-hi: #b94c04;
+  --sa-bone: #172126; --sa-bone-dim: #3d474a; --sa-bone-mute: #6c665b;
+  --sa-panel: #e7dbc2; --sa-panel-2: #ddcfb2; --sa-line: #c7b795; --sa-line-hi: #8e7f66; --sa-ink: #fbf5e8;
+  --c-bone: 23 33 38; --c-ink: 251 245 232;
+  --felt: none; --flat: none; --plate-body: none;
+}
+.ui-root .plant-card .tuning-plate { background: transparent !important; }
+.ui-root .plant-card :is(.tp-city, .tp-retune) { border-radius: 0; }
+.ui-root .plant-card :is(.tp-city, .tp-retune) {
+  background: #fbf5e8 !important; color: #182126 !important;
+  border-top: 1.5px solid #1e2527 !important; border-right: 1.5px solid #1e2527 !important; border-bottom: 1.5px solid #1e2527 !important;
+}
+.ui-root .plant-card :is(.tp-city, .tp-retune) * { color: inherit; }
+.ui-root .plant-card :is(.tp-city, .tp-retune):hover:not(:disabled) { background: #10191e !important; color: #f2e8d4 !important; }
+.ui-root .plant-card .tuning-plate { border-color: #111b2033 !important; }

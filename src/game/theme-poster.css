@@ -759,3 +759,16 @@
 /* owner: the palette is flat — no gradients on the difficulty cards */
 #iso-skill-prompt .iso-skill-label { background: var(--acc) !important; }
 #iso-skill-prompt .iso-skill-card { background-image: none; }
+
+/* owner (2026-09-27): the heroes are re-sliced whole (Anne's arm intact) and
+   stand on the stage floor. The art carries its own ghost + colour bar. */
+.px-portrait-stage .px-ghost { display: none; }
+.px-portrait-stage .px-hero,
+.px-portrait-stage.anne .px-hero {
+  left: auto; right: 0; bottom: 0; top: auto; width: 100%; height: 100%;
+  object-fit: contain; object-position: right bottom; filter: none;
+}
+/* James is narrow: he fills the height; only the colour bar crops on the left */
+.px-portrait-stage.james .px-hero { width: auto; max-width: none; height: 98%; }
+.start-screen.px .px-portrait img { object-fit: cover; object-position: center center; }
+.px-portrait-stage.anne .px-hero { right: 3%; width: 94%; }
