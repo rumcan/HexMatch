@@ -467,10 +467,11 @@ const RECIPES: Record<Cue, Recipe> = {
     },
   },
 
-  // A train pulling out: one long minor chord, breathed in over 30 ms. The
-  // 9 s gap keeps a four-platform terminus to one whistle per departure wave.
+  // A train pulling out: one long minor chord, breathed in over 30 ms. A rare
+  // accent, not a metronome: at most one whistle per 75 s across the map (a
+  // 9 s gap whistled near-constantly once a few lines ran).
   "train-whistle": {
-    gap: 9000,
+    gap: 75000,
     run: (v) => {
       for (const f of [622.25, 739.99, 932.33]) {
         v.tone({ freq: f, gain: 0.034, attack: 0.03, hold: 0.25, decay: 0.55 });

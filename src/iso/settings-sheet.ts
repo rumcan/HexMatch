@@ -45,8 +45,8 @@ import { ambience } from "../audio/ambience";
 // LIGHT-1 (#473): dynamic light follows the match; always-day pins noon.
 // Performance mode and reduced motion suppress it the way they suppress clouds.
 import {
-  LIGHTING_DAY_NOTE, LIGHTING_MOTION_NOTE, LIGHTING_NOTE,
-  currentLightingChoice, prefersReducedMotion, setLightingChoice, subscribeLighting,
+  LIGHTING_DAY_NOTE, LIGHTING_NOTE,
+  currentLightingChoice, setLightingChoice, subscribeLighting,
   type LightingChoice,
 } from "./lighting";
 
@@ -247,14 +247,11 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   let motionQuery: MediaQueryList | null = null;
   try { motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)"); } catch { motionQuery = null; }
   const paintLighting = (performance: boolean) => {
-    const reduced = motionQuery?.matches ?? prefersReducedMotion();
-    const suppressed = performance || reduced;
+    const suppressed = performance;
     const choice = currentLightingChoice();
     lightNote.textContent = performance
       ? SUPPRESSED_BY_PERF
-      : reduced
-        ? LIGHTING_MOTION_NOTE
-        : choice === "day" ? LIGHTING_DAY_NOTE : LIGHTING_NOTE;
+      : choice === "day" ? LIGHTING_DAY_NOTE : LIGHTING_NOTE;
     for (const b of Array.from(lightSeg.children) as HTMLButtonElement[]) {
       const id = b.dataset.light as LightingChoice;
       const on = id === choice;

@@ -95,8 +95,12 @@ interface Anchor {
  * every anchor, so the safety lift is a no-op on this curve.
  */
 const ANCHORS: readonly Anchor[] = [
-  { p: 0, sunDrop: 0, exposure: 1, tint: [1, 0.98, 0.94], windows: 0, shadow: 1 },
-  { p: 0.6, sunDrop: 0.42, exposure: 0.96, tint: [1, 0.86, 0.58], windows: 0.1, shadow: 1.35 },
+  // Late morning is already warm (not noon white) and the golden turn starts
+  // at 0.3, so the first stars move the light instead of the arc sitting flat
+  // (imperceptible) for the first half of the match.
+  { p: 0, sunDrop: 0, exposure: 1, tint: [1, 0.95, 0.86], windows: 0, shadow: 1 },
+  { p: 0.3, sunDrop: 0.22, exposure: 0.98, tint: [1, 0.9, 0.72], windows: 0, shadow: 1.15 },
+  { p: 0.6, sunDrop: 0.45, exposure: 0.95, tint: [1, 0.82, 0.58], windows: 0.15, shadow: 1.35 },
   { p: 0.85, sunDrop: 0.78, exposure: 0.9, tint: [1, 0.74, 0.5], windows: 0.78, shadow: 1.75 },
   { p: 1, sunDrop: 1, exposure: 0.86, tint: [0.98, 0.68, 0.48], windows: 1, shadow: 2.05 },
 ];
@@ -233,7 +237,9 @@ export interface LightingGates {
 
 /** Dynamic unless the player, performance mode, or reduced motion says otherwise. */
 export function effectiveLighting(gates: LightingGates): Lighting {
-  if (gates.choice !== "dynamic" || gates.performance || gates.reducedMotion) return DAY_LIGHTING;
+  // Reduced motion does NOT turn the grade off: a slow colour change is not
+  // motion, and Windows "animation effects: off" silently killed the feature.
+  if (gates.choice !== "dynamic" || gates.performance) return DAY_LIGHTING;
   return lightingFor(gates.progress);
 }
 
@@ -420,7 +426,6 @@ export function prefersReducedMotion(): boolean {
 export function endingNightActive(opts?: { performance?: boolean; reducedMotion?: boolean }): boolean {
   if (currentLightingChoice() !== "dynamic") return false;
   if (opts?.performance ?? currentGraphics().performance) return false;
-  if (opts?.reducedMotion ?? prefersReducedMotion()) return false;
   return true;
 }
 
