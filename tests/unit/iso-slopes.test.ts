@@ -97,7 +97,7 @@ describe("E4 (#268) the road slope rule", () => {
   it("pins the shipped numbers", () => {
     expect(SLOPES.roadMaxStep).toBe(1);
     expect(SLOPES.railMaxStep).toBe(1);
-    expect(SLOPES.railRampRun).toBe(3);
+    expect(SLOPES.railRampRun).toBe(2);   // #429: the switchback's ramp is 2 tiles
     expect(SLOPES.climbTiles).toBe(2);
     expect(SLOPES.uphillSlow).toBe(1);
   });
@@ -162,31 +162,50 @@ describe("E4 (#268) the rail slope rules", () => {
     expect(why.get(0)).toBe("slope-diagonal");
     // Level ground: the same diagonal is legal.
     expect(railDragSlopeRefusals(map(["00", "00"]), [[0, 0], [1, 1]]).size).toBe(0);
-    // …and the whole gesture says it too (the preview's `why`).
-    // (Rail costs 1 Stone a tile, so the preview needs a purse to lay any.)
-    const pv = railPreview(g, createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 2, 2);
-    expect(pv.why).toBe("slope-diagonal");
-    expect(pv.tiles.length).toBe(0);              // refused on its first tile
+    // …and the whole gesture routes it: #429 plans the legal detour instead
+    // of refusing when one exists (the straight 45° link broke the rule, the
+    // routed line never climbs a diagonal — 90° turns on the ramp's tiles,
+    // the switchback's turns).
+    const pv = railPreview(g, createTrack(), createRailState(), 1, { stone: 99 }, 0, 0, 2, 2);
+    expect(pv.why).toBeNull();
+    expect(pv.truncated).toBe(false);
+    expect(pv.blocked).toEqual([]);
+    expect(pv.tiles[0]).toEqual([0, 0]);
+    expect(pv.tiles[pv.tiles.length - 1]).toEqual([2, 2]);
+    for (let i = 1; i < pv.tiles.length; i++) {
+      const [x0, y0] = pv.tiles[i - 1];
+      const [x1, y1] = pv.tiles[i];
+      if (Math.abs(x1 - x0) === 1 && Math.abs(y1 - y0) === 1) {
+        expect(climbLevels(g, [x0, y0], [x1, y1])).toBe(0);
+      }
+    }
   });
 
   it("needs railRampRun steps of run between two level changes", () => {
     const tiles = (n: number): [number, number][] => Array.from({ length: n }, (_, x) => [x, 0] as [number, number]);
-    // Changes at steps 2 and 4: two steps apart — a cliff, not a ramp.
-    const tight = railDragSlopeRefusals(map(["001100000000"]), tiles(12));
+    // #429: changes at steps 2 and 4 are two steps apart — exactly
+    // `railRampRun` — the ramp that run 3 used to refuse as "tight".
+    expect(railDragSlopeRefusals(map(["001100000000"]), tiles(12)).size).toBe(0);
+    // One step apart is a step, not a ramp: both tight changes flag.
+    const tight = railDragSlopeRefusals(map(["001000000000"]), tiles(12));
+    expect(tight.get(1)).toBe("too-steep");
+    expect(tight.get(2)).toBe("too-steep");
     expect(tight.get(3)).toBe("too-steep");
-    expect(tight.get(4)).toBe("too-steep");
-    // Changes at steps 2 and 5: exactly `railRampRun` apart → a ramp.
+    // Changes at steps 2 and 5: wider than the run → a ramp too.
     expect(railDragSlopeRefusals(map(["001110000000"]), tiles(12)).size).toBe(0);
     // A two-level step is refused outright, ramp or not.
     const cliff = railDragSlopeRefusals(map(["002200000000"]), tiles(12));
     expect(cliff.get(1)).toBe("too-steep");
     expect(cliff.get(2)).toBe("too-steep");
-    // The preview stops the drag at the tile the run rule refuses.
-    const pv = railPreview(map(["001100000000"]), createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 8, 0);
+    // …and a drag INTO a 2-level cliff is refused even though the #429 router
+    // has the whole map to detour through: no level-1 tile touches the cliff,
+    // so no legal route exists. Only the two tiles of the bad step go red.
+    const wall = map(["002000000000"]);
+    const pv = railPreview(wall, createTrack(), createRailState(), 1, { stone: 9 }, 0, 0, 2, 0);
     expect(pv.why).toBe("too-steep");
-    // The drag stops at the tile before the first of the two changes: only (0,0)
-    // is laid, and the run it would need is the reason.
+    expect(pv.truncated).toBe(true);
     expect(pv.tiles).toEqual([[0, 0]]);
+    expect(pv.blocked).toEqual([[1, 0], [2, 0]]);
   });
 
   it("grades a platform's 1×3 and a rail Depot's 2×2 as one level", () => {
