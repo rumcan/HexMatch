@@ -83,9 +83,9 @@ export interface Truck {
   factory: [number, number];
   /** Road tiles from the depot's shoulder to the factory's shoulder. */
   route: [number, number][];
-  /** Index of the route tile the truck is leaving. */
+  /** Segment index: route[leg] → route[leg+1], in BOTH directions. */
   leg: number;
-  /** 0..1 progress from `route[leg]` toward the next tile. */
+  /** Position on that segment: increases outbound, decreases on return. */
   t: number;
   /** false = heading depot→factory, true = heading back. */
   reverse: boolean;
@@ -498,7 +498,7 @@ function stepBit(route: [number, number][], leg: number, reverse: boolean): numb
 }
 
 /**
- * The four screen headings a lorry can face, and the ONLY names either livery
+ * The eight screen headings a lorry can face, and the ONLY names either livery
  * family needs: the legacy OpenGFX cells are `truck_goods_<view>` (shipped in
  * `assets/iso-atlas/manifest.json`) and the branded ones are
  * `truck_<brand>_<view>` (`assets/vehicles/`). One key, two families, so a
@@ -534,7 +534,7 @@ export interface TruckSpriteSource { has(name: string): boolean }
 export function truckSpriteName(
   ownerId: number, dirBit: number, atlas?: TruckSpriteSource,
 ): string {
-  // `stepBit` only ever returns one of the four, so the default is unreachable
+  // `stepBit` only ever returns one of the eight, so the default is unreachable
   // from the game — but a truck must never be dropped for a bad bit, and a
   // one-tile route already faces SE for exactly that reason.
   const view = TRUCK_VIEW[dirBit] ?? "se";
@@ -557,27 +557,16 @@ export function truckItems(
     const { route, leg, t } = truck;
     const n = route.length;
     if (n < 2) continue;
-    // Determine the segment we're on, handling reverse.
-    let vLeg: number, vT: number, a: [number, number], b: [number, number];
-    if (!truck.reverse) {
-      vLeg = Math.min(leg, n - 2);
-      vT = t;
-      a = route[vLeg]; b = route[vLeg + 1];
-    } else {
-      // Reverse: heading back from factory to depot. leg points at the tile
-      // we're moving away from (route[k+1] in forward direction), t goes
-      // from 1→0. We construct a synthetic forward vehicle pos whose leg
-      // points to the leg we're currently traversing.
-      vLeg = Math.max(0, Math.min(leg - 1, n - 2));
-      vT = 1 - t;
-      a = route[vLeg]; b = route[vLeg + 1];
-    }
-    let fx = a[0] + (b[0] - a[0]) * vT;
-    let fy = a[1] + (b[1] - a[1]) * vT;
-    const vForOffset = { route, leg: vLeg, t: vT, reverse: false };
+    // `reverse` changes the heading, NOT the segment or its interpolation.
+    // tickTrucks keeps t on route[leg] → route[leg+1] on the return too.
+    const k = Math.min(leg, n - 2);
+    const a = route[k], b = route[k + 1];
+    let fx = a[0] + (b[0] - a[0]) * t;
+    let fy = a[1] + (b[1] - a[1]) * t;
+    const vForOffset = { route, leg: k, t, reverse: truck.reverse };
     let extraLift = 0;
     if (track) {
-      const [du, dv] = laneOffsetFor(vForOffset, track);
+      const [du, dv] = truckLaneOffset(truck, track);
       fx += du; fy += dv;
       extraLift = overpassLiftFor(vForOffset, track);
     }
@@ -598,6 +587,26 @@ export function truckItems(
     });
   }
   return out;
+}
+
+/**
+ * Interpolate shared waypoint offsets rather than switching perpendiculars
+ * (or highway widths) halfway through a segment. Adjacent legs meet at the
+ * same offset; endpoints meet at the centre so a return flips lanes without
+ * a sideways teleport. Cars retain their own lane presentation.
+ */
+function truckLaneOffset(truck: Truck, track: Track): [number, number] {
+  const { route, reverse } = truck;
+  const max = route.length - 1;
+  const k = Math.min(truck.leg, max - 1);
+  const at = (leg: number, t: number) => laneOffsetFor({ route, leg, t, reverse }, track);
+  const waypoint = (i: number): [number, number] => {
+    if (i === 0 || i === max) return [0, 0];
+    const incoming = at(i - 1, 1), outgoing = at(i, 0);
+    return [(incoming[0] + outgoing[0]) / 2, (incoming[1] + outgoing[1]) / 2];
+  };
+  const a = waypoint(k), b = waypoint(k + 1);
+  return [a[0] + (b[0] - a[0]) * truck.t, a[1] + (b[1] - a[1]) * truck.t];
 }
 
 /**

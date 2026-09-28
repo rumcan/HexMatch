@@ -23,6 +23,8 @@ import {
   PRESENT, ROAD_TIER, inMapT, tIdx, type Track,
 } from "./track";
 import { ambientRoadGraph } from "./road-routing";
+import { TRUCK_SPEED, TRUCK_ROAD_MULT } from "./vehicles";
+import { uphillSpeed } from "./slopes";
 
 // ── art the lead ships ────────────────────────────────────────────────────
 /** 1950s–60s models. Two finned-sedan liveries, a pickup, a bus, a van. */
@@ -355,7 +357,13 @@ export function holdTForLight(
 }
 
 // ── truck ghosts (visual only) ────────────────────────────────────────────
-export interface GhostPose { leg: number; t: number; reverse: boolean }
+export interface GhostPose {
+  leg: number;
+  t: number;
+  reverse: boolean;
+  /** Presentation-only route identity, to discard a hold after rerouting. */
+  route?: GhostTruck["route"];
+}
 
 export interface GhostTruck {
   depotId: number;
@@ -364,6 +372,8 @@ export interface GhostTruck {
   t: number;
   reverse: boolean;
   segMult?: number[];
+  segFast?: boolean[];
+  segClimb?: number[];
   rateMult?: number;
 }
 
@@ -381,22 +391,6 @@ function shouldHold(
   return aspectBinds(lightAspect(signals.seed, townId, ap.axis, timeMs), ap.remaining);
 }
 
-/** A step that would cross a binding stop line is cut back to the line. */
-function forbidLine(
-  before: GhostPose,
-  after: GhostPose,
-  route: readonly (readonly [number, number])[],
-  signals: SignalMap | null | undefined,
-  timeMs: number,
-): GhostPose {
-  const stop = stopFraction(route, before.leg, before.reverse, signals, timeMs);
-  if (stop == null) return after;
-  const crossed = before.reverse
-    ? before.t >= stop - 1e-6 && (after.leg !== before.leg || after.reverse !== before.reverse || after.t < stop - 1e-6)
-    : before.t <= stop + 1e-6 && (after.leg !== before.leg || after.reverse !== before.reverse || after.t > stop + 1e-6);
-  return crossed ? { leg: before.leg, t: stop, reverse: before.reverse } : after;
-}
-
 /** Pull a pose back to the stop line when the light binds. No-op otherwise. */
 export function clampToLight(
   pose: GhostPose,
@@ -411,15 +405,26 @@ export function clampToLight(
   return pose;
 }
 
-function scalarOf(p: GhostPose): number {
-  return p.leg + p.t;
+/** Distance in segment fractions around the OUTBOUND + RETURN loop. */
+function phaseOf(p: GhostPose, max: number): number {
+  const s = p.leg + p.t;
+  return p.reverse ? 2 * max - s : s;
+}
+
+function poseAtPhase(phase: number, max: number): GhostPose {
+  const p = phase % (2 * max);
+  const reverse = p >= max;
+  const s = reverse ? 2 * max - p : p;
+  const leg = reverse ? Math.max(0, Math.ceil(s) - 1) : Math.min(max - 1, Math.floor(s));
+  return { leg, t: s - leg, reverse };
 }
 
 /**
- * Move `ghost` toward the economic pose at up to 3× the lorry's pace, then
- * hold it on a red or amber line. Never writes the truck. A reverse flip
- * while the light is green snaps (the lorry turned around at a depot); a
- * flip while held keeps the ghost at the line until the light changes.
+ * Follow the economic pose FORWARDS around the round-trip loop, never across
+ * it. A light can hold the drawing while the economy turns (even laps it):
+ * the ghost must still visit the endpoint before it can reverse. Catch-up
+ * is bounded to 3× the current segment's physical pace, including length,
+ * road tier and slope. Neither deliveries nor economic positions are changed.
  */
 export function stepGhost(
   prev: GhostPose | null,
@@ -428,37 +433,46 @@ export function stepGhost(
   timeMs: number,
   dtMs: number,
 ): GhostPose {
-  const econ: GhostPose = { leg: truck.leg, t: truck.t, reverse: !!truck.reverse };
-  const n = truck.route.length;
-  if (n < 2) return econ;
-  let ghost: GhostPose = prev && prev.leg >= 0 && prev.leg < n ? { ...prev } : { ...econ };
-  const before = { ...ghost };
-  const held = shouldHold(approachOf(truck.route, ghost), signals, timeMs);
-  if (ghost.reverse !== econ.reverse) {
-    return held ? clampToLight(ghost, truck.route, signals, timeMs) : econ;
+  const econ: GhostPose = { leg: truck.leg, t: truck.t, reverse: !!truck.reverse, route: truck.route };
+  const max = truck.route.length - 1;
+  if (max < 1) return econ;
+  const sameRoute = !prev?.route || prev.route === truck.route
+    || (prev.route.length === truck.route.length && prev.route.every((p, i) =>
+      p[0] === truck.route[i][0] && p[1] === truck.route[i][1]));
+  if (!prev || !sameRoute || prev.leg < 0 || prev.leg >= max) return econ;
+
+  let phase = phaseOf(prev, max);
+  let distance = phaseOf(econ, max) - phase;
+  // Ignore floating point noise at a caught-up pose, not an entire new lap.
+  if (Math.abs(distance) < 1e-9) return { ...prev, route: truck.route };
+  if (distance < 0) distance += 2 * max;
+  let ms = Math.max(0, dtMs);
+  let ghost = poseAtPhase(phase, max);
+  const r = truck.rateMult;
+  const rate = typeof r === "number" && Number.isFinite(r) && r > 0 ? r : 1;
+  while (ms > 1e-9 && distance > 1e-9) {
+    const { leg, t, reverse } = ghost;
+    const a = truck.route[leg], b = truck.route[leg + 1];
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const pace = truck.segMult?.[leg] ?? (truck.segFast?.[leg] ? TRUCK_ROAD_MULT : 1);
+    const climb = truck.segClimb?.[leg] ?? 0;
+    const speed = 3 * TRUCK_SPEED * rate * pace * uphillSpeed(reverse ? -climb : climb) / length;
+    if (!(speed > 0)) break;
+    let available = reverse ? t : 1 - t;
+    const stop = stopFraction(truck.route, leg, reverse, signals, timeMs);
+    // A light that turns red AFTER we crossed its line must not pull us back.
+    // Test every segment, so a long/catch-up frame cannot skip a later light.
+    const toLine = stop == null ? -1 : (reverse ? t - stop : stop - t);
+    const binds = toLine >= -1e-9;
+    if (binds) available = Math.min(available, Math.max(0, toLine));
+    const step = Math.min(distance, available, ms * speed);
+    phase += step;
+    distance -= step;
+    ms -= step / speed;
+    ghost = poseAtPhase(phase, max);
+    if (binds && step >= available - 1e-9) break;
   }
-  const gs = scalarOf(ghost);
-  const es = scalarOf(econ);
-  const leg = Math.min(ghost.leg, n - 2);
-  const pace = truck.segMult?.[leg] ?? 4;
-  const rate = typeof truck.rateMult === "number" && truck.rateMult > 0 ? truck.rateMult : 1;
-  // 3× catch-up so a light-held ghost rejoins the economic lorry after green
-  // instead of lagging for the rest of the trip. 1/600 is TRUCK_SPEED.
-  const maxStep = (1 / 600) * rate * pace * 3 * Math.max(0, dtMs);
-  if (Math.abs(es - gs) > maxStep) {
-    const next = gs + Math.sign(es - gs) * maxStep;
-    const max = n - 1;
-    let legN = Math.floor(next);
-    let t = next - legN;
-    if (legN >= max) { legN = max - 1; t = 1; }
-    if (legN < 0) { legN = 0; t = 0; }
-    ghost = { leg: legN, t, reverse: ghost.reverse };
-  } else {
-    ghost = { ...econ };
-  }
-  // Catch-up can clear the braking window in one step. Cut that step at the
-  // line; clampToLight still pulls a pose that landed inside the window.
-  return clampToLight(forbidLine(before, ghost, truck.route, signals, timeMs), truck.route, signals, timeMs);
+  return { ...ghost, route: truck.route };
 }
 
 // ── pedestrians ───────────────────────────────────────────────────────────
