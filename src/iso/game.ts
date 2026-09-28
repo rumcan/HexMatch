@@ -15542,7 +15542,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     renderer = new IsoRenderer(canvases, atlas, cam, world);
     if (terrainGl) {
       renderer.externalGround = true;
-      renderer.onTileInvalidated = (tx, ty) => terrainGl.invalidateTiles([[tx, ty]]);
+      // PERF (rail-lag, 2026-09-28): the renderer reports changed tiles ONE
+      // AT A TIME, and every GL invalidation is a whole regional pass
+      // (distance fields, geometry rows, three texture uploads and a
+      // whole-lattice height compare). A rail line — or the rival's build —
+      // fired dozens of them back to back and froze the game for seconds.
+      // Collect the tiles of one synchronous pass and hand them over once.
+      const tg = terrainGl;
+      const pendingTiles = new Map<number, [number, number]>();
+      let flushQueued = false;
+      renderer.onTileInvalidated = (tx, ty) => {
+        pendingTiles.set(ty * 4096 + tx, [tx, ty]);
+        if (flushQueued) return;
+        flushQueued = true;
+        queueMicrotask(() => {
+          flushQueued = false;
+          if (!pendingTiles.size) return;
+          const tiles = [...pendingTiles.values()];
+          pendingTiles.clear();
+          tg.invalidateTiles(tiles);
+        });
+      };
     }
     renderer.setDecals(scenery);
     // PERF-01: the boot policy's terrain, applied before the first frame —
