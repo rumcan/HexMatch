@@ -241,9 +241,11 @@ void main() {
   float waterT = smoothstep(0.30, -0.30, dShore);                    // the waterline itself
   // All dithers are evaluated here, in uniform control flow, because
   // dither() takes screen-space derivatives (undefined inside branches).
-  float waterM = dither(waterT);
-  float sandM  = dither(sandT);
-  float wetM   = dither(wetT) * sandM;
+  float waterM = smoothstep(0.35, 0.65, waterT + (gDn - 0.5) * 0.2);
+  // Owner (2026-09-28): no dithering on the beach — the sand and wet sand
+  // blend smoothly, the clump noise only wobbling where the edge runs.
+  float sandM  = smoothstep(0.30, 0.70, sandT + (gDn - 0.5) * 0.35);
+  float wetM   = smoothstep(0.30, 0.70, wetT + (gDn - 0.5) * 0.25) * sandM;
 
   // Ground texture coordinates: tile space IS the ground plane of the
   // isometric projection (a linear map of world px), so textures read as

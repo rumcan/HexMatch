@@ -327,7 +327,6 @@ import {
   loopCarryToWire, savedLoopCarry,
   type SaveGamePayload,
 } from "./savegame-runtime";
-import { RES } from "../game/config";
 // L10 (#225): the rival's plant is a board you can WATCH (AI-03's peek panel)
 // and nothing else. Its frost/girder/smog cards, the clocks that expired them
 // and the damage model that scaled the rival's income by how wrecked the plant
@@ -373,7 +372,7 @@ import {
 import { loadRailwaySprites, loadStationSprites, makeLaneSlabSprites } from "./rail-art";
 import { loadRiverSprites } from "./rivers-art";
 import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
-import { HUD_ICONS, cargoIconHtml, moneyMarkup } from "../game/hud-icons";
+import { moneyMarkup } from "../game/hud-icons";
 // #302: the six board-gem tokens, pre-decoded behind the loading screen.
 import { GEM_ART } from "../game/gem-art";
 // SFX-01: the UI sound layer. Everything the player DOES on the map (a road
@@ -7939,6 +7938,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function finishStake(stake: MapBattleStake, won: boolean | null): ReturnType<typeof settleMapBattle> {
     const verdict = settleMapBattle(eco, stake, won);
+    // Owner (2026-09-28): the Gold a challenge costs is the POT — it goes to
+    // whoever wins the fight, challenger or defender.
+    if (won !== null && stake.kind !== "fightoff") {
+      const winnerId = won ? stake.challengerId : players.find((p) => p.id !== stake.challengerId)?.id;
+      const w = players.find((p) => p.id === winnerId);
+      if (w) {
+        earn(w, { gold: BATTLE_RULES.challengeGold });
+        if (w.id === me.id) toast(`+${BATTLE_RULES.challengeGold} Gold — you take the challenge pot.`, "good");
+      }
+    }
     // END-1 (#472): battles won highlight
     try {
       if (won !== null) {
@@ -14786,15 +14795,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   /** B2 (#247): at most one battle screen over the map (`__iso.startBattle`). */
   let battleScreen: BattleScreenHandle | null = null;
   if (topRight) {
-    const peek = document.createElement("button");
-    peek.type = "button"; peek.id = "iso-rival-peek";
-    peek.className = "icon-btn"; peek.innerHTML = HUD_ICONS.binoculars;
-    peek.title = "Watch the rival's plant — its board plays itself";
-    peek.addEventListener("click", () => toggleRivalPlantView());
-    // MP-AUDIT (#105): the peek panel is for BOTH seats now — the host reads
-    // its local rivalPlant record; a guest follows the host's plant through
-    // the synced board (`rivalQuarry`). (This gate used to be host-only.)
-    topRight.appendChild(peek);
+    // Owner (2026-09-28): no window onto the rival's plant — the HUD shows
+    // their resource amounts and nothing else.
 
     const menuBtn = document.createElement("button");
     menuBtn.type = "button"; menuBtn.id = "iso-menu-btn";
@@ -14979,67 +14981,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     };
   }
 
-  function toggleRivalPlantView() {
-    const open = getRivalView();
-    if (open) { open.close(); rivalBoardView = null; return; }
-    const el = document.createElement("div");
-    el.id = "iso-rival-view";
-    const head = document.createElement("header");
-    const title = document.createElement("b");
-    title.textContent = `${rival.name}'s processing plant`;
-    const statusEl = document.createElement("span");
-    statusEl.className = "rb-status";
-    const purseEl = document.createElement("div");
-    purseEl.className = "rb-purse";
-    const closeBtn = document.createElement("button");
-    closeBtn.type = "button"; closeBtn.textContent = "✕";
-    closeBtn.className = "rb-close";
-    closeBtn.addEventListener("click", () => toggleRivalPlantView());
-    head.appendChild(title); head.appendChild(statusEl); head.appendChild(closeBtn);
-    const grid = document.createElement("div");
-    grid.className = "rb-grid";
-    el.appendChild(head); el.appendChild(purseEl); el.appendChild(grid);
-    ui.el.appendChild(el);
 
-    const H = rivalBoard.grid.length, W = rivalBoard.grid[0]?.length ?? 0;
-    grid.style.gridTemplateColumns = `repeat(${W}, 24px)`;
-    const cells: HTMLElement[][] = [];
-    for (let r = 0; r < H; r++) {
-      const row: HTMLElement[] = [];
-      for (let c = 0; c < W; c++) {
-        const cell = document.createElement("div");
-        cell.className = "rb-cell";
-        grid.appendChild(cell); row.push(cell);
-      }
-      cells.push(row);
-    }
-    const paint = () => {
-      const st = rivalPlant.status();
-      const bits: string[] = [];
-      if (st.frozen) bits.push(`❄ ${st.frozen} frozen`);
-      if (st.girders) bits.push(`🏗 ${st.girders} girders`);
-      statusEl.textContent = bits.length ? " · " + bits.join(" · ") : " · healthy";
-      // AI-03: the rival's purse, per cargo — "where is all that gold coming
-      // from?" is answered by watching it move against the board above.
-      purseEl.innerHTML = (CARGOES as Cargo[])
-        .map((k) => `<span class="rb-chip">${cargoIconHtml(k)}&nbsp;${rival.purse[k] ?? 0}</span>`)
-        .join("");
-      for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) {
-        const g = rivalBoard.grid[r]?.[c] ?? null;
-        const cell = cells[r]?.[c];
-        if (!cell) continue;
-        if (!g) { cell.style.background = "transparent"; cell.textContent = ""; cell.title = ""; cell.style.boxShadow = "none"; continue; }
-        const R = RES[g.res];
-        cell.style.background = `radial-gradient(circle at 35% 30%, ${R.c2}, ${R.c1})`;
-        cell.style.boxShadow = g.tier ? `inset 0 0 0 2px ${R.ring}` : "none";
-        cell.textContent = g.block ? "🏗" : g.hard > 0 ? "❄" : g.special ? "💣" : g.tier === 2 ? "◆" : g.tier === 1 ? "◇" : "";
-        cell.title = `${R.name}${g.tier ? ` tier ${g.tier}` : ""}${g.hard ? " (frozen)" : ""}${g.block ? " (girder)" : ""}`;
-      }
-    };
-    paint();
-    const iv = window.setInterval(paint, 350);
-    rivalBoardView = { paint, close: () => { window.clearInterval(iv); el.remove(); } };
-  }
 
   // ── Protests on the map ──────────────────────────────────────────────────
   // The crowd is a TEMP png (`assets/protest.png`, transparent, ~1.5 tiles
@@ -15811,10 +15753,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       renderer!.routeOverlay = composeRouteOverlay(
         networkView, networkView ? networkPaths() : [], focusRoute(),
       );
-      // LIGHT-1: grade the ground and the structures from the leader's ★ share.
-      // Cheap (a few numbers + two uniforms). Identity while always-day,
-      // performance mode or reduced motion is on, so those frames skip the tint.
-      pushMatchLighting(dt);
+      // Owner (2026-09-28): no time-of-day arc — it tinted the map orange and
+      // its per-rect grade drew boxes round the cars and trains. The world
+      // stays in plain daylight; only the `?light=` screenshot pin still grades.
+      if (lightingPin != null) pushMatchLighting(dt);
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
       mini.paint();

@@ -27,7 +27,6 @@ import { loadStoryProgress } from "../story/progress";
 import { CHAPTERS, EMPLOYER, currentJobTitle } from "../story/chapters";
 // PROG-1 (#475): the Scenarios door — four tuned maps beyond the default
 // island, unlocked by winning. It stands whether Story mode is hidden or not.
-import { SCENARIOS, effectiveUnlocked, loadScenarioProgress } from "../story/scenarios";
 import { STORY_MODE_ENABLED } from "../story/flag";
 // CONTINUE-01 (#191): the front door names the save it can resume. Read once
 // per mount — returning from a match mounts the menu afresh, so a slot just
@@ -80,14 +79,6 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
 
   const progress = loadStoryProgress();
   const filed = CHAPTERS.filter((c) => progress.results[c.id] === "win").length;
-  // PROG-1 (#475): the scenario shelf — how many maps are open, and the best
-  // margin anywhere on it. Read once per mount, like the campaign line.
-  const scenProgress = loadScenarioProgress();
-  const scenOpen = effectiveUnlocked(scenProgress, progress);
-  const scenPlayed = SCENARIOS.filter((s) => (scenProgress.results[s.id]?.wins ?? 0) > 0);
-  const scenBest = scenPlayed
-    .map((s) => scenProgress.results[s.id]!.bestMargin)
-    .filter((m): m is number => m !== null && m !== undefined);
   // CONTINUE-01 (#191): the freshest resumable solo save, if any, takes the
   // primary button and Play steps down beside it. Story mode hidden: only the
   // sandbox slot is offered.
@@ -135,11 +126,6 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
               </button>
             ) : null}
           </nav>
-          <p className="menu-scenarios">
-            {scenPlayed.length > 0 && scenBest.length > 0
-              ? `Scenarios: ${scenOpen} of ${SCENARIOS.length} open · best +${Math.max(...scenBest)}★`
-              : `Scenarios: ${scenOpen} of ${SCENARIOS.length} open`}
-          </p>
         </div>
         <section className="px-detail" aria-label="The ladder and the Managers">
           <div className="px-detail-head">

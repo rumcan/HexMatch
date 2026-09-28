@@ -468,8 +468,8 @@ describe("PROG-1 Scenarios door", () => {
     expect(door, "the Scenarios door stands").toBeTruthy();
     act(() => { door.click(); });
     expect(onScenarios).toHaveBeenCalledTimes(1);
-    // and it names how many scenarios are open
-    expect(host.querySelector(".menu-scenarios")!.textContent).toMatch(/1 of 4 open/i);
+    // (owner 2026-09-28: the "N of 4 open" line is gone from the home stage)
+    expect(host.querySelector(".menu-scenarios")).toBeNull();
   });
 
   it("stays quiet without a handler and reports scenario bests", () => {
@@ -482,7 +482,6 @@ describe("PROG-1 Scenarios door", () => {
     });
     expect([...host.querySelectorAll("button")]
       .some((b) => /^Scenarios/.test((b.textContent ?? "").trim()))).toBe(false);
-    expect(host.querySelector(".menu-scenarios")!.textContent).toMatch(/2 of 4 open/i);
-    expect(host.querySelector(".menu-scenarios")!.textContent).toMatch(/best \+3/i);
+    expect(host.querySelector(".menu-scenarios")).toBeNull();
   });
 });
