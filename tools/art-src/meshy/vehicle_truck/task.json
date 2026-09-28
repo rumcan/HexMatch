@@ -1,0 +1,9 @@
+{
+  "id": "01a0e455-e1c3-758c-9c65-4ad34eeb78e7",
+  "name": "vehicle_truck",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790537229194,
+  "finished_at": 1790537365471
+}

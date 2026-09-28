@@ -1,0 +1,9 @@
+{
+  "id": "01a0e45a-abac-70b8-8bb9-9562eb90280d",
+  "name": "car_sedan_2",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790537542587,
+  "finished_at": 1790537618333
+}

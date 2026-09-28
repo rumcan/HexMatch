@@ -1,0 +1,9 @@
+{
+  "id": "01a0e462-110c-707c-b392-fb73847171b8",
+  "name": "rail_tank",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790538028755,
+  "finished_at": 1790538208316
+}

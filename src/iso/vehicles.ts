@@ -557,31 +557,23 @@ export function truckItems(
     const { route, leg, t } = truck;
     const n = route.length;
     if (n < 2) continue;
-    // Determine the segment we're on, handling reverse.
-    let vLeg: number, vT: number, a: [number, number], b: [number, number];
-    if (!truck.reverse) {
-      vLeg = Math.min(leg, n - 2);
-      vT = t;
-      a = route[vLeg]; b = route[vLeg + 1];
-    } else {
-      // Reverse: heading back from factory to depot. leg points at the tile
-      // we're moving away from (route[k+1] in forward direction), t goes
-      // from 1→0. We construct a synthetic forward vehicle pos whose leg
-      // points to the leg we're currently traversing.
-      vLeg = Math.max(0, Math.min(leg - 1, n - 2));
-      vT = 1 - t;
-      a = route[vLeg]; b = route[vLeg + 1];
-    }
-    let fx = a[0] + (b[0] - a[0]) * vT;
-    let fy = a[1] + (b[1] - a[1]) * vT;
-    const vForOffset = { route, leg: vLeg, t: vT, reverse: false };
+    // The segment the lorry is on: `tickTrucks` keeps it on route[leg] →
+    // route[leg + 1] in BOTH directions — forward t runs 0→1, reverse t runs
+    // 1→0 — so the position is the same lerp either way, and only the heading
+    // (sprite and lane side) flips. #504: this used to draw a reversing lorry
+    // on the PREVIOUS segment with t mirrored, so it slid forward along the
+    // route while facing back — the "trucks drive backwards" report.
+    const vLeg = Math.min(leg, n - 2);
+    const a = route[vLeg], b = route[vLeg + 1];
+    let fx = a[0] + (b[0] - a[0]) * t;
+    let fy = a[1] + (b[1] - a[1]) * t;
     let extraLift = 0;
     if (track) {
-      const [du, dv] = laneOffsetFor(vForOffset, track);
+      const [du, dv] = laneOffsetFor({ route, leg: vLeg, t, reverse: truck.reverse }, track);
       fx += du; fy += dv;
-      extraLift = overpassLiftFor(vForOffset, track);
+      extraLift = overpassLiftFor({ route, leg: vLeg, t, reverse: false }, track);
     }
-    const sprite = truckSpriteName(truck.ownerId, stepBit(route, leg, truck.reverse), atlas);
+    const sprite = truckSpriteName(truck.ownerId, stepBit(route, vLeg, truck.reverse), atlas);
     if (!sprite) continue;
     const depotLiftVal = truck.depot ? depotLift(truck.depot, fx, fy) : 0;
     const lift = depotLiftVal + extraLift;

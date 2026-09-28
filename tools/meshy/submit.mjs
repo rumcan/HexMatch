@@ -2,6 +2,7 @@
 // ART-3D (#504) step 1 — turn painted masters into 3D models on Meshy.
 //
 //   node tools/meshy/submit.mjs [--env ../hm-hud/.env.local] [--model meshy-6]
+//        [--prompts prompts.json]   (names found there go through text-to-3D)
 //        [--polycount 30000] [--src assets/buildings-src] [--min-credits 35]
 //        [--batch A_industries|B_depots|C_town|all] [<name> …]
 //
@@ -24,16 +25,18 @@ import path from "node:path";
 import sharp from "sharp";
 
 const API = "https://api.meshy.ai/openapi/v1";
+const API2 = "https://api.meshy.ai/openapi/v2";
 const OUT = "tools/art-src/meshy";
 
 function parseArgs(argv) {
-  const opts = { env: null, model: "meshy-6", polycount: 30000, src: "assets/buildings-src", minCredits: 35, names: [] };
+  const opts = { env: null, model: "meshy-6", polycount: 30000, src: "assets/buildings-src", minCredits: 35, names: [], prompts: {} };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") opts.env = argv[++i];
     else if (a === "--model") opts.model = argv[++i];
     else if (a === "--polycount") opts.polycount = Number(argv[++i]);
     else if (a === "--src") opts.src = argv[++i];
+    else if (a === "--prompts") opts.prompts = JSON.parse(fs.readFileSync(argv[++i], "utf8"));
     else if (a === "--min-credits") opts.minCredits = Number(argv[++i]);
     else if (a === "--batch") {
       const b = JSON.parse(fs.readFileSync("tools/meshy/batch.json", "utf8"));
@@ -57,7 +60,7 @@ function loadKey(envFile) {
 }
 
 async function api(key, method, url, body) {
-  const res = await fetch(`${API}${url}`, {
+  const res = await fetch(url.startsWith("http") ? url : `${API}${url}`, {
     method,
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
@@ -73,8 +76,10 @@ async function balance(key) {
 
 async function dataUri(file) {
   const meta = await sharp(file).metadata();
+  // Small masters are upscaled 4×; big ones (owner renders) only up to ~1024 px.
+  const k = Math.max(1, Math.min(4, Math.round(1024 / meta.width)));
   const png = await sharp(file)
-    .resize(meta.width * 4, meta.height * 4, { kernel: "lanczos3" })
+    .resize(meta.width * k, meta.height * k, { kernel: "lanczos3" })
     .png()
     .toBuffer();
   return `data:image/png;base64,${png.toString("base64")}`;
@@ -109,6 +114,24 @@ async function run() {
         console.log(`${name}: stopping — balance ${bal} < ${opts.minCredits} credits. Top up and re-run to resume.`);
         break;
       }
+      const prompt = opts.prompts[name];
+      if (prompt) {
+        // Text-to-3D (no usable master): preview, then refine with textures.
+        const pre = (await api(key, "POST", `${API2}/text-to-3d`, {
+          mode: "preview", prompt, art_style: "realistic", ai_model: opts.model,
+          should_remesh: true, topology: "triangle", target_polycount: opts.polycount,
+        })).result;
+        console.log(`${name}: text preview ${pre}`);
+        for (;;) {
+          const t = await api(key, "GET", `${API2}/text-to-3d/${pre}`);
+          if (t.status === "SUCCEEDED") break;
+          if (t.status === "FAILED" || t.status === "CANCELED") throw new Error(`${name}: preview ${t.status}`);
+          await sleep(10_000);
+        }
+        id = (await api(key, "POST", `${API2}/text-to-3d`, { mode: "refine", preview_task_id: pre, enable_pbr: false })).result;
+        fs.writeFileSync(taskFile, JSON.stringify({ id, name, prompt, preview: pre, kind: "text", model: opts.model }, null, 2));
+        console.log(`${name}: refine ${id}`);
+      } else {
       const src = path.join(opts.src, `${name}@2x.png`);
       const body = {
         image_url: await dataUri(src),
@@ -122,13 +145,16 @@ async function run() {
       id = (await api(key, "POST", "/image-to-3d", body)).result;
       fs.writeFileSync(taskFile, JSON.stringify({ id, name, src, model: opts.model, polycount: opts.polycount }, null, 2));
       console.log(`${name}: submitted ${id}`);
+      }
     } else {
       console.log(`${name}: resuming ${id}`);
     }
 
+    const isText = !!opts.prompts[name];
+    const poll = isText ? `${API2}/text-to-3d/${id}` : `/image-to-3d/${id}`;
     let task;
     for (;;) {
-      task = await api(key, "GET", `/image-to-3d/${id}`);
+      task = await api(key, "GET", poll);
       if (task.status === "SUCCEEDED" || task.status === "FAILED" || task.status === "CANCELED") break;
       process.stdout.write(`  ${name}: ${task.status} ${task.progress ?? 0}%\r`);
       await sleep(10_000);

@@ -1,0 +1,9 @@
+{
+  "id": "01a0e45f-a9f9-70a3-8ff2-b31cb4d73be2",
+  "name": "rail_flat",
+  "status": "SUCCEEDED",
+  "model": "meshy-6",
+  "polycount": 30000,
+  "created_at": 1790537871418,
+  "finished_at": 1790538017577
+}
