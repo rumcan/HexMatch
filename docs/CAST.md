@@ -14,9 +14,18 @@ manager does.
 |---|---|---|---|---|
 | **James Calloway** | The Road Man | Road Ways (dirt, street, road, highway, ramps, road bridges/overpasses) cost **25% less** | Rail Ways cost 10% more | Hired from the start |
 | **Anne Whitmore** | The Rail Baroness | Rail Ways (rail track, platforms, train depots) cost **25% less** | Road Ways cost 10% more | Hired from the start |
-| **Rafael Duarte** | The Fixer | **3 free Black Market sabotage cards** (Blockade or Protest) in every 5 minutes of play — a visible counter chip in the Black Market | Security Forces cost 50% more | Win 1 match |
-| **Dolores Vance** | The Magnate | **Security Forces are free** | Black Market sabotage costs 20% more Gold | Win a match on Normal or Hard (or any multiplayer win) |
-| **Kenji Arata** | The Prodigy | Tuning sessions score **+10%** (the yield and Gold a session settles to) | Level Ground costs 25% more | Win 3 matches, or win any Scenario |
+| **Rafael Duarte** | The Fixer | **4 free Black Market sabotage cards** (Blockade or Protest) in every 5 minutes of play — a visible counter chip in the Black Market | Security Forces cost 50% more | Win 1 match |
+| **Dolores Vance** | The Magnate | **Security Forces are free** | Black Market sabotage costs 10% more Gold | Win a match on Normal or Hard (or any multiplayer win) |
+| **Kenji Arata** | The Prodigy | Tuning sessions score **+20%** (the yield and Gold a session settles to) | Level Ground costs 25% more | Win 3 matches, or win any Scenario |
+
+**CAST-2 (#558) — the unlockables edge out the starters.** Rafael, Dolores and
+Kenji were a touch weaker than the starting pair, so hiring one felt like no
+reward. Each is now slightly better — the perk buffed or the quirk softened, one
+lever each, kept modest and never past the starters' 25% ceiling: Rafael's
+allowance is **4** free cards (was 3), Dolores pays **10%** more for sabotage
+(was 20%), Kenji's tuning is **+20%** (was +10%). James and Anne are unchanged.
+The perks stay player-seat only, so the BAL-1 gate and every AI test read the
+AI rival's null seat and are untouched.
 
 **The Rival — Cornelius Graves**, Chairman of Graves Consolidated. Not
 playable. He is the face of the AI opponent in a sandbox or scenario match:
@@ -97,7 +106,10 @@ screens and the ending card. Story contracts keep their own cast.
   profile shows a lock plate with the condition — but you play as the last
   hired manager, named above the mode buttons.
 - **Profile panel (Step 0 fix):** no scrollbars at any width — the name is
-  clamped, the rank badge text wraps, overflow hidden.
+  clamped, the rank badge text wraps, overflow hidden. CAST-2 (#558) removed the
+  HISTORY tab; the profile now foregrounds the perk and quirk (they take the
+  space History used) with the name, title and quote, laid out to fit at
+  1280×800 and at phone width with nothing clipped.
 - **In game:** the top-bar `.king-av` shows the manager's thumb for the player
   and Cornelius for the rival; the Black Market shows the Fixer's chip and the
   perk-adjusted prices; the build buttons quote perk-adjusted prices.
@@ -107,7 +119,7 @@ screens and the ending card. Story contracts keep their own cast.
 
 ## Tests
 
-`tests/unit/cast-managers.test.ts` — perk multipliers, the Fixer's 3-per-5-min
+`tests/unit/cast-managers.test.ts` — perk multipliers, the Fixer's 4-per-5-min
 refill, free Security, the legacy portrait map, unlock rules and their
 persistence. `tests/unit/iso-loading-screen.test.ts` — the 3 s floor (fake
 timers). Existing menu / start-screen / story tests follow the new names.

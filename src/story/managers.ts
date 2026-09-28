@@ -88,7 +88,7 @@ export const MANAGERS: readonly ManagerProfile[] = [
       ["1949", "The favours", "Time to call a few of them in."],
     ],
     rivalry: "Graves bought the magistrates. Rafael knows what they had for breakfast.",
-    perk: "3 free Black Market sabotage cards (Blockade or Protest) every 5 minutes.",
+    perk: "4 free Black Market sabotage cards (Blockade or Protest) every 5 minutes.",
     quirk: "Security Forces cost 50% more. He knows what guards can be paid to overlook.",
   },
   {
@@ -103,7 +103,7 @@ export const MANAGERS: readonly ManagerProfile[] = [
     ],
     rivalry: "Graves plays rough. Dolores has never had to — and never will.",
     perk: "Security Forces are free.",
-    quirk: "Black Market sabotage costs 20% more Gold. She pays extra so nobody can say she was there.",
+    quirk: "Black Market sabotage costs 10% more Gold. She pays extra so nobody can say she was there.",
   },
   {
     id: "kenji", first: "Kenji", last: "Arata", title: "The Prodigy",
@@ -116,7 +116,7 @@ export const MANAGERS: readonly ManagerProfile[] = [
       ["1949", "The island", "A hundred depots, each with a better answer."],
     ],
     rivalry: "Graves builds big. Kenji builds right, and lets the numbers do the shouting.",
-    perk: "Tuning sessions score 10% more — a better yield from every Depot you tune.",
+    perk: "Tuning sessions score 20% more — a better yield from every Depot you tune.",
     quirk: "Level Ground costs 25% more. He'd rather redraw the plan than move the hill.",
   },
 ];

@@ -65,13 +65,21 @@ const NONE: ManagerPerks = { build: {}, freeBlack: 0, security: 1, sabotageGold:
 /**
  * THE TABLE. Tuned modest on purpose — a 25% class discount is the biggest
  * number here, and each perk pays for itself with a quirk in another corner.
+ *
+ * CAST-2 (#558): the three unlockable managers were a touch WEAKER than the
+ * starting pair (James, Anne), so hiring one felt like no reward. Each is now
+ * slightly better — the perk buffed or the quirk softened, never both, and
+ * never past the starters' 25% ceiling: Rafael's allowance is 4 free cards,
+ * Dolores pays 10% (not 20%) more for sabotage, Kenji's tuning is +20%. The
+ * numbers stay player-seat only, so the BAL-1 gate and every AI test read the
+ * AI rival's null seat and are untouched.
  */
 export const PERKS: Record<ManagerId, ManagerPerks> = {
   james: { ...NONE, build: { road: 0.75, rail: 1.1 } },
   anne: { ...NONE, build: { rail: 0.75, road: 1.1 } },
-  rafael: { ...NONE, freeBlack: 3, security: 1.5 },
-  dolores: { ...NONE, security: 0, sabotageGold: 1.2 },
-  kenji: { ...NONE, tuning: 1.1, build: { level: 1.25 } },
+  rafael: { ...NONE, freeBlack: 4, security: 1.5 },
+  dolores: { ...NONE, security: 0, sabotageGold: 1.1 },
+  kenji: { ...NONE, tuning: 1.2, build: { level: 1.25 } },
 };
 
 export const perksOf = (id: ManagerId | null | undefined): ManagerPerks =>
