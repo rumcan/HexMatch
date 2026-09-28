@@ -101,7 +101,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     const play = findButton(/^Play vs AI/);
     expect(play.textContent).toMatch(/no login/);
     await click(play);
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
     expect(confirmPlate()).toBeNull();
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
   });
@@ -118,7 +118,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     expect(findButton(/^Play vs AI/).textContent).toMatch(/start a new game/);
     const rawBefore = localStorage.getItem(SAVE_KEY);
     await click(cont);
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex" }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "anne" }]);
     expect(localStorage.getItem(SAVE_KEY)).toBe(rawBefore);
   });
 
@@ -144,7 +144,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     await click(findButton(/^Play vs AI/));
     await click(confirmOk());
     await flush();
-    expect(choices).toEqual([{ mode: "ai", portrait: "vex", conquest: false }]);
+    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
     expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBeNull();
   });
@@ -177,7 +177,7 @@ describe.skipIf(!STORY_MODE_ENABLED)("campaign screen — Continue cards and Sta
     expect(container.querySelector(".chapter-item .cc-restart")).not.toBeNull();
     const rawBefore = localStorage.getItem(saveKeyFor("inheritance"));
     await click(card as HTMLButtonElement);
-    expect(choices).toEqual([{ mode: "story", chapter: "inheritance", portrait: "vex" }]);
+    expect(choices).toEqual([{ mode: "story", chapter: "inheritance", portrait: "anne" }]);
     expect(localStorage.getItem(saveKeyFor("inheritance"))).toBe(rawBefore);
   });
 
@@ -201,7 +201,7 @@ describe.skipIf(!STORY_MODE_ENABLED)("campaign screen — Continue cards and Sta
     await click(container.querySelector(".cc-restart") as HTMLButtonElement);
     await click(confirmOk());
     await flush();
-    expect(choices).toEqual([{ mode: "story", chapter: "inheritance", portrait: "vex" }]);
+    expect(choices).toEqual([{ mode: "story", chapter: "inheritance", portrait: "anne" }]);
     expect(localStorage.getItem(saveKeyFor("inheritance"))).toBeNull();
     // the other contract and the difficulty pick are untouched
     expect(localStorage.getItem(saveKeyFor("black-gold"))).not.toBeNull();

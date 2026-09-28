@@ -33,6 +33,6 @@ export const INTRO_SCENE: ScriptScene = {
     say("griev", "The chair recognises the new Logistics Manager. The Syndicate will watch your career with interest. Interest, Hexmatch, is a charge.", "calm", "boardroom"),
     say("mabel", "Let them watch, boss. Stars are how this island scores a company — pave your dirt, raise your plants, and every star is a line in OUR ledger, not theirs.", "smile"),
     say("mabel", "Five contracts stand between this leaky office and the Chairman's own minute book. Win one and the board promotes you. I have filed them in order of rudeness."),
-    title("BACK TO WORK · LOGISTICS MANAGER, HEXTALL FREIGHT", "skyline"),
+    title("BACK TO WORK · LOGISTICS MANAGER, HEXMATCH INDUSTRIES", "skyline"),
   ],
 };
