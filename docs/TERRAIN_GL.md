@@ -105,10 +105,15 @@ No runtime dependencies. Strict TypeScript, no `any`.
   (`waterT = smoothstep(.3,-.3,d)`), so wet sand creeps into surf.
 * **Water.** Colour = painted depth bands from `-dShore` (#3f8c94 → #1b5f72 → abyss), faint
   seabed in the shallows, a very-low-frequency tonal drift, river tint from the river field +
-  river flag. At zoom 2: two scrolling normal-map samples, upper-left light, soft specular; zoom
-  1: half amplitude/speed; zoom 0.5: `uWaterAnim = 0` → the branch is skipped entirely, the sea
-  is static bands (map-like). Foam: thin band at d ≈ −0.28 broken up by fine noise, wobbles only
-  when animated.
+  river flag. MAP-2 (#559): an **open-sea** term (two long swells at 24 and 9 tiles, riding a
+  slow tide) fades in past the shelf, so the deep water keeps reading as water out to the map
+  edge — the depth bands have flattened by eight tiles out (the field's own ±8 clamp), and the
+  sea beyond them used to be one flat abyss colour.
+  At zoom 2: two scrolling normal-map samples, upper-left light, soft specular; zoom 1: half
+  amplitude/speed; zoom 0.5: a third (`waterAnimFor`), with the swells stretched in world space
+  so the widest view stays calm. `quality: "low"` keeps `uWaterAnim = 0` — the sea is still
+  shaded (open sea included), just still. Foam: thin band at d ≈ −0.28 broken up by fine noise,
+  wobbles only when animated.
 * **Elevation.** Per-vertex normal from the height lattice via central differences pushed
   through the isometric transform into screen space, `diffuse = dot(n, normalize(-0.42,-0.5,
   0.76))`, normalised so flat = **exactly 1.0** (a flat map is bit-identical to no elevation).
@@ -192,7 +197,8 @@ One repeat covers 5 tiles (`tilesPerRepeat`).
 
 ## Known limits
 * Distance fields are clamped to ±8 tiles and quantised to 1/16 tile; nothing visible depends on
-  larger distances (deepest water band saturates at 8 tiles).
+  larger distances (the deepest depth band saturates at 8 tiles, and the open-sea swells take
+  over the shading past the shelf — see *Water* above).
 * Field lookups use tile-space UVs, so on slopes the beach/water masks are projected straight
   down the slope — fine for the ≤4-level terraces in the game.
 * River detection ("nearest water is a river") blends over ~1 tile where a river meets the sea,

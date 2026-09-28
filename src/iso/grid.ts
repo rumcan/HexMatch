@@ -16,7 +16,7 @@ import { deriveTownNames } from "./town-names";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
-  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN,
+  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN, TOWN_TREE_VARIANTS,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
 } from "./config";
@@ -710,7 +710,14 @@ export function footprintNearWater(
 function placeIndustries(
   terrain: Uint8Array, rng: () => number,
   preset?: MapPreset, centre?: [number, number] | null, waterfront = false,
+  /** Industries-after-terrain: the flatness gate over the natural field.
+   *  Absent (elevation OFF) → no gate and the historical draw sequence. */
+  gate?: SiteGate,
 ): { list: Industry[]; occ: Int16Array } {
+  // Tier wanted on attempt `a` of `n`: flat first, then nearly flat.
+  const want = (a: number, n: number): 0 | 1 | 2 => (!gate ? 0 : a < n / 2 ? 2 : 1);
+  const flatOk = (tx: number, ty: number, w: number, h: number, tier: 0 | 1 | 2) =>
+    !gate || tier === 0 || gate(tx, ty, w, h, tier);
   const occ = new Int16Array(MAP_W * MAP_H).fill(-1);
   const list: Industry[] = [];
   const idAt = (tx: number, ty: number) =>
@@ -774,7 +781,8 @@ function placeIndustries(
             + rng() * (preset.industryRing[1] - preset.industryRing[0]);
           const tx = Math.round(centre[0] + Math.cos(ang) * r - w / 2);
           const ty = Math.round(centre[1] + Math.sin(ang) * r - h / 2);
-          if (footprintFree(tx, ty, w, h) && separated(tx, ty, w, h, sep)) {
+          if (footprintFree(tx, ty, w, h) && separated(tx, ty, w, h, sep)
+            && flatOk(tx, ty, w, h, sep === 1 && attempt >= 60 ? 0 : want(attempt, 80))) {
             list.push({
               id: list.length, type: d.key, tx, ty, w, h,
               output: d.output, banditUntil: 0,
@@ -798,7 +806,7 @@ function placeIndustries(
   // PROG-1 (#475): the waterfront rule narrows the eligible ground, so it gets
   // more attempts per industry; the rule itself never relaxes (a River Valley
   // industry off the water is not a River Valley industry).
-  const tries = waterfront ? 250 : 90;
+  const tries = (waterfront ? 250 : 90) * (gate ? 2 : 1);
   for (const sep of [12, 8, 6, 4, 2, 1]) {
     let placedAny = true;
     while (placedAny) {
@@ -808,11 +816,16 @@ function placeIndustries(
         for (let k = have; k < n; k++) {
           const w = d.footprint[0], h = d.footprint[1];
           let done = false;
-          for (let attempt = 0; attempt < tries && !done; attempt++) {
+          // At the last separation a gated map gets one more round with no
+          // flatness wish: the quota outranks the ground (the small levelled
+          // patch in `makeElevation` still gives the Depot its catchment).
+          const rounds = gate && sep === 1 ? tries * 2 : tries;
+          for (let attempt = 0; attempt < rounds && !done; attempt++) {
             const tx = Math.floor(rng() * (MAP_W - w + 1));
             const ty = Math.floor(rng() * (MAP_H - h + 1));
             if (footprintFree(tx, ty, w, h) && separated(tx, ty, w, h, sep)
-              && (!waterfront || nearWater(tx, ty, w, h))) {
+              && (!waterfront || nearWater(tx, ty, w, h))
+              && flatOk(tx, ty, w, h, attempt >= tries ? 0 : want(attempt, tries))) {
               list.push({
                 id: list.length, type: d.key, tx, ty, w, h,
                 output: d.output, banditUntil: 0,
@@ -961,6 +974,8 @@ function applyRoadSpawnBuffer(
   terrain: Uint8Array, occ: Int16Array, list: Industry[],
   publicRoads: [number, number][],
   opts: { waterfront?: boolean; connected?: boolean } = {},
+  /** Industries-after-terrain: a re-sited node keeps to flat ground too. */
+  gate?: SiteGate,
 ): void {
   const waterfront = opts.waterfront === true;
   const connected = opts.connected !== false;
@@ -1043,7 +1058,7 @@ function applyRoadSpawnBuffer(
    */
   const nearestFit = (
     ox: number, oy: number, w: number, h: number, sep: number, sepField: Uint16Array,
-    wantWater = false,
+    wantWater = false, tier: 0 | 1 | 2 = 0,
   ): [number, number] | null => {
     for (let d = 1; d <= REPAIR_REACH; d++) {
       for (let dy = -d; dy <= d; dy++) {
@@ -1065,6 +1080,7 @@ function applyRoadSpawnBuffer(
           // the re-sited industry stays on the water. Off maps never pass
           // wantWater, so their search order is untouched.
           if (ok && wantWater && !footprintNearWater(terrain, tx, ty, w, h)) ok = false;
+          if (ok && tier && gate && !gate(tx, ty, w, h, tier)) ok = false;
           if (ok) return [tx, ty];
         }
       }
@@ -1094,9 +1110,14 @@ function applyRoadSpawnBuffer(
     // have none within reach) for any legal site. The map stays valid either
     // way; the quota is never dropped for the rule.
     const ladders = waterfront ? [true, false] : [false];
+    // Industries-after-terrain: flat ground first, then nearly flat, then any.
+    const tiers: (0 | 1 | 2)[] = gate ? [2, 1, 0] : [0];
     for (const wantWater of ladders) {
-      for (const sep of [12, 8, 6, 4, 2]) {
-        found = nearestFit(ind.tx, ind.ty, ind.w, ind.h, sep, sepField, wantWater);
+      for (const tier of tiers) {
+        for (const sep of [12, 8, 6, 4, 2]) {
+          found = nearestFit(ind.tx, ind.ty, ind.w, ind.h, sep, sepField, wantWater, tier);
+          if (found) break;
+        }
         if (found) break;
       }
       if (found) break;
@@ -1741,6 +1762,14 @@ export interface TownBuildingsOptions {
    * exactly today's layout.
    */
   shapes?: boolean;
+  /**
+   * MAP-2 (#559): can the renderer actually DRAW this sprite? The game passes
+   * the atlas (`atlas.has`), because the scenery TREE defs land in a load of
+   * their own, after the first sync — until then a lot must fall back to a
+   * park or a lawn rather than to a sprite that draws nothing. Absent (the
+   * pure callers, tests) means every named sprite is assumed drawable.
+   */
+  spriteKnown?: (sprite: string) => boolean;
 }
 
 /**
@@ -1788,13 +1817,17 @@ function townBuildingsLaid(
   });
   void full; void villageBlockPool;
   // Owner (2026-09-26): a VILLAGE keeps its small 1×1 homes. From the first
-  // upgrade on there are NO 1×1 buildings: a single house tile is a park.
+  // upgrade on there are NO 1×1 buildings: a single house tile is an open lot
+  // — a tree, a park or a lawn (`lotArtAt`), the owner's MAP-2 direction
+  // (#559) that a town's grass gaps should carry trees rather than sit bare.
   const villageHomes: readonly string[] = TOWN_VILLAGE_VARIANTS.filter((v) => {
     const [fw, fh] = footprintOf(v);
     return fw === 1 && fh === 1 && buildingFootprint(v) !== null;
   });
-  const houseArt: readonly string[] = village && villageHomes.length ? villageHomes : parkPool(footprintOf);
-  const tileArt: readonly string[] = parkPool(footprintOf);
+  const homeArt = village && villageHomes.length ? villageHomes : null;
+  /** The sprite a leftover single lot draws: a home (village), else a lot. */
+  const singleArt = (x: number, y: number): string =>
+    homeArt ? pickTownVariant(x, y, homeArt) : lotArtAt(x, y, footprintOf, opts.spriteKnown);
   // Whole blocks: 2×2-or-larger art only (a village places no block art).
   const blockArt: readonly string[] = village
     ? []
@@ -1832,57 +1865,48 @@ function townBuildingsLaid(
   const blockOrigin = (v: number, centre: number) =>
     centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
   const blocks = new Map<number, [number, number]>();
+  // Every house tile of each block, not a fixed 2×2 square: `mergeTownBlocks`
+  // (F4 #275) turns the lane between two blocks into house tiles, so a block
+  // can be 2×3 — and the seam tiles are still this block's to draw on.
+  const blockTiles = new Map<number, [number, number][]>();
   for (const [hx, hy] of t.houses) {
     const ox = blockOrigin(hx, t.tx), oy = blockOrigin(hy, t.ty);
-    blocks.set(idx(ox, oy), [ox, oy]);
+    const key = idx(ox, oy);
+    blocks.set(key, [ox, oy]);
+    const list = blockTiles.get(key);
+    if (list) list.push([hx, hy]); else blockTiles.set(key, [[hx, hy]]);
   }
   // Row-major over the block origins: a fixed order, so the output is stable.
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+
+  /** An open lot on every free house tile of the list, one per tile. */
+  const fillSingles = (tiles: readonly [number, number][]) => {
+    for (const [x, y] of tiles) {
+      const i = idx(x, y);
+      if (!houses.has(i) || used.has(i)) continue;
+      place(singleArt(x, y), x, y);
+    }
+  };
 
   for (const [ox, oy] of origins) {
     // The BLOCK pick runs on the FULL list at every non-village tier — that is
     // where the 2×2 towers, banks and cinemas come from — while the village
     // picks inside its small-homes list (and never places block art at all).
-    const pick = blockArt.length ? pickTownVariant(ox, oy, blockArt) : houseArt[0];
+    const pick = blockArt.length ? pickTownVariant(ox, oy, blockArt) : singleArt(ox, oy);
     const [fw, fh] = footprintOf(pick);
     const wholeBlock = blockArt.length > 0
       && (fw > 1 || fh > 1)
       && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
-    if (wholeBlock) { place(pick, ox, oy); continue; }
-    // Single houses, one per free tile of the block.
-    for (const [x, y] of span(ox, oy, BLOCK, BLOCK)) {
-      const i = idx(x, y);
-      if (!houses.has(i) || used.has(i)) continue;
-      place(pickTownVariant(x, y, houseArt), x, y);
-    }
+    // Open lots, one per free tile of the block: a small home in a village,
+    // else a tree / park / lawn (`singleArt`). Runs after a whole-block pick
+    // too, so a merged block's seam tiles are drawn instead of left bare.
+    if (wholeBlock) place(pick, ox, oy);
+    fillSingles(blockTiles.get(idx(ox, oy)) ?? []);
   }
 
   // The grown ring (tier 2+): the new districts beyond the old street plan.
-  // Laid last, so a ring tile can never steal art from the original blocks,
-  // and always as singles — the ring's depth is whole blocks, but it borders
-  // the old streets and the town's clipped edges, so per-tile placement keeps
-  // the "no art on a tile that is not this town's" guarantee for free.
-  if (tier >= 2 && opts.grid) {
-    const rings = townGrownRings(tier);
-    const ring = grownTownHouses(t, opts.grid, rings, opts.blocked);
-    const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
-    const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
-      const [fw, fh] = footprintOf(v);
-      return fw === 2 && fh === 2;
-    });
-    // Row-major, so the greedy 2×2 packing is deterministic.
-    for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
-      const i = idx(x, y);
-      if (used.has(i)) continue;
-      const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
-      if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
-        place(pickTownVariant(x, y, ring2), x, y);
-        continue;
-      }
-      place(pickTownVariant(x, y, tileArt), x, y);
-    }
-  }
+  layGrownRing(t, opts, footprintOf, used, place);
   return out;
 }
 
@@ -1915,8 +1939,9 @@ function townBuildingsShapes(
     return fw === 1 && fh === 1;
   });
   void full;
-  // Owner (2026-09-26): NO 1×1 buildings - leftover single tiles are parks.
-  const tileArt: readonly string[] = parkPool(footprintOf);
+  // Owner (2026-09-26): NO 1×1 buildings — a leftover single tile is an open
+  // lot. MAP-2 (#559): and an open lot draws a TREE, a park or a lawn
+  // (`lotArtAt`), so the new districts' strips do not read as bare grass.
 
   const houses = new Set<number>();
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
@@ -1933,12 +1958,12 @@ function townBuildingsShapes(
     out.push({ sprite, tx: ox, ty: oy });
     for (const [x, y] of span(ox, oy, fw, fh)) used.add(idx(x, y));
   };
-  /** Single houses on every free house tile of the list, one per tile. */
+  /** An open lot on every free house tile of the list, one per tile. */
   const fillSingles = (tiles: [number, number][]) => {
     for (const [x, y] of tiles) {
       const i = idx(x, y);
       if (!houses.has(i) || used.has(i)) continue;
-      place(pickTownVariant(x, y, tileArt), x, y);
+      place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
     }
   };
 
@@ -1948,9 +1973,14 @@ function townBuildingsShapes(
   const blockOrigin = (v: number, centre: number) =>
     centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
   const blocks = new Map<number, [number, number]>();
+  // As in the legacy path: a merged block's own house tiles, seams included.
+  const blockTiles = new Map<number, [number, number][]>();
   for (const [hx, hy] of t.houses) {
     const ox = blockOrigin(hx, t.tx), oy = blockOrigin(hy, t.ty);
-    blocks.set(idx(ox, oy), [ox, oy]);
+    const key = idx(ox, oy);
+    blocks.set(key, [ox, oy]);
+    const list = blockTiles.get(key);
+    if (list) list.push([hx, hy]); else blockTiles.set(key, [[hx, hy]]);
   }
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
   const fullBlock = (ox: number, oy: number): boolean =>
@@ -2025,36 +2055,104 @@ function townBuildingsShapes(
     const [fw, fh] = footprintOf(pick);
     const fits = (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
-    if (fits) {
-      place(pick, ox, oy);
-      fillSingles(span(ox, oy, BLOCK, BLOCK));
-      continue;
-    }
-    fillSingles(span(ox, oy, BLOCK, BLOCK));
+    if (fits) place(pick, ox, oy);
+    fillSingles(blockTiles.get(idx(ox, oy)) ?? []);
   }
 
   // The grown ring, exactly as the legacy path lays it.
-  if (tier >= 2 && opts.grid) {
-    const rings = townGrownRings(tier);
-    const ring = grownTownHouses(t, opts.grid, rings, opts.blocked);
-    const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
-    const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
-      const [fw, fh] = footprintOf(v);
-      return fw === 2 && fh === 2;
-    });
-    // Row-major, so the greedy 2×2 packing is deterministic.
-    for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
-      const i = idx(x, y);
-      if (used.has(i)) continue;
-      const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
-      if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
-        place(pickTownVariant(x, y, ring2), x, y);
+  layGrownRing(t, opts, footprintOf, used, place);
+  return out;
+}
+
+/**
+ * MAP-2 (#559): what an OPEN LOT of a town draws — a tree, a park or a tended
+ * lawn, mixed by the tile hash.
+ *
+ * Before this, every leftover single tile drew the lawn (`TOWN_LAWN`) and
+ * nothing else, so a town's clipped blocks and a grown district's 1-wide
+ * strips read as flat grass fields in the middle of the buildings. The owner
+ * asked for trees on exactly those lots. The pick is per tile and pure, so a
+ * re-sync, another client and a restored save all draw the same thing.
+ */
+function lotArtAt(
+  x: number, y: number,
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): string {
+  const trees = townTreePool(footprintOf, known);
+  const parks = parkPool(footprintOf);
+  const roll = hashPick(x + 0x5b, y + 0x27, 100);
+  if (trees.length && roll < 55) return trees[hashPick(x, y, trees.length)];
+  if (roll < 70) return parks[hashPick(x + 7, y + 13, parks.length)];
+  return buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : parks[0];
+}
+
+/** The town trees the atlas can draw as a 1×1 lot (MAP-2, #559). */
+function townTreePool(
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): string[] {
+  return TOWN_TREE_VARIANTS.filter((v) => {
+    if (known && !known(v)) return false;
+    try { const [fw, fh] = footprintOf(v); return fw === 1 && fh === 1; } catch { return false; }
+  });
+}
+
+/**
+ * The GROWN RING (tier 2+): the districts beyond the old street plan. Laid
+ * last, so a ring tile can never steal art from the original blocks, and
+ * always inside the ring — a footprint is only ever placed on tiles
+ * `grownTownHouses` returned, which keeps the "no art on a tile that is not
+ * this town's" guarantee.
+ *
+ * Packing: the biggest block building that fits a 2×2 quad first (that is
+ * what makes a district read as a city), then a 1×2/2×1 terrace for the
+ * 1-wide strips the quads leave over (MAP-2 #559 — the strips used to be
+ * lawn), then a single open lot (a tree, a park or a lawn).
+ */
+function layGrownRing(
+  t: Town,
+  opts: TownBuildingsOptions,
+  footprintOf: (sprite: string) => [number, number],
+  used: Set<number>,
+  place: (sprite: string, ox: number, oy: number) => void,
+): void {
+  const tier = opts.tier ?? TOWN_TIER_LEGACY;
+  if (tier < 2 || !opts.grid) return;
+  const ring = grownTownHouses(t, opts.grid, townGrownRings(tier), opts.blocked);
+  const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
+  const free = (x: number, y: number): boolean => ringSet.has(idx(x, y)) && !used.has(idx(x, y));
+  const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return fw === 2 && fh === 2;
+  });
+  // The terrace pair: the two orientations of the 1×2 art (#273), each of
+  // which covers exactly one strip tile and its neighbour along the strip.
+  const strips = TOWN_SHAPE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return (fw === 2 && fh === 1) || (fw === 1 && fh === 2);
+  });
+  // Row-major, so the greedy packing is deterministic.
+  for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
+    const i = idx(x, y);
+    if (used.has(i)) continue;
+    const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
+    if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
+      place(pickTownVariant(x, y, ring2), x, y);
+      continue;
+    }
+    if (strips.length) {
+      const pick = strips[hashPick(x + 3, y + 5, strips.length)];
+      const [fw, fh] = footprintOf(pick);
+      const tiles: [number, number][] = [];
+      for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) tiles.push([x + dx, y + dy]);
+      if (tiles.every(([tx, ty]) => free(tx, ty))) {
+        place(pick, x, y);
         continue;
       }
-      place(pickTownVariant(x, y, tileArt), x, y);
     }
+    place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
   }
-  return out;
 }
 
 /** 4-neighbourhood, in a fixed order (keeps every BFS below deterministic). */
@@ -2492,14 +2590,96 @@ function placeTowns(
  * open country by the one-level relaxation in `makeElevation` — the same
  * treatment the town apron gets.
  *
- * Three tiles is the floor the Depot rule needs: a 2×2 lot that edge-touches
+ * Two tiles is the floor the Depot rule needs: a 2×2 lot that edge-touches
  * the footprint (the only way a Depot claims an industry) has every tile
- * within 2 tiles of the footprint, so a 3-wide ring holds every candidate
- * lot flat on one level with a tile to spare. FTUE-1 (#464) first shipped
+ * within 2 tiles of the footprint. Industries-after-terrain shrank it from 3:
+ * the industry is now SITED on ground that is already (nearly) flat at its
+ * natural level (`industrySiteFlatness`), so the patch only trims ±1 bumps
+ * instead of carving a pit/plateau out of the hillside. FTUE-1 (#464) first shipped
  * this for the Starter Island preset (`MapPreset.industryApron`); #436
  * gives it to every generated map.
  */
-export const INDUSTRY_APRON = 3;
+export const INDUSTRY_APRON = 2;
+
+/**
+ * Industries-after-terrain: the NATURAL height field — the map's elevation
+ * with nothing placed on it (no industry, no town). `generateMap` builds it
+ * right after land/water/rivers, and the industry placer reads it to pick
+ * ground that is already flat. `makeElevation`'s jitter draws from its own
+ * seed-derived stream, so this costs the main RNG stream nothing.
+ */
+function naturalHeight(
+  seed: number, terrain: Uint8Array, rivers: Uint8Array | undefined,
+  strength: "normal" | "strong",
+): Uint8Array {
+  return makeElevation(seed, terrain, rivers, [], [], 0, strength);
+}
+
+/** Tiles of the box `pad` tiles around a footprint (the footprint included). */
+function forBox(
+  tx: number, ty: number, w: number, h: number, pad: number,
+  fn: (x: number, y: number) => boolean | void,
+): boolean {
+  for (let y = ty - pad; y < ty + h + pad; y++) {
+    for (let x = tx - pad; x < tx + w + pad; x++) {
+      if (!inBounds(x, y)) continue;
+      if (fn(x, y) === false) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The level an industry takes on the natural field `h0`: the footprint's most
+ * common level (ties → lower), pressed to 0 beside water — the same rule the
+ * old flatten applied at a river's edge, so a waterfront site keeps a legal
+ * bank.
+ */
+export function industrySiteLevel(
+  h0: Uint8Array, terrain: Uint8Array, tx: number, ty: number, w: number, h: number,
+): number {
+  const count = [0, 0, 0, 0, 0];
+  let wet = false;
+  forBox(tx, ty, w, h, 0, (x, y) => { count[h0[idx(x, y)]]++; });
+  forBox(tx, ty, w, h, 1, (x, y) => { if (terrain[idx(x, y)] === WATER) wet = true; });
+  if (wet) return 0;
+  let best = 0;
+  for (let l = 1; l < count.length; l++) if (count[l] > count[best]) best = l;
+  return best;
+}
+
+/**
+ * How well a footprint sits on the natural field:
+ *   2 — the footprint and its whole Depot catchment (`INDUSTRY_APRON` ring)
+ *       are already one level, and the country beyond is within ±1;
+ *   1 — nearly flat: footprint + catchment within ±1 of the site level (the
+ *       generator levels just that small patch, blending ≤ 1 level) and the
+ *       country beyond within ±1 too — no pit, no plateau;
+ *   0 — anything else.
+ */
+export function industrySiteFlatness(
+  h0: Uint8Array, terrain: Uint8Array, tx: number, ty: number, w: number, h: number,
+): 0 | 1 | 2 {
+  const lv = industrySiteLevel(h0, terrain, tx, ty, w, h);
+  let exact = true;
+  const near = forBox(tx, ty, w, h, INDUSTRY_APRON, (x, y) => {
+    const i = idx(x, y);
+    if (terrain[i] === WATER) return;
+    const d = Math.abs(h0[i] - lv);
+    if (d > 1) return false;
+    if (d) exact = false;
+  });
+  if (!near) return 0;
+  const outer = forBox(tx, ty, w, h, INDUSTRY_APRON + 3, (x, y) => {
+    const i = idx(x, y);
+    if (terrain[i] !== WATER && Math.abs(h0[i] - lv) > 1) return false;
+  });
+  if (!outer) return 0;
+  return exact ? 2 : 1;
+}
+
+/** A placement stage's flatness gate: accept a footprint at `tier` or better. */
+type SiteGate = (tx: number, ty: number, w: number, h: number, tier: 0 | 1 | 2) => boolean;
 
 /**
  * Build a small, deliberately conservative height field. This is kept separate
@@ -2521,6 +2701,9 @@ function makeElevation(
    *  ordinary map, a preset's tuned width on a scenario (0 = none). */
   industryApron = INDUSTRY_APRON,
   strength: "normal" | "strong" = "normal",
+  /** Each industry's level (index-aligned with `industries`), read off the
+   *  natural field it was sited on. */
+  industryLevels?: readonly number[],
 ): Uint8Array {
   const n = MAP_W * MAP_H;
   const height = new Uint8Array(n);
@@ -2569,13 +2752,25 @@ function makeElevation(
       height[i] = level;
     }
   };
-  for (const ind of industries) {
+  // Industries-after-terrain: an industry was sited on ground that is already
+  // (nearly) flat in the NATURAL field, so it keeps its natural level
+  // (`industryLevels`, from `industrySiteLevel`) instead of being pressed down
+  // onto the low shelf — no pit, no plateau. Without levels (legacy callers)
+  // the old low-shelf flatten runs.
+  industries.forEach((ind, k) => {
     const tiles: [number, number][] = [];
     for (let y = ind.ty; y < ind.ty + ind.h; y++) {
       for (let x = ind.tx; x < ind.tx + ind.w; x++) tiles.push([x, y]);
     }
-    flatten(tiles);
-  }
+    const lv = industryLevels?.[k];
+    if (lv === undefined) { flatten(tiles); return; }
+    for (const [x, y] of tiles) {
+      if (!inBounds(x, y)) continue;
+      const i = idx(x, y);
+      fixed[i] = 1;
+      height[i] = lv;
+    }
+  });
   for (const town of towns) flatten([...town.houses, ...town.roads, [town.tx, town.ty]]);
 
   // #436: a flat APRON around every industry — its own level, the ring
@@ -2589,6 +2784,13 @@ function makeElevation(
   // at TOWN_INDUSTRY_SEP). Water, rivers and other footprints keep theirs
   // (already fixed); rivers are never cut off, and the apron writes height
   // bytes only — no terrain tile changes course.
+  const besideWater = (x: number, y: number): boolean => {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (inBounds(nx, ny) && (terrain[idx(nx, ny)] === WATER || rivers?.[idx(nx, ny)])) return true;
+    }
+    return false;
+  };
   if (industryApron > 0) {
     for (const ind of industries) {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -2604,6 +2806,9 @@ function makeElevation(
           if (!inBounds(x, y)) continue;
           const i = idx(x, y);
           if (fixed[i]) continue;                       // water, rivers, footprints
+          // A raised patch never presses a cliff against the water: leave a
+          // shore tile to the relaxation (only reachable on a lenient site).
+          if (level > 1 && besideWater(x, y)) continue;
           height[i] = level;
           fixed[i] = 1;
         }
@@ -2624,11 +2829,22 @@ function makeElevation(
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
     const level = height[idx(town.tx, town.ty)];
+    // Industries-after-terrain: an industry now keeps its natural level, which
+    // may sit well above the town's low shelf. The town apron gives way near
+    // it — enough open ground between the two flats for the one-level-per-
+    // tile blend to climb without dragging the country beside the industry
+    // more than a level off (no terrace cut in next to its catchment).
+    const clear = industryLevels
+      ? industries.map((ind, k) => ({ ind, d: industryApron + 3 + Math.abs((industryLevels[k] ?? level) - level) }))
+      : [];
+    const nearIndustry = (x: number, y: number) => clear.some(({ ind, d }) =>
+      Math.max(ind.tx - x, x - (ind.tx + ind.w - 1), ind.ty - y, y - (ind.ty + ind.h - 1)) < d);
     for (let y = y0 - APRON; y <= y1 + APRON; y++) {
       for (let x = x0 - APRON; x <= x1 + APRON; x++) {
         if (!inBounds(x, y)) continue;
         const i = idx(x, y);
         if (fixed[i]) continue;                       // water, rivers, industries, the town itself
+        if (clear.length && nearIndustry(x, y)) continue;
         height[i] = level;
         fixed[i] = 1;
       }
@@ -2660,6 +2876,11 @@ function makeElevation(
       // its inland neighbour too.
       next[i] = low > high ? high : Math.max(low, Math.min(high, height[i]));
     }
+    // A pass that changes nothing is a fixed point: every later pass would
+    // be a no-op, so stopping here returns the identical field, faster.
+    let same = true;
+    for (let i = 0; i < n; i++) if (next[i] !== height[i]) { same = false; break; }
+    if (same) break;
     height.set(next);
   }
   return height;
@@ -2694,7 +2915,23 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   const cluster: [number, number] | null = preset
     ? [Math.round(MAP_W / 2 + (rng() * 2 - 1) * 6), Math.round(MAP_H / 2 + (rng() * 2 - 1) * 6)]
     : null;
-  const { list, occ } = placeIndustries(terrain, rng, preset ?? undefined, cluster, opts.waterfrontIndustries === true);
+  // Industries-after-terrain: the land, water, rivers AND the natural
+  // elevation exist before a single industry is placed. The placer reads the
+  // natural field through `gate` and picks footprints whose Depot catchment
+  // is already flat (or nearly — then only a small patch is levelled, ≤ 1
+  // level of blend), so industries no longer sit in pits/plateaus ringed by
+  // artificial slopes. Elevation OFF: no field, no gate — the historical
+  // placement, byte for byte. Elevation ON: the gate rejects candidates, so
+  // the main RNG stream is consumed differently from here on (accepted: the
+  // map is still a pure function of the seed + options).
+  const strength = opts.elevationStrength === "strong" ? "strong" : "normal";
+  const h0 = opts.elevation ? naturalHeight(s, terrain, riverMask, strength) : null;
+  const terrain0 = h0 ? terrain.slice() : terrain;   // the ground h0 was read over
+  const gate: SiteGate | undefined = h0
+    ? (tx, ty, w, h, tier) => industrySiteFlatness(h0, terrain0, tx, ty, w, h) >= tier
+    : undefined;
+  const { list, occ } = placeIndustries(terrain, rng, preset ?? undefined, cluster,
+    opts.waterfrontIndustries === true, gate);
   // TOWN-1: towns are placed AFTER industries (sequencing), using the same
   // seeded RNG so the map stays deterministic. Town tiles are stamped with
   // TOWN_OCC in the occupancy array so roads/other structures route around.
@@ -2731,7 +2968,7 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
     applyRoadSpawnBuffer(terrain, occ, list, publicRoads, {
       waterfront: opts.waterfrontIndustries === true,
       connected: opts.archipelago === true ? false : undefined,
-    });
+    }, gate);
   }
   // FTUE-1 (#464): gentle terrain — no rough ground in a preset's industry
   // aprons. Buildable, flat-cost land all around the four industries, so the
@@ -2816,9 +3053,10 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
   // Elevation is intentionally computed after all map placement. Thus every
   // generated industry and town footprint can be flat without changing the
   // placement RNG stream. Option-off still returns a flat compatibility map.
-  const height = opts.elevation
+  // Industries keep the level of the natural ground they were sited on.
+  const height = h0
     ? makeElevation(s, terrain, riverMask, list, towns, preset?.industryApron ?? INDUSTRY_APRON,
-      opts.elevationStrength === "strong" ? "strong" : "normal")
+      strength, list.map((ind) => industrySiteLevel(h0, terrain0, ind.tx, ind.ty, ind.w, ind.h)))
     : new Uint8Array(MAP_W * MAP_H);
   // fillCoastalHoles only fills sea-disconnected WATER; rivers reach the sea so
   // they survive — but re-assert the mask as water regardless, so the layer

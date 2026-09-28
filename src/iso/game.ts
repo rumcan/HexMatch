@@ -4195,7 +4195,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // grownTownHouses call skip every grown tile, so the draw list came
       // back with the base town only (tall centre, empty grass around it).
       const grown = tier >= 2 ? grownTownHouses(t, grid, townGrownRings(tier), isBuilt) : [];
-      const laid = townBuildings(t, footprintOf, { tier, grid, blocked: isBuilt, shapes: shapesOn });
+      const laid = townBuildings(t, footprintOf, {
+        tier, grid, blocked: isBuilt, shapes: shapesOn,
+        // MAP-2 (#559): the tree defs arrive with the scenery load, so a lot
+        // may only draw one the atlas can actually blit yet.
+        spriteKnown: (s) => atlasRef?.has(s) === true,
+      });
       const ring = new Set<number>();
       for (const [gx, gy] of grown) {
         const gi = tIdx(gx, gy);
@@ -13048,7 +13053,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // that anchor; otherwise a click on its far tiles would start a road the
   // network cannot reach. Keep raw tile picking for other tools/structures.
   const pickForAction = (x: number, y: number) => {
-    const p = renderer?.pick(x, y);
+    // MAP-2 (#559): the Level Ground tool targets GROUND — the tile the cursor
+    // is over — so a resource whose art covers the lots beside its footprint
+    // no longer swallows the click (every such click used to answer with the
+    // industry's own tile and refuse with "A building stands there"). Every
+    // other tool keeps the sprite-first pick it was built around.
+    const p = renderer?.pick(x, y, { sprites: tool !== "level" });
     if (!p || phase !== "play") return p;
     if (tool === "plant") {
       const site = resolvePlantTarget(grid, track, eco, p.tx, p.ty);
@@ -15176,6 +15186,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // The tree defs just joined the sprite table, so the cull pad (max
         // footprint + tallest sprite) may have grown.
         renderer?.recomputePad();
+        // MAP-2 (#559): and a town's open lots draw trees through that same
+        // table (`lotArtAt` filters the town trees by their atlas footprint),
+        // so the draw items laid before this load are re-decided here — the
+        // same re-sync the building layers do when their footprints land.
+        syncWorld();
       }
       renderer?.invalidateAll();
     }).catch((err) => {

@@ -36,6 +36,24 @@ import { makeNoiseAtlas, makeProcedural, variantFromBase, type RawTexture, type 
 
 export const TERRAIN_GRASS = 0, TERRAIN_WATER = 1, TERRAIN_ROUGH = 2, TERRAIN_SAND = 3;
 
+/**
+ * MAP-2 (#559): how much water MOTION the shader gets, by zoom and quality.
+ *
+ * The far zoom used to be a hard 0: the ripple branch vanished and the whole
+ * open sea held still, which is half of the owner's "the sea extends a few
+ * tiles, then a flat colour" report. It now keeps a calm third of the motion
+ * (the shader stretches those swells in world space at that zoom), the middle
+ * zoom half, the near zoom all of it. Low quality stays 0 at every zoom — the
+ * phones' perf gate, not a look. The open-sea swells themselves are static
+ * shading, so a still sea is still not a flat fill at any setting.
+ */
+export function waterAnimFor(zoom: number, low: boolean): number {
+  if (low) return 0;
+  if (zoom >= 2) return 1;
+  if (zoom >= 1) return 0.5;
+  return 0.35;
+}
+
 export type { TerrainMapInput, ErosionField } from "./mesh";
 export { hash2, worldOfCorner, buildTerrainMesh, buildErosionField, encodeLawn, LAWN_FEATHER } from "./mesh";
 
@@ -824,7 +842,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     const zoom = cam.zoom;
     const low = this.quality === "low";
     const detailAmt = low ? 0 : zoom === 2 ? 1 : zoom === 1 ? 0.35 : 0;
-    const waterAnim = low ? 0 : zoom === 2 ? 1 : zoom === 1 ? 0.5 : 0;
+    const waterAnim = waterAnimFor(zoom, low);
     // How many texture variants blend: the far zoom fetches two (the mip
     // chain already softens the repeats), the near zooms three. Low quality
     // (phones) keeps one. `?variants=N` pins it for an FPS A/B.
