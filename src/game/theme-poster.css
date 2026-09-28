@@ -20,6 +20,14 @@
   --px-orange-lo: #b94c04;
   --px-aqua: #00aeb8;
   --px-cream: #f2e9d6;
+  /* UIX-6 (#601): the paper recipe the menu cards paint, as ONE background
+     shorthand (dot stipple + 115° wash + paper colour). Every beige surface
+     in the game takes this var (or the .px-paper-tex class) — no flat beige,
+     no other gradients. */
+  --px-paper-bg:
+    radial-gradient(rgba(73, 52, 24, .095) .65px, transparent .7px) 0 0 / 5px 5px,
+    linear-gradient(115deg, var(--px-paper-hi), #ece0c7),
+    var(--px-paper);
   --px-display: "Barlow Condensed", "Arial Narrow", sans-serif;
   --px-body: "Barlow", Arial, sans-serif;
   --px-poster: "Anton", Impact, sans-serif;
@@ -134,10 +142,12 @@
 }
 .px-card[data-accent="aqua"] { --accent: #00aeb8; }
 @keyframes px-arrive { from { opacity: 0; transform: translateY(14px) scale(.992); } to { opacity: 1; transform: none; } }
+/* UIX-6 (#601): the ONE shared paper surface. The menu cards below and every
+   gameplay beige surface (theme-poster-hud.css) take this class or the
+   --px-paper-bg var — one recipe, no flat beige. */
+.px-paper-tex { background: var(--px-paper-bg); }
 .px-detail, .px-sidebar, .px-profile, .px-modes {
-  background-color: var(--px-paper);
-  background-image: radial-gradient(rgba(73, 52, 24, .095) .65px, transparent .7px), linear-gradient(115deg, var(--px-paper-hi), #ece0c7);
-  background-size: 5px 5px, auto;
+  background: var(--px-paper-bg);
   color: var(--px-text);
 }
 
@@ -453,7 +463,8 @@
 .modal-back { background: rgba(4, 10, 14, .76) !important; backdrop-filter: blur(5px); }
 .modal.box, .modal.box.small {
   border: 3px solid #11191d !important; border-radius: 0 !important;
-  background: var(--px-dialog) !important; color: #162024 !important;
+  /* UIX-6 (#601): every paper popup takes the shared paper texture. */
+  background: var(--px-paper-bg) !important; color: #162024 !important;
   box-shadow: 0 25px 65px rgba(0, 0, 0, .6) !important; font-family: var(--px-body);
   padding: 28px 32px 30px; text-align: left;
 }
@@ -489,7 +500,8 @@
   #iso-loading { background: url("../assets/poster/keyart-mobile.webp") center top / cover no-repeat, #0e1519 !important; }
 }
 #iso-loading .iso-loading-card {
-  border: 3px solid #11191d !important; border-radius: 0 !important; background: var(--px-dialog) !important; color: #162024;
+  border: 3px solid #11191d !important; border-radius: 0 !important;
+  background: var(--px-paper-bg) !important; color: #162024;
   box-shadow: 0 25px 65px rgba(0, 0, 0, .6) !important;
 }
 #iso-loading .iso-loading-kicker { color: #e06e13 !important; font: 700 13px var(--px-display) !important; letter-spacing: .14em !important; }
@@ -687,9 +699,7 @@
   --txt: #172126; --txt-dim: #3d474a; --brass: #e46b0e;
   position: relative; box-sizing: border-box; width: min(1080px, 100%); max-width: none;
   padding: 34px 40px 28px; border: 3px solid #11191d; border-radius: 0;
-  background-color: var(--px-paper);
-  background-image: radial-gradient(rgba(73, 52, 24, .095) .65px, transparent .7px), linear-gradient(115deg, var(--px-paper-hi), #ece0c7);
-  background-size: 5px 5px, auto; color: #162024; text-align: left;
+  background: var(--px-paper-bg); color: #162024; text-align: left;
   box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .6);
   animation: px-arrive .42s cubic-bezier(.22, 1, .36, 1) both;
 }
