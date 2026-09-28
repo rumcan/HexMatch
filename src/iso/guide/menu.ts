@@ -2,15 +2,13 @@
 // TUT-03 (#422) — the Tutorial MENU.
 //
 // One list, two doors: ☰ → Tutorial inside a game, and the front menu's
-// Tutorial button. A row per section with a ✓ once it is done; a click runs
-// that section NOW, in the game the player is standing in. "Reset tutorial"
-// clears the marks and lets the first game start over.
+// Tutorial button. A row per section with a ✓ once it is done; choosing one
+// starts its own disposable, deterministic match. The current match is saved
+// before leaving it. "Reset tutorial" clears the marks.
 //
-// It is a sheet, not an overlay: the game behind it is a live game, so the
-// plate sits over a backdrop and nothing else changes. When the door is the
-// front menu there is no game to run in yet, so the menu says which section
-// is queued and hands it to the boot through `queueGuideSection` — the next
-// game opens on it.
+// It is a sheet over the existing screen, not the practice game itself. App
+// owns both the teardown and the fresh boot; this module just reports a pick.
+// The queue remains for non-App harnesses that mount the guide host directly.
 //
 // Same projector contract as the settings sheet and the old tour: a host div,
 // a handle, a promise that settles on close. React (MainMenu) owns the seam
@@ -32,7 +30,7 @@ export interface TutorialMenuHandle {
 export interface TutorialMenuOptions {
   ctx: GuideContext;
   progress: GuideProgress;
-  /** Run one section now. Return false when there is no game to run it in. */
+  /** Leave the current match (if any) and start this practice scenario. */
   onRun: (id: GuideSectionId) => boolean;
   /** "Reset tutorial" — the caller clears the record and repaints. */
   onReset: () => void;
@@ -42,8 +40,7 @@ export interface TutorialMenuOptions {
    * game, where it would tear down the match the player is standing in.
    */
   onStarterIsland?: () => void;
-  /** True when a match is live. False on the front menu, where a pick queues
-   *  the section for the next boot instead of running it now. */
+  /** True when a match is live. */
   live: boolean;
   onClose?: () => void;
 }
@@ -97,9 +94,7 @@ export function showTutorialMenu(
   title.textContent = "Tutorial";
   const sub = document.createElement("p");
   sub.className = "sub";
-  sub.textContent = !opts.live
-    ? "Pick a section and it opens in the next game you start."
-    : "Pick a section and it runs now, in this game. Each one points at the real controls and waits for you.";
+  sub.textContent = "Pick a section to play its own practice island. Your current match stays saved.";
   const done = document.createElement("button");
   done.type = "button";
   done.className = "big-btn ghost guide-menu-done";

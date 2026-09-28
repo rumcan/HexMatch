@@ -35,6 +35,7 @@ export interface GuideRendererHooks {
   skip(): void;
   end(): void;
   /** The rect, in viewport coordinates, of a map target. Null = no hole. */
+  requireActions?: boolean;
   mapRect(target: GuideTarget): { x: number; y: number; w: number; h: number } | null;
 }
 
@@ -202,7 +203,7 @@ export function createGuideRenderer(hooks: GuideRendererHooks): GuideRenderer {
     skip.dataset.act = "guide-skip";
     skip.dataset.sfx = "close";
     skip.onclick = () => hooks.skip();
-    const stop = el("button", "guide-key ghost", "End tutorial") as HTMLButtonElement;
+    const stop = el("button", "guide-key ghost", hooks.requireActions ? "Quit to menu" : "End tutorial") as HTMLButtonElement;
     stop.type = "button";
     stop.dataset.act = "guide-end";
     stop.dataset.sfx = "close";
@@ -242,12 +243,11 @@ export function createGuideRenderer(hooks: GuideRendererHooks): GuideRenderer {
           hint.classList.toggle("hidden", !step.hint);
         }
         if (nextBtn) {
-          // Every step offers Next (the action still advances on its own).
-          nextBtn.classList.remove("hidden");
+          nextBtn.classList.toggle("hidden", !!hooks.requireActions && step.complete.kind !== "next");
           nextBtn.textContent = next.stepNumber === next.stepCount ? "Done →" : "Next →";
         }
         if (backBtn) {
-          backBtn.classList.toggle("hidden", next.stepNumber <= 1);
+          backBtn.classList.toggle("hidden", !!hooks.requireActions || next.stepNumber <= 1);
         }
         layer.dataset.section = next.sectionId ?? "";
         layer.dataset.step = step.id;

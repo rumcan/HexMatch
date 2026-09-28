@@ -51,6 +51,7 @@ export interface MainMenuProps {
   onLadder?: () => void;
   /** FTUE-1 (#464): the Tutorial menu's "Play the Starter Island" replay door. */
   onStarterIsland?: () => void;
+  onTutorialSection?: (id: import("../iso/guide/types").GuideSectionId) => void;
   /**
    * PROG-1 (#475): leave for the scenario list. Absent, the door is not
    * offered — a surface with nowhere to list scenarios shows no dead door.
@@ -61,7 +62,7 @@ export interface MainMenuProps {
 type LadderRow = { rank: number; username: string; rating: number; profileId?: string };
 type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
 
-export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland, onScenarios }: MainMenuProps) {
+export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland, onTutorialSection, onScenarios }: MainMenuProps) {
   const [panel, setPanel] = useState<"ladder" | "managers">("ladder");
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
 
@@ -104,7 +105,7 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
 
   return (
     <MenuShell tab="home" ariaLabel="Hexmatch main menu" className="menu"
-      onHome={() => setPanel("ladder")} onPlay={onPlay} onLadder={toLadder} onStarterIsland={onStarterIsland}>
+      onHome={() => setPanel("ladder")} onPlay={onPlay} onLadder={toLadder} onStarterIsland={onStarterIsland} onTutorialSection={onTutorialSection}>
       <div className="menu-embers" aria-hidden="true" />
       <div className="px-card px-home">
         <div className="px-home-stage">

@@ -87,7 +87,9 @@ export type GuideEventName =
   | "depot-upgraded"
   | "city-upgraded"
   | "first-income"
-  | "battle-finished";
+  | "battle-finished"
+  | "challenge-started"
+  | "retune-started";
 
 /** What the guide can do for the player on the way into a step. */
 export type GuideAssist =

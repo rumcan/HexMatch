@@ -102,6 +102,7 @@ type LadderView = {
 } | null;
 
 export type StartChoice =
+  | { mode: "tutorial"; section: import("../iso/guide/types").GuideSectionId; portrait: Portrait }
   | {
       mode: "ai"; portrait: Portrait; conquest?: boolean;
       /** FTUE-1 (#464): boot the Starter Island scenario (the Tutorial menu's
@@ -247,6 +248,7 @@ interface StartScreenProps {
   onStart: (choice: StartChoice) => void;
   /** STORY-01: the main menu's Back door, when the screen was reached from it. */
   onBack?: () => void;
+  onTutorialSection?: (id: import("../iso/guide/types").GuideSectionId) => void;
   /** STORY-01: reopening on the campaign list (the ledger's third door). */
   /** UI-3: the main menu's Ladder tab opens straight on the full board.
    *  PROG-1 (#475): …and a scenario ledger's door reopens on the scenario list. */
@@ -254,7 +256,7 @@ interface StartScreenProps {
 }
 
 /** The deliberately low-friction entry point: AI is always available without auth. */
-export default function StartScreen({ onStart, onBack, initial = "choose" }: StartScreenProps) {
+export default function StartScreen({ onStart, onBack, onTutorialSection, initial = "choose" }: StartScreenProps) {
   const [state, setState] = useState<ScreenState>(initial);
   const [room, setRoom] = useState<HexRoom | null>(null);
   const [seed, setSeed] = useState<number | null>(null);
@@ -1052,6 +1054,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const free = state === "choose" || state === "story" || state === "ladder" || state === "join" || state === "error";
   const shell = (tab: ShellTab | null, aria: string, cls: string, content: ReactNode) => (
     <MenuShell tab={tab} ariaLabel={aria} className={cls}
+      onTutorialSection={onTutorialSection}
       onHome={free ? onBack : undefined}
       onPlay={free ? () => { setError(""); setState("choose"); } : undefined}
       onLadder={free ? () => { loadLadder(); setState("ladder"); } : undefined}>

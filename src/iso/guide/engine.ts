@@ -34,6 +34,9 @@ export interface GuideOptions {
   /** The section table. Injected by the caller (sections.ts) so the engine
    *  stays free of the content — and so a test can drive a two-step section. */
   sections?: readonly GuideSection[];
+  requireActions?: boolean;
+  /** Quitting a disposable lesson must not dismiss onboarding in the real game. */
+  dismissOnEnd?: boolean;
 }
 
 export interface GuideController {
@@ -219,10 +222,11 @@ export function createGuide(opts: GuideOptions = {}): GuideController {
     },
     next() {
       const cur = currentStep();
-      if (!cur) return;
+      if (!cur || (opts.requireActions && cur.complete.kind !== "next")) return;
       advance();
     },
     back() {
+      if (opts.requireActions) return;
       if (!sectionId || stepIndex <= 0) return;
       stepIndex--;
       outcome = null;
@@ -238,8 +242,10 @@ export function createGuide(opts: GuideOptions = {}): GuideController {
     },
     end() {
       if (dead) return;
-      progress = { ...progress, dismissed: true };
-      write();
+      if (opts.dismissOnEnd !== false) {
+        progress = { ...progress, dismissed: true };
+        write();
+      }
       stop("ended");
     },
     reset() {
@@ -250,6 +256,7 @@ export function createGuide(opts: GuideOptions = {}): GuideController {
       if (dead) return;
       const cur = currentStep();
       if (!cur) return;
+      if (opts.requireActions && event.kind === "next" && cur.complete.kind !== "next") return;
       if (!stepSatisfied(cur, event)) return;
       advance();
     },

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import logoUrl from "../assets/poster/logo.webp";
 import { showTutorialMenu } from "../iso/guide/menu";
 import { loadProgress, resetProgress } from "../iso/guide/progress";
-import { queueGuideSection } from "../iso/guide/menu";
 import { showSettingsSheet } from "../iso/settings-sheet";
 import { showStorePanel } from "../game/store-panel";
 import { FREE_SETUP_TRACK } from "../iso/game";
@@ -39,6 +38,7 @@ export interface MenuShellProps {
   onLadder?: () => void;
   /** FTUE-1 (#464): offered as a row in the Tutorial menu. */
   onStarterIsland?: () => void;
+  onTutorialSection?: (id: import("../iso/guide/types").GuideSectionId) => void;
   children: ReactNode;
 }
 
@@ -54,15 +54,14 @@ const HexMark = () => (
 const canFullscreen = (): boolean =>
   typeof document !== "undefined" && !!document.fullscreenEnabled && !!document.documentElement.requestFullscreen;
 
-export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, onStarterIsland, children }: MenuShellProps) {
+export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, onStarterIsland, onTutorialSection, children }: MenuShellProps) {
   const [popup, setPopup] = useState<Popup>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(() => typeof document !== "undefined" && !!document.fullscreenElement);
 
   // The three projectors mount the way they always have: React owns the host
   // div and the open flag, the projector owns its listeners and resolves its
-  // promise on close. There is no live game here, so a Tutorial pick QUEUES
-  // its section for the next boot.
+  // promise on close. A Tutorial pick starts its own disposable match.
   useEffect(() => {
     const host = hostRef.current;
     if (!host || popup === null || popup === "help") return;
@@ -74,13 +73,13 @@ export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPl
           ctx: { vpTarget: RIVAL_SKILLS[resolveSkillKey()].winTarget, freeTrack: FREE_SETUP_TRACK },
           progress: loadProgress(),
           live: false,
-          onRun: (id) => { queueGuideSection(id); return true; },
+          onRun: (id) => { onTutorialSection?.(id); return true; },
           onReset: () => { resetProgress(); },
           onStarterIsland,
         });
     void handle.promise.then(() => setPopup((p) => (p === popup ? null : p)));
     return () => { handle.destroy(); };
-  }, [popup]);
+  }, [popup, onTutorialSection, onStarterIsland]);
 
   useEffect(() => {
     const sync = () => setFull(!!document.fullscreenElement);
