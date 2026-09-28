@@ -201,7 +201,7 @@ describe("RAIL-03 the art set is complete and self-consistent", () => {
     expect(licences).toMatch(/\* no Transport Fever \/ Urban Games asset has been extracted/i);
     for (const name of spriteFiles) {
       const def = manifest.sprites[name];
-      const source = def.kind === "car" ? /owner-supplied art/ :
+      const source = def.kind === "car" ? /owner-supplied art|Meshy model/ :   // ART-3D (#504): 3D models from the owner's art
         def.kind === "platform" ? /owner art.*cut_platform\.py/ : /make-railway-art\.mjs/;
       expect(def.note, name).toMatch(source);
     }
