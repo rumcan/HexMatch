@@ -753,10 +753,27 @@ export function scatterScenery(grid: Grid): Scenery {
   // tree or painted wood lands on a field.
   const fields = layResourceFields(grid, open, underForest);
   const forests: Forest[] = [];
+  // Owner (2026-09-28): the painted blocks grow in large ROUNDISH WOODS, not
+  // one by one — each wood is a disc of blocks laid edge to edge round a
+  // centre, ragged at the rim, and the single-tree skirt below feathers it.
   const forestAttempts = Math.round(land.length * FOREST_DENSITY);
-  for (let n = 0; n < forestAttempts; n++) {
+  const woods = Math.max(1, Math.round(forestAttempts / 5));
+  const spots: [number, number][] = [];
+  for (let n = 0; n < woods; n++) {
     const i = pick();
-    const tx = i % MAP_W, ty = (i / MAP_W) | 0;
+    const cx = i % MAP_W, cy = (i / MAP_W) | 0;
+    const radius = 2 + rng() * 1.4;   // in blocks
+    const R = Math.ceil(radius);
+    for (let by = -R; by <= R; by++) {
+      for (let bx = -R; bx <= R; bx++) {
+        const d = Math.hypot(bx, by);
+        if (d > radius) continue;
+        if (d > radius - 1 && rng() < 0.45) continue;   // a ragged rim
+        spots.push([cx + bx * FOREST_FOOTPRINT, cy + by * FOREST_FOOTPRINT]);
+      }
+    }
+  }
+  for (const [tx, ty] of spots) {
     let ok = true;
     for (let dy = 0; dy < FOREST_FOOTPRINT && ok; dy++) {
       for (let dx = 0; dx < FOREST_FOOTPRINT && ok; dx++) {
