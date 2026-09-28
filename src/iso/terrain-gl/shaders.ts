@@ -387,6 +387,20 @@ void main() {
     // very low-frequency tonal drift so the sea is a painting, not a fill
     // (one graded fetch of the noise atlas' low field, only on water)
     water *= 0.94 + 0.12 * textureGrad(uNoise, vTile * (1.0 / 64.0) + uSeedOff, tdx * (1.0 / 64.0), tdy * (1.0 / 64.0)).g;
+    // MAP-2 (#559): THE OPEN SEA. The signed-distance field saturates eight
+    // tiles off the coast, so every depth ramp above has flattened by there
+    // and the whole ocean beyond was ONE abyss colour to the map edge — the
+    // report's "the sea extends a few tiles, then a flat colour". Two very
+    // long swells (24 tiles, then 9) ride a slow tide and fade in past the
+    // shelf, so the deep water keeps reading as water out to the map edge:
+    // calm, consistent, and the same at every zoom, in every quality,
+    // animated or not (the tide term is the only part that needs uWaterAnim).
+    vec2 tide = vTile * (1.0 / 24.0) + uSeedOff * 0.7 + vec2(0.004, -0.006) * uTime * uWaterAnim;
+    float swellA = textureGrad(uNoise, tide, tdx * (1.0 / 24.0), tdy * (1.0 / 24.0)).g;
+    vec2 chop = vTile * (1.0 / 9.0) - uSeedOff.yx * 0.4 + vec2(-0.009, 0.005) * uTime * uWaterAnim;
+    float swellB = textureGrad(uNoise, chop, tdx * (1.0 / 9.0), tdy * (1.0 / 9.0)).a;
+    float openSea = smoothstep(1.5, 9.0, depth);
+    water *= 1.0 + ((swellA - 0.5) * 0.16 + (swellB - 0.5) * 0.07) * openSea;
     // faint seabed showing through the shallows
     water = mix(water, SEABED * 0.9, (1.0 - smoothstep(0.0, 1.2, depth)) * 0.30);
 
@@ -397,7 +411,10 @@ void main() {
       float t = uTime * (0.4 + 0.6 * uWaterAnim);
       // Broader, slower-looking swells offshore, blended gradually from the
       // tighter coastal ripples. Both components still scroll at every depth.
-      float waveScale = mix(0.45, 0.68, deepness);
+      // MAP-2 (#559): and the far zoom stretches the swells in WORLD space —
+      // its half-size pixels put twice the ripples on a screen inch, and the
+      // sea is meant to read calm out there, never busy.
+      float waveScale = mix(0.45, 0.68, deepness) * mix(0.68, 1.0, clamp(uZoom, 0.0, 1.0));
       vec2 wuv = vTile * waveScale;
       vec2 wdx = tdx * waveScale, wdy = tdy * waveScale;
       vec3 n1 = textureGrad(uWaterN, wuv + vec2(0.021, 0.013) * t, wdx, wdy).xyz;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTerrainMesh, hash2, worldOfCorner, TERRAIN_GRASS, TERRAIN_WATER, TERRAIN_SAND, TERRAIN_ROUGH, type TerrainMapInput } from "../../src/iso/terrain-gl/index";
+import { buildTerrainMesh, hash2, waterAnimFor, worldOfCorner, TERRAIN_GRASS, TERRAIN_WATER, TERRAIN_SAND, TERRAIN_ROUGH, type TerrainMapInput } from "../../src/iso/terrain-gl/index";
 import { TERRAIN_FS } from "../../src/iso/terrain-gl/shaders";
 import { buildFields, buildVertexShade, HH, HW, LEVEL_PX, signedDistance, updateFieldsRegion } from "../../src/iso/terrain-gl/mesh";
 
@@ -44,6 +44,30 @@ describe("terrain water shader", () => {
     expect(waterSection).toContain("water += spec");
     expect(waterSection).toContain("float deepness = smoothstep(1.0, 9.0, depth)");
     expect(waterSection).not.toContain("clamp(-dShore, 0.0, 8.0)");
+  });
+
+  // MAP-2 (#559): the owner's "the sea extends a few tiles, then a flat
+  // colour". The distance field saturates eight tiles off the coast, so the
+  // depth ramps flatten there and the open sea needs its own calm structure —
+  // two very long swells, faded in past the shelf.
+  it("shades the open sea past the shelf, to the map edge", () => {
+    const waterSection = TERRAIN_FS.split("// 4. Water")[1].split("// 5. Composite")[0];
+    expect(waterSection).toContain("OPEN SEA");
+    expect(waterSection).toContain("float openSea = smoothstep(1.5, 9.0, depth)");
+    expect(waterSection).toContain("textureGrad(uNoise");
+    expect(waterSection).toContain("water *= 1.0 + ((swellA - 0.5)");
+    // The tie to the tide is the animated part; the swells themselves are
+    // static, so a still sea (low quality) is still not a flat fill.
+    expect(waterSection).toContain("uTime * uWaterAnim");
+  });
+
+  // MAP-2 (#559): and the far zoom keeps a third of that motion — it used to
+  // be a hard 0, which left the widest view of the sea completely still.
+  it("keeps the sea moving at the far zoom, and still on low quality", () => {
+    expect(waterAnimFor(0.5, false)).toBeGreaterThan(0);
+    expect(waterAnimFor(1, false)).toBeGreaterThan(waterAnimFor(0.5, false));
+    expect(waterAnimFor(2, false)).toBeGreaterThan(waterAnimFor(1, false));
+    for (const zoom of [0.5, 1, 2]) expect(waterAnimFor(zoom, true)).toBe(0);
   });
 });
 
