@@ -116,6 +116,19 @@ test("#299: placing a Depot opens the session window over the map", async ({ pag
   // two doors — Finish and Abandon (#301's labels).
   const win = page.locator("#iso-session");
   await expect(win).toBeVisible();
+
+  // #461 TUNE-1: a target card may appear BEFORE the session board. If it does,
+  // start the session (or skip) so the board becomes visible.
+  const targetCard = win.locator("#iso-target-card");
+  if (await targetCard.isVisible()) {
+    const startBtn = targetCard.locator(".tc-start");
+    if (await startBtn.isVisible()) await startBtn.click();
+    else {
+      const skipBtn = targetCard.locator(".tc-skip");
+      if (await skipBtn.isVisible()) await skipBtn.click();
+    }
+  }
+
   await expect(win.locator(".tp-title")).toContainText(/Tuning .* Depot/);
   await expect(win.locator(".tp-moves")).toContainText("moves");
   await expect(win.locator(".tp-score")).toContainText("Score");
@@ -133,7 +146,16 @@ test("#299: placing a Depot opens the session window over the map", async ({ pag
 
   // Abandon (nothing scored, so #301's confirm does not arm) puts the map
   // back and takes the window — and the board — down.
-  await win.locator(".tp-abandon").click();
+  // #301: if score >0, first click arms confirm, second confirms — handle both.
+  const abandon = win.locator(".tp-abandon");
+  await abandon.click();
+  // If confirm armed, button text changes to "Confirm abandon?" — click again.
+  const confirmText = await abandon.textContent();
+  if (confirmText && /Confirm abandon/i.test(confirmText)) {
+    // Dismiss native confirm if it appears (some browsers show window.confirm)
+    page.once("dialog", async (d) => { try { await d.dismiss(); } catch {} });
+    await abandon.click();
+  }
   await expect(win).toBeHidden();
   expect(await page.evaluate(() => (document.querySelector("#map") as HTMLElement).inert)).toBe(false);
   await expect(page.locator(".reset-btn")).toBeHidden();

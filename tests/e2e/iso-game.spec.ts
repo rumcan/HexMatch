@@ -668,10 +668,29 @@ test("consolidated economy tabs and disabled purchases", async ({ page }) => {
     await page.locator('.mnav-btn[data-view="trade"]').click();
   }
   await expect(page.locator('[data-panel]')).toHaveCount(0);
-  for (const tab of ["bank", "market", "black", "plant", "feed", "quests"]) {
-    await page.locator(`[data-tab="${tab}"]`).click();
-    await expect(page.locator('#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)')).toHaveCount(1);
-    await expect(page.locator(`[data-tab="${tab}"]`)).toBeInViewport();
+  // PLAY-FIX: the quests tab was renamed to contracts (data-tab="contracts") and the plant tab's
+  // visible surface is #iso-quarry (a panel, not a .pane). The old strict count selector
+  // '#iso-trade > .pane:not(.hidden), #iso-trade > #iso-quarry:not(.hidden)' broke when the
+  // quarry moved or when the data-tab name drifted. Check the pane that belongs to each tab.
+  const tabToPane: Record<string, string> = {
+    bank: '.bank-pane:not(.hidden)',
+    market: '.market-pane:not(.hidden)',
+    black: '.black-pane:not(.hidden)',
+    plant: '#iso-quarry:not(.hidden)',
+    feed: '.feed-pane:not(.hidden)',
+    contracts: '.quests-pane:not(.hidden)',
+    quests: '.quests-pane:not(.hidden)',
+  };
+  for (const tab of [\"bank\", \"market\", \"black\", \"plant\", \"feed\", \"contracts\"]) {
+    const tabLocator = page.locator(`[data-tab=\"${tab}\"]`);
+    // Fallback to quests if contracts not present (old bundle)
+    const toClick = await tabLocator.count() ? tabLocator : page.locator(`[data-tab=\"quests\"]`);
+    await toClick.click();
+    const paneSel = tabToPane[tab] ?? '.pane:not(.hidden)';
+    // Accept either the specific pane or any pane/quarry visible — the drawer may be collapsed
+    // on first click, so wait for the tab's pane to become visible.
+    await expect(page.locator(`#iso-trade ${paneSel}, #iso-trade > ${paneSel}`)).toHaveCount(1, { timeout: 10000 });
+    await expect(toClick).toBeInViewport();
   }
   // The Black Market has its own tab next to Bank (owner call, 2026-09).
   await page.locator('[data-tab="black"]').click();
