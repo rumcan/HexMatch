@@ -12,16 +12,10 @@
 
 import { TUNING, clampYield, roundYield, tuningGoldFor, tuningStarsFor, tuningYieldFor, type TuningStars } from "./stars";
 import type { BoardObstacles, RewardKind, StoneType } from "./types";
+import { TUNING_REWARD_SCORE } from "../iso/tuning";
 
-/** L12 (#227) — what each board reward is worth in session score. */
-export const REWARD_POINTS: Record<RewardKind, number> = {
-  holyCross: 10,
-  brokenCross: 5,
-  shape: 2,
-  combo: 2,
-  frost: 1,
-  girder: 2,
-};
+/** L12 (#227) — what each board reward is worth in session score: the game's table. */
+export const REWARD_POINTS: Record<RewardKind, number> = TUNING_REWARD_SCORE;
 
 export type DifficultyKey = "trainee" | "easy" | "normal" | "hard";
 

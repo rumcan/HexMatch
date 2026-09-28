@@ -45,7 +45,7 @@ describe("#300 the star table (TUNING_STARS)", () => {
       expect(bars[i]).toBe(Math.max(1, Math.ceil(row.curve * TUNING.targetScore)));
     });
     // The shipped table, spelled out (MATCH-2: set from the measured bot sweep).
-    expect(bars).toEqual([1, 135, 360, 600, 870]);
+    expect(bars).toEqual([1, 450, 1320, 1980, 2760]);
   });
 
   it("rates a max-yield session one star now — the curve is unchanged, the bars moved (MATCH-2)", () => {
@@ -59,7 +59,7 @@ describe("#300 the star table (TUNING_STARS)", () => {
 
   it("rates the boundaries — 0 stars only when nothing was cleared", () => {
     const cases: [number, number][] = [
-      [0, 0], [1, 1], [134, 1], [135, 2], [359, 2], [360, 3], [599, 3], [600, 4], [869, 4], [870, 5], [5000, 5],
+      [0, 0], [1, 1], [449, 1], [450, 2], [1319, 2], [1320, 3], [1979, 3], [1980, 4], [2759, 4], [2760, 5], [5000, 5],
     ];
     for (const [score, stars] of cases) expect(tuningStarsFor(score), `score ${score}`).toBe(stars);
     expect(tuningStarsFor(-5)).toBe(0);
@@ -81,6 +81,8 @@ describe("#300 the star table (TUNING_STARS)", () => {
       const floor = rules.minYield;
       TUNING_STARS.forEach((row, i) => {
         // How far up THIS row's climb (floor → maxYield) the bar's score sits.
+        // (a bar past the yield's sanity ceiling pays the ceiling — nothing to measure there)
+        if (tuningYieldFor(bars[i], floor) >= TUNING.yieldSanityMax) return;
         const share = (tuningYieldFor(bars[i], floor) - floor) / (TUNING.maxYield - floor);
         expect(share, `${key}: the ${row.stars}★ bar is at its point on the climb`).toBeGreaterThanOrEqual(row.curve - 0.01);
       });

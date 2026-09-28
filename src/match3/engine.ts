@@ -188,7 +188,7 @@ export class Match3Engine {
 
   /** Can this cell take part in a run? Girders and bombs break a line. */
   matchable(g: Gem | null | undefined): g is Gem {
-    return !!g && !g.block && g.special !== "bomb";
+    return !!g && !g.block && g.special !== "bomb" && g.special !== "disco";
   }
 
   // ── runs and shapes ────────────────────────────────────────────────────
@@ -294,7 +294,8 @@ export class Match3Engine {
 
   /** Resolve `groups`: remove, crack, forge, mint — and report what happened. */
   /** The gems a line gem at (r, c) sweeps: its row, its column, or both. */
-  lineCells(r: number, c: number, axis: "row" | "col" | "both"): Gem[] {
+  lineCells(r: number, c: number, axis: "row" | "col" | "both" | "all"): Gem[] {
+    if (axis === "all") return this.gems();
     const out: Gem[] = [];
     if (axis !== "col") for (let x = 0; x < this.w; x++) { const g = this.grid[r][x]; if (g) out.push(g); }
     if (axis !== "row") for (let y = 0; y < this.h; y++) { const g = this.grid[y][c]; if (g && y !== r) out.push(g); }
@@ -306,10 +307,10 @@ export class Match3Engine {
    * column once (girders stand, frost cracks instead). Returns where each
    * line fired, for the blast fx.
    */
-  private expandLines(removeIds: Set<number>, crackIds: Set<number>, first?: { gem: Gem; axis: "row" | "col" | "both" }): CellRef[] {
+  private expandLines(removeIds: Set<number>, crackIds: Set<number>, first?: { gem: Gem; axis: "row" | "col" | "both" | "all" }): CellRef[] {
     const fired = new Set<number>();
     const at: CellRef[] = [];
-    const fire = (g: Gem, axis: "row" | "col" | "both") => {
+    const fire = (g: Gem, axis: "row" | "col" | "both" | "all") => {
       fired.add(g.id);
       at.push({ r: g.r, c: g.c });
       for (const o of this.lineCells(g.r, g.c, axis)) {
@@ -322,7 +323,9 @@ export class Match3Engine {
     for (let grew = true; grew;) {
       grew = false;
       for (const g of this.gems()) {
-        if (g.special === "line" && removeIds.has(g.id) && !fired.has(g.id)) { fire(g, "both"); grew = true; }
+        if (!removeIds.has(g.id) || fired.has(g.id)) continue;
+        if (g.special === "line") { fire(g, "both"); grew = true; }
+        else if (g.special === "disco") { fire(g, "all"); grew = true; }
       }
     }
     return at;
@@ -332,7 +335,7 @@ export class Match3Engine {
    * A line gem SWAPPED: it clears just its row (a left/right swap) or just its
    * column (up/down), then the board settles as after any clear.
    */
-  *lineBlast(line: Gem, axis: "row" | "col"): Resolution {
+  *lineBlast(line: Gem, axis: "row" | "col" | "all"): Resolution {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const at = this.expandLines(removeIds, crackIds, { gem: line, axis });
@@ -363,12 +366,14 @@ export class Match3Engine {
       }
     }
     const purged = removed.length;
+    if (axis === "all" && this.paysScore) rewards.push("disco");
     yield {
       type: "bombClear", chain: 1, removed, cracked, minted: [], fx, rewards, bonus: [], crosses: [],
       cleared: purged, pass: { cleared: {}, biggest: 0, shaped: false, chain: 1, purged },
-      bombAt: { r: line.r, c: line.c }, label: "LINE BLAST",
+      bombAt: { r: line.r, c: line.c }, label: axis === "all" ? "DISCO!" : "LINE BLAST",
+      ...(axis === "all" || removed.length >= this.w * this.h - 2 ? { wipe: true } : {}),
     };
-    yield { type: "end", gains, label: "LINE BLAST", maxChain: 0 };
+    yield { type: "end", gains, label: axis === "all" ? "DISCO!" : "LINE BLAST", maxChain: 0 };
     const fall = this.gravity(2);
     yield { ...fall, type: "bombFall" };
     yield* this.settle(2);
@@ -381,6 +386,7 @@ export class Match3Engine {
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
     const bombs: { r: number; c: number; res: ResKey }[] = [];
     const lines: { r: number; c: number; res: ResKey }[] = [];
+    const discos: { r: number; c: number; res: ResKey }[] = [];
     const fx: FxEvent[] = [];
     const rewards: RewardKind[] = [];
     const bonus: ClearPhase["bonus"] = [];
@@ -405,10 +411,19 @@ export class Match3Engine {
       const mid = grp[Math.floor(size / 2)];
       // Owner (2026-09-28): a match of 4 leaves a LINE gem of its colour behind.
       if (size === 4) lines.push({ r: mid.r, c: mid.c, res: anchor });
+      // Owner (2026-09-28): a match of 5 is the DISCO BALL now (wipes the board).
       if (size >= 5) {
-        bombs.push({ r: mid.r, c: mid.c, res: anchor });
+        discos.push({ r: mid.r, c: mid.c, res: anchor });
         if (!tokenPresent && !this.paysScore) forge.push({ r: grp[0].r, c: grp[0].c, res: anchor, tier: 2 });
       }
+    }
+
+    // …and the BOMB is minted by the shapes: an L's corner, a cross's middle.
+    const shapeCrosses = this.crosses(groups);
+    for (const x of shapeCrosses) bombs.push({ r: x.mid.r, c: x.mid.c, res: x.mid.res });
+    for (const ell of this.lShapes(groups)) {
+      const corner = ell.find((g) => ell.some((o) => o !== g && o.r === g.r) && ell.some((o) => o !== g && o.c === g.c));
+      if (corner && !bombs.some((b) => b.r === corner.r && b.c === corner.c)) bombs.push({ r: corner.r, c: corner.c, res: corner.res });
     }
 
     // A line gem caught in a match clears its whole row and column; a line gem
@@ -462,6 +477,14 @@ export class Match3Engine {
       minted.push({ r: f.r, c: f.c, what: "token" });
       fx.push({ type: "up", r: f.r, c: f.c });
     }
+    for (const d of discos) {
+      if (this.grid[d.r][d.c]) continue;
+      const g = this.newGem(d.res, d.r, d.c);
+      g.special = "disco";
+      this.grid[d.r][d.c] = g;
+      minted.push({ r: d.r, c: d.c, what: "disco" });
+      fx.push({ type: "boom", r: d.r, c: d.c });
+    }
     for (const l of lines) {
       if (this.grid[l.r][l.c]) continue;
       const g = this.newGem(l.res, l.r, l.c);
@@ -471,6 +494,7 @@ export class Match3Engine {
       fx.push({ type: "up", r: l.r, c: l.c });
     }
     for (const b of bombs) {
+      if (this.grid[b.r][b.c]) continue;
       const g = this.newGem(b.res, b.r, b.c);
       g.special = "bomb";
       this.grid[b.r][b.c] = g;
@@ -574,6 +598,7 @@ export class Match3Engine {
     const g1 = this.grid[r1]?.[c1];
     const g2 = this.grid[r2]?.[c2];
     if (!g1 || !g2 || g1.block || g2.block) return 0;
+    if (g1.special === "disco" || g2.special === "disco") return this.gems().filter((g) => !g.block).length;
     if (g1.special === "line" || g2.special === "line") {
       const l = g1.special === "line" ? g1 : g2;
       return this.lineCells(l.r, l.c, r1 === r2 ? "row" : "col").filter((g) => !g.block).length;
@@ -627,7 +652,7 @@ export class Match3Engine {
             if (!(a.special === "bomb" && b.special === "bomb") && !bombMove) bombMove = [r, c, r2, c2];
             continue;
           }
-          if ((a.special === "line" || b.special === "line") && !bombMove) bombMove = [r, c, r2, c2];
+          if ((a.special === "line" || b.special === "line" || a.special === "disco" || b.special === "disco") && !bombMove) bombMove = [r, c, r2, c2];
           if (!this.wouldMatch(r, c, r2, c2)) continue;
           const mv: Move = [r, c, r2, c2];
           if (!score) return mv;
@@ -647,7 +672,7 @@ export class Match3Engine {
       for (let c = 0; c < this.w; c++) {
         const a = this.grid[r][c];
         if (!a || a.block) continue;
-        if (a.special === "bomb" || a.special === "line") {
+        if (a.special === "bomb" || a.special === "line" || a.special === "disco") {
           const free = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const).some(([dr, dc]) => {
             const n = this.grid[r + dr]?.[c + dc];
             return !!n && !n.block;
@@ -716,6 +741,10 @@ export class Match3Engine {
     g2.c = c1;
     const bomb = g1.special === "bomb" || g2.special === "bomb";
     yield { type: "swap", a: before.a, b: before.b, contactAt: SWAP_CONTACT_AT, bomb };
+    if (g1.special === "disco" || g2.special === "disco") {
+      yield* this.lineBlast(g1.special === "disco" ? g1 : g2, "all");
+      return true;
+    }
     if (bomb) {
       const b = g1.special === "bomb" ? g1 : g2;
       const other = g1.special === "bomb" ? g2 : g1;

@@ -74,3 +74,23 @@ describe("the line gem", () => {
     expect(e.findMove()).not.toBeNull();
   });
 });
+
+describe("the disco ball and the shape bomb", () => {
+  it("swapped, a disco ball wipes the whole board", () => {
+    const e = board();
+    e.grid[4][3]!.special = "disco";
+    const phases = drain(e, e.resolveSwap(4, 3, 4, 4));
+    const wipe = phases.find((p) => p.type === "bombClear") as unknown as { removed: unknown[]; wipe?: boolean };
+    expect(wipe.wipe).toBe(true);
+    expect(wipe.removed.length).toBe(e.w * e.h);
+  });
+
+  it("an L-shape mints a bomb at its corner", () => {
+    const e = board();
+    // L: row 5 cols 0-2 and col 0 rows 3-5, corner (5,0)
+    for (const c of [0, 1, 2]) e.grid[5][c]!.res = "gold";
+    for (const r of [3, 4]) e.grid[r][0]!.res = "gold";
+    const clear = e.resolve(e.findGroups(), {}, 1);
+    expect(clear.minted.some((m) => m.what === "bomb" && m.r === 5 && m.c === 0)).toBe(true);
+  });
+});

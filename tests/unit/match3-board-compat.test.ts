@@ -143,7 +143,9 @@ describe("MATCH-2 — Board: the legacy surface", () => {
 });
 
 describe("MATCH-2 — Board: rules", () => {
-  it("a 5-run mints a bomb; swapping the bomb purges a colour and reports `purged`", async () => {
+  // Owner (2026-09-28): a 5-run mints the DISCO BALL now (bombs come from L's
+  // and crosses); the bomb's purge is checked on a bomb set by hand.
+  it("a 5-run mints a disco ball; a bomb swapped purges a colour and reports `purged`", async () => {
     const b = headless();
     b.setPaysScore(true);
     paint(b, ["WWBWWSH", "BSWOHBS", "HOBWSHO", "OWSBHOW", "WBSHOWB", "BSHOWBS", "HOWBSHO", "OWBSHOW"]);
@@ -156,7 +158,12 @@ describe("MATCH-2 — Board: rules", () => {
     expect(passes[0].biggest).toBeGreaterThanOrEqual(5);
     expect(passes[0].shaped).toBe(true);
     expect(rewards).toContain("shape");
-    const bomb = b.gems().find((g) => g.special === "bomb");
+    const disco = b.gems().find((g) => g.special === "disco");
+    expect(disco).toBeDefined();
+    expect(b.matchable(disco)).toBe(false);
+    disco!.special = null;
+    const bomb = b.gems().find((g) => g.r === 3 && g.c === 3)!;
+    bomb.special = "bomb";
     expect(bomb).toBeDefined();
     // a bomb is not matchable but is the board's escape hatch
     expect(b.matchable(bomb)).toBe(false);

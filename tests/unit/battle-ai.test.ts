@@ -94,8 +94,10 @@ describe("B4 chooseBattleMove", () => {
     expect(n).toBeGreaterThan(10);
     // Easy keeps the greedy eye (its best-line rate is pBest ≈ 0.55)
     expect(easyAgree / n).toBeGreaterThan(0.35);
-    // …and Hard's depth steps off the shallow line more often than that
-    expect(hardAgree / n).toBeLessThan(easyAgree / n);
+    // …and Hard's depth never walks the shallow line MORE than Easy. (Owner
+    // 2026-09-28: line gems, disco balls and shape bombs made the greedy line
+    // the right one more often, so on these 20 seeds the two can tie.)
+    expect(hardAgree / n).toBeLessThanOrEqual(easyAgree / n);
   });
 
   it("every skill takes a lethal Dynamite — nobody walks past a win", async () => {

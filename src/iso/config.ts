@@ -226,10 +226,10 @@ export interface TuningStarRow {
  * no ceiling, every score pays on at the same slope); only the bars did.
  *
  *   ★      any cleared gem           score ≥ 1     "Tuned"
- *   ★★     past the target           score ≥ 135   "Well tuned"
- *   ★★★    a strong session          score ≥ 360   "Precision"
- *   ★★★★   a great run               score ≥ 600   "Overdrive"
- *   ★★★★★  rare — the finale         score ≥ 870   "Legendary"
+ *   ★★     past the target           score ≥ 450   "Well tuned"
+ *   ★★★    a strong session          score ≥ 1320  "Precision"
+ *   ★★★★   a great run               score ≥ 1980  "Overdrive"
+ *   ★★★★★  rare — the finale         score ≥ 2760  "Legendary"
  *
  * Why these bars: the old three-star table put ★★★ at the target (60), and
  * the cargo-biased depot board cascades so readily that nearly every session
@@ -247,10 +247,10 @@ export interface TuningStarRow {
  */
 export const TUNING_STARS: readonly TuningStarRow[] = [
   { stars: 1, curve: 0, label: "Tuned" },
-  { stars: 2, curve: 2.25, label: "Well tuned" },
-  { stars: 3, curve: 6, label: "Precision" },
-  { stars: 4, curve: 10, label: "Overdrive" },
-  { stars: 5, curve: 14.5, label: "Legendary" },
+  { stars: 2, curve: 7.5, label: "Well tuned" },
+  { stars: 3, curve: 22, label: "Precision" },
+  { stars: 4, curve: 33, label: "Overdrive" },
+  { stars: 5, curve: 46, label: "Legendary" },
 ];
 
 // ── L6 (#220): difficulty = decay, not whether match-3 exists ─────────────
