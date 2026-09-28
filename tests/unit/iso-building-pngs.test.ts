@@ -24,8 +24,6 @@ interface BuildingEntry {
   w: number;
   h: number;
   footRoom?: number; // F1: 2× px below the south vertex (absent == 0)
-  frames?: number; // animated: a strip of `frames` equal slices
-  frameMs?: number;
 }
 
 interface BuildingsManifest {
@@ -77,20 +75,6 @@ describe("ART-1950S compiled building PNGs", () => {
         }
       });
 
-      it("an animated building is a strip of equal frames with its sheet committed", async () => {
-        const n = e.frames ?? 1;
-        if (n <= 1) return;
-        expect(existsSync(join(ROOT, "assets", "buildings-src", "anim", `${name}@2x.png`))).toBe(true);
-        expect(e.frameMs).toBeGreaterThan(0);
-        for (const [z, factor] of [["0.5x", 0.5], ["1x", 1], ["2x", 2]] as const) {
-          const meta = await sharp(join(ROOT, "assets", "buildings", `${name}@${z}.png`)).metadata();
-          expect(meta.width! % n, `${name}@${z}: ${meta.width} splits into ${n} equal frames`).toBe(0);
-          expect(meta.width! / n).toBe(Math.round((e.w / n) * factor));
-        }
-        // the anchor lands inside frame 0
-        expect(e.anchor[0]).toBeLessThanOrEqual(e.w / n);
-      });
-
       it("anchor sits inside the image (placement, not a corner reference)", () => {
         expect(e.anchor[0]).toBeGreaterThanOrEqual(0);
         expect(e.anchor[0]).toBeLessThanOrEqual(e.w);
@@ -101,7 +85,6 @@ describe("ART-1950S compiled building PNGs", () => {
       it("@2x output is the tight alpha trim of the authored source (B-3.1)", async () => {
         const src = join(ROOT, "assets", "buildings-src", `${name}@2x.png`);
         if (!existsSync(src)) return; // source masters are committed alongside
-        if ((e.frames ?? 1) > 1) return; // an animated strip — checked below
         const box = await alphaBBox(src);
         expect(box, `${name}: source is fully transparent?`).not.toBeNull();
         // snapped to the 4px lattice: floor origin / ceil far edge

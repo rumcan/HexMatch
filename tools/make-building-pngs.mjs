@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { isCli } from "./is-cli.mjs";
-import { hasAnimSheet, processAnim } from "./make-building-anims.mjs";
 // ══════════════════════════════════════════════════════════════════════════
 // Building layers — ONE standalone PNG per building, placed free on its
 // footprint (the roads stay exact-grid; buildings don't have to).
@@ -585,9 +584,6 @@ async function main() {
       footprint: entry.footprint, anchor: entry.anchor, w: entry.w, h: entry.h, canvas: entry.canvas,
       ...(entry.footRoom ? { footRoom: entry.footRoom } : {}),
     };
-    // An animated building (assets/buildings-src/anim/<name>@2x.png) ships
-    // its frame strip over the still, registered on the still's geometry.
-    if (hasAnimSheet(name)) manifest.sprites[name] = await processAnim(name, manifest.sprites[name]);
     const t = entry.trim;
     console.log(`${name}: ${entry.footprint[0]}×${entry.footprint[1]} (via ${entry.source}) → ${entry.w}×${entry.h} @1× (anchor ${entry.anchor.join(",")}, trimmed ${t.w2}×${t.h2} from canvas ${entry.canvas[0]}×${entry.canvas[1]} at +${t.left},+${t.top}${entry.footRoom ? `, footRoom ${entry.footRoom}` : ""})`);
   }
