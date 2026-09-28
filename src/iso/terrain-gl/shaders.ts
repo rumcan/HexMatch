@@ -382,6 +382,11 @@ void main() {
     // Keep depth continuous instead of quantizing the open sea into a terminal
     // band. These smooth ramps shade both colour and wave scale without a seam.
     float depth = max(-dShore, 0.0);
+    // Owner (2026-09-28): the sea must not END. Past the map edge the canvas
+    // is the flat abyss clear colour, so the last tiles fade every swell,
+    // ripple and tone into exactly that colour: no diamond seam, no moiré.
+    vec2  edgeD   = min(vTile, uMapSize - vTile);
+    float edgeSea = smoothstep(0.0, 4.0, min(edgeD.x, edgeD.y));
     float deepness = smoothstep(1.0, 9.0, depth);
     water = mix(SEA_SHALLOW, SEA_DEEP, smoothstep(0.0, 3.0, depth));
     water = mix(water, SEA_ABYSS, smoothstep(3.0, 9.0, depth));
@@ -402,7 +407,7 @@ void main() {
     vec2 chop = vTile * (1.0 / 9.0) - uSeedOff.yx * 0.4 + vec2(-0.009, 0.005) * uTime * uWaterAnim;
     float swellB = textureGrad(uNoise, chop, tdx * (1.0 / 9.0), tdy * (1.0 / 9.0)).a;
     float openSea = smoothstep(1.5, 9.0, depth);
-    water *= 1.0 + ((swellA - 0.5) * 0.16 + (swellB - 0.5) * 0.07) * openSea;
+    water *= 1.0 + ((swellA - 0.5) * 0.16 + (swellB - 0.5) * 0.07) * openSea * edgeSea;
     // faint seabed showing through the shallows
     water = mix(water, SEABED * 0.9, (1.0 - smoothstep(0.0, 1.2, depth)) * 0.30);
 
@@ -422,7 +427,7 @@ void main() {
       vec3 n1 = textureGrad(uWaterN, wuv + vec2(0.021, 0.013) * t, wdx, wdy).xyz;
       vec3 n2 = textureGrad(uWaterN, wuv * 1.37 + vec2(0.7, 0.2) - vec2(0.017, 0.024) * t, wdx * 1.37, wdy * 1.37).xyz;
       vec2 nxy = (n1.xy + n2.xy) * 2.0 - 2.0;
-      float amp = uWaterAnim * mix(1.0, 0.45, riverFlag);   // rivers are calmer
+      float amp = uWaterAnim * mix(1.0, 0.45, riverFlag) * edgeSea;   // rivers are calmer
       vec3 nrm = normalize(vec3(nxy * amp, 2.2));
       float diff = dot(nrm, sun) - sun.z;                   // 0 for a flat surface
       vec3  H    = normalize(sun + vec3(0.0, 0.0, 1.0));
@@ -434,6 +439,7 @@ void main() {
       float waveTone = (diff * 0.55 + spec * 0.8) * uWaterAnim;
       water *= 1.0 + waveTone * mix(0.12, 0.24, deepness);
     }
+    water = mix(SEA_ABYSS, water, edgeSea);
 
     // 4c. Foam: a thin band hugging the waterline, broken up by the fine
     //     noise, wobbling only when animated.
