@@ -168,30 +168,16 @@ export const VP = { target: 10 };
 export const REPAIR_COST: Partial<Record<ResKey, number>> = { wood: 1, brick: 1, wheat: 1, ore: 1 };
 
 /**
- * A1: `target` names WHO the action lands on.
- *
- * L9 (#224): the Black Market is MAP-ONLY sabotage now. The three cards that
- * reached into a match-3 board (Frost Tiles, Iron Girders, Smog Cloud) are
- * gone from the shop, the rival's raid table, the guest intents and the HUD —
- * frost and girders come back as tuning-session obstacles set by difficulty
- * (#225), which is where a board obstacle belongs once the board is a bounded
- * session rather than an always-on machine.
- *
- * What is left are the two cards that act on the WORLD, re-defined against the
- * clock economy (trucks are cosmetic after L7, so "stops the trucks" is no
- * longer a mechanic — "stops the income ticks" is):
- *
- *   bandit  (Blockade)  the targeted industry's depots stop ticking for 45s
- *   protest (Protest)   depots whose road route crosses the protested tile
- *                       stop ticking for 2:00 (and their lorries visibly halt)
- *
- * Security Forces (below) is the defence against BOTH, and the only other
- * thing in the panel.
+ * Black Market inventory. BM-2 (#560) adds timed session sabotage to the
+ * existing map cards. Security blocks new targeted attacks; it does not undo
+ * obstacles already dealt. Session timing/cooldowns live in iso/black-market.
  */
 export const SABOTAGE: Record<string, {
   name: string; gold: number; target: "tile" | "player"; desc: string;
 }> = {
-  // ×3 (owner balancing pass, 2026-09)
+  frost: { name: "Frost / Iron Girders", gold: 24, target: "player", desc: "For 2:00, new Depot and city tuning boards start with 4 frozen gems and 2 breakable iron girders. Shared 3:00 cooldown with Red Tape." },
+  redTape: { name: "Red Tape", gold: 18, target: "player", desc: "Bribe the permit office: for 1:00, new rival Depot and city tuning sessions lose 2 moves. Shared 3:00 cooldown with Frost / Iron Girders." },
+  // Map cards: ×3 (owner balancing pass, 2026-09).
   bandit: { name: "Blockade",     gold: 15, target: "tile",   desc: "Auto-blockades the rival's busiest industry for 45s — every depot holding it stops ticking." },
   protest: { name: "Protest",     gold: 18, target: "tile",   desc: "Stage a protest on any public road for 2:00 — every depot whose route crosses it stops ticking, yours included." },
 };
@@ -203,13 +189,12 @@ export const SABOTAGE: Record<string, {
  * REPAIR_COST (`wheat` maps to the grain cargo, `brick` to stone); Gold is
  * reserved for Black Market sabotage and pays for nothing else.
  *
- * L9 (#224): the guard covers the two cards that still exist — a Blockade
- * bought against a guarded player is turned away at the door, and a protest
- * never stops a guarded player's depots ticking. (Smog no longer exists.)
+ * The guard turns Blockade and BM-2 session attacks away at purchase, and
+ * protests never stop a guarded player's depots ticking.
  */
 export const SECURITY = {
   cost: { wheat: 6, brick: 3 } as Partial<Record<ResKey, number>>,   // ×3 (2026-09)
-  ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — immune to Blockade & Protest.",
+  ms: 90000, name: "Security Forces", desc: "Hire guards for 90s — blocks new sabotage and ignores Protests.",
 };
 export const TAX_EVERY_ROUNDS = 6;
 

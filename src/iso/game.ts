@@ -1,3 +1,7 @@
+import {
+  armSessionSabotage, isSessionSabotage, readBlackMarket, rebaseBlackMarket, sabotagedObstacles,
+  sabotagedScore, sessionSabotage, SESSION_SABOTAGE_COOLDOWN_MS, type BlackMarketState,
+} from "./black-market";
 import { totalStorageRent, storageRentLabel } from "./storage-rent";
 // ══════════════════════════════════════════════════════════════════════════
 // E11 — the playable isometric game.
@@ -632,6 +636,7 @@ export interface PlayerState {
   manager: ManagerId | null;
   /** CAST-1: Rafael's free Black Market allowance (the window and its spends). */
   fixer: FixerState;
+  blackMarket?: BlackMarketState;
 }
 
 type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
@@ -5541,7 +5546,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * seeded RNG with the deadlock guard watching every single one.
    */
   function seedSessionObstacles(depot: Harvester): BoardObstacles {
-    const plan = sessionObstaclesFor(difficultyRules(), depotTier(depot));
+    const plan = sabotagedObstacles(sessionObstaclesFor(difficultyRules(), depotTier(depot)), me.blackMarket, marketMs);
     const placed = quarry.board.seedObstacles(plan.frost, plan.girders, plan.frostHard);
     sessionObstacles = placed;
     return placed;
@@ -5557,8 +5562,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * reads the row the game is running (Easy none, Normal frost, Hard frost and
    * girders), the tier thins it for a first Depot, and `Board.seedObstacles`
    * places them on seeded RNG without ever leaving a board with no legal move.
-   * They are NOT a timer and NOT a purchase — nothing outside a session can
-   * put one on a board, and they leave with the session that brought them.
+   * BM-2 adds live sabotage at session opening. Obstacles already dealt stay
+   * breakable until that session ends; expiry only stops new affected sessions.
    */
   function cargoPerMinForDepot(depot: Harvester, yieldLevel: number): number {
     try {
@@ -5599,6 +5604,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry.board.resetNeutral();
     quarry.board.setBias(CARGO_TO_GEM[cargo], TUNING.cargoBias);
     tuning = createTuningSession(depot.id, cargo);
+    applySessionSabotageMoves();
     // The obstacles go on AFTER the fresh fill and BEFORE the plate opens:
     // they are part of the board the session deals, so the first thing the
     // player sees is the table as it will be played, not a clean one that
@@ -5866,6 +5872,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!isGuest()) cars.cars = planCars(track, grid, cars.cars, carCount, seed);
   }
 
+  function applySessionSabotageMoves(): void {
+    const lost = sessionSabotage(me.blackMarket, marketMs).lostMoves;
+    if (tuning && lost) {
+      tuning.moves = Math.max(1, tuning.moves - lost);
+      toast(`Red Tape — the permit office cost this session ${lost} moves.`, "bad");
+    }
+  }
+
   /**
    * L17 (#245): open the CITY upgrade's tuning session.
    *
@@ -5879,10 +5893,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry.board.resetNeutral();
     quarry.board.setBias(null);
     tuning = createTownSession();
+    applySessionSabotageMoves();
+    const plan = sabotagedObstacles({ frost: 0, girders: 0, frostHard: 1 }, me.blackMarket, marketMs);
+    sessionObstacles = quarry.board.seedObstacles(plan.frost, plan.girders, plan.frostHard);
+    const intro = obstacleIntroLine("Black Market", sessionObstacles);
+    if (intro) toast(intro, "bad");
     sfx.play("open");
     ui.openSessionBoard();
     toast(
-      `City upgrade — ${TUNING.moves} moves on the plant floor set the base rate for every Depot you have connected.`,
+      `City upgrade — ${tuning.moves} moves on the plant floor set the base rate for every Depot you have connected.`,
       "info",
     );
   }
@@ -6738,7 +6757,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const h of eco.harvesters) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       const tier = depotTier(h, comp);
-      const score = rivalTuningScore(key, 0, rules, tier);
+      const score = sabotagedScore(rivalTuningScore(key, 0, rules, tier), rival.blackMarket, marketMs);
       h.yield = Math.min(depotYieldCap(h.level), tuningYieldFor(score));
       tuned.add(h.id);
       // L14 (#229): the tier the session settled on, stamped exactly as a
@@ -6809,7 +6828,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       .map((h) => {
         const tier = depotTier(h, comp);
         const level = depotYield(h);
-        const fresh = settleTuningYield(level, rivalTuningScore(key, 0, rules, tier), rules);
+        const fresh = settleTuningYield(level, sabotagedScore(rivalTuningScore(key, 0, rules, tier), rival.blackMarket, marketMs), rules);
         return { h, tier, level, fresh };
       })
       // Lowest-yield Depot first (the plate's own sort), and only one that has
@@ -6824,7 +6843,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     head.h.yield = head.fresh;
     head.h.tuneTier = head.tier;
     // #461: keep rival's stars too.
-    head.h.lastStars = tuningStarsFor(rivalTuningScore(key, 0, rules, head.tier));
+    head.h.lastStars = tuningStarsFor(sabotagedScore(rivalTuningScore(key, 0, rules, head.tier), rival.blackMarket, marketMs));
     ui.feed(`Rival re-tunes a Depot: yield ×${head.fresh}`, rival.name);
     return true;
   }
@@ -7525,7 +7544,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return n;
   }
 
-  // ── Black Market: MAP-ONLY sabotage (L9 #224) ────────────────────────────
+  // ── Black Market: map + timed session sabotage (BM-2 #560) ────────────────────────────
   // Two cards act on the WORLD — a Blockade on an industry and a Protest on a
   // public road — and one defence (Security Forces) turns both away. Nothing
   // in here reaches into a match-3 board any more.
@@ -7557,8 +7576,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.i === 0) securityUntil = until; else guestSecurityUntil = until;
   };
   /**
-   * L9 (#224): every key the Black Market still answers to — the two map
-   * cards (priced in `SABOTAGE`) plus the material-priced defence. Derived
+   * Every key the Black Market answers to — map and session cards
+   * (priced in `SABOTAGE`) plus the material-priced defence. Derived
    * from the table, so retiring a card is a one-line config change and the
    * UI, the intents and the rival's raid table all follow.
    */
@@ -8947,7 +8966,31 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function buyBlackFor(actor: PlayerState, key: string): boolean {
+    if (phase === "won") return false;
     const now = performance.now();
+    if (isSessionSabotage(key)) {
+      // Multiplayer has no tuning sessions, so these cards would take Gold for nothing.
+      if (!isSolo()) {
+        toast(`${SABOTAGE[key].name} only works against tuning sessions — not available in multiplayer.`, "info");
+        return false;
+      }
+      const state = actor.blackMarket ??= readBlackMarket();
+      if (marketMs < state.readyAt) {
+        toast(`The permit office is lying low — ready in ${Math.ceil((state.readyAt - marketMs) / 1000)}s.`, "info");
+        return false;
+      }
+      if (!payBlackCard(actor, key)) return false;
+      const defender = otherSeat(actor);
+      if (now < securityOf(defender.id)) {
+        state.readyAt = marketMs + SESSION_SABOTAGE_COOLDOWN_MS;
+        toast(`Security Forces turned ${SABOTAGE[key].name} away.`, "info");
+      } else {
+        armSessionSabotage(state, defender.blackMarket ??= readBlackMarket(), key, marketMs);
+        toast(`${SABOTAGE[key].name} set against ${escText(defender.name)} — affects newly opened Depot and city tuning sessions.`, defender === me ? "bad" : "good");
+      }
+      if (isMp()) publishNet(now, true);
+      return true;
+    }
     if (key === "bandit") {
       // CAST-1: a Fixer card first, else the seat's (perk-priced) Gold.
       const refundCard = payBlackCard(actor, "bandit");
@@ -9030,13 +9073,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (isMp()) publishNet(now, true);
       return true;
     }
-    // L9 (#224): every other key is a RETIRED card — the three that reached
-    // into a match-3 board (Frost Tiles, Iron Girders, Smog Cloud) and the
-    // Repair Crew that existed to undo them. Nothing can dirty a plant board
-    // any more, so a crew that clears frost and girders repairs nothing; the
-    // obstacles that replace them (#225) belong to a tuning session, which
-    // ends by itself. A relayed intent for one of these lands here and is
-    // refused without a charge.
+    // Unknown/legacy keys cannot spend or mutate a seat.
     toast("That card is no longer on the Black Market.", "info");
     return false;
   }
@@ -9046,7 +9083,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast("The final ledger is closed. Start a rematch to settle another score.", "info");
       return;
     }
-    // L9 (#224): the shop's whole inventory, in one place — the two MAP cards
+    // The shop's whole inventory, in one place — map/session cards
     // and the defence. A retired key (a stale save's macro, an old console
     // call, a guest on an older build) is refused HERE, so no intent is ever
     // relayed for a card the rules no longer have.
@@ -9131,6 +9168,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let guestSecurityUntil = 0;
   /** A1: when the rival last ran a Black Market raid on the player's plant. */
   let lastRaid = 0;
+  let sessionRaidCount = 0;
   /**
    * L9 (#224): the two MAP cards the rival's raid table plays — the same two
    * the player can buy, at the same prices. `bandit` is `rivalSabotage`'s
@@ -9664,7 +9702,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       (rival.purse[c] ?? 0) >= storageCapFor(rival.townLevel));
     if (!wasting && !covers(reserve)) return false;
     if (!spend(rival, price.cost)) return false;
-    const score = rivalTuningScore(skill().key);
+    const score = sabotagedScore(rivalTuningScore(skill().key), rival.blackMarket, marketMs);
     if (!rivalCity) {
       rival.townLevel = Math.min(rival.townLevel + 1, TOWN_UPGRADES.length);
       rival.townBonus = townBonusFor(price.def.bonus, score);
@@ -9717,6 +9755,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const every = skill().raidEveryMs;
     if (!every) return;
     if (now - lastRaid < every) return;
+    // When the shared cooldown allows, alternate Frost and Red Tape.
+    // Normal/Hard only (Easy has no raid clock), priced by the shared shop.
+    if (newLoop) {
+      const key = sessionRaidCount % 2 === 0 ? "frost" : "redTape";
+      if (marketMs >= (rival.blackMarket?.readyAt ?? 0)
+        && (rival.purse.gold ?? 0) >= blackGoldFor(rival, key) + RIVAL_GOLD_RESERVE
+        && buyBlackFor(rival, key)) {
+        lastRaid = now;
+        sessionRaidCount++;
+        return;
+      }
+    }
     // L9 (#224): the raid plays the SAME card the player can buy, at the SAME
     // price — a Protest on a public road the player's own routes run through.
     // (The Blockade half of the raid table is `rivalSabotage`, immediately
@@ -10744,7 +10794,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     money: p.money, marketMs, market: marketToWire(market),
     // CAST-1: the seat's manager and the Fixer's allowance — additive-optional
     // like `money`, so an older peer simply ignores them.
-    manager: p.manager, fixer: p.fixer,
+    manager: p.manager, fixer: p.fixer, blackMarket: readBlackMarket(p.blackMarket),
   }));
 
   /**
@@ -11126,6 +11176,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (mg !== undefined) p.manager = managerOrNull(mg);
     const fx = (wire as { fixer?: unknown }).fixer;
     if (fx !== undefined) p.fixer = readFixer(fx);
+    p.blackMarket = readBlackMarket(wire.blackMarket);
     const mm = (wire as { marketMs?: number }).marketMs;
     if (typeof mm === "number" && Number.isFinite(mm)) marketMs = Math.max(0, mm);
     const mw = (wire as { market?: { seed: number } }).market;
@@ -12893,6 +12944,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       portrait,
       // CAST-1: the Black Market at this seat's prices, with the Fixer's chip.
       blackMarket: {
+        cooldownSeconds: Math.ceil(Math.max(0, (me.blackMarket?.readyAt ?? 0) - marketMs) / 1000),
+        frostSeconds: Math.ceil(Math.max(0, (me.blackMarket?.frostUntil ?? 0) - marketMs) / 1000),
+        redTapeSeconds: Math.ceil(Math.max(0, (me.blackMarket?.redTapeUntil ?? 0) - marketMs) / 1000),
         gold: Object.fromEntries(Object.keys(SABOTAGE).map((k) => [k, blackGoldFor(me, k)])),
         security: securityCostFor(me),
         fixer: perksOf(me.manager).freeBlack > 0
@@ -14279,6 +14333,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         money: p.money,
         // CAST-1: a resumed match keeps the manager it was started with.
         manager: p.manager, fixer: p.fixer,
+        blackMarket: rebaseBlackMarket(p.blackMarket, marketMs, 0),
       })),
       // live AI clocks START FRESH on load — a few seconds of drift is not
       // worth serialising a timer list for (the games feel identical).
@@ -14439,6 +14494,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const sm = (d.players[i] as { manager?: unknown }).manager;
       if (sm !== undefined) players[i].manager = players[i].human ? managerOrNull(sm) : null;
       players[i].fixer = readFixer((d.players[i] as { fixer?: unknown }).fixer);
+      players[i].blackMarket = rebaseBlackMarket(d.players[i].blackMarket, 0, marketMs);
     }
     if (me.manager) portrait = me.manager;
     conquest = (d as { conquest?: boolean }).conquest === true || conquest;
@@ -16241,6 +16297,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      *  and prove it crosses the wire (buyBlack refuses on a guest, exactly as
      *  the click path does). */
     buyBlack: (key: string) => buyBlack(key),
+    get blackMarketStates() { return players.map((p) => readBlackMarket(p.blackMarket)); },
     /**
      * L9 (#224): the same Black-Market core, run as a NAMED SEAT — the twin a
      * test needs to arm the rival's Security Forces (or to buy its cards) the

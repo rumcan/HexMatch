@@ -212,6 +212,8 @@ export interface WirePlayer {
    */
   manager?: string | null;
   fixer?: { window: number; used: number };
+  /** BM-2: deadlines on marketMs (independent of browser time origin). */
+  blackMarket?: import("./black-market").BlackMarketState;
 }
 
 /**
