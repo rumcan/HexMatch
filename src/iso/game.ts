@@ -13053,7 +13053,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // that anchor; otherwise a click on its far tiles would start a road the
   // network cannot reach. Keep raw tile picking for other tools/structures.
   const pickForAction = (x: number, y: number) => {
-    const p = renderer?.pick(x, y);
+    // MAP-2 (#559): the Level Ground tool targets GROUND — the tile the cursor
+    // is over — so a resource whose art covers the lots beside its footprint
+    // no longer swallows the click (every such click used to answer with the
+    // industry's own tile and refuse with "A building stands there"). Every
+    // other tool keeps the sprite-first pick it was built around.
+    const p = renderer?.pick(x, y, { sprites: tool !== "level" });
     if (!p || phase !== "play") return p;
     if (tool === "plant") {
       const site = resolvePlantTarget(grid, track, eco, p.tx, p.ty);

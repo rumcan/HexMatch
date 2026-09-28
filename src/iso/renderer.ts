@@ -2253,8 +2253,18 @@ export class IsoRenderer {
   /**
    * Two-stage pick. Stage 1 is the flat screenToTile; stage 2 walks the culled
    * draw list front-to-back with alpha masks and overrides stage 1 on a hit.
+   *
+   * MAP-2 (#559): `sprites: false` stops after stage 1, so the answer is the
+   * TILE the cursor is over and never the sprite whose art happens to cover
+   * it. The Level Ground tool takes it (see `pickForAction`): a tall factory's
+   * art covers the ground beside its footprint, and stage 2 answered every
+   * such click with the factory's own origin tile — a structure that can only
+   * refuse ("A building stands there"), which is exactly the "you cannot
+   * target the ground next to a resource" report.
    */
-  pick(screenX: number, screenY: number): {
+  pick(
+    screenX: number, screenY: number, opts: { sprites?: boolean } = {},
+  ): {
     tx: number; ty: number; sprite: Placed | null; ref: unknown;
   } {
     const [wx, wy] = screenToWorld(this.cam, screenX, screenY);
@@ -2262,6 +2272,7 @@ export class IsoRenderer {
     // a raised tile in front of a lower one is the one picked. `pickTile` is the
     // exact flat pick on a flat map, so the option-off path is unchanged.
     const flat = pickTile(this.world.grid, wx, wy);
+    if (opts.sprites === false) return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
     if (!this.lastOrder.length) this.drawStructures(0);
     const hit = pickSprite(this.atlas, this.lastOrder, wx, wy);
     if (hit) return { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref };
