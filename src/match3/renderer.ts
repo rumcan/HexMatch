@@ -36,12 +36,17 @@ import type { Board } from "./board";
 import { STONE_PALETTE, drawFlatGem, frameIndex, stripTypeFor, type StoneStrip, type StripType } from "./stones";
 import type { BoardPhase, CellRef, ClearPhase, FallPhase, ResKey, SwapPhase, Special } from "./types";
 
+/** One cell's wipe explosion, start to fade (the owner's 8 frames). */
+const BURST_MS = 560;
+
 export interface RendererArt {
   /** The Iron Girder blocker (the painted anvil). */
   girder?: CanvasImageSource | null;
   /** Frost overlays: one hit left, two hits left. */
   ice1?: CanvasImageSource | null;
   ice2?: CanvasImageSource | null;
+  /** The disco ball's board wipe: the owner's explosion, played in every cell. */
+  burst?: CanvasImageSource[] | null;
 }
 
 export interface RendererOptions {
@@ -156,6 +161,8 @@ export class BoardRenderer {
   private particles: Particle[] = [];
   private callouts: Callout[] = [];
   private rings: Ring[] = [];
+  /** Disco wipe: one explosion per cell, rippling out from the ball. */
+  private bursts: { x: number; y: number; born: number }[] = [];
   private raf = 0;
   private running = false;
   private lastFrame = 0;
@@ -485,7 +492,15 @@ export class BoardRenderer {
     }
     if (phase.bombAt) {
       const [cx, cy] = this.cellCentre(phase.bombAt.c, phase.bombAt.r);
-      this.rings.push({ x: cx, y: cy, born: now, life: Math.max(dur * 2, 320), color: "#ffb27a" });
+      this.rings.push({ x: cx, y: cy, born: now, life: Math.max(dur * 2, 320), color: phase.wipe ? "#e6a8ff" : "#ffb27a" });
+      if (phase.wipe) {
+        // the owner's explosion in every cell, rippling out from the ball
+        for (const cell of phase.removed) {
+          const d = Math.hypot(cell.r - phase.bombAt.r, cell.c - phase.bombAt.c);
+          const [x, y] = this.cellCentre(cell.c, cell.r);
+          this.bursts.push({ x, y, born: now + d * 45 });
+        }
+      }
     }
     const call = phase.fx.find((f) => f.type === "chain" || f.type === "combo");
     if (call && call.text) {
@@ -608,7 +623,7 @@ export class BoardRenderer {
       if (!perf && !this.opts.reducedMotion()) {
         const strip = this.opts.getStrip(stripTypeFor(s));
         if (strip && strip.frames > 1) {
-          if (s.special === "bomb") s.angle += ((strip.fps / strip.frames) * dt * ts) / 1000;
+          if (s.special === "bomb" || s.special === "disco") s.angle += ((strip.fps / strip.frames) * dt * ts) / 1000;
           else if (rich && !s.tweens.length) s.angle += ((0.02 * dt * ts) / 1000) * (s.seed % 2 ? 1 : -1);
         }
       }
@@ -625,6 +640,7 @@ export class BoardRenderer {
     this.particles = this.particles.filter((p) => p.age < p.life);
     this.callouts = this.callouts.filter((c) => now - c.born < c.life);
     this.rings = this.rings.filter((r) => now - r.born < r.life);
+    this.bursts = this.bursts.filter((b) => now - b.born < BURST_MS);
   }
 
   private draw(now: number): void {
@@ -649,6 +665,7 @@ export class BoardRenderer {
       Number(a.dying) - Number(b.dying) || inHand(a) - inHand(b) || a.y - b.y);
     for (const s of list) this.drawSprite(ctx, s, now);
     this.drawRings(ctx, now);
+    this.drawBursts(ctx, now);
     this.drawParticles(ctx);
     this.drawCallouts(ctx, now);
     ctx.restore();
@@ -729,6 +746,9 @@ export class BoardRenderer {
       breathe = 1 + 0.012 * Math.sin(now / 1900 + s.seed * 0.7);
     }
     const isSel = !s.dying && this.selected?.r === Math.round(s.y) && this.selected?.c === Math.round(s.x);
+    const hovered = !s.dying && this.hover?.r === Math.round(s.y) && this.hover?.c === Math.round(s.x);
+    // a hovered stone only leans a hair, side to side
+    if (hovered && rich && !isSel && !off) lean += 0.035 * Math.sin(now / 140);
     const pulse = isSel && rich && !off ? 1 + 0.05 * (0.5 - 0.5 * Math.cos((now / 1600) * Math.PI * 2)) : 1;
     const lift = off ? 1.1 : 1;
     const size = cell * 0.92 * s.scale * breathe * pulse * lift;
@@ -744,12 +764,15 @@ export class BoardRenderer {
     }
     if (s.tier > 0) this.drawTokenGlow(ctx, size, s.tier);
     if (isSel) this.drawGlow(ctx, size, "rgba(255, 214, 140, 0.55)");
-    const hovered = !s.dying && this.hover?.r === Math.round(s.y) && this.hover?.c === Math.round(s.x);
+    else if (hovered) this.drawGlow(ctx, size, "rgba(255, 226, 170, 0.35)");
     const ice = s.hard > 0 ? (s.hard >= 2 ? strip?.ice2 : strip?.ice1) : undefined;
     const posed = s.pose ? (s.pose.kind === "boom" ? strip?.boom : strip?.wiggle)?.[s.pose.frame] : undefined;
-    // a line gem is never still: its own wiggle, all the time
-    const wiggling = !perf && rich && !ice && (hovered || isSel || !!off || s.special === "line") && strip?.wiggle?.length;
+    const lineArt = s.special === "line" ? strip?.line : undefined;
+    // Owner (2026-09-28): hover plays no animation — a soft glow and a very
+    // slight sway; the wiggle frames are for a stone held or dragged.
+    const wiggling = !perf && rich && !ice && !lineArt && (isSel || !!off) && strip?.wiggle?.length;
     if (posed) ctx.drawImage(posed, -size / 2, -size / 2, size, size);
+    else if (lineArt && !ice) ctx.drawImage(lineArt, -size / 2, -size / 2, size, size);
     else if (ice) ctx.drawImage(ice, -size / 2, -size / 2, size, size);
     else if (wiggling) ctx.drawImage(strip!.wiggle![Math.floor(now / 120) % strip!.wiggle!.length], -size / 2, -size / 2, size, size);
     else if (strip) this.blit(ctx, strip, perf ? 0 : s.angle, size);
@@ -762,7 +785,6 @@ export class BoardRenderer {
       ctx.arc(0, 0, size * 0.48 + k * 2, 0, Math.PI * 2);
       ctx.stroke();
     }
-    if (s.special === "line") this.drawLineBeams(ctx, size, rich ? now : 0);
     if (s.hard > 0 && !ice) {
       const ice = s.hard >= 2 ? this.opts.art?.ice2 : this.opts.art?.ice1;
       if (ice) {
@@ -771,36 +793,6 @@ export class BoardRenderer {
       } else this.drawFrost(ctx, size, s.hard);
     }
     if (s.tier > 0) this.drawBadge(ctx, size, s.tier);
-    ctx.restore();
-  }
-
-  /** A line gem's mark: a row beam and a column beam of light through it, pulsing. */
-  private drawLineBeams(ctx: CanvasRenderingContext2D, size: number, now: number): void {
-    const k = 0.5 + 0.5 * Math.sin(now / 220);
-    const reach = size * (0.58 + 0.06 * k);
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    for (const [w, a] of [[size * 0.16, 0.18 + 0.12 * k], [size * 0.05, 0.75 + 0.2 * k]] as const) {
-      ctx.strokeStyle = `rgba(255, 226, 150, ${a})`;
-      ctx.lineWidth = w;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(-reach, 0); ctx.lineTo(reach, 0);
-      ctx.moveTo(0, -reach); ctx.lineTo(0, reach);
-      ctx.stroke();
-    }
-    // arrowheads at the four ends: the way the blast will run
-    ctx.fillStyle = `rgba(255, 240, 200, ${0.8 + 0.2 * k})`;
-    const t = size * 0.09;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const x = dx * reach, y = dy * reach;
-      ctx.beginPath();
-      ctx.moveTo(x + dx * t, y + dy * t);
-      ctx.lineTo(x - dy * t * 0.8, y + dx * t * 0.8);
-      ctx.lineTo(x + dy * t * 0.8, y - dx * t * 0.8);
-      ctx.closePath();
-      ctx.fill();
-    }
     ctx.restore();
   }
 
@@ -889,6 +881,18 @@ export class BoardRenderer {
     if (art) {
       const d = size * 0.8;
       ctx.drawImage(art, -d / 2, -d / 2, d, d);
+    }
+  }
+
+  private drawBursts(ctx: CanvasRenderingContext2D, now: number): void {
+    const frames = this.opts.art?.burst;
+    if (!frames?.length || !this.bursts.length) return;
+    const size = this.cell * 1.45;
+    for (const b of this.bursts) {
+      const t = (now - b.born) / BURST_MS;
+      if (t < 0 || t >= 1) continue;
+      const img = frames[Math.min(frames.length - 1, Math.floor(t * frames.length))];
+      ctx.drawImage(img, b.x - size / 2, b.y - size / 2, size, size);
     }
   }
 

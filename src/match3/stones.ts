@@ -17,7 +17,7 @@
 
 import { RES_TO_STONE, type ResKey, type StoneType, type Special } from "./types";
 
-export type StripType = StoneType | "bomb";
+export type StripType = StoneType | "bomb" | "disco";
 
 export interface StoneStrip {
   type: string;
@@ -32,6 +32,8 @@ export interface StoneStrip {
   /** The stone frozen: one hit left (semi-iced), two hits left (full ice). */
   ice1?: CanvasImageSource;
   ice2?: CanvasImageSource;
+  /** Owner (2026-09-28): the LINE gem wears the old octagon gem of its colour. */
+  line?: CanvasImageSource;
 }
 
 /** The frame at an angle in turns (0…1 = one rotation; any real accepted). */
@@ -43,7 +45,7 @@ export function frameIndex(strip: Pick<StoneStrip, "frames">, turns: number): nu
 
 /** The strip a gem draws from: its cargo, or its special. */
 export function stripTypeFor(gem: { res: ResKey; special: Special }): StripType {
-  return gem.special === "bomb" ? "bomb" : RES_TO_STONE[gem.res];
+  return gem.special === "bomb" ? "bomb" : gem.special === "disco" ? "disco" : RES_TO_STONE[gem.res];
 }
 
 /** Cut a horizontal sheet of `frames` equal squares into its pictures. */
@@ -107,6 +109,7 @@ export const STONE_PALETTE: Record<StripType, StonePalette> = {
   oil: { base: "#9a4cf4", dark: "#1c1b24", glint: "#e1c6ff" },
   gold: { base: "#ffd24a", dark: "#c58a10", glint: "#fff6c8" },
   bomb: { base: "#3a3a40", dark: "#101014", glint: "#ffb27a" },
+  disco: { base: "#9a6ae0", dark: "#2a1a4a", glint: "#f4d8ff" },
 };
 
 /** A plain token in the stone's palette — only for the instant before the art decodes. */

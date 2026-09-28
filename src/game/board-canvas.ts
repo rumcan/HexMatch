@@ -22,7 +22,7 @@
 // so the board never shows a hole (and headless tests, which never decode an
 // image, run the same code).
 // ══════════════════════════════════════════════════════════════════════════
-import { BoardRenderer } from "../match3/renderer";
+import { BoardRenderer, type RendererArt } from "../match3/renderer";
 import { sliceSheet, withShadow, type StoneStrip, type StripType } from "../match3/stones";
 import type { BoardPhase, CellRef, SwapPhase } from "../match3/types";
 import type { Board } from "./board";
@@ -35,6 +35,8 @@ const BOARD_ART = import.meta.glob<string>("../assets/board/*.{webp,png}", { eag
 const art = (name: string): string | undefined => BOARD_ART[`../assets/board/${name}`];
 /** The owner's per-gem animations and iced pictures (tools/make-gem-anims.py). */
 const ANIM = import.meta.glob<string>("../assets/gems/anim/*.png", { eager: true, import: "default" });
+/** Owner (2026-09-28): the line gem's art — the old octagon gems. */
+const LINE_ART = import.meta.glob<string>("../assets/gems/line/*.png", { eager: true, import: "default" });
 
 /** Frames in the bomb's sheet (one full turn). */
 export const BOMB_FRAMES = 24;
@@ -100,7 +102,7 @@ export function mountBoardCanvas(host: BoardCanvasHost): BoardCanvas | null {
   host.grid.classList.add("canvas-board");
 
   const strips = new Map<StripType, StoneStrip>();
-  const boardArt: { girder?: CanvasImageSource | null; ice1?: CanvasImageSource | null; ice2?: CanvasImageSource | null } = {};
+  const boardArt: RendererArt = {};
 
   const renderer = new BoardRenderer(canvas, host.board, {
     cell: host.cell,
@@ -141,13 +143,15 @@ export function mountBoardCanvas(host: BoardCanvasHost): BoardCanvas | null {
     void Promise.all([
       loadImage(cargoArt[cargo]), seq("wiggle"), seq("boom"),
       loadImage(ANIM[`../assets/gems/anim/${cargo}_ice1.png`]), loadImage(ANIM[`../assets/gems/anim/${cargo}_ice2.png`]),
-    ]).then(([img, wiggle, boom, ice1, ice2]) => {
+      loadImage(LINE_ART[`../assets/gems/line/${cargo}.png`]),
+    ]).then(([img, wiggle, boom, ice1, ice2, line]) => {
       if (!img) return;
       const all = (xs: (HTMLImageElement | null)[]) => (xs.every(Boolean) ? xs.map((x) => withShadow(x!)) : undefined);
       strips.set(STRIP_OF[cargo], {
         type: cargo, frames: 1, fps: 0, images: [withShadow(img)],
         wiggle: all(wiggle), boom: all(boom),
         ice1: ice1 ? withShadow(ice1) : undefined, ice2: ice2 ? withShadow(ice2) : undefined,
+        line: line ? withShadow(line) : undefined,
       });
     });
   }
@@ -155,6 +159,14 @@ export function mountBoardCanvas(host: BoardCanvasHost): BoardCanvas | null {
     if (!img) return;
     const frames = sliceSheet(img, BOMB_FRAMES).map((f) => withShadow(f as HTMLCanvasElement));
     if (frames.length) strips.set("bomb", { type: "bomb", frames: frames.length, fps: 15, images: frames });
+  });
+  // Owner (2026-09-28): the disco ball (match 5) spins through its four
+  // frames; its board wipe plays the explosion in every cell.
+  void Promise.all([0, 1, 2, 3].map((i) => loadImage(ANIM[`../assets/gems/anim/disco_${i}.png`]))).then((fs) => {
+    if (fs.every(Boolean)) strips.set("disco", { type: "disco", frames: 4, fps: 8, images: fs.map((f) => withShadow(f!)) });
+  });
+  void Promise.all([0, 1, 2, 3, 4, 5, 6, 7].map((i) => loadImage(ANIM[`../assets/gems/anim/burst_${i}.png`]))).then((fs) => {
+    if (fs.every(Boolean)) boardArt.burst = fs as HTMLImageElement[];
   });
   // (frost: each gem has its own iced pictures now; the cube is only the fallback)
   void loadImage(art("ice1@2x.webp")).then((img) => { boardArt.ice1 = img; });
