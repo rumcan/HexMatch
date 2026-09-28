@@ -19,12 +19,14 @@ No ceiling (owner call, 2026-09) — only the Depot's level cap (the overshoot p
 | Stars | Score ≥ | Verdict    | Share of the average player | Share of the competent player |
 | ----- | ------- | ---------- | --------------------------- | ----------------------------- |
 | ★     | 1       | Tuned      | 32.0 %                      | 13.0 %                        |
-| ★★    | 96      | Well tuned | 43.0 %                      | 44.7 %                        |
-| ★★★   | 177     | Precision  | 19.3 %                      | 27.7 %                        |
-| ★★★★  | 300     | Overdrive  | 5.3 %                       | 12.3 %                        |
-| ★★★★★ | 480     | Legendary  | 0.3 %                       | 2.3 %                         |
+| ★★    | 135     | Well tuned | 43.0 %                      | 44.7 %                        |
+| ★★★   | 360     | Precision  | 19.3 %                      | 27.7 %                        |
+| ★★★★  | 600     | Overdrive  | 5.3 %                       | 12.3 %                        |
+| ★★★★★ | 870     | Legendary  | 0.3 %                       | 2.3 %                         |
 
 **Why these bars.** The old table (#300) put ★★★ at the target, score 60 — and the cargo-biased depot board cascades so readily that nearly every session cleared it (the owner's "it's too easy to get 3 stars"). Fable's analytic first cut (42 / 78 / 108 / 138) had the same problem: the average bot scored a median of 118, so it averaged ~3.8★. The bars above are read off the **measured** sweep instead: ★★ at the average player's 30th percentile, ★★★ near their 75th, ★★★★ near their 95th, and ★★★★★ past the competent player's 97th.
+
+**2026-09-28, the line gem:** a match of 4 now leaves a line gem (clears a row and a column; swapped, just the row or the column). It lifts every score, so the bars moved to 135 / 360 / 600 / 870 by the same method (average bot p30 / p75 / p95, competent p97). The share columns above are from the first sweep; `match3-balance-bot.test.ts` holds the gate.
 
 ## The sweep
 

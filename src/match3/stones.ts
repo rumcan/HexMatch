@@ -15,7 +15,7 @@
 // hole.
 // ══════════════════════════════════════════════════════════════════════════
 
-import { RES_TO_STONE, type ResKey, type StoneType } from "./types";
+import { RES_TO_STONE, type ResKey, type StoneType, type Special } from "./types";
 
 export type StripType = StoneType | "bomb";
 
@@ -42,7 +42,7 @@ export function frameIndex(strip: Pick<StoneStrip, "frames">, turns: number): nu
 }
 
 /** The strip a gem draws from: its cargo, or its special. */
-export function stripTypeFor(gem: { res: ResKey; special: null | "bomb" }): StripType {
+export function stripTypeFor(gem: { res: ResKey; special: Special }): StripType {
   return gem.special === "bomb" ? "bomb" : RES_TO_STONE[gem.res];
 }
 

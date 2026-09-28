@@ -19,7 +19,7 @@ describe("MATCH-2 — the 5★ scale", () => {
   it("has five rising rows, read off the yield curve", () => {
     expect(TUNING_STARS.map((r) => r.stars)).toEqual([1, 2, 3, 4, 5]);
     for (let i = 1; i < TUNING_STARS.length; i++) expect(TUNING_STARS[i].curve).toBeGreaterThan(TUNING_STARS[i - 1].curve);
-    expect(tuningStarScores()).toEqual([1, 96, 177, 300, 480]);
+    expect(tuningStarScores()).toEqual([1, 135, 360, 600, 870]);
   });
 
   it("rates a score by the highest bar it reaches", () => {
@@ -27,18 +27,18 @@ describe("MATCH-2 — the 5★ scale", () => {
     expect(tuningStarsFor(-3)).toBe(0);
     expect(tuningStarsFor(NaN)).toBe(0);
     expect(tuningStarsFor(1)).toBe(1);
-    expect(tuningStarsFor(95)).toBe(1);
-    expect(tuningStarsFor(96)).toBe(2);
-    expect(tuningStarsFor(176)).toBe(2);
-    expect(tuningStarsFor(177)).toBe(3);
-    expect(tuningStarsFor(299)).toBe(3);
-    expect(tuningStarsFor(300)).toBe(4);
-    expect(tuningStarsFor(479)).toBe(4);
-    expect(tuningStarsFor(480)).toBe(5);
+    expect(tuningStarsFor(134)).toBe(1);
+    expect(tuningStarsFor(135)).toBe(2);
+    expect(tuningStarsFor(359)).toBe(2);
+    expect(tuningStarsFor(360)).toBe(3);
+    expect(tuningStarsFor(599)).toBe(3);
+    expect(tuningStarsFor(600)).toBe(4);
+    expect(tuningStarsFor(869)).toBe(4);
+    expect(tuningStarsFor(870)).toBe(5);
     expect(tuningStarsFor(9999)).toBe(5);
   });
 
-  it("is harder than #300's table: the old ★★★ (score 60) is ★ now, ★★ needs 96", () => {
+  it("is harder than #300's table: the old ★★★ (score 60) is ★ now, ★★ needs 135", () => {
     expect(tuningStarsFor(60)).toBe(1);
     expect(tuningStarsFor(30)).toBe(1);
   });
@@ -53,9 +53,9 @@ describe("MATCH-2 — the 5★ scale", () => {
     expect(tuningYieldFor(30, 1.5)).toBe(2);
     // the tiers are points on that same line
     const tiers = starTierYields(1);
-    expect(tiers.map((t) => t.score)).toEqual([1, 96, 177, 300, 480]);
+    expect(tiers.map((t) => t.score)).toEqual([1, 135, 360, 600, 870]);
     for (const t of tiers) expect(t.yield).toBe(tuningYieldFor(t.score, 1));
-    expect(starTierYields(1.5)[1].yield).toBe(3.1);
+    expect(starTierYields(1.5)[1].yield).toBe(3.75);
   });
 
   it("names every tier and counts the distance to the next", () => {
@@ -63,8 +63,8 @@ describe("MATCH-2 — the 5★ scale", () => {
     expect(tuningStarLabel(5)).toBe("Legendary");
     expect(tuningStarLabel(0)).toBe("");
     expect(scoreToNextStar(0)).toBe(1);
-    expect(scoreToNextStar(40)).toBe(56);
-    expect(scoreToNextStar(480)).toBe(0);
+    expect(scoreToNextStar(40)).toBe(95);
+    expect(scoreToNextStar(870)).toBe(0);
   });
 
   it("prints the depot card's glyphs on the 5-scale", () => {

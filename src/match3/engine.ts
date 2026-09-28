@@ -30,6 +30,7 @@ import {
   type BoardObstacles,
   type BoardPhase,
   type CellGem,
+  type CellRef,
   type ClearPhase,
   type CrossHit,
   type CrossKind,
@@ -40,6 +41,7 @@ import {
   type PassReport,
   type ResKey,
   type RewardKind,
+  type Special,
 } from "./types";
 
 /** The colours a board boots with — gold only joins once a mine is reached. */
@@ -291,11 +293,94 @@ export class Match3Engine {
   }
 
   /** Resolve `groups`: remove, crack, forge, mint — and report what happened. */
+  /** The gems a line gem at (r, c) sweeps: its row, its column, or both. */
+  lineCells(r: number, c: number, axis: "row" | "col" | "both"): Gem[] {
+    const out: Gem[] = [];
+    if (axis !== "col") for (let x = 0; x < this.w; x++) { const g = this.grid[r][x]; if (g) out.push(g); }
+    if (axis !== "row") for (let y = 0; y < this.h; y++) { const g = this.grid[y][c]; if (g && y !== r) out.push(g); }
+    return out;
+  }
+
+  /**
+   * Grow a removal set through the line gems in it: each fires its row and
+   * column once (girders stand, frost cracks instead). Returns where each
+   * line fired, for the blast fx.
+   */
+  private expandLines(removeIds: Set<number>, crackIds: Set<number>, first?: { gem: Gem; axis: "row" | "col" | "both" }): CellRef[] {
+    const fired = new Set<number>();
+    const at: CellRef[] = [];
+    const fire = (g: Gem, axis: "row" | "col" | "both") => {
+      fired.add(g.id);
+      at.push({ r: g.r, c: g.c });
+      for (const o of this.lineCells(g.r, g.c, axis)) {
+        if (o.block || o.id === g.id) continue;
+        if (o.hard > 0) { crackIds.add(o.id); continue; }
+        removeIds.add(o.id);
+      }
+    };
+    if (first) { removeIds.add(first.gem.id); fire(first.gem, first.axis); }
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const g of this.gems()) {
+        if (g.special === "line" && removeIds.has(g.id) && !fired.has(g.id)) { fire(g, "both"); grew = true; }
+      }
+    }
+    return at;
+  }
+
+  /**
+   * A line gem SWAPPED: it clears just its row (a left/right swap) or just its
+   * column (up/down), then the board settles as after any clear.
+   */
+  *lineBlast(line: Gem, axis: "row" | "col"): Resolution {
+    const removeIds = new Set<number>();
+    const crackIds = new Set<number>();
+    const at = this.expandLines(removeIds, crackIds, { gem: line, axis });
+    const gains: Partial<Record<ResKey, number>> = {};
+    const removed: CellGem[] = [];
+    const cracked: ClearPhase["cracked"] = [];
+    const fx: FxEvent[] = at.map((b) => ({ type: "boom" as const, r: b.r, c: b.c }));
+    const rewards: RewardKind[] = [];
+    for (let r = 0; r < this.h; r++) {
+      for (let c = 0; c < this.w; c++) {
+        const g = this.grid[r][c];
+        if (!g) continue;
+        if (crackIds.has(g.id)) {
+          g.hard = (g.hard - 1) as 0 | 1 | 2;
+          cracked.push({ r, c, kind: "frost", left: g.hard });
+          fx.push({ type: "crack", r, c });
+          if (this.paysScore) rewards.push("frost");
+        } else if (removeIds.has(g.id)) {
+          if (g.tier > 0) {
+            const paid = this.credit(g.res, g.tier, g.forged === true);
+            if (paid > 0) gains[g.res] = (gains[g.res] ?? 0) + paid;
+          }
+          g.dead = true;
+          this.grid[r][c] = null;
+          removed.push({ r, c, id: g.id, res: g.res });
+          fx.push({ type: "pop", r, c });
+        }
+      }
+    }
+    const purged = removed.length;
+    yield {
+      type: "bombClear", chain: 1, removed, cracked, minted: [], fx, rewards, bonus: [], crosses: [],
+      cleared: purged, pass: { cleared: {}, biggest: 0, shaped: false, chain: 1, purged },
+      bombAt: { r: line.r, c: line.c }, label: "LINE BLAST",
+    };
+    yield { type: "end", gains, label: "LINE BLAST", maxChain: 0 };
+    const fall = this.gravity(2);
+    yield { ...fall, type: "bombFall" };
+    yield* this.settle(2);
+    return true;
+  }
+
   resolve(groups: Gem[][], gains: Partial<Record<ResKey, number>>, chain = 1): ClearPhase {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
     const bombs: { r: number; c: number; res: ResKey }[] = [];
+    const lines: { r: number; c: number; res: ResKey }[] = [];
     const fx: FxEvent[] = [];
     const rewards: RewardKind[] = [];
     const bonus: ClearPhase["bonus"] = [];
@@ -318,12 +403,18 @@ export class Match3Engine {
         }
       }
       const mid = grp[Math.floor(size / 2)];
-      if (size === 4 && !tokenPresent && !this.paysScore) forge.push({ r: mid.r, c: mid.c, res: anchor, tier: 1 });
+      // Owner (2026-09-28): a match of 4 leaves a LINE gem of its colour behind.
+      if (size === 4) lines.push({ r: mid.r, c: mid.c, res: anchor });
       if (size >= 5) {
         bombs.push({ r: mid.r, c: mid.c, res: anchor });
         if (!tokenPresent && !this.paysScore) forge.push({ r: grp[0].r, c: grp[0].c, res: anchor, tier: 2 });
       }
     }
+
+    // A line gem caught in a match clears its whole row and column; a line gem
+    // those clear takes its own cross with it.
+    const blasts = this.expandLines(removeIds, crackIds);
+    for (const b of blasts) fx.push({ type: "boom", r: b.r, c: b.c });
 
     // apply
     const removed: CellGem[] = [];
@@ -370,6 +461,14 @@ export class Match3Engine {
       this.grid[f.r][f.c] = g;
       minted.push({ r: f.r, c: f.c, what: "token" });
       fx.push({ type: "up", r: f.r, c: f.c });
+    }
+    for (const l of lines) {
+      if (this.grid[l.r][l.c]) continue;
+      const g = this.newGem(l.res, l.r, l.c);
+      g.special = "line";
+      this.grid[l.r][l.c] = g;
+      minted.push({ r: l.r, c: l.c, what: "line" });
+      fx.push({ type: "up", r: l.r, c: l.c });
     }
     for (const b of bombs) {
       const g = this.newGem(b.res, b.r, b.c);
@@ -475,6 +574,10 @@ export class Match3Engine {
     const g1 = this.grid[r1]?.[c1];
     const g2 = this.grid[r2]?.[c2];
     if (!g1 || !g2 || g1.block || g2.block) return 0;
+    if (g1.special === "line" || g2.special === "line") {
+      const l = g1.special === "line" ? g1 : g2;
+      return this.lineCells(l.r, l.c, r1 === r2 ? "row" : "col").filter((g) => !g.block).length;
+    }
     if (g1.special === "bomb" || g2.special === "bomb") {
       const colour = g1.special === "bomb" ? g2.res : g1.res;
       return this.gems().filter((g) => g.res === colour && !g.block && g.special !== "bomb").length;
@@ -524,6 +627,7 @@ export class Match3Engine {
             if (!(a.special === "bomb" && b.special === "bomb") && !bombMove) bombMove = [r, c, r2, c2];
             continue;
           }
+          if ((a.special === "line" || b.special === "line") && !bombMove) bombMove = [r, c, r2, c2];
           if (!this.wouldMatch(r, c, r2, c2)) continue;
           const mv: Move = [r, c, r2, c2];
           if (!score) return mv;
@@ -543,7 +647,7 @@ export class Match3Engine {
       for (let c = 0; c < this.w; c++) {
         const a = this.grid[r][c];
         if (!a || a.block) continue;
-        if (a.special === "bomb") {
+        if (a.special === "bomb" || a.special === "line") {
           const free = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const).some(([dr, dc]) => {
             const n = this.grid[r + dr]?.[c + dc];
             return !!n && !n.block;
@@ -616,6 +720,10 @@ export class Match3Engine {
       const b = g1.special === "bomb" ? g1 : g2;
       const other = g1.special === "bomb" ? g2 : g1;
       yield* this.detonate(b, other.res);
+      return true;
+    }
+    if (g1.special === "line" || g2.special === "line") {
+      yield* this.lineBlast(g1.special === "line" ? g1 : g2, r1 === r2 ? "row" : "col");
       return true;
     }
     if (!this.findGroups().length) {
@@ -820,7 +928,7 @@ export class Match3Engine {
 
   // ── wire ───────────────────────────────────────────────────────────────
   snapshot(): {
-    grid: ({ id: number; res: ResKey; tier: number; special: null | "bomb"; hard: number; block: boolean; forged: 0 | 1 } | null)[][];
+    grid: ({ id: number; res: ResKey; tier: number; special: Special; hard: number; block: boolean; forged: 0 | 1 } | null)[][];
     seq: number;
     pool: ResKey[];
     comboCount: number;
