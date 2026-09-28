@@ -12,6 +12,7 @@
 // water, quota per industry type so no cargo is absent from the map.
 // ══════════════════════════════════════════════════════════════════════════
 import { fillCoastalHoles } from "./coastline";
+import { deriveTownNames } from "./town-names";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
@@ -80,6 +81,19 @@ export interface Town {
    * so their towns keep today's look unchanged.
    */
   level?: number;
+  /**
+   * TOWN-3 (#561): a generated 1940s–50s town name ("Millbrook",
+   * "Hartwell"...), seeded from the map's seed alone (`deriveTownNames` in
+   * `town-names.ts`) — deterministic per map and never repeated within one
+   * map. `generateMap` always fills it (from its own private RNG stream, so
+   * drawing it never perturbs the terrain/industry/town PLACEMENT stream —
+   * every seed keeps its byte-identical geometry); optional only so the
+   * hand-built synthetic grids in unit tests, which build a `Town` literal
+   * directly, stay valid without naming anything. Every UI surface that used
+   * to print "Town N" reads this first and falls back to that only when it
+   * is absent.
+   */
+  name?: string;
 }
 
 export interface Grid {
@@ -2690,6 +2704,16 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
       connected: opts.archipelago === true ? false : undefined,
       regions: opts.archipelago === true ? archipelagoRegions() : undefined,
     });
+  // TOWN-3 (#561): name the towns from the seed alone, on a private RNG
+  // stream (see `town-names.ts`) — drawn AFTER placement so the number and
+  // order of towns is already final, and never from `rng` itself, so no
+  // seed's terrain/industry/town geometry changes. Deterministic and
+  // repeat-free per map; every client rebuilds the same names from the same
+  // seed, so nothing here needs to travel on a save or the MP wire.
+  {
+    const names = deriveTownNames(s, towns.length);
+    for (let i = 0; i < towns.length; i++) towns[i].name = names[i];
+  }
   // PP-13: highways between the towns, derived from the towns that were
   // actually placed. No RNG draws, so the seeded stream the rest of the map
   // depends on is untouched — and the highway is a pure function of the seed.

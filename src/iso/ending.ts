@@ -478,6 +478,13 @@ export interface EndingScreenOptions {
   rank?: EndingRankLine | null;
   /** END-1 (#472): the match summary, when available. */
   summary?: SummaryModel | null;
+  /**
+   * TOWN-3 (#561): the map's town names, in `grid.towns` order (index =
+   * `townId`) — lets the summary's "First to each town tier" line say
+   * "Millbrook → Lv2" instead of a bare town number. Optional: absent falls
+   * back to the historical placeholder, so an older caller keeps working.
+   */
+  townNames?: readonly string[];
   /** END-1: one-click rematch — same settings, new seed. */
   onRematch?: () => void;
   /** END-1: same map again — same seed. */
@@ -807,7 +814,7 @@ function appendSummaryCharts(host: HTMLElement, summary: SummaryModel): void {
   host.appendChild(wrap);
 }
 
-function appendSummaryHighlights(host: HTMLElement, summary: SummaryModel): void {
+function appendSummaryHighlights(host: HTMLElement, summary: SummaryModel, townNames?: readonly string[]): void {
   const wrap = el("section", "ending-summary-highlights");
   wrap.setAttribute("aria-label", "Highlights");
   wrap.appendChild(el("h2", "ending-section-title", "Highlights"));
@@ -839,9 +846,13 @@ function appendSummaryHighlights(host: HTMLElement, summary: SummaryModel): void
   addRow("⚔", "Battles won", `You ${hl.battles.pWins} – Rival ${hl.battles.rWins} (total ${hl.battles.total})`);
   addRow("📦", "Contracts & tenders", `Offers taken: You ${hl.offers.pTaken} – Rival ${hl.offers.rTaken} · Quests: You ${hl.quests.pDone} – Rival ${hl.quests.rDone}`);
   if (hl.townFirsts.length) {
+    // TOWN-3 (#561): `townNames[id]` is the grid's generated name for that
+    // town ("Millbrook"); falls back to the placeholder only if the caller
+    // could not supply names (defensive — the live game always can).
+    const nameOf = (id: number): string => townNames?.[id] ?? `Town ${id + 1}`;
     const txt = hl.townFirsts.slice(0, 8).map((f) => {
       const who = f.firstSeat === 0 ? "You" : "Rival";
-      return `Town ${f.townId} → Lv${f.level} by ${who} @${fmtTime(f.firstT)}`;
+      return `${nameOf(f.townId)} → Lv${f.level} by ${who} @${fmtTime(f.firstT)}`;
     }).join(" · ");
     const more = hl.townFirsts.length > 8 ? ` +${hl.townFirsts.length - 8} more` : "";
     addRow("▰", "First to each town tier", txt + more);
@@ -853,13 +864,13 @@ function appendSummaryHighlights(host: HTMLElement, summary: SummaryModel): void
   host.appendChild(wrap);
 }
 
-function appendSummarySection(card: HTMLElement, summary: SummaryModel): void {
+function appendSummarySection(card: HTMLElement, summary: SummaryModel, townNames?: readonly string[]): void {
   const section = el("section", "ending-summary");
   section.id = "iso-ending-summary";
   section.setAttribute("aria-label", "Match summary");
   section.appendChild(el("h2", "ending-section-title", "Match summary"));
   appendSummaryCharts(section, summary);
-  appendSummaryHighlights(section, summary);
+  appendSummaryHighlights(section, summary, townNames);
   card.appendChild(section);
 }
 
@@ -942,7 +953,7 @@ export function showEndingScreen(
   // END-1 (#472): summary, if available, stands after the rank row and before the epilogue
   // so the score, then what the scoreboard did to the ladder, then the charts, then what happened next.
   if (options.summary) {
-    appendSummarySection(card, options.summary);
+    appendSummarySection(card, options.summary, options.townNames);
   }
 
   const after = el("section", "ending-after");

@@ -770,7 +770,7 @@ export function siteIncome(
 /** What the stakes card prints, all read live off the economy. */
 export interface BattleStakeFacts {
   kind: "industry" | "town";
-  /** The site's display name ("Farm", "Town 2"). */
+  /** The site's display name ("Farm", "Millbrook"). */
   site: string;
   /** Who holds it now ("You", a rival's name, or "Unclaimed"). */
   holder: string;
@@ -834,7 +834,7 @@ export function battleStakeFacts(
   for (const o of owners) perMin += siteIncome(eco, { kind: "town", townId }, o, tickMs, now).perMin;
   return {
     kind: "town",
-    site: `Town ${townId + 1}`,
+    site: eco.grid.towns[townId]?.name ?? `Town ${townId + 1}`,
     holder: owners.length
       ? owners.map((o) => opts.nameOf(o)).join(" & ")
       : hold ? opts.nameOf(hold.holder) : "Unclaimed",

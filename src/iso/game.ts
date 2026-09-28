@@ -3339,6 +3339,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // prints "filing…"), and the line itself once it has landed.
         rank: rankRuntime ? (rankVerdict ? rankLineFor(rankVerdict) : null) : undefined,
         summary,
+        // TOWN-3 (#561): the ending's "First to each town tier" line names
+        // towns instead of numbering them.
+        townNames: grid.towns.map((t) => t.name ?? `Town ${t.id + 1}`),
         onRestart: () => {
           restartArmed = true;
           clearSave(saveKey);
@@ -3590,7 +3593,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const phase = target > 0 ? Math.min(1, vpNow / target) : 0;
     const townsForView = grid.towns.map((t) => ({
       id: t.id,
-      name: `Town ${t.id + 1}`,
+      name: t.name ?? `Town ${t.id + 1}`,
       tx: t.tx,
       ty: t.ty,
     }));
@@ -4226,8 +4229,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     for (const t of grid.towns) {
       const hot = contestedT.has(t.id);
+      const label = t.name ?? "Town";
       entries.push({
-        key: `town-${t.id}`, name: hot ? sword("Town") : "Town", tx: t.tx, ty: t.ty,
+        key: `town-${t.id}`, name: hot ? sword(label) : label, tx: t.tx, ty: t.ty,
         cls: hot ? "label-town label-contested" : "label-town",
       });
     }
@@ -7539,7 +7543,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const industryName = (id: number | undefined): string =>
     INDUSTRY_BY_KEY[grid.industries[id ?? -1]?.type ?? ""]?.name ?? "the industry";
   const townName = (id: number | undefined): string =>
-    id == null ? "the city" : `Town ${id + 1}`;
+    id == null ? "the city" : grid.towns[id]?.name ?? `Town ${id + 1}`;
   const pavedCountOf = (p: PlayerState): number => {
     let n = 0;
     for (let i = 0; i < track.road.length; i++) {
@@ -10213,7 +10217,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return {
       kind: "lot", id: ty * MAP_W + tx, tx, ty,
       townId: town?.id ?? null,
-      name: town ? `a plant site at Town ${town.id + 1}` : "a plant site",
+      name: town ? `a plant site at ${town.name ?? `Town ${town.id + 1}`}` : "a plant site",
     };
   };
   const siteLabel = (site: ClaimSite): string =>
@@ -12454,7 +12458,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           && resolveConnection(eco, componentsFor(h.ownerId), h).factory === f).length;
         info = `<b>Processing Plant</b> (${owner === "you" ? "yours" : "rival"})<br>` +
           `plant ${(f?.id ?? 0) + 1} of ${list.length}` +
-          (f?.townId != null ? ` · town ${f.townId + 1}` : "") + `<br>` +
+          (f?.townId != null ? ` · ${grid.towns[f.townId]?.name ?? `town ${f.townId + 1}`}` : "") + `<br>` +
           `${served} depot${served === 1 ? "" : "s"} delivering here`;
       } else if (ref && ref.kind === "town" && newLoop) {
         // L17 (#245): the town centre answers with what it is and what the
@@ -12466,7 +12470,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const isBank = townCentreSprite(tier) === "town_bank";
           const mine = townOfSeat(me)?.id === t.id;
           const price = mine ? priceTownUpgrade(me.purse, me.townLevel) : null;
-          info = `<b>${isBank ? "Town Bank" : "Town Square"}</b> — a ${townTierLabel(tier)}<br>` +
+          info = `<b>${t.name ?? `Town ${t.id + 1}`}</b> — ${isBank ? "Town Bank" : "Town Square"}, a ${townTierLabel(tier)}<br>` +
             (mine
               ? (price?.def
                 ? `click to upgrade · ${costLabel(price.cost)}`
