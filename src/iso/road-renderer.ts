@@ -52,7 +52,7 @@ import {
 import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
-import { FLAT_DRAPER, draperFor, elevationLiftPx, type Draper } from "./elevation";
+import { FLAT_DRAPER, draperFor, elevationLiftPx, slopeShade, tileCorners, type Draper } from "./elevation";
 import type { Decal } from "./scenery";
 import { DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads, type Track } from "./track";
 
@@ -1407,6 +1407,10 @@ export class RoadCache {
       // Road-above-rail is the inverse ordering of a level/rail-deck crossing.
       // Repaint only those deck tiles, inside the existing cached raster.
       if (gradeRoadDecks.length) paintRoadTiles(ctx, gradeRoadDecks, style, [], [], elev, diagonalsOn(world));
+      // Owner (2026-09-28): roads and rails sat bright on shaded hillsides —
+      // the terrain shader lights slopes, this layer never did. Shade them the
+      // same way, only where road/rail paint already is (source-atop).
+      if (world.grid?.height) paintSlopeShade(ctx, world.grid, [...tiles, ...rail], elev);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       // No softening pass: the chunk is rasterised at the camera zoom in
       // backing pixels and blitted 1:1, so it stays crisp at every zoom.
@@ -1453,4 +1457,39 @@ export class RoadCache {
     }
     return blits;
   }
+}
+
+/**
+ * Hill shading for the road/rail raster: each covered tile's draped diamond,
+ * dark on slopes turned from the upper-left sun and a faint warm wash on the
+ * lit ones, composited `source-atop` so it lands on road and track pixels
+ * only. `slopeShade` is the terrain's own term (≈ −0.30…+0.14), so the roads
+ * darken exactly where the ground around them does. Flat tiles cost nothing.
+ */
+function paintSlopeShade(
+  ctx: Ctx2D,
+  grid: NonNullable<RoadWorld["grid"]>,
+  tiles: readonly { tx: number; ty: number }[],
+  elev: Draper,
+): void {
+  const seen = new Set<number>();
+  ctx.save();
+  ctx.globalCompositeOperation = "source-atop";
+  for (const t of tiles) {
+    const key = t.ty * MAP_W + t.tx;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const s = slopeShade(tileCorners(grid, t.tx, t.ty));
+    if (Math.abs(s) < 0.015) continue;
+    const pts = elev.path([[t.tx, t.ty], [t.tx + 1, t.ty], [t.tx + 1, t.ty + 1], [t.tx, t.ty + 1]]);
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = s < 0
+      ? `rgba(18,22,28,${Math.min(0.55, -s * 1.4).toFixed(3)})`
+      : `rgba(255,242,214,${Math.min(0.22, s * 1.1).toFixed(3)})`;
+    ctx.fill();
+  }
+  ctx.restore();
 }
