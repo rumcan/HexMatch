@@ -789,6 +789,8 @@ export class IsoRenderer {
   // ── damage-clipped traffic repaint ───────────────────────────────────────
   /** The structures canvas holds a complete frame the next pass may patch. */
   private paintedValid = false;
+  /** The grade the structures canvas was last fully painted with. */
+  private paintedLighting: Lighting | null = null;
   /** Non-moving placements in the order last drawn (compared by identity). */
   private lastStaticOrder: Placed[] = [];
   /** Screen bounds of every moving sprite last drawn. */
@@ -1266,7 +1268,11 @@ export class IsoRenderer {
    * extra passes.
    */
   setLighting(next: Lighting): void {
-    const prev = this.lighting;
+    // Compare with the grade the canvas was last FULLY painted with, not the
+    // previous frame's: the arc eases a hair per frame, so frame-to-frame
+    // deltas never crossed the threshold and the canvas drifted from the live
+    // grade until every partial redraw showed as a box.
+    const prev = this.paintedLighting ?? this.lighting;
     this.lighting = next;
     if (lightingPaintChanged(prev, next)) {
       this.structuresDirty = true;
@@ -1915,6 +1921,10 @@ export class IsoRenderer {
       // LIGHT-1: one multiply over the freshly drawn frame (roads and
       // buildings together), then the window glow on top so it stays emissive.
       this.applyStructureTint(ctx, null);
+      // Remember the grade this whole canvas now carries: damage rects must
+      // be tinted with THIS grade, not the live one, or every redraw box (a
+      // car, a lorry passing a building) shows as a differently-graded patch.
+      this.paintedLighting = this.lighting;
       if (tinting) shadows = paintShadowsUnder();
       this.paintWindows(ctx, order, timeMs);
       this.paintedValid = true;
@@ -1939,7 +1949,7 @@ export class IsoRenderer {
         }
         // Tint only the pixels just drawn. The rest of the canvas was graded
         // on an earlier full pass; multiplying it again would crush it.
-        this.applyStructureTint(ctx, rects);
+        this.applyStructureTint(ctx, rects, this.paintedLighting ?? this.lighting);
         if (tinting) shadows = paintShadowsUnder();
         this.paintWindows(ctx, order, timeMs, rects);
         ctx.restore();
@@ -1987,8 +1997,8 @@ export class IsoRenderer {
    * drawn (null = the whole canvas). A missing canvas — the node stubs — skips
    * the pass rather than painting a black plate.
    */
-  private applyStructureTint(ctx: Ctx2D, rects: ScreenRect[] | null): void {
-    if (this.lighting.identity) return;
+  private applyStructureTint(ctx: Ctx2D, rects: ScreenRect[] | null, lit: Lighting = this.lighting): void {
+    if (lit.identity) return;
     const canvas = (ctx as Ctx2D & { canvas?: HTMLCanvasElement }).canvas;
     if (!canvas || !(canvas.width > 0) || !(canvas.height > 0)) return;
     const scratch = this.tintBuffer(canvas.width, canvas.height);
@@ -1996,13 +2006,13 @@ export class IsoRenderer {
     const regions = rects && rects.length
       ? rects.map((d) => ({ x: d.x0, y: d.y0, w: d.x1 - d.x0, h: d.y1 - d.y0 }))
       : [{ x: 0, y: 0, w: canvas.width, h: canvas.height }];
-    const css = gradeCss(this.lighting.grade);
+    const css = gradeCss(lit.grade);
     // Owner fix (2026-09-28): the multiply fill below mixes the tint INTO a
     // translucent pixel (tree shading, soft edges, contact shadows), which
     // read as a pale white halo. Where the canvas takes SVG filters, grade
     // through a colour matrix instead: it scales R, G and B and leaves alpha
     // alone, so every translucent pixel keeps its own darkness.
-    const matrix = gradeFilter(this.lighting.grade);
+    const matrix = gradeFilter(lit.grade);
     for (const rc of regions) {
       if (rc.w <= 0 || rc.h <= 0) continue;
       scratch.ctx.clearRect(rc.x, rc.y, rc.w, rc.h);
