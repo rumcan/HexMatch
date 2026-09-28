@@ -161,8 +161,10 @@ export function costMarkup(cost: Purse): string {
  * `costMarkup` above is still the RESOURCE renderer: city upgrades and the
  * depot tree's rungs keep costing goods.
  */
-export function moneyMarkup(cost: Purse): string {
-  const price = moneyValueOf(cost);
+export function moneyMarkup(cost: Purse, priced?: number): string {
+  // CAST-1: `priced` is the seat's perk-adjusted $ for this bill, when the
+  // caller has one — the chip then quotes what the click will charge.
+  const price = priced ?? moneyValueOf(cost);
   return price > 0 ? `<span class="cost-chip money">$${price.toLocaleString("en-US")}</span>` : "free";
 }
 

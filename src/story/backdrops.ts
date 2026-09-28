@@ -28,7 +28,7 @@ export type BackdropKey =
   | "quarry"     // the gold quarry by lantern light
   | "skyline"   // the empire at full height — finales and title cards
   | "town"      // main street under Marrow's toll gates
-  | "office";   // Hextall Freight's office above the dock — Mabel's room
+  | "office";   // Hexmatch Industries's office above the dock — Mabel's room
 
 export const BACKDROPS: Record<BackdropKey, string> = {
   harbor: bgHarbor,
@@ -45,12 +45,12 @@ export const BACKDROP_KEYS = Object.keys(BACKDROPS) as BackdropKey[];
 
 /** The one-line place caption the stage prints under a backdrop change. */
 export const BACKDROP_CAPTION: Record<BackdropKey, string> = {
-  harbor: "Hextall Freight docks · first light",
+  harbor: "Hexmatch Industries docks · first light",
   boardroom: "The Foundry Syndicate boardroom",
   railyard: "Meridian marshalling yard · rain",
   oilfield: "The Roque field · dusk",
   quarry: "Blackwood gold quarry · lantern light",
   skyline: "The city · the years that followed",
   town: "Main Street · under the toll gates",
-  office: "Hextall Freight · the office above the dock",
+  office: "Hexmatch Industries · the office above the dock",
 };

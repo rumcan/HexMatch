@@ -83,6 +83,9 @@ import portraitYou from "../assets/ui/tycoon_you_small.png";
 import portraitKrag from "../assets/ui/tycoon_krag.png";
 import portraitTorvin from "../assets/ui/tycoon_torvin_small.png";
 import portraitVex from "../assets/ui/tycoon_vex_small.png";
+// CAST-1 (docs/CAST.md): the managers' poster faces and Cornelius Graves.
+import { RIVAL, managerThumb } from "../story/managers";
+import { buildMultiplier, perkPrice, type ManagerId } from "../iso/managers";
 // STORY-01: the wire's office voice (Mabel) and her standing expression.
 import { faceOf } from "../story/cast";
 // MOBILE-01: copy that names controls must name the ones this device HAS.
@@ -106,10 +109,9 @@ import {
 const PORTRAIT_BY_SEAT = [portraitYou, portraitKrag, portraitTorvin, portraitVex];
 const PORTRAIT_BY_NAME: Record<string, string> = {
   you: portraitYou, krag: portraitKrag, torvin: portraitTorvin, vex: portraitVex,
-  // PP-14b: the solo rival is simply named "Rival", which is no surname in the
-  // family — name Torvin here rather than let the seat tie-break hand him
-  // Krag's face. Torvin plays the rival; the player's own is chosen below.
-  rival: portraitTorvin,
+  // PP-14b → CAST-1: the solo rival seat is named "Rival" — Cornelius Graves,
+  // the face of the AI opponent. The player's own face is chosen below.
+  rival: RIVAL.thumb,
 };
 
 /** The dossier face for one player: their named portrait, else their seat's. */
@@ -215,6 +217,14 @@ export interface UiRailRow {
   hint?: string;
 }
 
+/** CAST-1: the seat's Black Market prices and the Fixer's counter. */
+export interface UiBlackMarket {
+  gold: Record<string, number>;
+  security: Partial<Record<Cargo, number>>;
+  /** Rafael only: free cards left this window, of `max`, and the refill clock. */
+  fixer?: { left: number; max: number; refillMs: number };
+}
+
 export interface UiPlayer {
   id: string;
   name: string;
@@ -225,6 +235,8 @@ export interface UiPlayer {
    *  over this player's name row in the header ("what did I and the rival
    *  receive win points for"). */
   vpTip?: string;
+  /** CAST-1: this seat's face (its manager, or the rival's) — the game knows. */
+  face?: string;
 }
 
 /** L8 (#222): one optional quest, as the chrome prints it. The game owns the
@@ -395,8 +407,14 @@ export interface UiState {
    * mugshot map, exactly as before the campaign existed.
    */
   rivalFace?: { url: string; pos: readonly [number, number] | null };
-  /** PP-14b: which tycoon portrait the player picked. */
+  /** PP-14b → CAST-1: the manager the player picked (their face). */
   portrait: Portrait;
+  /**
+   * CAST-1: the Black Market as THIS seat's manager sees it — each card's Gold
+   * (Dolores pays more), the Security Forces bill (free for Dolores, dearer
+   * for Rafael) and Rafael's free-card counter. Absent: the shipped prices.
+   */
+  blackMarket?: UiBlackMarket;
   /**
    * NAMES: whether the name tags are shown over the map's features — the
    * top-bar Names button paints its pressed state from this.
@@ -937,6 +955,12 @@ export interface OriginalUiOptions {
    * chat panel": there is no other seat, so there is no panel to show.
    */
   chat?: UiChatConfig;
+  /**
+   * CAST-1: the local seat's manager — the build buttons quote the price its
+   * perk or quirk charges (the same `perkPrice` the game's `spendBuild` uses).
+   * Absent/null: base prices.
+   */
+  manager?: ManagerId | null;
 }
 
 /**
@@ -1023,6 +1047,12 @@ export function createOriginalUi(
 ): OriginalUi {
   const root = h("div", "ui-root");
   root.dataset.view = "map";
+  /** CAST-1: a build price as THIS seat's manager pays it (a perk shows as ↓). */
+  const perkMarkup = (cost: Partial<Record<Cargo, number>>, cls: "road" | "rail" | "level"): string => {
+    const m = buildMultiplier(opts.manager ?? null, cls);
+    const chip = moneyMarkup(cost, perkPrice(moneyValueOf(cost), opts.manager ?? null, cls));
+    return m < 1 ? chip.replace('class="cost-chip money"', 'class="cost-chip money perk"') : chip;
+  };
   // L15 (#230): the new loop is the only loop — no trading surfaces.
   root.style.setProperty("--gem-move-ms", `${BOARD_ANIMATION_MS.swap}ms`);
   root.style.setProperty("--gem-clear-ms", `${BOARD_ANIMATION_MS.clear}ms`);
@@ -1254,7 +1284,7 @@ export function createOriginalUi(
   const railPanel = h("div", "panel rail-panel hidden");
   railPanel.appendChild(h("div", "panel-title", "Railway"));
   const railNote = h("div", "pane-note");
-  railNote.innerHTML = `Rail ${moneyMarkup(RAIL_COSTS.rail)} a tile · a platform pays +1★ · one train per connected network. <b>R</b> turns a platform or depot.`;
+  railNote.innerHTML = `Rail ${perkMarkup(RAIL_COSTS.rail, "rail")} a tile · a platform pays +1★ · one train per connected network. <b>R</b> turns a platform or depot.`;
   railPanel.appendChild(railNote);
   const railRows = h("div", "rail-rows");
   railPanel.appendChild(railRows);
@@ -1965,9 +1995,9 @@ export function createOriginalUi(
   rivalWire.setAttribute("aria-atomic", "true");
   const rivalWireFace = h("span", "rival-quip-face");
   rivalWireFace.setAttribute("aria-hidden", "true");
-  rivalWireFace.style.backgroundImage = `url(${portraitTorvin})`;
+  rivalWireFace.style.backgroundImage = `url(${RIVAL.thumb})`;
   const rivalWireCopy = h("span", "rival-quip-copy");
-  const rivalWireLabel = h("b", "rival-quip-label", "Rival · Private wire");
+  const rivalWireLabel = h("b", "rival-quip-label", `${RIVAL.last} · Private wire`);
   rivalWireCopy.appendChild(rivalWireLabel);
   const rivalWireText = h("q", "rival-quip-text");
   rivalWireCopy.appendChild(rivalWireText);
@@ -2500,13 +2530,13 @@ export function createOriginalUi(
     // "+0.25★ paving dirt" would sell the player the one plan the scoreboard
     // no longer pays for. Road is still worth building (it is the fast
     // transport tier, `TRANSPORT.road.factor`), so the line says THAT instead.
-    { key: "street", label: "Street", sub: `${moneyMarkup(ROAD_TIERS.street.cost)} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
-    { key: "road", label: "Road", sub: `${moneyMarkup(TRANSPORT.road.cost)} · ${roadRule}` },
-    { key: "highway", label: "Highway", sub: `${moneyMarkup(ROAD_TIERS.highway.cost)} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
+    { key: "street", label: "Street", sub: `${perkMarkup(ROAD_TIERS.street.cost, "road")} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
+    { key: "road", label: "Road", sub: `${perkMarkup(TRANSPORT.road.cost, "road")} · ${roadRule}` },
+    { key: "highway", label: "Highway", sub: `${perkMarkup(ROAD_TIERS.highway.cost, "road")} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
     // ROADS-3 (#394): the only way on or off a Highway; a Road or Street
     // dragged ACROSS a Highway builds an overpass by itself.
     { key: "interchange", label: "Interchange", sub: "Diamond · 1 overpass + 4 ramps + new road · choose a straight Highway" },
-    { key: "ramp", label: "Ramp", sub: `${moneyMarkup(ROAD_TIERS.ramp.cost)} · ${ROAD_TIERS.ramp.blurb}` },
+    { key: "ramp", label: "Ramp", sub: `${perkMarkup(ROAD_TIERS.ramp.cost, "road")} · ${ROAD_TIERS.ramp.blurb}` },
     // PP-05: `depotSub` refreshes the Depot line below as the free-setup
     // allowance burns down. L5 (#219): on the new loop the price is the
     // industry's own mix, so the line says "from …" rather than quoting the
@@ -2518,13 +2548,13 @@ export function createOriginalUi(
     // #456: Level Ground. The price is the per-tile-level row the commit
     // charges (`LEVEL_GROUND_COST` × tile-levels moved) and the hover card
     // quotes it live — the drag hint shows the exact total before the click.
-    { key: "level", label: "Level Ground", sub: `${moneyMarkup(LEVEL_GROUND_COST)} a tile-level · drag to flatten to where you started` },
+    { key: "level", label: "Level Ground", sub: `${perkMarkup(LEVEL_GROUND_COST, "level")} a tile-level · drag to flatten to where you started` },
     // ── RAIL-04 (#178): the railway's four buttons ────────────────────────
     // The prices are read from the same table the placement charges
     // (`RAIL_COSTS`) and the point from the same constant the scoreboard pays
     // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
-    { key: "rail", label: "Rail", sub: `${moneyMarkup(RAIL_COSTS.rail)} a tile · 0★` },
-    { key: "platform", label: "Platform", sub: `${moneyMarkup(RAIL_COSTS.platform)} · +${VICTORY.platform}★ · track beside it included · R turns` },
+    { key: "rail", label: "Rail", sub: `${perkMarkup(RAIL_COSTS.rail, "rail")} a tile · 0★` },
+    { key: "platform", label: "Platform", sub: `${perkMarkup(RAIL_COSTS.platform, "rail")} · +${VICTORY.platform}★ · track beside it included · R turns` },
     // R3 (#270): the hydro dam. The price is read from the same row the
     // placement charges (`BUILD_COSTS.dam`) and the bonus from the same
     // constant the clock multiplies by (`DAM_BONUS`), so the button never
@@ -2691,13 +2721,28 @@ export function createOriginalUi(
   // Rail Ways sits directly under Road Ways (owner, 2026-09-26).
   { const r = groupEls.get("roads"), l = groupEls.get("rails"); if (r && l) r.wrap.after(l.wrap); }
   // ── Black Market ──────────────────────────────────────────────────────────
+  /** CAST-1: the latest perk-priced Black Market (null = shipped prices). */
+  let blackMarketView: UiBlackMarket | null = null;
   function renderSabotage() {
     sabList.innerHTML = "";
+    const bm = blackMarketView;
+    // CAST-1: Rafael's counter chip stands at the head of the shop.
+    const freeLeft = bm?.fixer?.left ?? 0;
+    if (bm?.fixer) {
+      const secs = Math.ceil(bm.fixer.refillMs / 1000);
+      const chip = h("div", "sab-fixer" + (freeLeft > 0 ? "" : " spent"));
+      chip.dataset.left = String(freeLeft);
+      chip.innerHTML = `<b>Fixer · ${freeLeft}/${bm.fixer.max} free</b>`
+        + `<small>${freeLeft > 0 ? "Blockade or Protest, on the house" : "all used"} · refill ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</small>`;
+      sabList.appendChild(chip);
+    }
     for (const key of Object.keys(SABOTAGE)) {
       const s = SABOTAGE[key];
-      const afford = (seat.res.gold ?? 0) >= s.gold;
+      const gold = bm?.gold[key] ?? s.gold;
+      const afford = freeLeft > 0 || (seat.res.gold ?? 0) >= gold;
       const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled"));
-      b.innerHTML = `<div class="sab-top"><b>${s.name}</b><span class="sab-cost">${s.gold}${cargoIconHtml("gold")}</span></div>` +
+      const price = freeLeft > 0 ? `<span class="sab-cost free">free</span>` : `<span class="sab-cost">${gold}${cargoIconHtml("gold")}</span>`;
+      b.innerHTML = `<div class="sab-top"><b>${s.name}</b>${price}</div>` +
         `<div class="sab-desc">${s.desc}</div>`;
       b.disabled = !afford;
       b.dataset.black = key;
@@ -2707,10 +2752,12 @@ export function createOriginalUi(
     const secOn = false;
     // PP-08: Security Forces are bought with MATERIALS now, so their
     // affordability reads the purse, not the Gold balance.
-    const secAfford = (Object.entries(SECURITY_ISO) as [Cargo, number][])
+    const secBill = bm?.security ?? SECURITY_ISO;
+    const secAfford = (Object.entries(secBill) as [Cargo, number][])
       .every(([k, v]) => (seat.res[k] ?? 0) >= v);
     const sb = h("button", "sab-btn secure-btn" + (secOn ? " active" : secAfford ? "" : " disabled"));
-    sb.innerHTML = `<div class="sab-top"><b>🛡️ ${SECURITY.name}</b><span class="sab-cost">${costStr(SECURITY_ISO)}</span></div>` +
+    const secPrice = Object.keys(secBill).length ? costStr(secBill) : "free";
+    sb.innerHTML = `<div class="sab-top"><b>🛡️ ${SECURITY.name}</b><span class="sab-cost${Object.keys(secBill).length ? "" : " free"}">${secPrice}</span></div>` +
       `<div class="sab-desc">${SECURITY.desc}</div>`;
     sb.disabled = !secAfford;
     sb.dataset.black = "security";
@@ -3648,7 +3695,9 @@ export function createOriginalUi(
 
   const rivalWireQueue: UiRivalryBeat[] = [];
   let rivalWireBusy = false;
-  let rivalWirePlayerPortrait = portraitVex;
+  let rivalWirePlayerPortrait = managerThumb("anne");
+  /** CAST-1: the sandbox rival's standing face — Graves, unless a contract's. */
+  let rivalWireRivalPortrait: string = RIVAL.thumb;
   // STORY-01: the guide's standing face — the calm quadrant of her sheet —
   // for the office beats that arrive without a mood of their own.
   const rivalWireGuideFace = faceOf("mabel", "calm");
@@ -3675,7 +3724,7 @@ export function createOriginalUi(
         rivalWireFace.style.backgroundPosition = "center 20%";
       }
     } else {
-      const standing = yours ? rivalWirePlayerPortrait : guide ? rivalWireGuideFace.url : portraitTorvin;
+      const standing = yours ? rivalWirePlayerPortrait : guide ? rivalWireGuideFace.url : rivalWireRivalPortrait;
       rivalWireFace.style.backgroundImage = `url(${standing})`;
       rivalWireFace.style.backgroundSize = guide ? "200% 200%" : "cover";
       rivalWireFace.style.backgroundPosition = guide
@@ -3683,7 +3732,8 @@ export function createOriginalUi(
         : "center 20%";
     }
     rivalWireLabel.textContent = beat.label
-      ?? (yours ? "You · Open channel" : guide ? "Office · Mabel Quill" : "Rival · Private wire");
+      ?? (yours ? "You · Open channel" : guide ? "Office · Mabel Quill"
+        : rivalFaceOverride ? "Rival · Private wire" : `${RIVAL.last} · Private wire`);
     rivalWireText.textContent = beat.text;
   };
 
@@ -4360,9 +4410,8 @@ export function createOriginalUi(
       // portrait picked on the start screen; every rival keeps the mugshot its
       // name (or seat) maps to — Torvin plays the solo rival. The coloured
       // initial stays as the fallback under the image.
-      const face = p.human
-        ? (portrait === "you" ? portraitYou : portraitVex)
-        : portraitFor(p, seat);
+      const face = p.face
+        ?? (p.human ? managerThumb(portrait) : portraitFor(p, seat));
       // STORY-01: a contract's rival wears their painted expression sheet on
       // the dossier card — one quadrant at a uniform 2×, never stretched —
       // while a sandbox match keeps the mugshot its name or seat maps to.
@@ -5290,10 +5339,15 @@ export function createOriginalUi(
     paintMarket(state.offers);
     // ECON-1 (#421): the exchange rows and the money chip's number.
     paintExchange(state.market, state.marketEvent, state.money, state.marketRumour);
-    rivalWirePlayerPortrait = state.portrait === "you" ? portraitYou : portraitVex;
+    rivalWirePlayerPortrait = managerThumb(state.portrait);
     // STORY-01: the contract's rival wears their painted sheet on the dossier
     // card; a sandbox match (no face on the state) keeps the mugshot map.
     rivalFaceOverride = state.rivalFace ?? null;
+    // CAST-1: the wire's standing rival face — Graves in a sandbox match, the
+    // contract rival's solo mugshot (or the old stand-in) in a campaign.
+    rivalWireRivalPortrait = state.rivalFace
+      ? (state.rivalFace.pos ? portraitTorvin : state.rivalFace.url)
+      : RIVAL.thumb;
     // TUT-01: remember the live free-tile allowance so a tour replayed from ❔
     // quotes the game being played, not the shipped constant.
     if (rivalWire.dataset.speaker === "you") {
@@ -5337,7 +5391,12 @@ export function createOriginalUi(
     // button. (L9 #224 retired Repair Crew, the other material row.)
     const matAfford = (cost: Partial<Record<Cargo, number>>) =>
       (Object.entries(cost) as [Cargo, number][]).every(([k, v]) => (seat.res[k] ?? 0) >= v);
-    const sabKey = `${seat.res.gold ?? 0}:${matAfford(SECURITY_ISO)}`;
+    // CAST-1: the manager's prices and the Fixer's counter re-render it too
+    // (the refill clock ticks by the second, so the chip stays honest).
+    blackMarketView = state.blackMarket ?? null;
+    const bmv = blackMarketView;
+    const sabKey = `${seat.res.gold ?? 0}:${matAfford(bmv?.security ?? SECURITY_ISO)}:${
+      bmv ? `${JSON.stringify(bmv.gold)}|${bmv.fixer ? `${bmv.fixer.left}/${Math.ceil(bmv.fixer.refillMs / 1000)}` : ""}` : ""}`;
     if (sabKey !== lastSabKey) {
       lastSabKey = sabKey;
       renderSabotage();
@@ -5729,7 +5788,7 @@ export function createOriginalUi(
       voiceSub.classList.add("show", line.speaker);
       voiceLabel.textContent = VOICE_WHO[line.speaker] ?? "Voice";
       voiceText.textContent = line.text;
-      const face = line.speaker === "rival" ? portraitTorvin
+      const face = line.speaker === "rival" ? rivalWireRivalPortrait
         : line.speaker === "player" ? rivalWirePlayerPortrait
         : "";
       voiceFace.style.backgroundImage = face ? `url(${face})` : "";

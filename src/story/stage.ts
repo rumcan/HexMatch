@@ -28,13 +28,13 @@
 // uniform 2× quadrant — nothing is stretched into a box it does not share.
 // ══════════════════════════════════════════════════════════════════════════
 import { BACKDROPS, BACKDROP_CAPTION, type BackdropKey } from "./backdrops";
-import { CAST, faceOf, resolveSpeaker } from "./cast";
+import { CAST, faceOf, resolveSpeaker, type CastId } from "./cast";
 import type { ScriptLine, ScriptScene } from "./script";
 import { sfx } from "../audio/sfx";
 
 export interface SceneOptions {
   /** The tycoon the start screen chose — `player` lines resolve to this. */
-  player?: "vex" | "you";
+  player?: CastId;
   skipLabel?: string;
   /**
    * #123: instant-text mode for loss epilogues. Each line appears in full on
@@ -75,7 +75,7 @@ const pauseAfter = (ch: string): number =>
 export function showScene(
   host: HTMLElement, scene: ScriptScene, opts: SceneOptions = {},
 ): SceneHandle {
-  const player = opts.player ?? "vex";
+  const player: CastId = opts.player ?? "vex";
   const quiet = reducedMotion();
   /** #123: loss epilogues show every line in full immediately. */
   const instant = opts.instant ?? false;

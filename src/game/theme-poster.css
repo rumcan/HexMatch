@@ -162,7 +162,7 @@
 }
 .px-select:hover { transform: translateY(-3px); filter: brightness(1.08); }
 
-/* ── HOME: the Hextalls on the left, the ladder panel on the right ── */
+/* ── HOME: the key art on the left, the ladder panel on the right ── */
 .px-home { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr); background: #0e1519; }
 .px-home-stage {
   position: relative; overflow: hidden; min-height: 0;
@@ -794,3 +794,111 @@
   inset: 0; left: 0; right: 0; top: 0; bottom: 0; width: 100%; height: 100%; max-width: none;
   object-fit: cover; object-position: 60% bottom;
 }
+
+/* ══ CAST-1 (docs/CAST.md): five managers on the roster card ══════════════
+   Flat colours only (UIX): each manager's stage is one colour (`--stage`,
+   set inline from src/story/managers.ts) and the accent is `--accent`. */
+.px-portrait-stage,
+.px-portrait-stage.anne { background: var(--stage, #f07d12); }
+.px-portrait-stage::before { display: none; }
+/* a locked manager is previewed greyed, with what hires them on a paper plate */
+.px-portrait-stage.locked .px-hero { filter: grayscale(1) contrast(.9) brightness(.92); opacity: .72; }
+.px-portrait-stage.locked { background: #8d8a82; }
+.px-lock-plate {
+  position: absolute; z-index: 2; left: 12px; right: 12px; bottom: 14px; margin: 0; padding: 10px 12px;
+  border: 2px solid #11191d; background: var(--px-dialog); color: #162024;
+  font: 700 14px/1.2 var(--px-display); letter-spacing: .08em; text-transform: uppercase; text-align: center;
+}
+/* the heroes' faces sit at different heights and sides in their cut-outs */
+.px-portrait-stage.rafael .px-hero { object-position: 45% bottom; }
+.px-portrait-stage.dolores .px-hero { object-position: 45% bottom; }
+.px-portrait-stage.kenji .px-hero { object-position: 52% bottom; }
+
+/* the sidebar holds five portraits: they size from the column's height */
+.px-roster-nav { top: 24%; bottom: 11%; }
+.start-screen.px .px-portraits { height: 100%; justify-content: center; gap: clamp(6px, 1.3vh, 12px); }
+.start-screen.px .px-portrait {
+  --thumb: #ec6c10; width: auto; height: calc((100% - 4 * clamp(6px, 1.3vh, 12px)) / 5);
+  max-height: 116px; min-height: 44px; aspect-ratio: .91; padding: 3px;
+}
+.start-screen.px .px-portrait.locked img { filter: grayscale(1); opacity: .55; }
+.start-screen.px .px-portrait-lock {
+  position: absolute; left: 3px; right: 3px; bottom: 3px; padding: 2px 0; background: #11191d; color: #f2e8d4;
+  font: 700 9px/1 var(--px-display); letter-spacing: .14em; text-align: center;
+}
+
+/* Step 0 (owner, 2026-09-27): NO scrollbars anywhere in the profile panel —
+   it fits: the head wraps, the badge text wraps, the name is clamped, and
+   whatever still overflows is clipped rather than scrolled. */
+.px-profile { overflow: hidden; }
+.px-profile .px-detail-head { flex-wrap: wrap; row-gap: 6px; min-width: 0; }
+.start-screen.px .px-rank { flex: 1 1 180px; min-width: 0; justify-content: flex-end; }
+.start-screen.px .px-rank .rank-chip { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.start-screen.px .px-rank .rank-chip-text { min-width: 0; }
+.start-screen.px .px-rank .rank-block-note { flex: 0 1 18ch; min-width: 0; max-width: 18ch; white-space: normal; overflow-wrap: anywhere; }
+.px-profile-body { min-width: 0; }
+.px-name { font-size: clamp(38px, min(4.4vw, 7.4vh), 84px); overflow-wrap: anywhere; }
+.px-quote { margin-top: 10px; font-size: clamp(15px, min(1.45vw, 2.5vh), 22px); }
+.start-screen.px .px-bio { margin-top: 10px; font-size: clamp(13px, min(1.1vw, 2vh), 17px); line-height: 1.35; }
+.px-lock-note {
+  display: inline-block; margin: 10px 0 0; padding: 5px 10px; background: #11191d; color: #f2e8d4;
+  font: 700 12px/1.2 var(--px-display); letter-spacing: .12em; text-transform: uppercase;
+}
+.px-perks { display: grid; gap: 4px; max-width: 540px; margin: 12px 0 0; }
+.px-perk { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; align-items: baseline; margin: 0; }
+.px-perk dt { color: var(--accent); font: 700 12px var(--px-display); letter-spacing: .16em; text-transform: uppercase; }
+.px-perk dd { margin: 0; color: var(--px-text); font: 600 clamp(13px, min(1.05vw, 1.9vh), 16px)/1.25 var(--px-body); }
+.px-perk.quirk dt { color: var(--px-mute); }
+.px-perk.quirk dd { font-weight: 500; color: var(--px-text-2); }
+.px-rival-card { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 14px; max-width: 520px; margin-top: 14px; }
+.px-rival-card img { width: 72px; height: 72px; object-fit: cover; border: 2px solid #11191d; }
+.px-rival-card strong { display: block; font: 400 24px/1 var(--px-poster); text-transform: uppercase; }
+.px-rival-card span { display: block; margin-top: 3px; color: var(--accent); font: 700 12px var(--px-display); letter-spacing: .12em; text-transform: uppercase; }
+.px-rival-card p { margin: 6px 0 0; font: 400 14px/1.3 var(--px-body); }
+.start-screen.px .px-modes .px-playing-as {
+  grid-column: 1 / -1; margin: 0 0 4px; color: var(--px-text-2); text-align: left;
+  font: 600 13px var(--px-display); letter-spacing: .08em; text-transform: uppercase;
+}
+.start-screen.px .px-modes .px-playing-as b { color: var(--px-text); }
+@media (min-width: 831px) and (max-height: 820px) {
+  .px-name { font-size: clamp(34px, min(3.8vw, 6.6vh), 64px); }
+  .px-perks { margin-top: 8px; }
+}
+@media (max-width: 830px) {
+  .px-profile { overflow: visible; }
+  .px-roster-nav { top: 30%; bottom: 8%; }
+  .start-screen.px .px-portrait { max-height: 64px; }
+  .px-name { font-size: clamp(40px, 11vw, 80px); }
+}
+
+/* the main menu's Managers tab: five compact cards, locked ones greyed */
+.px-cast-list { gap: 8px; margin-top: 16px; }
+.px-cast { grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 4px; }
+.px-cast img { width: 64px; }
+.px-cast b { font-size: 24px; }
+.px-cast .px-cast-title { display: block; margin-top: 2px; color: var(--px-mute); font: 700 11px var(--px-display); font-style: normal; letter-spacing: .14em; text-transform: uppercase; }
+.px-cast i { margin-top: 3px; font: 600 13px/1.2 var(--px-body); font-style: normal; }
+.px-cast.locked { cursor: not-allowed; background: #e0d6c1; border-color: #8e7f66; }
+.px-cast.locked:hover { transform: none; box-shadow: none; border-color: #8e7f66; }
+.px-cast.locked img { filter: grayscale(1); opacity: .6; }
+.px-cast.locked b { color: #6c665b; }
+.px-cast .px-cast-lock { color: #6c665b; font-weight: 700; }
+
+/* ── CAST-1: the loading screen is the poster (landscape / portrait), cover-
+   fit, with the progress card tucked into a corner so the faces show. ── */
+#iso-loading {
+  background: url("../assets/poster/loading-poster.webp") center / cover no-repeat, #0e1519 !important;
+  align-items: flex-end !important; justify-content: flex-start !important; padding: 0 0 3vh 3vw;
+  background-blend-mode: normal !important;
+}
+@media (max-aspect-ratio: 1/1) {
+  #iso-loading {
+    background: url("../assets/poster/loading-poster-portrait.webp") center / cover no-repeat, #0e1519 !important;
+    justify-content: center !important; padding: 0 16px 3vh;
+  }
+}
+#iso-loading .iso-loading-card { width: min(380px, calc(100% - 32px)); padding: 16px 20px 14px; }
+#iso-loading h2 { font-size: 28px !important; }
+#iso-loading .iso-loading-steps { font-size: 11px; }
+@media (max-height: 560px) { #iso-loading .iso-loading-steps { display: none; } }
+.px-cast-role { margin: 6px 0 0; color: var(--accent); font: 700 14px var(--px-display); letter-spacing: .16em; text-transform: uppercase; }

@@ -1,4 +1,9 @@
-import { CAST_KEY, MENU_CAST } from "./MainMenu";
+// CAST-1 (docs/CAST.md): the five managers, who is hired, and the Rival.
+import {
+  MANAGER_BY_ID, MANAGER_IDS, RIVAL, fullName, loadManagerRecord, saveManagerPick, savedManager, unlockLabel,
+  type ManagerId,
+} from "../story/managers";
+import { isUnlocked } from "../iso/managers";
 import MenuShell, { type ShellTab } from "./MenuShell";
 import logoUrl from "../assets/poster/logo.webp";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -255,10 +260,12 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const [seed, setSeed] = useState<number | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
-  /** PP-14b: the player's tycoon portrait — Vex or You (Torvin is the rival). */
-  const [portrait, setPortrait] = useState<Portrait>(() => {
-    try { return localStorage.getItem(CAST_KEY) === "james" ? "you" : "vex"; } catch { return "vex"; }
-  });
+  /** CAST-1: who is hired — read once per mount of the mode screen. */
+  const [managerRecord] = useState(() => loadManagerRecord());
+  /** PP-14b → CAST-1: the manager the next match plays as (always a hired one). */
+  const [portrait, setPortrait] = useState<Portrait>(() => savedManager());
+  /** CAST-1: the manager on the stage — may be a locked one, previewed. */
+  const [viewing, setViewing] = useState<ManagerId>(() => savedManager());
   /** UI-3: the roster card's PROFILE / HISTORY / RIVALS tabs. */
   const [profileTab, setProfileTab] = useState<"profile" | "history" | "rivals">("profile");
   /** STORY-01: the campaign record, re-read each time the menu opens so a
@@ -1055,19 +1062,25 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
     // UI-3 (owner, 2026-09-27): the Play screen is the UIX roster card —
     // sidebar (logo, scroll guide, portraits), the portrait stage, and the
     // paper detail with PROFILE / HISTORY / RIVALS over the game modes.
-    // PORTRAITS: "vex" is Anne, "you" is James.
-    const castOf = (p: Portrait) => MENU_CAST.find((c) => c.id === (p === "vex" ? "anne" : "james")) ?? MENU_CAST[0];
-    const cast = castOf(portrait);
-    const order: Portrait[] = ["you", "vex"];
-    const pick = (p: Portrait) => {
-      setPortrait(p);
+    // CAST-1: five managers. A locked one can be PREVIEWED (story, perk, and
+    // what hires them), but the match is always played by a hired manager —
+    // the one named above the mode buttons.
+    const cast = MANAGER_BY_ID[viewing];
+    const hired = isUnlocked(managerRecord, viewing);
+    const order = MANAGER_IDS;
+    const pick = (id: ManagerId) => {
+      setViewing(id);
       setProfileTab("profile");
-      try { localStorage.setItem(CAST_KEY, castOf(p).id); } catch { /* private mode */ }
+      if (isUnlocked(managerRecord, id)) {
+        setPortrait(id);
+        saveManagerPick(id);
+      }
     };
-    const flip = () => pick(portrait === "vex" ? "you" : "vex");
-    const idx = order.indexOf(portrait) + 1;
+    const stepCast = (d: number) => pick(order[(order.indexOf(viewing) + d + order.length) % order.length]);
+    const idx = order.indexOf(viewing) + 1;
     return shell("play", "Hexmatch start screen", "play-card", (
-      <div className="start-panel start-modes px-card px-roster" data-accent={cast.accent}>
+      <div className="start-panel start-modes px-card px-roster" data-manager={cast.id}
+        style={{ "--accent": cast.accent, "--stage": cast.stage } as CSSProperties}>
         <section className="start-modes-info" aria-label="Manager and rating">
           <aside className="px-sidebar">
             <button type="button" className="px-logo-button" onClick={onBack} disabled={!onBack} aria-label="Back to the main menu">
@@ -1075,34 +1088,39 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             </button>
             <div className="px-roster-nav">
               <div className="px-scroll-guide">
-                <button type="button" onClick={flip} aria-label="Previous manager" data-sfx="select">▲</button>
+                <button type="button" onClick={() => stepCast(-1)} aria-label="Previous manager" data-sfx="select">▲</button>
                 <span className="px-scroll-line" />
                 <span className="portrait-label px-scroll-word">Your manager</span>
                 <span className="px-scroll-line" />
-                <button type="button" onClick={flip} aria-label="Next manager" data-sfx="select">▼</button>
+                <button type="button" onClick={() => stepCast(1)} aria-label="Next manager" data-sfx="select">▼</button>
               </div>
               <div className="portrait-picker px-portraits" role="radiogroup" aria-label="Choose your manager">
-                {order.map((p) => {
-                  const c = castOf(p);
+                {order.map((id) => {
+                  const c = MANAGER_BY_ID[id];
+                  const open = isUnlocked(managerRecord, id);
                   return (
-                    <button key={p} type="button" role="radio"
-                      className={`px-portrait portrait-opt${portrait === p ? " on" : ""}`} data-accent={c.accent}
-                      aria-pressed={portrait === p} aria-checked={portrait === p}
-                      data-sfx="select" onClick={() => pick(p)} aria-label={`${c.first} ${c.last}`}>
+                    <button key={id} type="button" role="radio"
+                      className={`px-portrait portrait-opt${viewing === id ? " on" : ""}${open ? "" : " locked"}`}
+                      data-manager={id} style={{ "--thumb": c.stage } as CSSProperties}
+                      aria-pressed={viewing === id} aria-checked={viewing === id}
+                      data-sfx="select" onClick={() => pick(id)}
+                      aria-label={open ? fullName(id) : `${fullName(id)} — locked`}>
                       <img src={c.thumb} alt="" draggable={false} />
+                      {open ? null : <span className="px-portrait-lock" aria-hidden="true">LOCKED</span>}
                       <span className="portrait-name">{c.first} {c.last}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
-            <span className="px-count">{String(idx).padStart(2, "0")} / 02</span>
+            <span className="px-count">{String(idx).padStart(2, "0")} / {String(order.length).padStart(2, "0")}</span>
           </aside>
-          <div className={`px-portrait-stage ${cast.id}`} aria-hidden="true">
+          <div className={`px-portrait-stage ${cast.id}${hired ? "" : " locked"}`} aria-hidden="true">
             <div className="px-art" key={cast.id}>
               <img className="px-ghost" src={cast.hero} alt="" draggable={false} />
               <img className="px-hero" src={cast.hero} alt="" draggable={false} />
             </div>
+            {hired ? null : <p className="px-lock-plate">Locked · {unlockLabel(cast.id)}</p>}
           </div>
           <div className="px-profile">
             <div className="px-detail-head">
@@ -1133,14 +1151,19 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             {profileTab === "profile" ? (
               <div className="px-profile-body" key={`${cast.id}-profile`}>
                 <h2 className="px-name"><span>{cast.first}</span> <span>{cast.last}</span></h2>
+                <p className="px-cast-role">{cast.title}</p>
+                {hired ? null : <p className="px-lock-note" role="note">Locked · {unlockLabel(cast.id)}</p>}
+                <dl className="px-perks">
+                  <div className="px-perk"><dt>Perk</dt><dd>{cast.perk}</dd></div>
+                  <div className="px-perk quirk"><dt>Quirk</dt><dd>{cast.quirk}</dd></div>
+                </dl>
                 <p className="px-quote">“{cast.quote}”</p>
-                <span className="px-rule" aria-hidden="true" />
                 <p className="start-subtitle px-bio">{cast.bio}</p>
               </div>
             ) : profileTab === "history" ? (
               <div className="px-profile-body" key={`${cast.id}-history`}>
                 <h2 className="px-title">A life in motion</h2>
-                <span className="px-rule" aria-hidden="true" />
+                <p className="start-subtitle px-bio px-bio-history">{cast.bio}</p>
                 <div className="px-history">
                   {cast.history.map(([year, title, text]) => (
                     <div className="px-history-row" key={year}><span>{year}</span><div><strong>{title}</strong><p>{text}</p></div></div>
@@ -1149,16 +1172,19 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
               </div>
             ) : (
               <div className="px-profile-body" key={`${cast.id}-rivals`}>
-                <h2 className="px-title">Know your rivals</h2>
+                <h2 className="px-title">Know your rival</h2>
                 <p className="px-quote">“{cast.rivalry}”</p>
                 <span className="px-rule" aria-hidden="true" />
-                <div className="px-rival-line"><span>01 / The Foundry Syndicate</span><strong>Own the roads.</strong></div>
-                <div className="px-rival-line"><span>02 / Your next move</span><strong>Build something bigger.</strong></div>
+                <div className="px-rival-card">
+                  <img src={RIVAL.thumb} alt="" draggable={false} />
+                  <div><strong>{RIVAL.name}</strong><span>{RIVAL.title}</span><p>{RIVAL.bio}</p></div>
+                </div>
               </div>
             )}
           </div>
         </section>
         <nav className="start-actions px-modes" aria-label="Game modes">
+          <p className="px-playing-as">Playing as <b>{fullName(portrait)}</b>{viewing !== portrait ? " · win to hire the one on stage" : ""}</p>
           <p className="start-actions-label">Solo</p>
           {/* CONTINUE-01 (#191): a resumable sandbox save gets the primary door,
               naming the rival, the score and when it was last saved. It boots

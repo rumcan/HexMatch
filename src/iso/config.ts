@@ -28,15 +28,18 @@ import type { Manifest } from "./atlas";
 export { TILE_W, TILE_H, MAP_W, MAP_H, HW, HH };
 export { tileToScreen, screenToTile, tileIndex, inMap, mulberry32 } from "../game/config";
 
+import { MANAGER_IDS, type ManagerId } from "./managers";
+
 // ── Cargoes (also the six match-3 colours) ────────────────────────────────
 export type Cargo = "grain" | "wood" | "ore" | "stone" | "oil" | "gold";
 
 /**
- * PP-14b — the player's tycoon portrait, picked on the start screen. The
- * rival always shows Torvin; the player's own is Vex or You.
+ * PP-14b → CAST-1 — the player's manager, picked on the start screen. The
+ * value IS the manager id (`src/iso/managers.ts`); the legacy "vex" (Anne) /
+ * "you" (James) portraits are read through `normalizeManager`.
  */
-export type Portrait = "vex" | "you";
-export const PORTRAITS: Portrait[] = ["vex", "you"];
+export type Portrait = ManagerId;
+export const PORTRAITS: readonly Portrait[] = MANAGER_IDS;
 
 export const CARGOES: Cargo[] = ["grain", "wood", "ore", "stone", "oil", "gold"];
 

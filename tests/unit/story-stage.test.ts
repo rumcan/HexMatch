@@ -65,8 +65,8 @@ describe("STORY-01 the stage projector", () => {
     await wait(20);
     click(stage as HTMLElement);            // complete it
     expect(text()).toBe("Then let us read them.");
-    // the player line resolves to the default tycoon (Anne Hextall)
-    expect(stage?.querySelector(".story-name")?.textContent).toBe("Anne Hextall");
+    // the player line resolves to the default tycoon (Anne Whitmore)
+    expect(stage?.querySelector(".story-name")?.textContent).toBe("Anne Whitmore");
     click(stage as HTMLElement);            // → narrator line
     await wait(20);
     click(stage as HTMLElement);            // complete narrator
@@ -118,7 +118,7 @@ describe("STORY-01 the stage projector", () => {
     click(stage);                           // → player
     await wait(20);
     click(stage);                           // complete
-    expect(stage.querySelector(".story-name")?.textContent).toBe("James Hextall");
+    expect(stage.querySelector(".story-name")?.textContent).toBe("James Calloway");
   });
 
   it("destroy tears the stage down and settles an unsettled promise", async () => {

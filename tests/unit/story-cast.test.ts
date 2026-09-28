@@ -59,7 +59,7 @@ describe("STORY-01 the cast", () => {
     }
   });
 
-  it("resolves the player stand-in to whichever Hextall the player chose", () => {
+  it("resolves the player stand-in to whichever manager the player chose", () => {
     expect(resolveSpeaker("player", "you")).toBe("you");
     expect(resolveSpeaker("player", "vex")).toBe("vex");
     expect(resolveSpeaker("mabel", "you")).toBe("mabel");

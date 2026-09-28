@@ -8,6 +8,7 @@ import { startIsoGame } from "./iso/game";
 import StartScreen, { type StartChoice } from "./ui/StartScreen";
 // STORY-01: the front door — Play / Settings / How to Play over a living
 // plate. Play leads to the mode screen; the menu never mounts the game.
+import { savedManager, type ManagerId } from "./story/managers";
 import MainMenu from "./ui/MainMenu";
 // STORY-01: the opening reel stands between the menu and the first contract —
 // one skippable cinematic, played once (watched or skipped both count), and
@@ -87,7 +88,7 @@ export default function App() {
   // extras (the camera opens on the town).
   const [firstRun, setFirstRun] = useState(isFirstLaunch);
   const [choice, setChoice] = useState<StartChoice | null>(
-    firstRun ? { mode: "ai", portrait: "vex", starter: true } : null,
+    firstRun ? { mode: "ai", portrait: savedManager(), starter: true } : null,
   );
   /** STORY-01: the front door stands until Play is pressed (or a playtest
    *  link pins a contract, which walks straight past it). */
@@ -101,7 +102,7 @@ export default function App() {
   const [backToScenarios, setBackToScenarios] = useState(false);
   /** PROG-1 (#475): the manager picked for this match — "Next contract"
    *  carries it into the next chapter rather than re-asking. */
-  const portraitRef = useRef<"vex" | "you">("vex");
+  const portraitRef = useRef<ManagerId>(savedManager());
   /** STORY-01: the reel, and what starts when it settles (null = the menu). */
   const [reel, setReel] = useState<{ next: StartChoice | null } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -157,7 +158,7 @@ export default function App() {
   useEffect(() => {
     const pin = STORY_MODE_ENABLED ? pinnedChapter() : null;
     if (!pin || !chapterById(pin)) return;
-    begin({ mode: "story", chapter: pin, portrait: "vex" });
+    begin({ mode: "story", chapter: pin, portrait: savedManager() });
   }, []); // boot-only: a playtest link is read once, like every other boot flag
 
   // PROG-1 (#475): `?scenario=<id>` is the same straight into a scenario —
@@ -165,7 +166,7 @@ export default function App() {
   useEffect(() => {
     const pin = pinnedScenario();
     if (!pin || !scenarioById(pin)) return;
-    begin({ mode: "scenario", scenario: pin, portrait: "vex" });
+    begin({ mode: "scenario", scenario: pin, portrait: savedManager() });
   }, []); // boot-only, like the contract pin above
 
   // SETTINGS-01/GFX-01: the in-game ☰ menu's "Quit to main menu" walks out
@@ -193,14 +194,14 @@ export default function App() {
     setFirstRun(false);
     setBackToCampaign(false);
     setAtMenu(false);
-    setChoice({ mode: "ai", portrait: "vex", starter: false });
+    setChoice({ mode: "ai", portrait: savedManager(), starter: false });
   };
   // FTUE-1 (#464): the Tutorial menu's "Play the Starter Island" — the
   // scenario again (fixed island, trainee, guided chain), on demand.
   const playStarterIsland = () => {
     setBackToCampaign(false);
     setAtMenu(false);
-    setChoice({ mode: "ai", portrait: "vex", starter: true });
+    setChoice({ mode: "ai", portrait: savedManager(), starter: true });
   };
 
   /**
@@ -316,10 +317,10 @@ export default function App() {
       // the slot and resumes it; no slot is cleared on this path.
       // PROG-1 (#475): a scenario id routes to its scenario choice.
       onContinue={(chapterId) => begin(chapterId === null
-        ? { mode: "ai", portrait: "vex" }
+        ? { mode: "ai", portrait: savedManager() }
         : chapterId.startsWith(SCENARIO_SAVE_PREFIX)
-          ? { mode: "scenario", scenario: chapterId.slice(SCENARIO_SAVE_PREFIX.length), portrait: "vex" }
-          : { mode: "story", chapter: chapterId, portrait: "vex" })}
+          ? { mode: "scenario", scenario: chapterId.slice(SCENARIO_SAVE_PREFIX.length), portrait: savedManager() }
+          : { mode: "story", chapter: chapterId, portrait: savedManager() })}
       // PROG-1 (#475): the Scenarios door walks past the mode pick straight
       // to the list.
       onScenarios={() => { setBackToScenarios(true); setAtMenu(false); }}

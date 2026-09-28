@@ -204,6 +204,14 @@ export interface WirePlayer {
   money?: number;
   marketMs?: number;
   market?: { seed: number; impact?: Record<string, number>; impactAt?: number };
+  /**
+   * CAST-1 (docs/CAST.md): the seat's manager — whose perk and quirk the host
+   * prices this seat's builds and Black Market cards with — and Rafael's free
+   * card allowance. Additive-optional like `money`: an older peer ignores
+   * them, and `null` is a VALUE (no manager: base prices).
+   */
+  manager?: string | null;
+  fixer?: { window: number; used: number };
 }
 
 /**

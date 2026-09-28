@@ -5,16 +5,16 @@ import { INTRO_SCENE } from "../../src/story/intro";
 
 // ══════════════════════════════════════════════════════════════════════════
 // BACK TO WORK (the jam theme) — Story Mode is a career: the player takes the
-// job of Logistics Manager at Hextall Freight and every contract won is a
+// job of Logistics Manager at Hexmatch Industries and every contract won is a
 // promotion. These tests keep the job visible in the data and in the scenes.
 // ══════════════════════════════════════════════════════════════════════════
 
 const text = (lines: readonly { text: string }[]) => lines.map((l) => l.text).join(" ");
 
 describe("the Story Mode career", () => {
-  it("hires the player as Logistics Manager at Hextall Freight", () => {
+  it("hires the player as Logistics Manager at Hexmatch Industries", () => {
     expect(CHAPTERS[0].jobTitle).toBe("Logistics Manager");
-    expect(EMPLOYER).toBe("Hextall Freight");
+    expect(EMPLOYER).toBe("Hexmatch Industries");
     expect(CAST.vex.role).toContain("Logistics Manager");
     expect(CAST.you.role).toContain("Logistics Manager");
   });

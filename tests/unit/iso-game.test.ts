@@ -813,7 +813,7 @@ describe("the two-portrait rivalry conversation", () => {
     expect(wire.querySelector(".rival-quip-label")!.textContent).toBe("You · Open channel");
     expect(wire.querySelector(".rival-quip-text")!.textContent).toBe("Drill what?");
     expect(face.style.backgroundImage).not.toBe(rivalPortrait);
-    expect(face.style.backgroundImage).toMatch(/tycoon_vex/i);
+    expect(face.style.backgroundImage).toMatch(/thumb-anne/i);
 
     const feedBefore = root.querySelectorAll(".feed-row").length;
     expect(root.textContent).toContain("I was making a rude gesture with my hands.");
