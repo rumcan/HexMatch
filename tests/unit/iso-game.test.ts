@@ -8,12 +8,16 @@
 // this verifies wiring and game logic, not pixels. Pixel correctness is what
 // the committed-reference-PNG fixture is for, and that still needs a browser.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { DEPOT_RUNG_GATE } from "../../src/iso/config";
+import { BATTLE_RULES, DEPOT_RUNG_GATE } from "../../src/iso/config";
+import { canChallenge, createChallengeState } from "../../src/iso/battle-map";
+import { GUIDE_SECTION_IDS } from "../../src/iso/guide/types";
+import { tutorialSites, tutorialPrerequisites } from "../../src/iso/guide/scenario";
+import { platformRefusal, resolveAnchor, RAIL_VIEWS } from "../../src/iso/rail";
 import { southLotFree } from "./helpers/depot-lot";
 import { WATER, GRASS, ROUGH, SAND, factoryTouchesTown } from "../../src/iso/grid";
 import { SABOTAGE, RAID_EVERY, BANDIT_MS } from "../../src/game/config";
 import { PUBLIC_OWNER, buildTile, tIdx } from "../../src/iso/track";
-import { industriesInCatchment, lockedIndustryIds } from "../../src/iso/economy";
+import { industriesInCatchment, lockedIndustryIds, industryLocks } from "../../src/iso/economy";
 import { MAP_W, MAP_H, TRANSPORT, INDUSTRY_BY_KEY, VICTORY } from "../../src/iso/config";
 import { RIVAL_BANTER } from "../../src/iso/rivalry";
 import { setRng, mulberry32 } from "../../src/game/config";
@@ -233,12 +237,96 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function boot(opts: { rail?: boolean; newLoop?: boolean; story?: string } = {}) {
+async function boot(opts: { rail?: boolean; newLoop?: boolean; story?: string; tutorialSection?: import("../../src/iso/guide/types").GuideSectionId; onTutorialExit?: () => void } = {}) {
   const { startIsoGame } = await import("../../src/iso/game");
   dispose = startIsoGame(root, opts);
   await settle();
   return hook();
 }
+
+describe("TUT-2 isolated practice match", () => {
+  it.each(GUIDE_SECTION_IDS)("boots %s from its own island, not the sandbox slot", async (id) => {
+    localStorage.setItem("hexmatch:save", "saved sandbox");
+    let exits = 0;
+    const game = await boot({ tutorialSection: id, onTutorialExit: () => { exits++; } });
+    const prereq = tutorialPrerequisites(id);
+    expect(game.factories.some((f) => f.owner === "you")).toBe(prereq.factory);
+    expect(game.harvesters.some((h) => h.owner === "you")).toBe(prereq.depot && id !== "rivals");
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-section")).toBe(id);
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBeTruthy();
+    (root.querySelector('[data-act="guide-skip"]') as HTMLButtonElement).click();
+    expect(exits).toBe(1);
+    expect(localStorage.getItem("hexmatch:save")).toBe("saved sandbox");
+  });
+
+  it("advances the Factory lesson through the real placement path, not Next", async () => {
+    let exits = 0;
+    const game = await boot({ tutorialSection: "factory", onTutorialExit: () => { exits++; } });
+    const { factory } = tutorialSites(game.grid, game.track);
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("place");
+    (root.querySelector('[data-act="guide-next"]') as HTMLButtonElement).click();
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("place");
+    expect(game.placeFactory(factory.tx, factory.ty)).toBe(true);
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("rotate");
+    (root.querySelector('[data-act="guide-next"]') as HTMLButtonElement).click();
+    expect(exits).toBe(1);
+  });
+  it("boots Rail with a legal industry platform and opens its tuning session on placement", async () => {
+    await boot({ tutorialSection: "rail" });
+    const h = hook();
+    const ind = h.grid.industries[0];
+    const plants = h.eco.factories.map((f) => ({
+      ownerId: f.ownerId, tx: f.tx, ty: f.ty, id: f.id, rot: f.rot,
+    }));
+    let placed = false;
+    for (let y = ind.ty - 8; y <= ind.ty + ind.h + 8 && !placed; y++) {
+      for (let x = ind.tx - 8; x <= ind.tx + ind.w + 8 && !placed; x++) {
+        for (const view of RAIL_VIEWS) {
+          if (platformRefusal(h.grid, [], plants, 1, x, y, view) !== "ok") continue;
+          const anchor = resolveAnchor(h.grid, plants, 1, x, y, view);
+          if (anchor?.kind !== "industry" || anchor.id !== ind.id) continue;
+          placed = h.placePlatform(x, y, view);
+          break;
+        }
+      }
+    }
+    expect(placed).toBe(true);
+    expect(h.eco.harvesters.some((d) => d.owner === "you" && d.platformId)).toBe(true);
+    expect(root.querySelector("#iso-session")).not.toBeNull();
+  });
+
+  it("boots Rivals with a serviced opposing Depot and enough Gold to challenge", async () => {
+    const game = await boot({ tutorialSection: "rivals" });
+    expect(game.phase).toBe("play");
+    expect(game.harvesters.some((h) => h.owner === "ai")).toBe(true);
+    expect(game.purse.gold).toBeGreaterThan(0);
+    expect(industryLocks(game.eco).get(game.grid.industries[0].id)?.owner).toBe("ai");
+    expect(canChallenge(game.eco, createChallengeState(), performance.now(), "you",
+      game.grid.industries[0].id, BATTLE_RULES, game.purse.gold).ok).toBe(true);
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("rival");
+    (root.querySelector('[data-act="guide-next"]') as HTMLButtonElement).click();
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("challenge");
+    expect(root.querySelector('[data-act="guide-next"]')?.classList.contains("hidden")).toBe(true);
+  });
+  it("boots Depots after the factory, gates the build and leaves the real save alone", async () => {
+    const realSave = "the player's real saved match";
+    localStorage.setItem("hexmatch:save", realSave);
+    let exits = 0;
+    const game = await boot({ tutorialSection: "depots", onTutorialExit: () => { exits++; } });
+    expect(game.newLoop).toBe(true); // even behind the harness's ?loop=old
+    expect(game.phase).toBe("setup-harvester");
+    expect(game.factories.filter((f) => f.owner === "you")).toHaveLength(1);
+    expect(game.harvesters).toHaveLength(0);
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-section")).toBe("depots");
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("place");
+    expect(root.querySelector('[data-act="guide-next"]')?.classList.contains("hidden")).toBe(true);
+    (root.querySelector('[data-act="guide-next"]') as HTMLButtonElement).click();
+    expect(root.querySelector("#iso-guide")?.getAttribute("data-step")).toBe("place");
+    (root.querySelector('[data-act="guide-end"]') as HTMLButtonElement).click();
+    expect(exits).toBe(1);
+    expect(localStorage.getItem("hexmatch:save")).toBe(realSave);
+  });
+});
 
 describe("E11 the game boots", () => {
   it("mounts three canvas layers and a tool bar", async () => {

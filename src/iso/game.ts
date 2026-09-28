@@ -227,7 +227,7 @@ import {
   rumourAt, createAlert, alertTick as priceAlertTick, type PriceAlert,
 } from "./market";
 import {
-  DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotFacingOf, depotFacings,
+  DEFAULT_FACING, DEPOT_FACINGS, DEPOT_SPRITES, depotContains, depotEntranceTiles, depotFacingOf, depotFacings,
   depotSites, depotTiles, rotateFacing, type DepotFacing,
 } from "./depot";
 // #456: the flat-footprint test the rival's Level Ground planner reads — the
@@ -393,6 +393,8 @@ import { MIN_SHOW_MS, createLoadingScreen, createRevealGate } from "./loading-sc
 // eight-card tour (`src/iso/tutorial.ts`, removed): the Tutorial menu, the
 // spotlight and the narrator all live in src/iso/guide.
 import { createGuideHost, takeQueuedSection, type GuideHost } from "./guide";
+import { tutorialMap, tutorialSites, tutorialPrerequisites } from "./guide/scenario";
+import { GUIDE_SECTION_IDS, type GuideSectionId } from "./guide/types";
 import { showSettingsSheet, type SettingsSheetHandle } from "./settings-sheet";
 // MON-1 (#367): the RUN Bits store — THE panel the main menu raises too, so
 // the front door and a live match never quote a different price. `loadStore`
@@ -780,6 +782,10 @@ export interface IsoGameOptions {
    * ordinary game.
    */
   starterIsland?: boolean;
+  /** An isolated, unsaved practice match for one guide section. */
+  tutorialSection?: GuideSectionId;
+  onTutorialExit?: () => void;
+  onTutorialSection?: (id: GuideSectionId) => void;
   /**
    * FTUE-1 (#464): leave the Starter Island for the NORMAL game. Wired to the
    * first screen's "Skip to the real game" and to the won ledger's "Build
@@ -822,6 +828,7 @@ export function setupDepotToast(newLoop: boolean): string {
 }
 
 export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
+  const tutorialSection = opts.tutorialSection;
   // ── DOM ────────────────────────────────────────────────────────────────
   // U1: the recovered UI owns the chrome. It is created once the trading
   // state exists (below); the iso canvas layer stack is mounted into its
@@ -902,11 +909,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Owner call (2026-09): railways are back in the build menu for playtesting
   // (Rail, Platform, Railway panel — trains spawn on their own, no depot).
   // `?rail=0` hides them again; `opts.rail` still wins for tests.
-  const railAvailable = opts.rail ?? railParam !== "0";
+  const railAvailable = opts.tutorialSection ? true : (opts.rail ?? railParam !== "0");
   const loopParam = (() => {
     try { return new URLSearchParams(location.search).get("loop"); } catch { return null; }
   })();
-  const newLoopRequested = opts.newLoop ?? loopParam !== "old";
+  const newLoopRequested = opts.tutorialSection ? true : (opts.newLoop ?? loopParam !== "old");
   // The new loop is sandbox-only: a networked room or a story contract ignores
   // the request and says so — the toast waits until no boot overlay covers the
   // map (see the frame loop's `loopToastPending`).
@@ -990,7 +997,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // without the flag would regenerate a different (riverless) terrain under
   // the saved network, so rivers play is a fresh sandbox each time. Shapes
   // change the generated map the same way, so they get the same treatment.
-  const savesOff = isMp() || freshLink || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
+  const savesOff = isMp() || !!opts.tutorialSection || freshLink || !!(window as unknown as Record<string, unknown>).__ISO_DISABLE_SAVE;
   // MAP-1 (#412): a URL that names a map feature asks for a FRESH map with it —
   // don't resume a save onto a different terrain (the save is still written).
   const searchNow = (() => { try { return location.search; } catch { return ""; } })();
@@ -1024,7 +1031,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // map features, whatever the ambient options say.
   const starterSaved = (bootSave as { skillKey?: string } | null)?.skillKey === "trainee";
   const starterIsland = opts.starterIsland === true || opts.firstRun === true || starterSaved;
-  const seed = starterIsland
+  const seed = opts.tutorialSection ? STARTER_ISLAND_SEED + GUIDE_SECTION_IDS.indexOf(opts.tutorialSection)
+    : starterIsland
     ? STARTER_ISLAND_SEED
     : (opts.seed ?? bootSave?.seed ?? storyChapter?.seed ?? scenarioDef?.seed ?? resolveMapSeed());
   // PROG-1 (#475): the match's wall clock, for scenario and contract best
@@ -1038,7 +1046,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // keeps the save in front of it instead of throwing the map away to honour it.
   // FTUE-1 (#464): …except the Starter Island, which is tuned terrain (its
   // own map options, recorded on the save like any other game's).
-  const mapOptions: MapOptions = starterIsland
+  const mapOptions: MapOptions = opts.tutorialSection || starterIsland
     ? { rivers: false, elevation: true, shapes: true, rings: true, diag: true }
     : resolveMapOptions({
       explicit: { rivers: opts.rivers, elevation: opts.elevation, shapes: opts.shapes, rings: (opts as { rings?: boolean }).rings, diag: opts.diag },
@@ -1049,7 +1057,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       scenario: scenarioOn ? (scenarioDef ?? {}) : null,
     });
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
-  const grid: Grid = starterIsland
+  const grid: Grid = opts.tutorialSection ? tutorialMap(opts.tutorialSection)
+    : starterIsland
     ? starterIslandGrid()
     : generateMap(seed, {
       rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings,
@@ -1457,7 +1466,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // not persisted: the player's own difficulty for normal games is theirs.
   // PROG-1 (#475): a scenario casts its rival at its fixed difficulty, like a
   // contract — the scenario IS the pacing.
-  let skillKey: SkillKey = starterIsland
+  let skillKey: SkillKey = opts.tutorialSection ? "hard"
+    : starterIsland
     ? "trainee"
     : storyChapter
       ? storyChapter.skill
@@ -1471,7 +1481,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // path writes here: a plain boot must leave the storage key ABSENT or the
   // AI-02 start-of-game picker would never ask a fresh player again. A
   // scenario cast (Starter Island, PROG-1) never writes the player's key at all.
-  if (!starterIsland && !storyChapter && !scenarioDef && skillKeyFromUrl()) {
+  if (!starterIsland && !opts.tutorialSection && !storyChapter && !scenarioDef && skillKeyFromUrl()) {
     try { localStorage.setItem(SKILL_STORAGE_KEY, skillKey); } catch { /* private mode */ }
   }
   const skill = (): RivalSkill => RIVAL_SKILLS[skillKey];
@@ -1533,7 +1543,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // trainee's own ★ line (6), read live like every other line, so the HUD,
   // the king bars and the win check all agree.
   // PROG-1 (#475): a scenario races its own ★ line, like a contract.
-  const winTarget = (): number => starterIsland
+  const winTarget = (): number => opts.tutorialSection ? skill().winTarget
+    : starterIsland
     ? skill().winTarget
     : (newLoop
       ? VICTORY.loop.target
@@ -1659,6 +1670,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return nextHarvesterId++;
   };
   let phase: Phase = "setup-factory";
+  // The fixture is born before the first world sync, from the SAME placement
+  // planners as a player click. Nothing enters a save slot (savesOff above).
+  const lessonSites = opts.tutorialSection ? tutorialSites(grid, track) : null;
+  if (opts.tutorialSection && lessonSites) {
+    factoryView = lessonSites.factory.rot;
+    const prerequisites = tutorialPrerequisites(opts.tutorialSection);
+    if (prerequisites.factory) {
+      const { tx, ty, rot } = lessonSites.factory;
+      eco.factories.push({ owner: me.id, ownerId: me.i + 1, id: 0, tx, ty, rot,
+        townId: adjacentTown(grid, tx, ty, rot)?.id ?? null });
+      phase = "setup-harvester";
+    }
+    if (prerequisites.depot) {
+      const { tx, ty, facing } = lessonSites.depot;
+      const contested = opts.tutorialSection === "rivals";
+      const owner = contested ? rival : me;
+      eco.harvesters.push({ id: allocHarvesterId(), owner: owner.id, ownerId: owner.i + 1,
+        tx, ty, facing, yield: 1 });
+      // The rival's resource has an actual serviced claim, not a pretend
+      // marker: the game's own challenge eligibility sees the same road.
+      if (contested) {
+        const entrance = depotEntranceTiles(tx, ty, facing)
+          .find(([x, y]) => canBuildOn(grid, "dirt", x, y));
+        if (!entrance) throw new Error("Tutorial rival has no road entrance");
+        buildTile(track, "dirt", entrance[0], entrance[1], rival.i + 1);
+      } else me.freeDepots = 0;
+      phase = "play";
+    }
+    if (opts.tutorialSection === "rail") phase = "play";
+    me.money = 100_000; // practice builds cannot run out of money
+    // Only the lesson's prerequisite materials are staged. Filling every
+    // warehouse to 1000 would start storage rent and hide the first-income
+    // moment the Logistics lesson waits for.
+    if (opts.tutorialSection === "upgrades") {
+      me.purse.wood = Math.max(me.purse.wood ?? 0, 20);
+      me.purse.stone = Math.max(me.purse.stone ?? 0, 14);
+      me.purse.grain = Math.max(me.purse.grain ?? 0, 14);
+    }
+    if (opts.tutorialSection === "rail") me.purse.stone = Math.max(me.purse.stone ?? 0, 20);
+    if (opts.tutorialSection === "rivals") me.purse.gold = BATTLE_RULES.challengeGold + 2;
+  }
   let tool: Tool = "dirt";
   /** ROADS-2 (#393): the paved tier the Road tool lays (the rail's Street /
    *  Road / Highway buttons all arm "road" with one of these). */
@@ -2188,7 +2240,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // FTUE-1 (#464): no difficulty switch beside a scenario cast — the
     // Starter Island's rival is the trainee, the same way a hosted game has
     // no selector (the hook's absence is what keeps it out of the top bar).
-    onSkill: isSolo() && !starterIsland ? (key) => setRivalSkill(key) : undefined,
+    onSkill: isSolo() && !starterIsland && !tutorialSection ? (key) => setRivalSkill(key) : undefined,
     skill: isSolo() ? skillKey : undefined,
   }, {
     rail: railAvailable,
@@ -2247,6 +2299,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   //     its target lives in, or arm the tool it is about to use.
   // Completions arrive as events from the placement paths below, so the guide
   // advances on the same gesture the game already handles.
+  // A practice match ignores unrelated tool picks (without disabling the
+  // camera, the menu or the Exit key). Install before the guide's own capture
+  // listener so a refused pick cannot accidentally complete a step.
+  const gateLessonTool = (event: MouseEvent) => {
+    if (!opts.tutorialSection) return;
+    const button = (event.target as Element | null)?.closest<HTMLElement>("[data-tool]");
+    const picked = button?.dataset.tool;
+    if (!picked) return;
+    const c = guide?.controller.view().step?.complete;
+    const expected = c?.kind === "tool" ? c.tool : c?.kind === "build"
+      ? ({ road: "dirt", rail: "rail", platform: "platform", depot: "harvester" } as Record<string, string>)[c.what]
+      : c?.kind === "event" && c.name === "challenge-started" ? "select" : null;
+    if (picked === "select" || picked === expected || c?.kind === "build" && c.what === "road" && picked === "road") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  document.addEventListener("click", gateLessonTool, true);
   guide = createGuideHost({
     root: ui.el,
     ctx: { vpTarget: winTarget(), freeTrack: me.freeTrack },
@@ -2255,8 +2324,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // "Skip to the real game" chip beside the strip while the first-game
     // chain runs, and this is where it lands (App boots the normal match).
     onPlayNormalGame: opts.onPlayNormalGame,
+    standalone: !!opts.tutorialSection,
+    onTutorialSection: opts.onTutorialSection ? (id) => { saveNow(); opts.onTutorialSection?.(id); } : undefined,
+    onOutcome: opts.tutorialSection ? () => opts.onTutorialExit?.() : undefined,
     mapRect: (target) => {
       if (target.kind === "screen") return null;
+      const lessonStep = guide?.controller.view().step;
+      if (opts.tutorialSection === "rivals" && lessonStep?.id === "challenge"
+        && target.kind === "anchor" && target.what === "industry") {
+        const ind = grid.industries[0];
+        return ind ? guideTileRect({ x0: ind.tx, y0: ind.ty,
+          x1: ind.tx + ind.w - 1, y1: ind.ty + ind.h - 1 }) : null;
+      }
+      if (lessonSites && lessonStep?.complete.kind === "build") {
+        const site = lessonStep.complete.what === "factory" ? lessonSites.factory
+          : lessonStep.complete.what === "depot" ? lessonSites.depot : null;
+        // Highlight the origin tile, not the entire footprint: only its
+        // corner click places the building at the scripted legal site.
+        if (site && target.kind === "anchor") return guideTileRect({
+          x0: site.tx, y0: site.ty, x1: site.tx, y1: site.ty,
+        });
+      }
       const box = target.kind === "area" ? target
         // A UI or full-screen target has no place on the map; the spotlight
         // finds it by its selector instead, and this seam answers "nothing".
@@ -2269,6 +2357,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const mine = me.i + 1;
       const hasFactory = eco.factories.some((f) => f.ownerId === mine);
       const hasDepot = eco.harvesters.some((h) => h.ownerId === mine);
+      if (opts.tutorialSection) return false;
       if (k === "factory:place" || k === "factory:rotate") return hasFactory;
       if (k === "depots:place") return hasDepot;
       if (k === "logistics:connect" || k === "logistics:income") return voicedIncome;
@@ -2286,7 +2375,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   });
   // A section picked on the FRONT menu's Tutorial door waits for this boot.
   const queuedGuide = takeQueuedSection();
-  if (queuedGuide) guide.run(queuedGuide);
+  if (opts.tutorialSection) guide.run(opts.tutorialSection);
+  else if (queuedGuide) guide.run(queuedGuide);
   /**
    * True while a guide step is standing. The only two things that still bow
    * to it are the boot toasts (a save or loop announcement must not be
@@ -2395,7 +2485,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // `setRivalSkill`, persists for the next boot, and syncs the top-bar
       // selector the `onSkill` hook would otherwise own. A contract skips the
       // question: the chapter cast the rival, and re-asking would un-cast it.
-      if (starterIsland && newLoop) {
+      if (opts.tutorialSection) {
+        // A lesson has its own setup and no difficulty prompt or first-game chain.
+      } else if (starterIsland && newLoop) {
         // FTUE-1 (#464): the Starter Island — no difficulty question (the
         // rival is CAST as the trainee, above, and never persisted), and the
         // guide takes over with its whole chain (Getting started → Factory →
@@ -2693,7 +2785,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // screen that shows only a farm leaves nothing to aim at.
     // FTUE-1 (#464): every Starter Island boot opens this way (first launch,
     // replay, resume) — the town is the scenario's heart.
-    if (starterIsland && ind && grid.towns.length) {
+    if ((starterIsland || opts.tutorialSection) && ind && grid.towns.length) {
       const near = [...grid.towns].sort((a, b) =>
         Math.hypot(a.tx - ind.tx, a.ty - ind.ty) - Math.hypot(b.tx - ind.tx, b.ty - ind.ty))[0];
       return { tx: near.tx, ty: near.ty };
@@ -4705,7 +4797,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         ? "Platform built at the industry — tune its yield, then run rail to your plant's platform."
         : "Plant platform built — run rail to it from an industry platform.", "good");
     }
-    guide?.emit({ kind: "build", what: "platform" });
+    if (!opts.tutorialSection || depot) guide?.emit({ kind: "build", what: "platform" });
     if (depot && newLoop && p === me && !isGuest()) openTuningSession(depot);
     return !!built;
   }
@@ -6408,6 +6500,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     openTuningSession(head.depot, true);
+    guide?.emit({ kind: "game", name: "retune-started" });
     return true;
   }
 
@@ -6429,11 +6522,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     d.level = lvl + 1;
-    guide?.emit({ kind: "game", name: "depot-upgraded" });
     toast(`Depot upgraded to level ${d.level} — its yield cap is now ×${depotYieldCap(d.level)}. Tune it up!`, "good");
     ui.feed(`Depot upgraded to level ${d.level} (cap ×${depotYieldCap(d.level)})`, me.name);
     rescoreNow();
     openTuningSession(d, true);
+    guide?.emit({ kind: "game", name: "depot-upgraded" });
     return true;
   }
 
@@ -7091,7 +7184,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (p.human && res.built.length) {
       // Both tiers are a ROAD to the guide: the lesson is "join the Depot to
       // the Factory", whichever tile the player reached for.
-      guide?.emit({ kind: "build", what: "road" });
+      const connected = !opts.tutorialSection || eco.harvesters.some((h) =>
+        h.owner === me.id && resolveConnection(eco, buildAllComponents(track, me.i + 1), h).factory);
+      if (connected) {
+        guide?.emit({ kind: "build", what: "road" });
+        if (opts.tutorialSection && voicedIncome) guide?.emit({ kind: "game", name: "first-income" });
+      }
     }
     if (pv.free > 0) toast(`${pv.free} free setup tile${pv.free > 1 ? "s" : ""} used.`, "info");
   }
@@ -8062,6 +8160,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       publishNet(now, true);
       return true;
     }
+    guide?.emit({ kind: "game", name: "challenge-started" });
     openMapBattle(
       {
         kind: "industry", industryId: indId,
@@ -8075,6 +8174,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   function challengeIndustry(indId: number): boolean {
+    if (opts.tutorialSection === "rivals" && indId !== grid.industries[0]?.id) {
+      toast("Challenge the highlighted industry for this lesson.", "info");
+      return false;
+    }
     const now = performance.now();
     if (isGuest()) {
       if (battleScreen) { toast("One fight at a time.", "bad"); return false; }
@@ -9230,7 +9333,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // intent — an autoplaying AI there would be a third player on their board.
     // #186: an AI-FILLED seat has no person on it, so its board plays itself at
     // the same cadence it does in solo (and the guest-side wire carries it).
-    if (isSolo() || aiOpponent) rivalAutoplay(now);
+    if ((isSolo() || aiOpponent) && !tutorialSection) rivalAutoplay(now);
   }
 
   /** AI-03: the rival's match-3 cadence — "a board where he is slowly
@@ -10434,7 +10537,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function aiTick(now: number) {
     // B5 (#250): no AI action and no economy churn during a battle; the two
     // offer doors (rival challenges, fight-offs) expire here too.
-    if (battleScreen) return;
+    if (battleScreen || tutorialSection) return;
     // Playtest (2026-09): nor while YOUR tuning session is open. The session
     // is modal (you cannot lay the road that would claim the industry), and
     // the rival used that window to build beside a Depot you had just placed.
@@ -13379,6 +13482,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  demolish and select a map press can mean. MOB-1 (#474) runs it twice:
    *  straight from `onUp`, and from the phone's confirm sheet. */
   function useToolAt(p: NonNullable<ReturnType<typeof pickForAction>>, t: Tool): void {
+    if (opts.tutorialSection) {
+      const step = guide?.controller.view().step;
+      const action = step?.complete;
+      // Reading steps leave Select available for inspection, but never spend
+      // practice materials on an unrelated placement or demolition.
+      const allowed = action?.kind === "build" && (
+        (action.what === "platform" && t === "platform") ||
+        (action.what === "depot" && t === "harvester"));
+      if (t !== "select" && !allowed) return;
+    }
     // A bought protest intercepts the click: it stages on a public road
     // (or refuses and stays armed), and never runs the current tool.
     if (pendingProtest) placeProtest(p.tx, p.ty);
@@ -13462,6 +13575,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   const onUp = (e: PointerEvent) => {
     const [x, y] = pos(e);
+    if (opts.tutorialSection && drag) {
+      const action = guide?.controller.view().step?.complete;
+      if (!(action?.kind === "build" && (action.what === "road" && (tool === "dirt" || tool === "road")
+        || action.what === "rail" && tool === "rail"))) {
+        drag = null; preview = null; levelPlan = null; downAt = null;
+        g = pointerUp(g, e.pointerId);
+        return;
+      }
+    }
     // RIGHT-CLICK: the strategy-game "escape to pointer". It cancels whatever
     // tool is held — and an armed protest, the same thing Esc does — and
     // leaves the pointer (select) in the hand, which highlights and names
@@ -13587,12 +13709,29 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         paintOverlayNow();
       }
       if (p) {
+        if (opts.tutorialSection && lessonSites) {
+          const step = guide?.controller.view().step;
+          const site = step?.complete.kind === "build" && step.complete.what === "factory"
+            ? lessonSites.factory : step?.complete.kind === "build" && step.complete.what === "depot"
+              ? lessonSites.depot : null;
+          if (site && (p.tx !== site.tx || p.ty !== site.ty)) {
+            toast("Try the highlighted site for this step.", "info");
+            downAt = null;
+            g = pointerUp(g, e.pointerId);
+            return;
+          }
+          if ((phase === "setup-factory" || phase === "setup-harvester") && !site) {
+            downAt = null;
+            g = pointerUp(g, e.pointerId);
+            return;
+          }
+        }
         if (phase === "setup-factory") {
           // MP-05: a guest's opening click is an intent like any other — the
           // host places seat 1's Factory by the same town-adjacency rule.
           // F3: orientation on wire.
           if (isGuest()) net?.sendIntent("build", { do: "factory", tx: p.tx, ty: p.ty, rot: factoryView });
-          else placeFactory(p.tx, p.ty);
+          else { if (lessonSites) factoryView = lessonSites.factory.rot; placeFactory(p.tx, p.ty); }
         } else if (phase === "setup-harvester") {
           // PP-05: the setup Depot is free because `me.freeDepots` is still 1 —
           // the allowance is data on the player record, not this phase.
@@ -14363,7 +14502,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MP-05: a networked match is not saved. `savesOff` already blocks the write
   // (see `saveNow`), and skipping the timer entirely keeps a hosted match from
   // queueing work nobody asked for.
-  if (!isMp()) {
+  if (!savesOff) {
     saveIv = window.setInterval(() => saveNow(), 5_000);
     onPageHide = () => saveNow();
     window.addEventListener("pagehide", onPageHide);
@@ -15258,16 +15397,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         } catch { /* history must never break the frame */ }
       }
       // ECON-1 (#421): the rival works the market on its own clock.
-      if (sim) rivalMarketTick(t);
+      if (sim && !tutorialSection) rivalMarketTick(t);
       // L8 (#222): the optional quests — pay what is done, keep 2–3 on the
       // panel. Runs beside the clock it pays against, and before the paint
       // that reads the view it derives.
       syncQuests();
       if (sim) quarryTick(t);
-      if (sim) aiTick(t);
+      if (sim && !opts.tutorialSection) aiTick(t);
       // Rivalry idle wire: a Torvin saying / dad joke every so often, mid-game.
-      if (sim) rivalChitChat(t);
-      if (sim) advisorTick(t);
+      if (sim && !tutorialSection) rivalChitChat(t);
+      if (sim && !tutorialSection) advisorTick(t);
       if (sim) phaseTick();   // BAL-1 (#471): Feed beats as the leader advances
       if (sim) noteClaimContested();   // RIVAL-3 (#467): the Feed says "Contested"
       // MP-05: protests are solo/host-only (buyBlack refuses guests, like the
@@ -16905,6 +17044,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // is what stops the boot chain from awaiting a card that no longer exists.
     guide?.destroy();
     guide = null;
+    document.removeEventListener("click", gateLessonTool, true);
     storyView?.destroy();
     storyView = null;
     floats.clear();

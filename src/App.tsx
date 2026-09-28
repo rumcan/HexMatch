@@ -198,6 +198,11 @@ export default function App() {
   };
   // FTUE-1 (#464): the Tutorial menu's "Play the Starter Island" — the
   // scenario again (fixed island, trainee, guided chain), on demand.
+  const playTutorialSection = (section: import("./iso/guide/types").GuideSectionId) => {
+    setFirstRun(false);
+    setAtMenu(false);
+    setChoice({ mode: "tutorial", section, portrait: savedManager() });
+  };
   const playStarterIsland = () => {
     setBackToCampaign(false);
     setAtMenu(false);
@@ -219,7 +224,13 @@ export default function App() {
 
   useEffect(() => {
     if (!choice || !ref.current) return;
-    const cleanup = choice.mode === "ai"
+    const cleanup = choice.mode === "tutorial"
+      ? startIsoGame(ref.current, {
+        role: "solo", portrait: choice.portrait, tutorialSection: choice.section,
+        onTutorialExit: quitToMenu, onQuitToMenu: quitToMenu,
+        onTutorialSection: playTutorialSection,
+      })
+      : choice.mode === "ai"
       ? startIsoGame(ref.current, {
         role: "solo", portrait: choice.portrait, onQuitToMenu: quitToMenu,
         conquest: choice.conquest === true,
@@ -310,6 +321,7 @@ export default function App() {
     <MainMenu
       onPlay={() => { setBackToCampaign(false); setBackToScenarios(false); setToLadder(false); setAtMenu(false); }}
       onStarterIsland={playStarterIsland}
+      onTutorialSection={playTutorialSection}
       onLadder={() => { setBackToCampaign(false); setBackToScenarios(false); setToLadder(true); setAtMenu(false); }}
       // CONTINUE-01 (#191): the front door's gold button jumps straight into
       // the freshest resumable solo save — sandbox slot or a contract — by
@@ -329,6 +341,7 @@ export default function App() {
   return (
     <StartScreen
       onStart={begin}
+      onTutorialSection={playTutorialSection}
       onBack={() => setAtMenu(true)}
       initial={backToCampaign ? "story" : backToScenarios ? "scenarios" : toLadder ? "ladder" : "choose"}
     />

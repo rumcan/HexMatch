@@ -62,6 +62,9 @@ export interface GuideHostHooks {
    * where it lands. Absent = no chip (every ordinary boot).
    */
   onPlayNormalGame?: () => void;
+  onTutorialSection?: (id: GuideSectionId) => void;
+  /** A standalone lesson requires its real action, not Next or Back. */
+  standalone?: boolean;
 }
 
 export interface GuideHost {
@@ -88,7 +91,7 @@ export interface GuideHost {
 
 export function createGuideHost(hooks: GuideHostHooks): GuideHost {
   const sections = buildGuideSections(hooks.ctx);
-  const controller: GuideController = createGuide({ sections });
+  const controller: GuideController = createGuide({ sections, requireActions: hooks.standalone, dismissOnEnd: !hooks.standalone });
   const renderer: GuideRenderer = createGuideRenderer({
     emit: (e) => controller.emit(e),
     next: () => controller.next(),
@@ -96,6 +99,7 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
     skip: () => controller.skip(),
     end: () => controller.end(),
     mapRect: (t) => hooks.mapRect(t),
+    requireActions: hooks.standalone,
   });
 
   let menu: TutorialMenuHandle | null = null;
@@ -221,6 +225,7 @@ export function createGuideHost(hooks: GuideHostHooks): GuideHost {
         progress: controller.progress(),
         live: hooks.live,
         onRun: (id) => {
+          if (hooks.onTutorialSection) { hooks.onTutorialSection(id); return true; }
           if (hooks.live) return host.run(id);
           // No game yet: the boot picks the section up.
           queueGuideSection(id);
