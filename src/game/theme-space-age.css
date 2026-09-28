@@ -996,7 +996,7 @@ select, input[type="number"], input[type="text"] { background: var(--sa-ink); co
 }
 
 /* Confirm placement sheet — appears when a valid placement is selected on phone */
-.confirm-sheet {
+.confirm-sheet:not(.modal-root) {
   position: fixed;
   left: 0;
   right: 0;
