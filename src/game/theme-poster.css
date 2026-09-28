@@ -861,8 +861,12 @@
 }
 .start-screen.px .px-modes .px-playing-as b { color: var(--px-text); }
 @media (min-width: 831px) and (max-height: 820px) {
-  .px-name { font-size: clamp(34px, min(3.8vw, 6.6vh), 64px); }
+  /* CAST-2 (#558): the profile column is narrowest here, so the perk/quirk
+     block wraps most. Trim the name and the quote's lead so the whole card —
+     name, role, perk, quirk, quote — fits with nothing clipped. */
+  .px-name { font-size: clamp(30px, min(3.4vw, 6vh), 58px); }
   .px-perks { margin-top: 8px; }
+  .px-quote { margin-top: 8px; }
 }
 @media (max-width: 830px) {
   .px-profile { overflow: visible; }

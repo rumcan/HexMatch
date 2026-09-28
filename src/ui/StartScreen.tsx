@@ -266,8 +266,9 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
   const [portrait, setPortrait] = useState<Portrait>(() => savedManager());
   /** CAST-1: the manager on the stage — may be a locked one, previewed. */
   const [viewing, setViewing] = useState<ManagerId>(() => savedManager());
-  /** UI-3: the roster card's PROFILE / HISTORY / RIVALS tabs. */
-  const [profileTab, setProfileTab] = useState<"profile" | "history" | "rivals">("profile");
+  /** UI-3: the roster card's PROFILE / RIVALS tabs. CAST-2 (#558) dropped the
+   *  HISTORY tab — the perk and quirk now own the profile's main space. */
+  const [profileTab, setProfileTab] = useState<"profile" | "rivals">("profile");
   /** STORY-01: the campaign record, re-read each time the menu opens so a
    *  finished contract seals itself without a reload. */
   const [progress, setProgress] = useState<StoryProgress>(() => loadStoryProgress());
@@ -1125,7 +1126,7 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
           <div className="px-profile">
             <div className="px-detail-head">
               <div className="px-subtabs" role="tablist" aria-label="Manager details">
-                {(["profile", "history", "rivals"] as const).map((t, i) => (
+                {(["profile", "rivals"] as const).map((t, i) => (
                   <Fragment key={t}>
                     {i > 0 ? <span className="px-divider" aria-hidden="true" /> : null}
                     <button type="button" role="tab" aria-selected={profileTab === t}
@@ -1149,6 +1150,10 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
             </div>
             <h1 className="px-kicker">Back to work, Logistics Manager.</h1>
             {profileTab === "profile" ? (
+              // CAST-2 (#558): the HISTORY tab is gone. The profile foregrounds
+              // who the manager is (name, title, quote) and what they do (perk,
+              // quirk) — the perk/quirk block takes the space the History view
+              // used to occupy, laid out to fit with no clipping.
               <div className="px-profile-body" key={`${cast.id}-profile`}>
                 <h2 className="px-name"><span>{cast.first}</span> <span>{cast.last}</span></h2>
                 <p className="px-cast-role">{cast.title}</p>
@@ -1158,17 +1163,6 @@ export default function StartScreen({ onStart, onBack, initial = "choose" }: Sta
                   <div className="px-perk quirk"><dt>Quirk</dt><dd>{cast.quirk}</dd></div>
                 </dl>
                 <p className="px-quote">“{cast.quote}”</p>
-                <p className="start-subtitle px-bio">{cast.bio}</p>
-              </div>
-            ) : profileTab === "history" ? (
-              <div className="px-profile-body" key={`${cast.id}-history`}>
-                <h2 className="px-title">A life in motion</h2>
-                <p className="start-subtitle px-bio px-bio-history">{cast.bio}</p>
-                <div className="px-history">
-                  {cast.history.map(([year, title, text]) => (
-                    <div className="px-history-row" key={year}><span>{year}</span><div><strong>{title}</strong><p>{text}</p></div></div>
-                  ))}
-                </div>
               </div>
             ) : (
               <div className="px-profile-body" key={`${cast.id}-rivals`}>

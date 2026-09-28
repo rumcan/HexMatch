@@ -7462,7 +7462,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const BLACK_MARKET_ACTIONS: ReadonlySet<string> = new Set([...Object.keys(SABOTAGE), "security"]);
 
   // ── CAST-1: the managers at the Black Market (docs/CAST.md) ──────────────
-  /** The Gold a sabotage card costs THIS seat (Dolores pays 20% more). */
+  /** The Gold a sabotage card costs THIS seat (Dolores pays 10% more). */
   const blackGoldFor = (p: PlayerState, key: string): number =>
     sabotageGold(SABOTAGE[key]?.gold ?? 0, p.manager);
   /** Security Forces for THIS seat: free for Dolores, +50% for Rafael. */

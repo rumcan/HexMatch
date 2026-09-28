@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   FIXER_WINDOW_MS, FRESH_RECORD, MANAGER_IDS, buildMultiplier, effectiveBalance, fixerLeft, fixerRefillIn,
-  isUnlocked, managerOrNull, normalizeManager, perkPrice, readRecord, recordOutcome, sabotageGold,
+  isUnlocked, managerOrNull, normalizeManager, perkPrice, perksOf, readRecord, recordOutcome, sabotageGold,
   securityCost, spendFixer, tuningScore, type FixerState,
 } from "../../src/iso/managers";
 import { MANAGERS, loadManagerRecord, recordManagerMatch, savedManager, CAST_KEY } from "../../src/story/managers";
@@ -25,8 +25,8 @@ describe("CAST-1 perks", () => {
     expect(perkPrice(120, "anne", "rail")).toBe(90);
     expect(perkPrice(120, "anne", "road")).toBe(132);
   });
-  it("Kenji: tuning +10%, levelling +25%", () => {
-    expect(tuningScore(1000, "kenji")).toBe(1100);
+  it("Kenji: tuning +20%, levelling +25%", () => {
+    expect(tuningScore(1000, "kenji")).toBe(1200);
     expect(tuningScore(1000, "james")).toBe(1000);
     expect(perkPrice(40, "kenji", "level")).toBe(50);
   });
@@ -36,13 +36,25 @@ describe("CAST-1 perks", () => {
     expect(securityCost({ grain: 6, stone: 3 }, null)).toEqual({ grain: 6, stone: 3 });
     expect(tuningScore(777, null)).toBe(777);
   });
-  it("Dolores: Security Forces are free; sabotage costs 20% more Gold", () => {
+  it("Dolores: Security Forces are free; sabotage costs 10% more Gold", () => {
     expect(securityCost({ grain: 6, stone: 3 }, "dolores")).toEqual({});
-    expect(sabotageGold(15, "dolores")).toBe(18);
-    expect(sabotageGold(18, "dolores")).toBe(22);
+    expect(sabotageGold(15, "dolores")).toBe(17);
+    expect(sabotageGold(18, "dolores")).toBe(20);
   });
   it("Rafael: Security Forces cost 50% more", () => {
     expect(securityCost({ grain: 6, stone: 3 }, "rafael")).toEqual({ grain: 9, stone: 5 });
+  });
+  it("CAST-2 (#558): Rafael, Dolores and Kenji each edge out the starting pair", () => {
+    // The starters' headline is a 25% class discount. The unlockables were a
+    // touch weaker, so #558 buffed the perk or softened the quirk — modestly,
+    // and never past the starters' 25% ceiling, so hiring one is a reward.
+    expect(perksOf("rafael").freeBlack).toBe(4);        // was 3 free cards a window
+    expect(perksOf("dolores").sabotageGold).toBeCloseTo(1.1); // was a +20% surcharge
+    expect(perksOf("kenji").tuning).toBeCloseTo(1.2);   // was a +10% bonus
+    expect(Math.abs(perksOf("kenji").tuning - 1)).toBeLessThanOrEqual(0.25);
+    // James and Anne are untouched.
+    expect(perkPrice(100, "james", "road")).toBe(75);
+    expect(perkPrice(120, "anne", "rail")).toBe(90);
   });
   it("the preview balance never promises more than the charge can take", () => {
     for (const id of MANAGER_IDS) for (const cls of ["road", "rail", "level"] as const) {
@@ -54,10 +66,10 @@ describe("CAST-1 perks", () => {
 });
 
 describe("CAST-1 Rafael's Fixer allowance", () => {
-  it("gives 3 free cards per 5 minutes of play, refilled (never stacked)", () => {
+  it("gives 4 free cards per 5 minutes of play, refilled (never stacked)", () => {
     let s: FixerState | null = null;
-    for (let i = 0; i < 3; i++) {
-      expect(fixerLeft(s, "rafael", 10_000)).toBe(3 - i);
+    for (let i = 0; i < 4; i++) {
+      expect(fixerLeft(s, "rafael", 10_000)).toBe(4 - i);
       s = spendFixer(s, "rafael", 10_000);
       expect(s).not.toBeNull();
     }
@@ -66,9 +78,9 @@ describe("CAST-1 Rafael's Fixer allowance", () => {
     // still the same window just before the refill
     expect(fixerLeft(s, "rafael", FIXER_WINDOW_MS - 1)).toBe(0);
     expect(fixerRefillIn(FIXER_WINDOW_MS - 1)).toBe(1);
-    // the next window: a full three, no carry-over
-    expect(fixerLeft(s, "rafael", FIXER_WINDOW_MS)).toBe(3);
-    expect(fixerLeft(null, "rafael", FIXER_WINDOW_MS * 7)).toBe(3);
+    // the next window: a full four, no carry-over
+    expect(fixerLeft(s, "rafael", FIXER_WINDOW_MS)).toBe(4);
+    expect(fixerLeft(null, "rafael", FIXER_WINDOW_MS * 7)).toBe(4);
   });
   it("is Rafael's alone", () => {
     for (const id of ["james", "anne", "dolores", "kenji", null] as const) {

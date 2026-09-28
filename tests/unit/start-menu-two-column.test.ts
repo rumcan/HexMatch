@@ -86,17 +86,33 @@ describe("#184 two-column mode menu", () => {
     expect(groups[1].classList.contains("start-actions")).toBe(true);
   });
 
-  it("keeps heading, intro, manager picker and rating in the left column", async () => {
+  it("keeps heading, perk and quirk, manager picker and rating in the left column", async () => {
     await renderModes();
     const info = container.querySelector(".start-modes-info")!;
     expect(info.querySelector("h1")?.textContent).toContain("Back to work");
-    expect(info.querySelector(".start-subtitle")).not.toBeNull();
+    // CAST-2 (#558): the HISTORY tab is gone — the perk and quirk block is the
+    // profile's main content now, and it stays in the left/info column.
+    expect(info.querySelector(".px-perks")).not.toBeNull();
     expect(info.querySelector(".portrait-picker")).not.toBeNull();
     expect(info.querySelector(".portrait-label")?.textContent).toContain("Your manager");
     // Nothing that belongs on the left leaks into the action column.
     const actions = container.querySelector(".start-actions")!;
     expect(actions.querySelector("h1")).toBeNull();
     expect(actions.querySelector(".portrait-picker")).toBeNull();
+  });
+
+  it("CAST-2 (#558): the profile shows perk and quirk; the HISTORY tab is gone", async () => {
+    await renderModes();
+    const tabs = [...container.querySelectorAll(".px-subtabs button")]
+      .map((b) => (b.textContent ?? "").trim());
+    expect(tabs).toEqual(["profile", "rivals"]);
+    // The perk and quirk block is the profile's main content and stays readable.
+    const perks = container.querySelector(".px-perks");
+    expect(perks).not.toBeNull();
+    expect(perks!.querySelector(".px-perk dt")?.textContent).toBe("Perk");
+    expect(perks!.querySelector(".px-perk.quirk dt")?.textContent).toBe("Quirk");
+    // The old history view no longer renders anywhere.
+    expect(container.querySelector(".px-history")).toBeNull();
   });
 
   it("lists every primary action on the right; the rank picker waits for the search", async () => {
