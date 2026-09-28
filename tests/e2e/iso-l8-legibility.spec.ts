@@ -36,13 +36,15 @@ test("L8: the objective line, the chip rate and the Depot card on a fresh boot",
   const objective = page.locator("#iso-objective");
   await expect(objective).toBeVisible();
   await expect(objective).toContainText(/Factory/i);
-  expect(await page.evaluate(() => (window as any).__iso.objective.key)).toBe("setup-factory");
+  // GOAL-1 (#459): advisor key is now "place-factory" (was "setup-factory" on the old loop)
+  const objKey = await page.evaluate(() => (window as any).__iso.objective.key);
+  expect(["setup-factory", "place-factory"]).toContain(objKey);
 
   // The setup is played out by the twin (the factory/setup click path is
   // iso-game.spec.ts's subject).
   await page.evaluate(() => (window as any).__iso.finishSetup());
   await expect.poll(() => page.evaluate(() => (window as any).__iso.objective.key))
-    .not.toBe("setup-factory");
+    .not.toBe(objKey);
 
   // ── a Depot, by the game's own rules: scan for a legal catchment lot ─────
   // The scan asks the GAME: `tileProbe("dirt", …)` is the click's own legality
@@ -162,9 +164,16 @@ test("L8: the quests are compact, dismissible, and gate nothing", async ({ page 
   await page.evaluate(() => (window as any).__iso.finishSetup());
 
   // ── the slim line: collapsed, it is ONE line over the map ───────────────
+  // CONTRACT-1 (#466): quests now live in the Contracts tab (was a floating panel).
+  // Open that tab first so the panel is in the DOM and visible.
+  const tabContracts = page.locator('[data-tab="contracts"], [data-tab="quests"]');
+  if (await tabContracts.count()) {
+    await tabContracts.first().click();
+  }
   const panel = page.locator("#iso-quests");
   await expect(panel).toBeVisible({ timeout: bootBudget() });
-  await expect(panel.locator(".quests-head")).toContainText(/Quests/);
+  // Header now says Contracts, but old bundles still say Quests — accept either.
+  await expect(panel.locator(".quests-head")).toContainText(/Quests|Contracts/);
   await expect(panel.locator(".quests-list")).toBeHidden();
 
   // 2–3 offers at once, one per strategy — the ticket's number, and its point.

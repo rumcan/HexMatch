@@ -89,7 +89,14 @@ test.describe("start menu two-column layout", () => {
       // clipped, not reachable only by scrolling or keyboard.
       const viewport = page.viewportSize()!;
       for (const action of ACTIONS) {
-        const button = page.locator(".start-actions").getByRole("button", { name: new RegExp(`^${action}`) });
+        // PLAY-FIX: \"Play vs AI\" now has a second variant \"Play vs AI — Conquest\" beside it — the old
+        // ^Play vs AI regex matched both and triggered a strict-mode violation. Match the exact label
+        // for that entry (the Conquest button has its own explicit name) and keep prefix matching for
+        // the rest (e.g. \"Auto Matchmaking\" may carry a <small> suffix in the accessible name).
+        const nameFilter = action === \"Play vs AI\"
+          ? /^Play vs AI(?! — Conquest)/
+          : new RegExp(`^${action}`);
+        const button = page.locator(\".start-actions\").getByRole(\"button\", { name: nameFilter });
         await expect(button).toBeVisible();
         const box = await button.boundingBox();
         expect(box, `${action} has no box`).toBeTruthy();

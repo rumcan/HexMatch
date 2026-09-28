@@ -56,10 +56,23 @@ export async function bootSoloIso(
       for (const [k, v] of Object.entries(state)) localStorage.setItem(k, v);
     }, opts.remembered);
   }
-  await page.goto(opts.url);
+  // PLAY-FIX: page.goto can abort with ERR_ABORTED if the frame detaches during HMR or a
+  // previous navigation — retry once and wait for DOM to settle before clicking the menu.
+  try {
+    await page.goto(opts.url, { waitUntil: "domcontentloaded" });
+  } catch (e) {
+    // Retry on abort — the dev server may have restarted between specs.
+    if (String(e).includes("ERR_ABORTED") || String(e).includes("detached")) {
+      await page.waitForTimeout(500);
+      await page.goto(opts.url, { waitUntil: "domcontentloaded" });
+    } else throw e;
+  }
+  await page.locator(".menu-btn.primary").waitFor({ state: "visible", timeout: bootBudget() });
   // The front door, then the mode screen — the same two clicks a player makes.
   await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+  const playBtn = page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ });
+  await playBtn.waitFor({ state: "visible", timeout: bootBudget() });
+  await playBtn.click();
   await page.waitForFunction(() => {
     const h = (window as unknown as {
       __iso?: { phase: string; loading: boolean; grid?: { industries: unknown[] } };
