@@ -777,6 +777,18 @@ export class BoardRenderer {
     else if (wiggling) ctx.drawImage(strip!.wiggle![Math.floor(now / 120) % strip!.wiggle!.length], -size / 2, -size / 2, size, size);
     else if (strip) this.blit(ctx, strip, perf ? 0 : s.angle, size);
     else drawFlatGem(ctx, type, 0, 0, size);
+    if ((s.special === "blast" || s.special === "nova") && !s.dying) {
+      // the area gems wear their own art, ringed: amber (3×3), double white-gold (5×5)
+      const k = rich ? 0.5 + 0.5 * Math.sin(now / 200 + s.seed) : 0.6;
+      const rings = s.special === "nova" ? 2 : 1;
+      for (let i = 0; i < rings; i++) {
+        ctx.strokeStyle = s.special === "nova" ? `rgba(255,244,210,${0.45 + 0.4 * k})` : `rgba(255,170,70,${0.4 + 0.45 * k})`;
+        ctx.lineWidth = 2 + k * 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, size * (0.46 + i * 0.1) + k * 2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
     if (s.special === "bomb" && rich) {
       const k = 0.5 + 0.5 * Math.sin(now / 160);
       ctx.strokeStyle = `rgba(255,140,70,${0.25 + 0.35 * k})`;

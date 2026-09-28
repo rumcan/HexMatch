@@ -99,9 +99,10 @@ export type AnimationKey = keyof typeof BOARD_ANIMATION_MS;
 export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo" | "cross" | "bcross";
 /** A gem's special: a bomb (match 5) purges a colour; a line gem (match 4)
  * clears its row and column — or, swapped, just the row (left/right) or the
- * column (up/down); a disco ball (match 5) wipes the whole board. Bombs are
- * minted by L-shapes and crosses. */
-export type Special = null | "bomb" | "line" | "disco";
+ * column (up/down); a disco ball (match 5) wipes the whole board; a bomb
+ * (L-shape) purges a colour; a blast (T / broken cross) clears the 3×3 round
+ * it and a nova (holy cross, the +) the 5×5. */
+export type Special = null | "bomb" | "line" | "disco" | "blast" | "nova";
 export type CrossKind = "holy" | "broken";
 
 /** B1 (#246) — one resolved pass, seen by the battle engine. */
@@ -169,7 +170,7 @@ export interface ClearPhase {
   removed: CellGem[];
   cracked: { r: number; c: number; kind: "frost" | "girder"; left: number }[];
   /** Tokens forged / bombs minted in place this pass (drawn as an `up`/`boom`). */
-  minted: { r: number; c: number; what: "token" | "bomb" | "line" | "disco" }[];
+  minted: { r: number; c: number; what: "token" | "bomb" | "line" | "disco" | "blast" | "nova" }[];
   fx: FxEvent[];
   rewards: RewardKind[];
   bonus: { res: ResKey; amount: number; reason: string }[];
