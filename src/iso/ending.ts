@@ -659,9 +659,9 @@ function appendRankRow(
 // ── END-1 (#472): summary charts (plain SVG, Space Age palette) ────────────
 
 const SA_ORANGE = "#f08a24";
-const SA_AQUA = "#4fb3bf";
-const SA_LEMON = "#f2d64b";
-const SA_BONE = "#eee6d4";
+const SA_AQUA = "#344e57";
+const SA_LEMON = "#775020";
+const SA_BONE = "#243238";
 const SA_LINE = "#343b3f";
 
 function fmtTime(sec: number): string {
@@ -703,7 +703,7 @@ function chartSvg(
   const bg = document.createElementNS(ns, "rect");
   bg.setAttribute("x", "0"); bg.setAttribute("y", "0");
   bg.setAttribute("width", String(W)); bg.setAttribute("height", String(H));
-  bg.setAttribute("fill", "#1f2427");
+  bg.setAttribute("fill", "#fbf5e8");
   bg.setAttribute("rx", "0");
   svg.appendChild(bg);
 
@@ -1011,16 +1011,23 @@ export function showEndingScreen(
     mainMenuBtn.type = "button";
     mainMenuBtn.dataset.sfx = "close";
   }
-  // Order: review, rematch, same-map, next-contract / continue, main-menu, restart (restart last as the old primary)
-  actions.append(
-    review,
-    ...(rematchBtn ? [rematchBtn] : []),
-    ...(sameMapBtn ? [sameMapBtn] : []),
-    ...(nextContractBtn ? [nextContractBtn] : []),
-    ...(continueBtn ? [continueBtn] : []),
-    ...(mainMenuBtn ? [mainMenuBtn] : []),
-    restart,
-  );
+  // One replay door; map reuse is an option, not a second competing action.
+  const sameMap = el("input", "ending-map-choice") as HTMLInputElement;
+  sameMap.type = "checkbox";
+  if (options.onSameMap) {
+    const label = el("label", "ending-map-label", "Use the same map");
+    label.prepend(sameMap);
+    card.appendChild(label);
+  }
+  const primary = nextContractBtn ?? continueBtn ?? restart;
+  primary.classList.add("ending-primary");
+  if (!nextContractBtn && !continueBtn) restart.textContent = "Play again";
+  actions.append(primary, review,
+    // A won contract offers both doors: "Next contract" leads, and the way
+    // back to the campaign list must still stand beside it.
+    ...(continueBtn && primary !== continueBtn ? [continueBtn] : []),
+    ...(primary !== restart ? [restart] : []),
+    ...(mainMenuBtn ? [mainMenuBtn] : []));
   card.appendChild(actions);
   screen.appendChild(card);
 
@@ -1042,7 +1049,10 @@ export function showEndingScreen(
     reopen.focus();
   };
   review.addEventListener("click", close);
-  restart.addEventListener("click", options.onRestart);
+  restart.addEventListener("click", () => {
+    if (sameMap.checked && options.onSameMap) options.onSameMap();
+    else (options.onRematch ?? options.onRestart)();
+  });
   if (continueBtn && options.onContinue) {
     continueBtn.addEventListener("click", options.onContinue);
   }
@@ -1061,15 +1071,7 @@ export function showEndingScreen(
   reopen.addEventListener("click", open);
   // The ledger's keyboard trap walks whatever doors this match actually has:
   // two in a sandbox match, three inside a contract, plus END-1's new doors.
-  const doors = [
-    review,
-    ...(rematchBtn ? [rematchBtn] : []),
-    ...(sameMapBtn ? [sameMapBtn] : []),
-    ...(nextContractBtn ? [nextContractBtn] : []),
-    ...(continueBtn ? [continueBtn] : []),
-    ...(mainMenuBtn ? [mainMenuBtn] : []),
-    restart,
-  ];
+  const doors = [...(options.onSameMap ? [sameMap] : []), ...actions.querySelectorAll<HTMLButtonElement>("button")];
   const onKey = (event: KeyboardEvent) => {
     if (screen.classList.contains("hidden")) return;
     if (event.key === "Escape") {

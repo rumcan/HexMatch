@@ -1,3 +1,4 @@
+import { storageRentLabel } from "../iso/storage-rent";
 // ══════════════════════════════════════════════════════════════════════════
 // U1 — the restored HexMatch interface, driven by the iso game.
 //
@@ -1571,6 +1572,11 @@ export function createOriginalUi(
   const marketPane = h("div", "pane market-pane hidden");
   tp.appendChild(bankPane);
   tp.appendChild(marketPane);
+  const rentNotices = [moneyChip, marketPane, bankPane].map(host => {
+    const note = h("small", "storage-rent hidden");
+    host.appendChild(note);
+    return note;
+  });
   tp.appendChild(blackPane);
   tp.appendChild(feedPane);
   tp.appendChild(questsPane);
@@ -4309,6 +4315,11 @@ export function createOriginalUi(
     // itself. A new Depot being connected or a better tune visibly lifts the
     // number before the purse has banked it, so the economy is read where it
     // is earned.
+    const rentText = storageCap === undefined ? "" : storageRentLabel(purse, storageCap);
+    for (const note of rentNotices) {
+      if (note.textContent !== rentText) note.textContent = rentText;
+      note.classList.toggle("hidden", !rentText);
+    }
     const ratesSig = CARGOES.map((c) => String(rates?.[c] ?? "-")).join(",");
     const ratesChanged = ratesSig !== lastRatesSig;
     if (ratesChanged) lastRatesSig = ratesSig;
@@ -4996,15 +5007,21 @@ export function createOriginalUi(
       act.appendChild(b);
     }
     const alertIn = h("input", "alert-in") as HTMLInputElement;
-    alertIn.type = "number"; alertIn.min = "1"; alertIn.placeholder = "Alert $";
+    alertIn.type = "number"; alertIn.min = "0.01"; alertIn.step = "0.01"; alertIn.placeholder = "Price";
     alertIn.title = "Notify me above $X";
     alertIn.dataset.alert = cargo;
-    const alertBtn = h("button", "mini alert-btn", "🔔") as HTMLButtonElement;
+    const alertBtn = h("button", "mini alert-btn", "Set alert") as HTMLButtonElement;
     alertBtn.dataset.alertBtn = cargo;
     alertBtn.title = "Set a price alert";
     alertBtn.onclick = () => doAlert(cargo, alertIn);
     alertIn.onkeydown = (e) => { if (e.key === "Enter") doAlert(cargo, alertIn); };
-    act.append(alertIn, alertBtn);
+    const alertLabel = h("label", "market-alert-label", "Alert at $");
+    alertIn.setAttribute("aria-label", `${CARGO[cargo].name} alert at $`);
+    alertLabel.appendChild(alertIn);
+    const clear = h("button", "mini alert-clear", "Clear") as HTMLButtonElement;
+    clear.dataset.alertClear = cargo;
+    clear.onclick = () => { alertIn.value = ""; doAlert(cargo, alertIn); };
+    act.append(alertLabel, alertBtn, clear);
     act.insertBefore(held, act.firstChild);
     root.append(head, spark, act);
     exRows.set(cargo, { root, price, trend, spark, held, btns, buyBtns, alertIn, alertBtn });
@@ -5054,12 +5071,15 @@ export function createOriginalUi(
         b.title = `Buy ${want} for $${Math.ceil(row.buy * want).toLocaleString("en-US")} (price + spread)`;
       }
       // Never rewrite the alert box mid-typing — only when it is not focused.
-      if (document.activeElement !== el.alertIn) {
+      if (document.activeElement !== el.alertIn && document.activeElement !== el.alertBtn) {
         el.alertIn.value = row.alert != null ? String(row.alert) : "";
       }
       el.alertBtn.classList.toggle("on", row.alert != null);
+      el.alertBtn.textContent = row.alert != null ? `Set · armed $${row.alert}` : "Set alert";
+      el.alertBtn.setAttribute("aria-pressed", String(row.alert != null));
+      el.root.querySelector<HTMLButtonElement>(".alert-clear")!.disabled = row.alert == null;
       el.alertBtn.title = row.alert != null
-        ? `Alert set above $${row.alert} — clear the box and press 🔔 to remove it`
+        ? `Alert set above $${row.alert} — press Clear to remove it`
         : "Notify me above $X";
       drawSpark(el.spark, row.spark);
     }

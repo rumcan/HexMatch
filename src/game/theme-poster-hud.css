@@ -369,3 +369,41 @@
 .ending-unlocked-kicker { color: #e8700f; font: 700 13px var(--px-display); letter-spacing: .16em; text-transform: uppercase; }
 .ending-unlocked-name { font: 400 22px/1 var(--px-poster, Impact); text-transform: uppercase; }
 .ending-unlocked-perk { font: 500 13px/1.3 var(--px-body, sans-serif); color: #354144; }
+/* PLAY-FIX-1: visible price controls and overflow carrying cost. */
+.ui-root .market-alert-label { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.ui-root .market-alert-label .alert-in { width: 80px; min-height: 32px; color: #111b20; background: #fffaf0; border: 1px solid #111b20; }
+.ui-root .market-act .alert-btn { min-height: 32px; padding: 6px 8px; }
+.ui-root .market-act .alert-btn.on { color: #111b20; background: #f39826; }
+.ui-root .storage-rent { display: block; color: #a73b12; font: 600 11px/1.4 var(--px-display); white-space: normal; }
+.ui-root .storage-rent.hidden { display: none; }
+.ui-root .chip-money { position: relative; }
+.ui-root .chip-money .storage-rent { position: absolute; top: 34px; right: 0; width: 245px; padding: 6px 10px; border: 1px solid #111b20; background: #fbf5e8; }
+
+/* Final ledger: the same paper, ink frames and orange rule as the UI-3 HUD.
+   ID specificity also beats night/defeat and legacy space-age variants. */
+#iso-ending { --ending-accent: #b74a0b; color: #111b20; background: #17252b; }
+#iso-ending .ending-shade { background: #17252b; filter: none; }
+#iso-ending .ending-shade::after { display: none; }
+#iso-ending .ending-card { background: #f3ead7; color: #111b20; border: 2px solid #111b20; border-top: 6px solid #ed7414; box-shadow: 8px 8px 0 #091112; text-align: left; }
+#iso-ending .ending-card::before { display: none; }
+#iso-ending .ending-card::after { display: none; }
+#iso-ending .ending-title, #iso-ending .ending-result, #iso-ending .ending-epilogue,
+#iso-ending .ending-player-final, #iso-ending .ending-rival-final,
+#iso-ending .ending-highlight-copy b, #iso-ending .ending-section-title { color: #111b20; }
+#iso-ending .ending-method, #iso-ending .ending-coda, #iso-ending .ending-highlight-copy small,
+#iso-ending .ending-chart-label, #iso-ending .ending-chart-legend, #iso-ending .ending-rank-note { color: #46545a; }
+#iso-ending .ending-ledger, #iso-ending .ending-summary, #iso-ending .ending-chart-box,
+#iso-ending .ending-rank { background: #fbf5e8; color: #111b20; border: 1px solid #111b20; transform: none; }
+#iso-ending .ending-ledger { width: 100%; box-sizing: border-box; }
+#iso-ending .ending-summary { padding: 16px; border-top: 3px solid #ed7414; }
+#iso-ending .ending-highlight-row { background: transparent; border: 0; border-bottom: 1px solid #111b2033; padding: 8px 0; }
+#iso-ending .ending-final-beat, #iso-ending .ending-final-beat.player { background: #e8ddc5; border-color: #b74a0b; }
+#iso-ending .ending-final-face, #iso-ending .ending-final-beat.player .ending-final-face { border-color: #111b20; }
+#iso-ending .ending-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; }
+#iso-ending .ending-button { background: #fbf5e8; color: #111b20; border: 1px solid #111b20; }
+#iso-ending .ending-button.ending-primary { background: #ed7414; color: #111b20; border: 2px solid #111b20; flex-basis: 100%; font-size: 14px; }
+#iso-ending .ending-button:hover { background: #e7d7b8; }
+#iso-ending .ending-primary:hover { background: #f39826; }
+#iso-ending .ending-map-label { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 13px; }
+#iso-ending .ending-the-end { text-align: center; }
+#iso-ending .ending-fireworks, #iso-ending .ending-ashes { display: none; }

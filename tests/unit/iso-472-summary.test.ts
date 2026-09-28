@@ -195,16 +195,20 @@ describe("END-1 ending screen with summary", () => {
     expect(view.element.textContent).toContain("Contracts & tenders");
     expect(view.element.textContent).toContain("First to each town tier");
 
-    // Buttons exist
-    expect(view.element.querySelector(".ending-rematch")).not.toBeNull();
-    expect(view.element.querySelector(".ending-same-map")).not.toBeNull();
+    // PLAY-FIX-1 (#544): one primary action, and the rematch doors folded
+    // into "Play again" + a "Use the same map" choice.
+    expect(view.element.querySelector(".ending-primary")).not.toBeNull();
+    expect(view.element.querySelector(".ending-restart")).not.toBeNull();
+    expect(view.element.querySelector(".ending-map-choice")).not.toBeNull();
     expect(view.element.querySelector(".ending-next-contract")).not.toBeNull();
     expect(view.element.querySelector(".ending-main-menu")).not.toBeNull();
 
-    // Clicking them calls the callbacks
-    (view.element.querySelector(".ending-rematch") as HTMLButtonElement).click();
+    // Play again = a rematch on a new map; with the box ticked, the same map
+    const restart = view.element.querySelector(".ending-restart") as HTMLButtonElement;
+    restart.click();
     expect(onRematch).toHaveBeenCalledOnce();
-    (view.element.querySelector(".ending-same-map") as HTMLButtonElement).click();
+    (view.element.querySelector(".ending-map-choice") as HTMLInputElement).checked = true;
+    restart.click();
     expect(onSameMap).toHaveBeenCalledOnce();
     (view.element.querySelector(".ending-next-contract") as HTMLButtonElement).click();
     expect(onNext).toHaveBeenCalledOnce();

@@ -73,7 +73,8 @@ const SOFT_CUT = 8;                       // same threshold the sheet packer use
 
 const COLORS = { blue: "player 1 (human)", red: "player 2 (rival)" };
 const VIEWS = { ne: "away to the upper right", se: "toward the lower right",
-  sw: "toward the lower left", nw: "away to the upper left" };
+  sw: "toward the lower left", nw: "away to the upper left",
+  n: "north", e: "east", s: "south", w: "west" };
 export const TRUCK_NAMES = [];
 for (const color of Object.keys(COLORS)) for (const v of Object.keys(VIEWS)) TRUCK_NAMES.push(`truck_${color}_${v}`);
 

@@ -57,7 +57,7 @@ function loadBitmap(url: string): Promise<AtlasImage> {
       if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
       return r.blob();
     })
-    .then((b) => createImageBitmap(b));
+    .then((b) => createImageBitmap(b, { premultiplyAlpha: "premultiply" }));
 }
 
 /**

@@ -41,7 +41,7 @@ import { depotRate, distanceFactor } from "./loop";
 import { gradeOf, uphillSpeed } from "./slopes";
 import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import {
-  NE, SE, SW, NW, tIdx, type Track,
+  NE, SE, SW, NW, ROAD_DE, ROAD_DS, ROAD_DW, ROAD_DN, DIR, tIdx, type Track,
 } from "./track";
 import {
   YIELD_WAIT_MS, STATIONARY_SPEED, buildHash, laneOffsetFor,
@@ -491,10 +491,9 @@ function stepBit(route: [number, number][], leg: number, reverse: boolean): numb
   const a = route[leg], b = route[Math.min(leg + 1, route.length - 1)];
   const sign = reverse ? -1 : 1;
   const dx = (b[0] - a[0]) * sign, dy = (b[1] - a[1]) * sign;
-  if (dx > 0) return SE;
-  if (dx < 0) return NW;
-  if (dy > 0) return SW;
-  if (dy < 0) return NE;
+  for (const [bit, [x, y]] of Object.entries(DIR)) {
+    if (Math.sign(dx) === x && Math.sign(dy) === y) return Number(bit);
+  }
   return SE;   // degenerate single-tile route: face somewhere sensible
 }
 
@@ -506,8 +505,9 @@ function stepBit(route: [number, number][], leg: number, reverse: boolean): numb
  * heading can never exist for one art set and be missing from the other.
  * A route step is exactly one of these — `stepBit` returns no other bit.
  */
-export const TRUCK_VIEW: Record<number, "ne" | "se" | "sw" | "nw"> = {
+export const TRUCK_VIEW: Record<number, "ne" | "se" | "sw" | "nw" | "n" | "e" | "s" | "w"> = {
   [NE]: "ne", [SE]: "se", [SW]: "sw", [NW]: "nw",
+  [ROAD_DE]: "e", [ROAD_DS]: "s", [ROAD_DW]: "w", [ROAD_DN]: "n",
 };
 
 /** Who owns which livery: the player drives the blue lorries, everyone else red. */
