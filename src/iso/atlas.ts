@@ -393,11 +393,7 @@ export async function loadBuildingLayers(
   try { res = await fetch(`${baseUrl}manifest.json`); } catch { return 0; }
   if (!res.ok) return 0;
   const m: {
-    sprites: Record<string, {
-      footprint: [number, number]; anchor: [number, number]; w: number; h: number;
-      /** Owner (2026-09-28): an animated building is a strip of equal frames. */
-      frames?: number; frameMs?: number;
-    }>;
+    sprites: Record<string, { footprint: [number, number]; anchor: [number, number]; w: number; h: number }>;
   } = await res.json().catch(() => null);
   const names = m?.sprites ? Object.entries(m.sprites) : [];
   await Promise.all(names.map(async ([name, def]) => {
@@ -429,10 +425,6 @@ export async function loadBuildingLayers(
       s.x = 0; s.y = 0; s.w = size.w; s.h = size.h;
       s.anchor = size.anchor;
       s.center = true;
-      // The PNG is the whole sprite: its frame count is the manifest's, never
-      // a stale one left on the sheet def this layer replaces.
-      s.frames = def.frames && def.frames > 1 ? def.frames : undefined;
-      s.frameMs = s.frames ? def.frameMs : undefined;
       if (def.footprint) s.footprint = def.footprint;
     } catch (err) {
       // A fill pass failing leaves the already-installed levels serving the

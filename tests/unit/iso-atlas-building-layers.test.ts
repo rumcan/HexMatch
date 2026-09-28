@@ -117,34 +117,6 @@ describe("#136 loadBuildingLayers installs per sprite, as each one's PNGs land",
     for (const name of NAMES) expect(atlas.get(name)?.center, `${name} centre-anchored`).toBe(true);
   });
 
-  it("an animated building installs as a strip: frames and frame time reach the def", async () => {
-    // Owner (2026-09-28): the resource industries animate. The committed
-    // manifest carries `frames`; the loader must hand it to the sprite so the
-    // renderer blits one slice per tick (zoomFrameRect), never the whole strip.
-    const m = buildingsManifest() as unknown as { sprites: Record<string, { w: number; h: number; frames?: number; frameMs?: number }> };
-    const animated = Object.entries(m.sprites).filter(([, d]) => (d.frames ?? 1) > 1);
-    expect(animated.map(([n]) => n).sort()).toEqual(["farm", "forest", "gold_mine", "oil_rig", "ore_mine", "quarry"]);
-    stubNetwork({
-      size: (f) => {
-        const d = m.sprites[spriteOf(f)];
-        const z = f.includes("@2x") ? 2 : f.includes("@1x") ? 1 : 0.5;
-        return d ? [Math.round(d.w * z), Math.round(d.h * z)] : undefined;
-      },
-    });
-    const atlas = freshAtlas();
-    await loadBuildingLayers(atlas, "/assets/buildings/");
-    for (const [name, d] of animated) {
-      const s = atlas.get(name)!;
-      expect(s.frames, name).toBe(d.frames);
-      expect(s.frameMs, name).toBe(d.frameMs);
-      expect(atlas.zoomFrameRect(s, 1, 1).w, `${name} one frame wide`).toBe(Math.round(d.w / d.frames!));
-      expect(atlas.frameAt(s, 0)).toBe(0);
-      expect(atlas.frameAt(s, d.frameMs!)).toBe(1);
-    }
-    // a still building never inherits a frame count
-    expect(atlas.get("town_center")?.frames ?? 1).toBe(1);
-  });
-
   it("one dead tier drops that sprite to the sheet, warns, and spares the rest", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const victim = "farm";
