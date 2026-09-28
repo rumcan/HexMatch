@@ -35,7 +35,7 @@ describe("D5 Euclidean vehicle clocks and continuous four-heading placeholders",
     expect(state.trucks[0].t).toBeCloseTo(0.5);
     const item = truckItems(state)[0];
     expect(item.fx).toBeCloseTo(10 + dx / 2); expect(item.fy).toBeCloseTo(10 + dy / 2);
-    expect(item.sprite).toMatch(/_(ne|se|sw|nw)$/);
+    expect(item.sprite).toMatch(/_(n|ne|e|se|s|sw|w|nw)$/); // PLAY-FIX-1 (#544): eight truck headings
     tickTrucks(state, duration / 2);
     expect(state.trucks[0].deliveries).toBe(1); expect(state.trucks[0].reverse).toBe(true);
     tickTrucks(state, duration / 2);
@@ -48,7 +48,7 @@ describe("D5 Euclidean vehicle clocks and continuous four-heading placeholders",
     expect(state.cars[0].t).toBeCloseTo(0.5);
     const item = carItems(state)[0];
     expect(item.fx).toBeCloseTo(10 + dx / 2); expect(item.fy).toBeCloseTo(10 + dy / 2);
-    expect(item.sprite).toMatch(/_(ne|se|sw|nw)$/);
+    expect(item.sprite).toMatch(/_(n|ne|e|se|s|sw|w|nw)$/); // PLAY-FIX-1 (#544): eight truck headings
     tickCars(state, duration / 2);
     expect(state.cars[0].state).toBe("arriving");
   });
