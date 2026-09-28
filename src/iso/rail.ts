@@ -3231,6 +3231,53 @@ export function railStructureItems(state: RailState, atlas?: RailSpriteSource): 
 }
 
 /**
+ * RAIL-7 (#603) — GHOST HELPERS: one source of truth for what a placed
+ * station looks like. The ghost and the placed structure call the SAME sprite
+ * lookup (stationWhSprite / laneSlabSprite / stationCapSprite / depotSprite)
+ * and the SAME tile helpers (laneSlabTiles / laneCapTile /
+ * stationWarehouseTile), so they cannot drift again.
+ *
+ * The overlay (game.ts) builds its ghost from these; the unit test
+ * rail-7-ghost.test.ts asserts that the ghost's sprite keys equal the placed
+ * structure's sprite keys for every rotation.
+ */
+export interface GhostDrawItem { sprite: string; tx: number; ty: number; }
+
+/** The warehouse + one slab + cap that a 1-lane platform placement will build. */
+export function platformGhostItems(tx: number, ty: number, view: RailView, tier: number = 1): GhostDrawItem[] {
+  const wh = stationWhSprite(tier, view);
+  const lane = { view, tx, ty } as RailLane;
+  const slab = laneSlabTiles(lane);
+  const cap = laneCapTile(lane);
+  const out: GhostDrawItem[] = [];
+  out.push({ sprite: wh, tx, ty });
+  if (slab.length >= 2) {
+    out.push({ sprite: laneSlabSprite(view), tx: slab[1][0], ty: slab[1][1] });
+  }
+  out.push({ sprite: stationCapSprite(view), tx: cap[0], ty: cap[1] });
+  return out;
+}
+
+/** A train depot ghost — same sprite as the placed depot. */
+export function depotGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
+  return [{ sprite: depotSprite(view), tx, ty }];
+}
+
+/** The lane that a station upgrade will add: two slabs + cap. */
+export function laneGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
+  const lane = { view, tx, ty } as RailLane;
+  const slab = laneSlabTiles(lane);
+  const cap = laneCapTile(lane);
+  const out: GhostDrawItem[] = [];
+  for (let i = 0; i < slab.length - 1; i++) {
+    out.push({ sprite: laneSlabSprite(view), tx: slab[i][0], ty: slab[i][1] });
+  }
+  out.push({ sprite: stationCapSprite(view), tx: cap[0], ty: cap[1] });
+  return out;
+}
+
+
+/**
  * A train as two moving draw items: the locomotive on its own ground point and
  * the wagon `WAGON_OFFSET` tiles behind it ON THE SAME POLYLINE, so both follow
  * the track around a corner instead of the wagon cutting across it. A sprite
