@@ -119,6 +119,12 @@ function contractDeadlineFor(kind: ContractKind, view: ContractView): number {
   return Math.round(base * mult);
 }
 
+// TOWN-3 (#561): this module never sees the grid, only `ContractView.towns`,
+// which the game already fills with each town's generated name
+// (`grid.towns[i].name`). This placeholder is a defensive fallback only —
+// an empty `view.towns` (should never happen on a real map) or an old save's
+// wire contract missing `townName` (`contractsFromWire` below) — so it never
+// shows on a live game's contracts/tenders.
 function townNameFor(id: number): string {
   return `Town ${id + 1}`;
 }
