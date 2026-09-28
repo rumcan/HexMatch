@@ -13,6 +13,12 @@
 //   Twin Towns    two towns with a contested middle;
 //   Archipelago   four islands — roads and rail must bridge between them.
 //
+// SCEN-2 (#602) added the `objective` each scenario carries: the job the map
+// is for, said in the CURRENT loop's verbs (see `scenario-goals.ts`). The old
+// loop is retired for scenario play — a scenario boots the new loop like any
+// sandbox match — so nothing here may name the Processing Plant tab or the
+// harvest flow; the objective line and the briefing are the new UI's.
+//
 // The record lives under its own key (`hexmatch:scenarios`), beside the
 // campaign's (`hexmatch:story`) rather than inside it: the campaign record's
 // shape is pinned by STORY-01's tests, and scenarios must work with Story
@@ -29,6 +35,7 @@ import type { MapOptions } from "../net/match-settings";
 import type { MapGenOptions } from "../iso/grid";
 import type { SkillKey } from "../iso/skill";
 import type { StoryProgress } from "./progress";
+import type { ScenarioObjective } from "./scenario-goals";
 
 export const SCENARIO_STORAGE_KEY = "hexmatch:scenarios";
 
@@ -58,6 +65,13 @@ export interface ScenarioDef {
   skill: SkillKey;
   /** The ★ line the scenario races to. */
   winTarget: number;
+  /**
+   * SCEN-2 (#602): the scenario's own objective — what THIS map is for, said
+   * in the current loop's verbs (cargo in, a Depot tuning, a train line, a
+   * battle won) and painted on the objective lane. It is the scenario's job,
+   * never its win condition: the race is still `winTarget`.
+   */
+  objective: ScenarioObjective;
   /** The map features the scenario generates with. */
   mapOptions: MapOptions;
   /** The generator knobs beyond the four map options. */
@@ -74,6 +88,12 @@ export const SCENARIOS: readonly ScenarioDef[] = [
     seed: 47501,
     skill: "normal",
     winTarget: 10,
+    objective: {
+      kind: "deliver",
+      target: 12,
+      text: "Deliver 12 cargo into your Plant",
+      done: "The river pays — 12 loads are in the yard.",
+    },
     mapOptions: { rivers: true, elevation: true, shapes: true, rings: true, diag: true },
     gen: { waterfrontIndustries: true },
   },
@@ -86,6 +106,12 @@ export const SCENARIOS: readonly ScenarioDef[] = [
     seed: 47502,
     skill: "normal",
     winTarget: 10,
+    objective: {
+      kind: "tune",
+      target: 3,
+      text: "Reach ★★★ in a Depot tuning",
+      done: "A three-star tune up here — the climb was worth it.",
+    },
     mapOptions: { rivers: false, elevation: true, shapes: true, rings: true, diag: true },
     gen: { elevationStrength: "strong" },
   },
@@ -98,6 +124,12 @@ export const SCENARIOS: readonly ScenarioDef[] = [
     seed: 47503,
     skill: "normal",
     winTarget: 10,
+    objective: {
+      kind: "rail",
+      target: 1,
+      text: "Run a train line between two stations",
+      done: "Steel on the contested middle — the line is running.",
+    },
     mapOptions: { rivers: true, elevation: true, shapes: true, rings: true, diag: true },
     gen: { townCount: 2 },
   },
@@ -110,6 +142,12 @@ export const SCENARIOS: readonly ScenarioDef[] = [
     seed: 47504,
     skill: "normal",
     winTarget: 10,
+    objective: {
+      kind: "battle",
+      target: 1,
+      text: "Win a rival battle",
+      done: "The islands answer to you — a battle won.",
+    },
     mapOptions: { rivers: false, elevation: true, shapes: true, rings: true, diag: true },
     gen: { archipelago: true },
   },
