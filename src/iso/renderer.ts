@@ -1892,15 +1892,30 @@ export class IsoRenderer {
     // but must never land on a building, a tree or a passing lorry.
     const paintShadows = () => paintBuildingShadows(
       ctx, cam, order, this.shadowStamps, (w, h) => makeSurface(w, h));
+    // LIGHT-1 fix (owner, 2026-09-28): the multiply tint turned the 44%-alpha
+    // contact shadows into a pale veil (multiply blends the tint into a
+    // translucent pixel's transparent part). While a grade is live, the
+    // shadows go down AFTER the tint, slid under what is already drawn, so
+    // they stay dark and still never land on a building. Noon keeps the old
+    // order byte for byte.
+    const tinting = !this.lighting.identity;
+    const paintShadowsUnder = () => {
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-over";
+      const n = paintShadows();
+      ctx.restore();
+      return n;
+    };
     let shadows = 0, blits = 0, damageRects = 0;
     if (full) {
       ctx.clearRect(0, 0, cam.vw, cam.vh);
       paintRoads();
-      shadows = paintShadows();
+      if (!tinting) shadows = paintShadows();
       for (const p of order) if (this.blit(ctx, p, timeMs)) blits++;
       // LIGHT-1: one multiply over the freshly drawn frame (roads and
       // buildings together), then the window glow on top so it stays emissive.
       this.applyStructureTint(ctx, null);
+      if (tinting) shadows = paintShadowsUnder();
       this.paintWindows(ctx, order, timeMs);
       this.paintedValid = true;
     } else {
@@ -1916,7 +1931,7 @@ export class IsoRenderer {
         }
         ctx.clip();
         paintRoads();
-        shadows = paintShadows();
+        if (!tinting) shadows = paintShadows();
         for (const p of order) {
           const box = this.screenRect(p);
           if (!rects.some((d) => rectsOverlap(box, d))) continue;
@@ -1925,6 +1940,7 @@ export class IsoRenderer {
         // Tint only the pixels just drawn. The rest of the canvas was graded
         // on an earlier full pass; multiplying it again would crush it.
         this.applyStructureTint(ctx, rects);
+        if (tinting) shadows = paintShadowsUnder();
         this.paintWindows(ctx, order, timeMs, rects);
         ctx.restore();
       } else {
