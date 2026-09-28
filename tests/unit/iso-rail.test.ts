@@ -713,7 +713,10 @@ describe("the Railway panel's model", () => {
     const state = createRailState();
     const { source, dest } = buildLine(state, grid, track, 7, 3);
     const before = railPanelRows(state, 1);
-    expect(before.find((r) => r.id === source.id)?.actions).toEqual([]);   // trains spawn on their own: nothing to assign
+    // RAIL-6 (#575): a station's one click is the lane upgrade (trains still
+    // spawn on their own — there is no line to assign).
+    expect(before.find((r) => r.id === source.id)?.actions).toEqual(["lane"]);
+    expect(before.find((r) => r.id === source.id)?.label).toMatch(/Station · 1 lane/);
     expect(before.find((r) => r.id === source.id)?.partnerId).toBe(dest.id);
     expect(before.find((r) => r.kind === "depot")?.detail).toBe("no train");
     const plan = assignLine(state, 1, source.id, dest.id);
@@ -731,9 +734,20 @@ describe("the Railway panel's model", () => {
     const state = createRailState();
     const s = placePlatform(state, "you", 1, 7, 3, "se", null);
     const items = railStructureItems(state);
-    expect(items).toHaveLength(1);
-    expect(items[0].sprite).toBe("platform_se");
-    expect(items[0].ref).toMatchObject({ kind: "rail", structure: s.id, railKind: "platform" });
+    // RAIL-6 (#575): a platform draws as its STATION — the warehouse behind
+    // lane 0, one code-painted slab tile per strip tile but the last, and a
+    // cap finishing every lane — in a fixed back-to-front order.
+    expect(items.map((i) => i.sprite)).toEqual([
+      "station_wh_1_r", "station_lane_se", "station_cap_r",
+    ]);
+    expect(items.map((i) => [i.tx, i.ty])).toEqual([[7, 3], [7, 4], [7, 5]]);
+    for (const i of items) {
+      expect(i.ref).toMatchObject({ kind: "rail", structure: s.id, railKind: "platform" });
+    }
+    // An atlas without the station art falls back on the platform sprite the
+    // railway always had (the non-gating contract).
+    expect(railStructureItems(state, { has: () => false }).map((i) => i.sprite))
+      .toEqual(["platform_se"]);
     const depot = placeDepot(state, "you", 1, 13, 5, "ne");
     expect(railStructureItems(state).find((i) => i.tx === 13)?.sprite).toBe("train-depot_ne");
     void depot;

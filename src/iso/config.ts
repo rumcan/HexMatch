@@ -960,7 +960,7 @@ export interface TransportDef {
  */
 export const BUILD_COSTS: Readonly<Record<
   "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train"
-  | "bridge" | "railBridge" | "dam",
+  | "bridge" | "railBridge" | "dam" | "stationLane",
   Partial<Record<Cargo, number>>
 >> = {
   // A Dirt Road is FREE: the gravel is the plumbing every game needs, and
@@ -994,6 +994,12 @@ export const BUILD_COSTS: Readonly<Record<
   // needs, a little oil. The free setup allowance never covers it, and the
   // rival prices it from this same row (`ai.ts`).
   dam: { wood: 12, stone: 12, ore: 18, oil: 6 },
+  // RAIL-6 (#575): one more LANE at an existing station — a platform strip and
+  // its three stopping tiles beside the lanes already there. Half a platform:
+  // the anchor, the warehouse and the throat are already paid for, what this
+  // buys is the strip, the track and the switch. The Rail Baroness perk (the
+  // `rail` build class) applies, exactly as it does to a platform.
+  stationLane: { wood: 3, stone: 3, ore: 6, oil: 1 },
 };
 
 
@@ -1062,6 +1068,8 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   plant: moneyValueOf(BUILD_COSTS.plant),
   rail: moneyValueOf(BUILD_COSTS.rail),
   platform: moneyValueOf(BUILD_COSTS.platform),
+  // RAIL-6 (#575): one more lane at a standing station — half a platform.
+  stationLane: moneyValueOf(BUILD_COSTS.stationLane),
   trainDepot: moneyValueOf(BUILD_COSTS.trainDepot),
   train: moneyValueOf(BUILD_COSTS.train),
   bridge: moneyValueOf(BUILD_COSTS.bridge),

@@ -90,12 +90,14 @@ import {
   railCostOf, railTerrainOk, roadAt, railBridgePlan, buildRail,
   railJoinRunAt, railJoinTurnOk, railTurnOkGrid, previewRailBuild,
   platformRefusal, resolveAnchor, placePlatform,
-  depotRefusal, placeDepot, depotExit, stopTile, railPorts,
-  structureAt, structuresOf, railComponents, ownerRailTiles,
+  depotRefusal, placeDepot, depotExit, stopTile, railPorts, railPath, laneStopTile,
+  structureAt, structuresOf, railComponents, ownerRailTiles, structureById,
   footprintTiles, trainsOf, assignLine, recallTrain, sellTrain, trainAtHome,
   OCT_STEPS, octantOf, layPlatformTrack,
-  type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal,
-} from "./rail";
+  // RAIL-6 (#575): the station upgrade, through the same rules the player's
+  // click and the host intent read — the rival never re-derives a lane.
+  laneRefusal, addStationLane, probeStationLane, laneSlabTiles, laneTrackTiles, stationLanes, MAX_LANES,
+  type RailState, type RailView, type RailAnchor, type RailStructure, type RailRefusal, type RailLane, carPlacements,} from "./rail";
 
 // ── terrain cost ──────────────────────────────────────────────────────────
 export const COST_FLAT = 1;
@@ -2185,7 +2187,9 @@ export type RailMove =
   | { kind: "depot"; tx: number; ty: number; view: RailView; cost: Purse }
   | { kind: "train"; sourceId: number; destId: number; cost: Purse }
   | { kind: "recall"; trainId: number; cost: Purse }
-  | { kind: "sell"; trainId: number; cost: Purse };
+  | { kind: "sell"; trainId: number; cost: Purse }
+  /** RAIL-6 (#575): one more lane at one of the seat's own stations. */
+  | { kind: "lane"; stationId: number; side: 1 | -1; cost: Purse };
 
 export interface RailMoveOutcome {
   /** What the build actually charged (a track may cost less than planned). */
@@ -2322,6 +2326,15 @@ export function planRailRoute(
   const goal = tIdx(bx, by);
   if (railStepCost(grid, track, rail, ownerId, ax, ay) === IMPASSABLE) return null;
   if (railStepCost(grid, track, rail, ownerId, bx, by) === IMPASSABLE) return null;
+  // RAIL-6 (#575): a tile a train stands on cannot be built ("train-in-way").
+  // The search steps around standing trains instead of drawing a drag the
+  // commit would refuse — otherwise one running shuttle would forever block a
+  // connector that wants to branch off the very track the shuttle runs on.
+  const occupied = new Set<number>();
+  for (const t of rail.trains) {
+    for (const c of carPlacements(rail, t)) occupied.add(tIdx(Math.round(c.fx), Math.round(c.fy)));
+  }
+  if (occupied.has(tIdx(ax, ay)) || occupied.has(goal)) return null;
   // The search box: the endpoints plus a margin of detour room.
   const cx = (ax + bx) >> 1, cy = (ay + by) >> 1;
   const box = (Math.abs(ax - bx) + Math.abs(ay - by)) / 2 + 14;
@@ -2404,6 +2417,7 @@ export function planRailRoute(
       if (oct !== 8 && !railTurnOkGrid(grid,
         [cxn - OCT_STEPS[oct][0], cyn - OCT_STEPS[oct][1]], [cxn, cyn], [nx, ny])) continue;
       if (!inMapT(nx, ny) || !inBox(nx, ny)) continue;
+      if (occupied.has(tIdx(nx, ny))) continue;
       if (!railJoinTurnOk(rail, ownerId, cxn, cyn, nx, ny, grid)) continue;
       // A level crossing is straight across: no diagonal on or off a road
       // tile, and no turn on one.
@@ -2671,6 +2685,93 @@ function joinPath(
 }
 
 /**
+ * RAIL-6 (#575): the cheapest legal connector between two endpoint sets, as a
+ * ready track move. Combos are tried NEAREST-FIRST (the same determinism
+ * `joinPath` keeps): a line grows from the mouths that face each other — a
+ * short, straight join — instead of the first far-mouth detour that happens to
+ * validate (a detour is dearer AND wraps track around the station's own lane
+ * approaches, walling in the upgrades).
+ */
+function planConnector(
+  grid: Grid, track: Track, rail: RailState, ownerId: number,
+  sources: [number, number][], goals: [number, number][],
+  verify?: (probe: RailState) => boolean,
+): RailMove | null {
+  const combos: { s: [number, number]; g: [number, number]; d: number }[] = [];
+  for (const g of goals) {
+    for (const s2 of sources) {
+      if (s2[0] === g[0] && s2[1] === g[1]) continue;
+      combos.push({ s: s2, g, d: Math.abs(s2[0] - g[0]) + Math.abs(s2[1] - g[1]) });
+    }
+  }
+  combos.sort((p2, q) => p2.d - q.d || tIdx(...p2.s) - tIdx(...q.s) || tIdx(...p2.g) - tIdx(...q.g));
+  for (const { s: s2, g } of combos) {
+    const path = planRailRoute(grid, track, rail, ownerId, s2[0], s2[1], g[0], g[1]);
+    if (!path) continue;
+    const v = validateRailDrag(grid, track, rail, ownerId, path);
+    if (!v.ok) continue;
+    // The caller's invariant, checked on the state the drag WOULD leave: a
+    // connector can touch the network and still strand a train (a 45° wye at
+    // a trunk END joins the graph yet turns every through train away — the
+    // component says connected, `railPath` says undrivable).
+    if (verify) {
+      const probe = probeWithTrack(grid, track, rail, ownerId, path);
+      if (!probe || !verify(probe)) continue;
+    }
+    return {
+      kind: "track", tiles: path, fresh: v.fresh, bridges: v.bridges,
+      cost: railCostOf(v.fresh, v.bridges),
+    };
+  }
+  return null;
+}
+
+/** Lay `tiles` on a throwaway copy of the rail state — the state a caller's
+ *  `verify` asks about. Same copy discipline as `previewRailBuild`. */
+function probeWithTrack(
+  grid: Grid, track: Track, rail: RailState, ownerId: number, tiles: [number, number][],
+): RailState | null {
+  const probe: RailState = { ...rail, rail: { ...rail.rail,
+    tile: rail.rail.tile.slice(), owner: rail.rail.owner.slice() } };
+  return buildRail(grid, track, probe, ownerId, tiles).ok ? probe : null;
+}
+
+/** Can a train DRIVE from one tile to the other — exactly the probe
+ *  `autoTrains` gates a line on (the return leg rides the reversal). */
+function drives(
+  rail: RailState, ownerId: number, grid: Grid, from: [number, number], to: [number, number],
+): boolean {
+  return !!railPath(rail, ownerId, [from], new Set([tIdx(...to)]), -1, grid);
+}
+
+/** The two tiles a switch must reach so a train can drive INTO a lane: one
+ *  step past each end of the lane's own track, along the lane's axis. */
+function laneJoinGoals(lane: RailLane): [number, number][] {
+  const tt = laneTrackTiles(lane);
+  const a0 = tt[0], b0 = tt[tt.length - 1];
+  const dx = Math.sign(b0[0] - a0[0]), dy = Math.sign(b0[1] - a0[1]);
+  return [[a0[0] - dx, a0[1] - dy], [b0[0] + dx, b0[1] + dy]];
+}
+
+/** Every mouth of every platform on a station's own component — the switch
+ *  may start from any of them, so a lane beside a long trunk is reachable
+ *  from whichever end faces it. */
+function stationMouths(
+  grid: Grid, rail: RailState, ownerId: number, st: RailStructure,
+): [number, number][] {
+  const comps = railComponents(rail, ownerId);
+  const home = comps.get(tIdx(...stopTile(st))) ?? 0;
+  const mouths: [number, number][] = [];
+  for (const mp of structuresOf(rail, ownerId, "platform")) {
+    if ((comps.get(tIdx(...stopTile(mp))) ?? 0) !== home) continue;
+    for (const m of endpointSources(grid, rail, ownerId, mp, home)) {
+      if (!mouths.some((q) => q[0] === m[0] && q[1] === m[1])) mouths.push(m);
+    }
+  }
+  return mouths;
+}
+
+/**
  * Legal platform spots around an anchor building, in a fixed order (views,
  * then row, then column — the same determinism discipline as the factory
  * search). `limit` keeps the geometry pass cheap; the spots are re-derived
@@ -2783,26 +2884,104 @@ export function planRailMove(
     const a = comp.get(tIdx(...stopTile(plantPlat))) ?? 0;
     const b = comp.get(tIdx(...stopTile(indPlat))) ?? 0;
     if (a === 0 || b === 0 || a !== b) {
-      const sources = endpointSources(grid, rail, ownerId, plantPlat, a);
-      const goals = endpointSources(grid, rail, ownerId, indPlat, b);
-      for (const s of sources) {
-        for (const g of goals) {
-          if (s[0] === g[0] && s[1] === g[1]) continue;
-          const path = planRailRoute(grid, track, rail, ownerId, s[0], s[1], g[0], g[1]);
-          if (!path) continue;
-          const v = validateRailDrag(grid, track, rail, ownerId, path);
-          if (!v.ok) continue;
-          return {
-            kind: "track", tiles: path, fresh: v.fresh, bridges: v.bridges,
-            cost: railCostOf(v.fresh, v.bridges),
-          };
-        }
-      }
+      const srcMouths = endpointSources(grid, rail, ownerId, plantPlat, a);
+      const dstGoals = endpointSources(grid, rail, ownerId, indPlat, b);
+      // The reconnect must leave the line DRIVABLE (autoTrains' own probe),
+      // not merely touching — and if no combo achieves that, a graph-connected
+      // join still beats a stranded platform.
+      const conn = planConnector(grid, track, rail, ownerId, srcMouths, dstGoals,
+          (probe) => drives(probe, ownerId, grid, stopTile(indPlat), stopTile(plantPlat)))
+        ?? planConnector(grid, track, rail, ownerId, srcMouths, dstGoals);
+      if (conn) return conn;
       return null;   // broken and unconnectable: the recall/sell above drains it
     }
     // Playtest (2026-09): no depot and no train to buy — a connected
     // industry→plant pair gets its train automatically (`autoTrains`), for the
     // rival exactly as for the player. The line is done.
+    //
+    // RAIL-6 (#575): …until a SECOND resource wants the same plant station.
+    // The station's lanes are its capacity — one train per lane — so the
+    // second line waits on the upgrade that adds its lane, exactly like the
+    // player's does:
+    //   (a) an industry platform of ours the network has not reached yet is
+    //       connected first, with the same drag rules the first join used;
+    //   (b) a connected industry platform with no line is waiting on a lane:
+    //       buy one (cheapest side the rules accept) and `autoTrains` starts
+    //       the second line on the next pass;
+    //   (c) with room for one more line, the next claimable industry gets its
+    //       platform — the station grows a lane when the line needs it.
+    const indPlats = structuresOf(rail, ownerId, "platform")
+      .filter((q) => q.anchor?.kind === "industry");
+    // (a) connect every industry platform the plant's component has not got.
+    // The connector may start at ANY mouth of the component — the plant's own
+    // ports and the ports of the industry platforms already on it — because a
+    // drag is refused while a running train stands on the stretch it would
+    // re-walk ("train-in-way"), and the mouth beside the target is both the
+    // cheapest start and the one clear of the line's own shuttle.
+    const mouths: [number, number][] = [];
+    for (const mp of [plantPlat, ...indPlats]) {
+      if ((comp.get(tIdx(...stopTile(mp))) ?? 0) !== a) continue;
+      for (const m of endpointSources(grid, rail, ownerId, mp, a)) {
+        if (!mouths.some((q) => q[0] === m[0] && q[1] === m[1])) mouths.push(m);
+      }
+    }
+    for (const ip of indPlats) {
+      const c = comp.get(tIdx(...stopTile(ip))) ?? 0;
+      if (c === a) continue;
+      const goals = endpointSources(grid, rail, ownerId, ip, c);
+      // Nearest mouth first (the same determinism `joinPath` keeps): the short
+      // connector beside the target is cheaper AND keeps the drag — and its
+      // junctions — away from the plant station's own lane approaches. The
+      // join must also leave a train able to DRIVE target→plant; failing
+      // that, a graph-connected join still beats a stranded platform.
+      const conn = planConnector(grid, track, rail, ownerId, mouths, goals,
+          (probe) => drives(probe, ownerId, grid, stopTile(ip), stopTile(plantPlat)))
+        ?? planConnector(grid, track, rail, ownerId, mouths, goals);
+      if (conn) return conn;
+    }
+    // (b) a connected, line-less industry platform: the station needs a lane
+    const idle = indPlats.find((ip) => (comp.get(tIdx(...stopTile(ip))) ?? 0) === a
+      && !rail.lines.some((l) => l.source === ip.id || l.dest === ip.id));
+    const freeLane = stationLanes(plantPlat).some((l) => l.lineId == null);
+    if (idle && !freeLane) {
+      for (const side of [1, -1] as const) {
+        // The COMMIT answer, not the cheap hover one: a lane the rival plans
+        // must be a lane `executeRailMove` builds — and the executor lays the
+        // rival's own switch to the lane's mouth in the same turn, so the plan
+        // costs that switch too (probed on the identical post-lane state, so
+        // the affordability gate sees the very bill the commit will present).
+        const pr = probeStationLane(grid, track, rail, ownerId, plantPlat.id, side);
+        if (!pr) continue;
+        const pst = structureById(pr.state, plantPlat.id);
+        const conn = pst
+          ? planConnector(grid, track, pr.state, ownerId,
+              stationMouths(grid, pr.state, ownerId, pst), laneJoinGoals(pr.lane),
+              (probe) => drives(probe, ownerId, grid, stopTile(pst), laneStopTile(pr.lane)))
+          : null;
+        return {
+          kind: "lane", stationId: plantPlat.id, side,
+          cost: conn ? addCost({ ...RAIL_COSTS.lane }, conn.cost) : { ...RAIL_COSTS.lane },
+        };
+      }
+    }
+    // (c) room for one more line: claim the next industry with a platform
+    const canGrow = stationLanes(plantPlat).length < MAX_LANES
+      && ([1, -1] as const).some((side) => laneRefusal(grid, rail, ownerId, plantPlat.id, side) === "ok");
+    if (freeLane || canGrow) {
+      const walled = excludedTargets(state, rail);
+      for (const ind of railTargets(state, rail, factory, opts.purse, ownerId, now)) {
+        if (walled.has(ind.id)) continue;
+        if (indPlats.some((ip) => ip.anchor?.kind === "industry" && ip.anchor.id === ind.id)) continue;
+        const spots = platformSpotsAround(
+          grid, rail, factories, ownerId, ind.tx, ind.ty, ind.w, ind.h,
+          { kind: "industry", id: ind.id, tiles: industryTiles(ind) }, 1, claimLocked,
+        );
+        if (spots.length) {
+          const s0 = spots[0];
+          return { kind: "platform", tx: s0.tx, ty: s0.ty, view: s0.view, anchor: s0.anchor, cost: { ...RAIL_COSTS.platform } };
+        }
+      }
+    }
     return null;
   }
 
@@ -2992,6 +3171,34 @@ export function executeRailMove(
       const t = rail.trains.find((x) => x.id === move.trainId && x.ownerId === ownerId);
       if (!t || !recallTrain(rail, t, grid)) return null;
       return { spent: {}, tiles: [], label: "recalls its blocked train" };
+    }
+    case "lane": {
+      // RAIL-6 (#575): the station upgrade, judged and built by the shared
+      // rule — the same refusal the player's click and the host intent get.
+      if (laneRefusal(grid, rail, ownerId, move.stationId, move.side) !== "ok") return null;
+      const res = addStationLane(grid, track, rail, ownerId, move.stationId, move.side);
+      if (!res.ok || !res.lane) return null;
+      const tiles: [number, number][] = [...laneSlabTiles(res.lane), ...laneTrackTiles(res.lane)];
+      const spent = { ...RAIL_COSTS.lane };
+      // The lane is only a berth once a train can DRIVE into it: the rival
+      // lays the switch from its own network to the lane's mouth in the same
+      // turn (a player drags their own). Without it the fresh lane's track is
+      // an island and `autoTrains` would never start the waiting line.
+      const st = structureById(rail, move.stationId);
+      if (st) {
+        const stop = stopTile(st), laneStop = laneStopTile(res.lane);
+        const conn = planConnector(grid, track, rail, ownerId,
+          stationMouths(grid, rail, ownerId, st), laneJoinGoals(res.lane),
+          (probe) => drives(probe, ownerId, grid, stop, laneStop));
+        if (conn && conn.kind === "track") {
+          const built = buildRail(grid, track, rail, ownerId, conn.tiles);
+          for (const [k, v] of Object.entries(built.cost) as [keyof Purse, number][]) {
+            spent[k] = (spent[k] ?? 0) + v;
+          }
+          tiles.push(...built.built);
+        }
+      }
+      return { spent, tiles, label: "adds a lane to its station" };
     }
     case "sell": {
       const t = rail.trains.find((x) => x.id === move.trainId && x.ownerId === ownerId);

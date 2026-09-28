@@ -309,6 +309,18 @@ export interface RailAnchorWire {
   id: number;
   tiles: [number, number][];
 }
+/**
+ * RAIL-6 (#575): one lane of a station, as the wire carries it. Absent on a
+ * structure from an old save or an old host: `stationLanes` in rail.ts reads a
+ * lane-less platform as the 1-lane station it always was.
+ */
+export interface RailLaneWire {
+  id: number;
+  view: string;
+  tx: number;
+  ty: number;
+  lineId: number | null;
+}
 export interface RailStructureWire {
   id: number;
   kind: "platform" | "depot";
@@ -320,6 +332,7 @@ export interface RailStructureWire {
   h: number;
   view: string;
   anchor?: RailAnchorWire | null;
+  lanes?: RailLaneWire[];
 }
 export interface RailLineWire {
   id: number;
@@ -327,6 +340,9 @@ export interface RailLineWire {
   name: string;
   source: number;
   dest: number;
+  /** RAIL-6 (#575): the lane each end runs into (absent = the first lane). */
+  sourceLane?: number | null;
+  destLane?: number | null;
 }
 export interface TrainWire {
   id: number;
@@ -350,6 +366,10 @@ export interface TrainWire {
   dirBit: number;
   resold: boolean;
   blockedWhy?: string;
+  /** RAIL-6 (#575): the lane booked at the stop the train is heading for. */
+  laneId?: number | null;
+  /** RAIL-6 (#575): the station a `holding` train queues at. */
+  holdStation?: number | null;
 }
 /**
  * The whole railway. Structures, lines and trains are a handful of records and
