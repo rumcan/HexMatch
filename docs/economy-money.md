@@ -204,6 +204,10 @@ harness, measured results). Every knob that pass turned, and where it lives:
 | `RIVAL_SKILLS.hard` clocks | `src/iso/skill.ts` | session 55s → 54s | a 1s trim onto the measured "~60%" line; hard measured in-band on the first full round |
 | `RIVAL_SKILLS.trainee` | `src/iso/skill.ts` | session 120s, tune 0.30, townReserve 1.25, winTarget 6★ | FTUE-1's (#464) Starter Island rival — measured 0 wins vs novice |
 | `DIFFICULTY_RULES.trainee` (new row) | `src/iso/config.ts` | gentle floor (minYield 1.5), no obstacles | the Starter Island's player side — FTUE-1 (#464), not a race knob |
+| `RIVAL_SKILLS.normal` clocks | `src/iso/skill.ts` | build 6.5s → 7.2s, idle 1.8s → 2.1s, session 74s → 79s | BAL-2 (#530): re-measured after #431's purchase rule landed — holds "normal wins ~40% vs steady" at 36.7% over 30 seeds |
+| `RIVAL_SKILLS.normal` cadence | `src/iso/skill.ts` | pave 12 → 11, townReserve 0.85 → 0.90 | same — the pacing taken back for the rival's new money-to-goal conversion |
+| `RIVAL_SKILLS.hard` clocks | `src/iso/skill.ts` | build 4.5s → 4.8s, idle 1.2s → 1.3s, session 54s → 56.5s | BAL-2: the closest measurable point to "~60% vs steady" — 53.3%, one win short (the harness's outcome lattice skips 17–19 wins; BALANCE.md §6) |
+| `RIVAL_SKILLS.hard` cadence | `src/iso/skill.ts` | pave 16 → 15, townReserve 0.60 → 0.62 | same |
 
 Considered and **held at their shipped values** (measured, then documented
 here so the next pass does not re-open them blind):
@@ -218,6 +222,14 @@ here so the next pass does not re-open them blind):
   moved both seats together and blurred the ladder. Re-check after #466.
 - **the market's `DUMP_FLOOR` / 2% edge** — MKT-2 (#465) owns them.
 - **per-map yields** — #603's row in §5.
+- **`RIVAL_SKILLS[].tuningSkill` (BAL-2)** — 0.67 / 0.88 held: measured
+  ±0.005…±0.13 moves whole seed groups (8↔11 wins for Normal, 16↔20 for
+  Hard) rather than rates, so the hands stay at their BAL-1 settings and the
+  recalibration is pacing only. **The #431 purchase rule**
+  (`goalOutOfReach` / `planGoalPurchase`) — held per #530; the recalibration
+  compensates in pacing, not by re-gating the fix. **`expandPerTurn`** —
+  the harness builds one Depot per turn and never reads it, so it is not a
+  measurement knob; held.
 
 The trainee's rows were added for FTUE-1 (#464) and only re-measured here:
 "the trainee never beats the novice" is a harness *target*, not a knob. The
