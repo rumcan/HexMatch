@@ -650,8 +650,9 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
       && (typeof h.tuneTier !== "number" || !Number.isInteger(h.tuneTier) || h.tuneTier < 0)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot tune tier.");
     }
+    // MATCH-2 (#566): the 5★ scale — an old 0…3 rating is a legal 0…5 one.
     if (h && h.lastStars !== undefined
-      && (typeof h.lastStars !== "number" || !Number.isInteger(h.lastStars) || h.lastStars < 0 || h.lastStars > 3)) {
+      && (typeof h.lastStars !== "number" || !Number.isInteger(h.lastStars) || h.lastStars < 0 || h.lastStars > 5)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot star rating.");
     }
   }

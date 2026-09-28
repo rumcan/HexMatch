@@ -180,7 +180,8 @@ describe("settle / swap", () => {
   it("a short pick list is topped up to six, honouring every pick", async () => {
     const b = crossBoard();
     const bonus: [string, number][] = [];
-    b.onBonus = (res, n) => bonus.push([res, n]);
+    // only the holy cross's payout — a random refill can cascade into more
+    b.onBonus = (res, n, why) => { if (why === "HOLY CROSS") bonus.push([res, n]); };
     b.onCrossChoice = (_kind, _picks, pick) => pick(["wood", "wood"]);
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
@@ -191,8 +192,9 @@ describe("settle / swap", () => {
     for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
       b.grid[r][c]!.res = "ore";
     }
+    // MATCH-2: the board paces its phases, so the payout lands when the settle resolves.
     const p = b.settle();
-    await new Promise((r) => setTimeout(r, 0));
+    await p;
     expect(bonus).toHaveLength(6);
     // BOTH picks are honoured — the random top-up can only ever add wood,
     // never take the two the player was promised away.
@@ -203,7 +205,8 @@ describe("settle / swap", () => {
   it("all six of a single cargo is a valid spend", async () => {
     const b = crossBoard();
     const bonus: [string, number][] = [];
-    b.onBonus = (res, n) => bonus.push([res, n]);
+    // only the holy cross's payout — a random refill can cascade into more
+    b.onBonus = (res, n, why) => { if (why === "HOLY CROSS") bonus.push([res, n]); };
     b.onCrossChoice = (_kind, _picks, pick) => pick(["wood", "wood", "wood", "wood", "wood", "wood"]);
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
@@ -214,8 +217,9 @@ describe("settle / swap", () => {
     for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
       b.grid[r][c]!.res = "ore";
     }
+    // MATCH-2: the board paces its phases, so the payout lands when the settle resolves.
     const p = b.settle();
-    await new Promise((r) => setTimeout(r, 0));
+    await p;
     expect(bonus).toEqual([["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1], ["wood", 1]]);
     await p;
   });
@@ -223,7 +227,8 @@ describe("settle / swap", () => {
   it.skip("with no chooser wired the cross still pays six cargoes", async () => {
     const b = crossBoard();
     const bonus: [string, number][] = [];
-    b.onBonus = (res, n) => bonus.push([res, n]);
+    // only the holy cross's payout — a random refill can cascade into more
+    b.onBonus = (res, n, why) => { if (why === "HOLY CROSS") bonus.push([res, n]); };
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
     b.grid[2][3]!.res = "sheep";
@@ -233,8 +238,9 @@ describe("settle / swap", () => {
     for (const [r, c] of [[2, 0], [2, 4], [0, 2], [5, 2], [1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
       b.grid[r][c]!.res = "ore";
     }
+    // MATCH-2: the board paces its phases, so the payout lands when the settle resolves.
     const p = b.settle();
-    await new Promise((r) => setTimeout(r, 0));
+    await p;
     expect(bonus).toHaveLength(6);
     await p;
   });
@@ -271,7 +277,8 @@ describe("settle / swap", () => {
   it.skip("a broken cross topped up to three with no chooser pays three", async () => {
     const b = crossBoard();
     const bonus: [string, number][] = [];
-    b.onBonus = (res, n) => bonus.push([res, n]);
+    // only the holy cross's payout — a random refill can cascade into more
+    b.onBonus = (res, n, why) => { if (why === "HOLY CROSS") bonus.push([res, n]); };
     b.grid[2][1]!.res = "sheep";
     b.grid[2][2]!.res = "sheep";
     b.grid[2][3]!.res = "sheep";
@@ -282,8 +289,9 @@ describe("settle / swap", () => {
     }
     b.grid[4][1]!.res = "wheat";
     b.grid[4][3]!.res = "wheat";
+    // MATCH-2: the board paces its phases, so the payout lands when the settle resolves.
     const p = b.settle();
-    await new Promise((r) => setTimeout(r, 0));
+    await p;
     expect(bonus).toHaveLength(3);
     await p;
   });

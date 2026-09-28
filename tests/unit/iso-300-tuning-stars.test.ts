@@ -6,9 +6,9 @@
  * (`tuningYieldFor`, tuning.ts), so this file pins three things:
  *
  *   1. the table itself — one row per star, rising, on the curve;
- *   2. the derivation — each row's bar is its point on the curve, and
- *      three stars is exactly a max-yield session (`TUNING.maxYield` at
- *      `TUNING.targetScore`), on every difficulty;
+ *   2. the derivation — each row's bar is its point on the curve, on every
+ *      difficulty (MATCH-2 #566: five rows now, and the bars sit PAST the
+ *      max-yield target — a target session is one star);
  *   3. the outcome the pop-up shows (`depotSessionOutcome`) is the number the
  *      settle has always applied (`settleTuningYield` + the Gold rules) — the
  *      "Confirm applies exactly the yield shown" half that needs no game.
@@ -25,12 +25,14 @@ import {
 const RULES = Object.entries(DIFFICULTY_RULES) as [string, DifficultyRules][];
 
 describe("#300 the star table (TUNING_STARS)", () => {
-  it("has one row per star, 1 → 3, in rising order", () => {
-    expect(TUNING_STARS.map((r) => r.stars)).toEqual([1, 2, 3]);
+  // MATCH-2 (#566): the scale is 1–5★ and every bar above the first sits past
+  // the target (the curve runs on past it at the same slope — no ceiling).
+  it("has one row per star, 1 → 5, in rising order", () => {
+    expect(TUNING_STARS.map((r) => r.stars)).toEqual([1, 2, 3, 4, 5]);
     for (let i = 0; i < TUNING_STARS.length; i++) {
       const row = TUNING_STARS[i];
-      expect(row.curve, `row ${i} is a point on the curve (0…1)`).toBeGreaterThanOrEqual(0);
-      expect(row.curve).toBeLessThanOrEqual(1);
+      expect(row.curve, `row ${i} is a point on the curve`).toBeGreaterThanOrEqual(0);
+      if (i > 0) expect(row.curve, `row ${i} is past the target`).toBeGreaterThan(1);
       if (i > 0) expect(row.curve, "each star asks for more of the climb").toBeGreaterThan(TUNING_STARS[i - 1].curve);
       expect(row.label.length, `row ${i} has a verdict word`).toBeGreaterThan(0);
     }
@@ -42,22 +44,22 @@ describe("#300 the star table (TUNING_STARS)", () => {
     TUNING_STARS.forEach((row, i) => {
       expect(bars[i]).toBe(Math.max(1, Math.ceil(row.curve * TUNING.targetScore)));
     });
-    // The shipped table, spelled out: any cleared gem / half the climb / all of it.
-    expect(bars).toEqual([1, TUNING.targetScore / 2, TUNING.targetScore]);
+    // The shipped table, spelled out (MATCH-2: set from the measured bot sweep).
+    expect(bars).toEqual([1, 96, 177, 300, 480]);
   });
 
-  it("puts three stars exactly at a max-yield session — one point short is two", () => {
+  it("rates a max-yield session one star now — the curve is unchanged, the bars moved (MATCH-2)", () => {
+    expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
+    expect(tuningStarsFor(TUNING.targetScore)).toBe(1);
     const top = tuningStarScores()[TUNING_STARS.length - 1];
-    expect(top).toBe(TUNING.targetScore);
-    expect(tuningYieldFor(top)).toBe(TUNING.maxYield);
-    expect(tuningStarsFor(top)).toBe(3);
-    expect(tuningYieldFor(top - 1)).toBeLessThan(TUNING.maxYield);
-    expect(tuningStarsFor(top - 1)).toBe(2);
+    expect(tuningStarsFor(top)).toBe(5);
+    expect(tuningStarsFor(top - 1)).toBe(4);
+    expect(tuningYieldFor(top)).toBeGreaterThan(TUNING.maxYield);
   });
 
   it("rates the boundaries — 0 stars only when nothing was cleared", () => {
     const cases: [number, number][] = [
-      [0, 0], [1, 1], [29, 1], [30, 2], [59, 2], [60, 3], [61, 3], [500, 3],
+      [0, 0], [1, 1], [95, 1], [96, 2], [176, 2], [177, 3], [299, 3], [300, 4], [479, 4], [480, 5], [5000, 5],
     ];
     for (const [score, stars] of cases) expect(tuningStarsFor(score), `score ${score}`).toBe(stars);
     expect(tuningStarsFor(-5)).toBe(0);
@@ -82,8 +84,8 @@ describe("#300 the star table (TUNING_STARS)", () => {
         const share = (tuningYieldFor(bars[i], floor) - floor) / (TUNING.maxYield - floor);
         expect(share, `${key}: the ${row.stars}★ bar is at its point on the climb`).toBeGreaterThanOrEqual(row.curve - 0.01);
       });
-      // …and the top bar is the max yield on this floor too.
-      expect(tuningYieldFor(bars[bars.length - 1], floor), key).toBe(TUNING.maxYield);
+      // …and the target score is still the max yield on this floor.
+      expect(tuningYieldFor(TUNING.targetScore, floor), key).toBe(TUNING.maxYield);
     }
   });
 
@@ -121,7 +123,7 @@ describe("#300 the outcome the pop-up counts up (depotSessionOutcome)", () => {
     const cap = depotYieldCap(undefined);
     expect(cap).toBe(DEPOT_LEVELS.caps[0]);
     const o = depotSessionOutcome(TUNING.targetScore, normal.minYield, normal, { cap });
-    expect(o.stars).toBe(3);
+    expect(o.stars, "MATCH-2: a max-yield session is one star on the 5-scale").toBe(1);
     expect(o.raw).toBe(TUNING.maxYield);
     expect(o.yield).toBe(cap);
     expect(o.capped).toBe(true);

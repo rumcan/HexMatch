@@ -431,13 +431,14 @@ describe("#300 the results pop-up a tuning session ends on", () => {
     const depotId = h.tuning!.depotId;
     expect(h.eco.harvesters.find((x) => x.id === depotId)!.platformId, "the session is the platform's").toBeDefined();
 
-    // Half the climb — a two-star session, under the level-1 cap.
+    // Half the climb — under the level-1 cap. MATCH-2 (#566): one star on the
+    // 5-scale (★★ asks 96).
     h.board.onClear(TUNING.targetScore / 2, 1);
     h.tuningEnd();
     expect(await until(() => h.tuningResult !== null && shown())).toBe(true);
     const r = h.tuningResult!;
     expect(r.platform).toBe(true);
-    expect(r.stars).toBe(2);
+    expect(r.stars).toBe(1);
     expect(text(".sr-kicker")).toMatch(/Platform$/);
     confirmKey().click();
     await settle();
@@ -456,13 +457,14 @@ describe("#300 the results pop-up a tuning session ends on", () => {
     await settle();
     expect(h.tuning?.kind).toBe("town");
 
-    // A max session: three stars, the row's whole ceiling.
+    // A max session: the row's whole ceiling. MATCH-2 (#566): the bonus caps at
+    // the target, the stars do not — a target session is one star on the 5-scale.
     h.board.onClear(TUNING.targetScore, 1);
     h.tuningEnd();
     expect(await until(() => h.tuningResult !== null && shown())).toBe(true);
     const r = h.tuningResult!;
     expect(r.kind).toBe("town");
-    expect(r.stars).toBe(3);
+    expect(r.stars).toBe(1);
     expect(r.to).toBe(townBonusFor(row.bonus, TUNING.targetScore));
     expect(text(".sr-kicker")).toContain("City");
     expect(text(".sr-row-yield .sr-k")).toBe("Base rate");
