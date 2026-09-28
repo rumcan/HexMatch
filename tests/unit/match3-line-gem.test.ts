@@ -109,3 +109,28 @@ describe("a disco ball's cascade", () => {
     }
   });
 });
+
+describe("the crazy combo", () => {
+  it("bomb into bomb purges both colours and counts up", () => {
+    const e = board();
+    e.grid[3][3]!.special = "bomb";
+    e.grid[3][4]!.special = "bomb";
+    const c1 = e.grid[3][3]!.res, c2 = e.grid[3][4]!.res;
+    const before = e.gems().filter((g) => g.res === c1 || g.res === c2).length;
+    const phases = drain(e, e.resolveSwap(3, 3, 3, 4));
+    const blast = phases.find((p) => p.type === "bombClear") as unknown as { removed: unknown[]; label: string };
+    expect(blast.label).toBe("CRAZY COMBO ×1!");
+    expect(blast.removed.length).toBe(before);
+    expect(e.crazyCount).toBe(1);
+  });
+});
+
+describe("specials on frost", () => {
+  it("a 4-run with a frozen middle still leaves its line gem", () => {
+    const e = board();
+    for (const c of [0, 1, 2, 3]) e.grid[6][c]!.res = "sheep";
+    e.grid[6][2]!.hard = 1;
+    const clear = e.resolve(e.findGroups(), {}, 1);
+    expect(clear.minted.filter((m) => m.what === "line").length).toBe(1);
+  });
+});

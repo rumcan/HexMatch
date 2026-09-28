@@ -322,7 +322,8 @@ export const TUNING_REWARD_SCORE: Record<RewardKind, number> = {
   combo: 2,     // a cascade that ran two deep
   frost: 1,     // one step of frost cracked off a gem
   girder: 2,    // a girder broken by an adjacent match
-  disco: 150,   // owner (2026-09-28): a disco ball's board wipe is a big payday on top of its gems
+  disco: 150,
+  crazy: 60,    // owner (2026-09-28): bomb into bomb — ×N for the Nth crazy combo this session   // owner (2026-09-28): a disco ball's board wipe is a big payday on top of its gems
 };
 
 /**
