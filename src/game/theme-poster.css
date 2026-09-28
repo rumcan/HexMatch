@@ -174,7 +174,8 @@
 }
 .px-duo {
   position: absolute; left: 50%; bottom: 0; z-index: 0;
-  height: 96%; width: auto; max-width: 100%; object-fit: contain; object-position: bottom center;
+  /* owner (2026-09-28): the art runs to the top of the stage */
+  height: 100%; width: auto; max-width: 100%; object-fit: contain; object-position: bottom center;
   transform: translateX(-50%); animation: px-art 1.1s ease-out both;
 }
 @keyframes px-art { from { opacity: 0; filter: brightness(.72); } to { opacity: 1; filter: brightness(1); } }
