@@ -266,11 +266,11 @@
       "kind": "car",
       "car": "loco",
       "view": "e",
-      "w": 62,
-      "h": 26,
+      "w": 40,
+      "h": 18,
       "anchor": [
-        31,
-        23
+        20,
+        15
       ],
       "footprint": [
         1,
@@ -278,263 +278,23 @@
       ],
       "moving": true,
       "box2x": [
-        124,
-        52
+        80,
+        36
       ],
       "lenTiles": 0.861,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-tender_e": {
       "name": "car-tender_e",
       "kind": "car",
       "car": "tender",
       "view": "e",
-      "w": 36,
-      "h": 22,
-      "anchor": [
-        18,
-        19
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        72,
-        44
-      ],
-      "lenTiles": 0.394,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-box_e": {
-      "name": "car-box_e",
-      "kind": "car",
-      "car": "box",
-      "view": "e",
-      "w": 48,
-      "h": 24,
-      "anchor": [
-        24,
-        20
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        96,
-        48
-      ],
-      "lenTiles": 0.6,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tank_e": {
-      "name": "car-tank_e",
-      "kind": "car",
-      "car": "tank",
-      "view": "e",
-      "w": 46,
-      "h": 26,
-      "anchor": [
-        23,
-        21
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        52
-      ],
-      "lenTiles": 0.556,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-flat_e": {
-      "name": "car-flat_e",
-      "kind": "car",
-      "car": "flat",
-      "view": "e",
-      "w": 46,
-      "h": 20,
-      "anchor": [
-        23,
-        16
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        40
-      ],
-      "lenTiles": 0.515,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-loco_w": {
-      "name": "car-loco_w",
-      "kind": "car",
-      "car": "loco",
-      "view": "w",
-      "w": 62,
-      "h": 26,
-      "anchor": [
-        31,
-        23
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        124,
-        52
-      ],
-      "lenTiles": 0.861,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tender_w": {
-      "name": "car-tender_w",
-      "kind": "car",
-      "car": "tender",
-      "view": "w",
-      "w": 36,
-      "h": 22,
-      "anchor": [
-        18,
-        19
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        72,
-        44
-      ],
-      "lenTiles": 0.394,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-box_w": {
-      "name": "car-box_w",
-      "kind": "car",
-      "car": "box",
-      "view": "w",
-      "w": 48,
-      "h": 24,
-      "anchor": [
-        24,
-        20
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        96,
-        48
-      ],
-      "lenTiles": 0.6,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tank_w": {
-      "name": "car-tank_w",
-      "kind": "car",
-      "car": "tank",
-      "view": "w",
-      "w": 46,
-      "h": 26,
-      "anchor": [
-        23,
-        21
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        52
-      ],
-      "lenTiles": 0.556,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-flat_w": {
-      "name": "car-flat_w",
-      "kind": "car",
-      "car": "flat",
-      "view": "w",
-      "w": 46,
-      "h": 20,
-      "anchor": [
-        23,
-        16
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        92,
-        40
-      ],
-      "lenTiles": 0.515,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-loco_s": {
-      "name": "car-loco_s",
-      "kind": "car",
-      "car": "loco",
-      "view": "s",
-      "w": 20,
-      "h": 52,
-      "anchor": [
-        10,
-        36
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        40,
-        104
-      ],
-      "lenTiles": 0.861,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tender_s": {
-      "name": "car-tender_s",
-      "kind": "car",
-      "car": "tender",
-      "view": "s",
       "w": 18,
-      "h": 30,
+      "h": 12,
       "anchor": [
         9,
-        23
+        10
       ],
       "footprint": [
         1,
@@ -543,22 +303,22 @@
       "moving": true,
       "box2x": [
         36,
-        60
+        24
       ],
       "lenTiles": 0.394,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-box_s": {
-      "name": "car-box_s",
+    "car-box_e": {
+      "name": "car-box_e",
       "kind": "car",
       "car": "box",
-      "view": "s",
-      "w": 16,
-      "h": 38,
+      "view": "e",
+      "w": 28,
+      "h": 16,
       "anchor": [
-        8,
-        28
+        14,
+        13
       ],
       "footprint": [
         1,
@@ -566,23 +326,23 @@
       ],
       "moving": true,
       "box2x": [
-        32,
-        76
+        56,
+        32
       ],
       "lenTiles": 0.6,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-tank_s": {
-      "name": "car-tank_s",
+    "car-tank_e": {
+      "name": "car-tank_e",
       "kind": "car",
       "car": "tank",
-      "view": "s",
-      "w": 20,
-      "h": 36,
+      "view": "e",
+      "w": 28,
+      "h": 16,
       "anchor": [
-        10,
-        26
+        14,
+        12
       ],
       "footprint": [
         1,
@@ -590,23 +350,23 @@
       ],
       "moving": true,
       "box2x": [
-        40,
-        72
+        56,
+        32
       ],
       "lenTiles": 0.556,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-flat_s": {
-      "name": "car-flat_s",
+    "car-flat_e": {
+      "name": "car-flat_e",
       "kind": "car",
       "car": "flat",
-      "view": "s",
-      "w": 20,
-      "h": 32,
+      "view": "e",
+      "w": 24,
+      "h": 12,
       "anchor": [
-        10,
-        21
+        12,
+        9
       ],
       "footprint": [
         1,
@@ -614,23 +374,23 @@
       ],
       "moving": true,
       "box2x": [
-        40,
-        64
+        48,
+        24
       ],
       "lenTiles": 0.515,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-loco_n": {
-      "name": "car-loco_n",
+    "car-loco_w": {
+      "name": "car-loco_w",
       "kind": "car",
       "car": "loco",
-      "view": "n",
-      "w": 20,
-      "h": 42,
+      "view": "w",
+      "w": 40,
+      "h": 18,
       "anchor": [
-        10,
-        30
+        20,
+        15
       ],
       "footprint": [
         1,
@@ -638,22 +398,118 @@
       ],
       "moving": true,
       "box2x": [
-        40,
-        84
+        80,
+        36
       ],
       "lenTiles": 0.861,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-tender_n": {
-      "name": "car-tender_n",
+    "car-tender_w": {
+      "name": "car-tender_w",
       "kind": "car",
       "car": "tender",
-      "view": "n",
+      "view": "w",
       "w": 18,
-      "h": 30,
+      "h": 12,
       "anchor": [
-        8,
+        9,
+        10
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        36,
+        24
+      ],
+      "lenTiles": 0.394,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-box_w": {
+      "name": "car-box_w",
+      "kind": "car",
+      "car": "box",
+      "view": "w",
+      "w": 28,
+      "h": 16,
+      "anchor": [
+        14,
+        13
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        56,
+        32
+      ],
+      "lenTiles": 0.6,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tank_w": {
+      "name": "car-tank_w",
+      "kind": "car",
+      "car": "tank",
+      "view": "w",
+      "w": 28,
+      "h": 16,
+      "anchor": [
+        14,
+        12
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        56,
+        32
+      ],
+      "lenTiles": 0.556,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-flat_w": {
+      "name": "car-flat_w",
+      "kind": "car",
+      "car": "flat",
+      "view": "w",
+      "w": 24,
+      "h": 12,
+      "anchor": [
+        12,
+        9
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        48,
+        24
+      ],
+      "lenTiles": 0.515,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-loco_s": {
+      "name": "car-loco_s",
+      "kind": "car",
+      "car": "loco",
+      "view": "s",
+      "w": 14,
+      "h": 34,
+      "anchor": [
+        7,
         24
       ],
       "footprint": [
@@ -662,23 +518,47 @@
       ],
       "moving": true,
       "box2x": [
-        36,
-        60
+        28,
+        68
+      ],
+      "lenTiles": 0.861,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tender_s": {
+      "name": "car-tender_s",
+      "kind": "car",
+      "car": "tender",
+      "view": "s",
+      "w": 10,
+      "h": 16,
+      "anchor": [
+        5,
+        12
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        20,
+        32
       ],
       "lenTiles": 0.394,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-box_n": {
-      "name": "car-box_n",
+    "car-box_s": {
+      "name": "car-box_s",
       "kind": "car",
       "car": "box",
-      "view": "n",
-      "w": 16,
-      "h": 38,
+      "view": "s",
+      "w": 12,
+      "h": 24,
       "anchor": [
-        8,
-        28
+        6,
+        17
       ],
       "footprint": [
         1,
@@ -686,23 +566,23 @@
       ],
       "moving": true,
       "box2x": [
-        32,
-        76
+        24,
+        48
       ],
       "lenTiles": 0.6,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-tank_n": {
-      "name": "car-tank_n",
+    "car-tank_s": {
+      "name": "car-tank_s",
       "kind": "car",
       "car": "tank",
-      "view": "n",
-      "w": 20,
-      "h": 36,
+      "view": "s",
+      "w": 10,
+      "h": 22,
       "anchor": [
-        10,
-        26
+        5,
+        16
       ],
       "footprint": [
         1,
@@ -710,22 +590,46 @@
       ],
       "moving": true,
       "box2x": [
-        40,
-        72
+        20,
+        44
       ],
       "lenTiles": 0.556,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
-    "car-flat_n": {
-      "name": "car-flat_n",
+    "car-flat_s": {
+      "name": "car-flat_s",
       "kind": "car",
       "car": "flat",
-      "view": "n",
-      "w": 20,
-      "h": 30,
+      "view": "s",
+      "w": 12,
+      "h": 16,
       "anchor": [
-        9,
+        6,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        24,
+        32
+      ],
+      "lenTiles": 0.515,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-loco_n": {
+      "name": "car-loco_n",
+      "kind": "car",
+      "car": "loco",
+      "view": "n",
+      "w": 14,
+      "h": 28,
+      "anchor": [
+        6,
         20
       ],
       "footprint": [
@@ -734,162 +638,114 @@
       ],
       "moving": true,
       "box2x": [
-        40,
-        60
+        28,
+        56
+      ],
+      "lenTiles": 0.861,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tender_n": {
+      "name": "car-tender_n",
+      "kind": "car",
+      "car": "tender",
+      "view": "n",
+      "w": 10,
+      "h": 16,
+      "anchor": [
+        5,
+        12
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        20,
+        32
+      ],
+      "lenTiles": 0.394,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-box_n": {
+      "name": "car-box_n",
+      "kind": "car",
+      "car": "box",
+      "view": "n",
+      "w": 12,
+      "h": 24,
+      "anchor": [
+        6,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        24,
+        48
+      ],
+      "lenTiles": 0.6,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tank_n": {
+      "name": "car-tank_n",
+      "kind": "car",
+      "car": "tank",
+      "view": "n",
+      "w": 10,
+      "h": 22,
+      "anchor": [
+        5,
+        16
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        20,
+        44
+      ],
+      "lenTiles": 0.556,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-flat_n": {
+      "name": "car-flat_n",
+      "kind": "car",
+      "car": "flat",
+      "view": "n",
+      "w": 12,
+      "h": 16,
+      "anchor": [
+        5,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        24,
+        32
       ],
       "lenTiles": 0.515,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-loco_sw": {
       "name": "car-loco_sw",
       "kind": "car",
       "car": "loco",
       "view": "sw",
-      "w": 52,
-      "h": 44,
-      "anchor": [
-        24,
-        32
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        104,
-        88
-      ],
-      "lenTiles": 0.861,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tender_sw": {
-      "name": "car-tender_sw",
-      "kind": "car",
-      "car": "tender",
-      "view": "sw",
-      "w": 32,
-      "h": 30,
-      "anchor": [
-        16,
-        23
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        64,
-        60
-      ],
-      "lenTiles": 0.394,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-box_sw": {
-      "name": "car-box_sw",
-      "kind": "car",
-      "car": "box",
-      "view": "sw",
-      "w": 40,
-      "h": 34,
-      "anchor": [
-        20,
-        26
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        80,
-        68
-      ],
-      "lenTiles": 0.6,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tank_sw": {
-      "name": "car-tank_sw",
-      "kind": "car",
-      "car": "tank",
-      "view": "sw",
-      "w": 40,
-      "h": 34,
-      "anchor": [
-        20,
-        25
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        80,
-        68
-      ],
-      "lenTiles": 0.556,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-flat_sw": {
-      "name": "car-flat_sw",
-      "kind": "car",
-      "car": "flat",
-      "view": "sw",
-      "w": 42,
-      "h": 30,
-      "anchor": [
-        21,
-        21
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        84,
-        60
-      ],
-      "lenTiles": 0.515,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-loco_se": {
-      "name": "car-loco_se",
-      "kind": "car",
-      "car": "loco",
-      "view": "se",
-      "w": 52,
-      "h": 44,
-      "anchor": [
-        27,
-        32
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        104,
-        88
-      ],
-      "lenTiles": 0.861,
-      "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
-    },
-    "car-tender_se": {
-      "name": "car-tender_se",
-      "kind": "car",
-      "car": "tender",
-      "view": "se",
       "w": 34,
       "h": 30,
       "anchor": [
@@ -905,20 +761,164 @@
         68,
         60
       ],
+      "lenTiles": 0.861,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tender_sw": {
+      "name": "car-tender_sw",
+      "kind": "car",
+      "car": "tender",
+      "view": "sw",
+      "w": 18,
+      "h": 16,
+      "anchor": [
+        9,
+        12
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        36,
+        32
+      ],
       "lenTiles": 0.394,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-box_sw": {
+      "name": "car-box_sw",
+      "kind": "car",
+      "car": "box",
+      "view": "sw",
+      "w": 24,
+      "h": 22,
+      "anchor": [
+        12,
+        17
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        48,
+        44
+      ],
+      "lenTiles": 0.6,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tank_sw": {
+      "name": "car-tank_sw",
+      "kind": "car",
+      "car": "tank",
+      "view": "sw",
+      "w": 24,
+      "h": 20,
+      "anchor": [
+        12,
+        14
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        48,
+        40
+      ],
+      "lenTiles": 0.556,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-flat_sw": {
+      "name": "car-flat_sw",
+      "kind": "car",
+      "car": "flat",
+      "view": "sw",
+      "w": 22,
+      "h": 16,
+      "anchor": [
+        11,
+        11
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        44,
+        32
+      ],
+      "lenTiles": 0.515,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-loco_se": {
+      "name": "car-loco_se",
+      "kind": "car",
+      "car": "loco",
+      "view": "se",
+      "w": 34,
+      "h": 30,
+      "anchor": [
+        18,
+        22
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        68,
+        60
+      ],
+      "lenTiles": 0.861,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+    },
+    "car-tender_se": {
+      "name": "car-tender_se",
+      "kind": "car",
+      "car": "tender",
+      "view": "se",
+      "w": 18,
+      "h": 16,
+      "anchor": [
+        9,
+        12
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        36,
+        32
+      ],
+      "lenTiles": 0.394,
+      "widthTiles": 0.315,
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-box_se": {
       "name": "car-box_se",
       "kind": "car",
       "car": "box",
       "view": "se",
-      "w": 40,
-      "h": 34,
+      "w": 24,
+      "h": 22,
       "anchor": [
-        20,
-        26
+        12,
+        17
       ],
       "footprint": [
         1,
@@ -926,23 +926,23 @@
       ],
       "moving": true,
       "box2x": [
-        80,
-        68
+        48,
+        44
       ],
       "lenTiles": 0.6,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-tank_se": {
       "name": "car-tank_se",
       "kind": "car",
       "car": "tank",
       "view": "se",
-      "w": 40,
-      "h": 32,
+      "w": 24,
+      "h": 20,
       "anchor": [
-        20,
-        24
+        12,
+        14
       ],
       "footprint": [
         1,
@@ -950,23 +950,23 @@
       ],
       "moving": true,
       "box2x": [
-        80,
-        64
+        48,
+        40
       ],
       "lenTiles": 0.556,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-flat_se": {
       "name": "car-flat_se",
       "kind": "car",
       "car": "flat",
       "view": "se",
-      "w": 42,
-      "h": 30,
+      "w": 22,
+      "h": 16,
       "anchor": [
-        21,
-        21
+        11,
+        11
       ],
       "footprint": [
         1,
@@ -974,23 +974,23 @@
       ],
       "moving": true,
       "box2x": [
-        84,
-        60
+        44,
+        32
       ],
       "lenTiles": 0.515,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-loco_nw": {
       "name": "car-loco_nw",
       "kind": "car",
       "car": "loco",
       "view": "nw",
-      "w": 52,
-      "h": 40,
+      "w": 34,
+      "h": 26,
       "anchor": [
-        24,
-        29
+        16,
+        18
       ],
       "footprint": [
         1,
@@ -998,23 +998,23 @@
       ],
       "moving": true,
       "box2x": [
-        104,
-        80
+        68,
+        52
       ],
       "lenTiles": 0.861,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-tender_nw": {
       "name": "car-tender_nw",
       "kind": "car",
       "car": "tender",
       "view": "nw",
-      "w": 32,
-      "h": 30,
+      "w": 18,
+      "h": 16,
       "anchor": [
-        16,
-        22
+        9,
+        12
       ],
       "footprint": [
         1,
@@ -1022,23 +1022,23 @@
       ],
       "moving": true,
       "box2x": [
-        64,
-        60
+        36,
+        32
       ],
       "lenTiles": 0.394,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-box_nw": {
       "name": "car-box_nw",
       "kind": "car",
       "car": "box",
       "view": "nw",
-      "w": 40,
-      "h": 34,
+      "w": 24,
+      "h": 22,
       "anchor": [
-        20,
-        26
+        12,
+        17
       ],
       "footprint": [
         1,
@@ -1046,23 +1046,23 @@
       ],
       "moving": true,
       "box2x": [
-        80,
-        68
+        48,
+        44
       ],
       "lenTiles": 0.6,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-tank_nw": {
       "name": "car-tank_nw",
       "kind": "car",
       "car": "tank",
       "view": "nw",
-      "w": 40,
-      "h": 32,
+      "w": 24,
+      "h": 20,
       "anchor": [
-        20,
-        24
+        12,
+        14
       ],
       "footprint": [
         1,
@@ -1070,23 +1070,23 @@
       ],
       "moving": true,
       "box2x": [
-        80,
-        64
+        48,
+        40
       ],
       "lenTiles": 0.556,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-flat_nw": {
       "name": "car-flat_nw",
       "kind": "car",
       "car": "flat",
       "view": "nw",
-      "w": 42,
-      "h": 30,
+      "w": 22,
+      "h": 16,
       "anchor": [
-        20,
-        21
+        11,
+        10
       ],
       "footprint": [
         1,
@@ -1094,23 +1094,23 @@
       ],
       "moving": true,
       "box2x": [
-        84,
-        60
+        44,
+        32
       ],
       "lenTiles": 0.515,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-loco_ne": {
       "name": "car-loco_ne",
       "kind": "car",
       "car": "loco",
       "view": "ne",
-      "w": 52,
-      "h": 40,
+      "w": 34,
+      "h": 26,
       "anchor": [
-        27,
-        29
+        18,
+        18
       ],
       "footprint": [
         1,
@@ -1118,23 +1118,23 @@
       ],
       "moving": true,
       "box2x": [
-        104,
-        80
+        68,
+        52
       ],
       "lenTiles": 0.861,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_loco, 16 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_loco, 10.3 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-tender_ne": {
       "name": "car-tender_ne",
       "kind": "car",
       "car": "tender",
       "view": "ne",
-      "w": 32,
-      "h": 30,
+      "w": 18,
+      "h": 18,
       "anchor": [
-        16,
-        22
+        9,
+        13
       ],
       "footprint": [
         1,
@@ -1142,23 +1142,23 @@
       ],
       "moving": true,
       "box2x": [
-        64,
-        60
+        36,
+        36
       ],
       "lenTiles": 0.394,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tender, 9 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tender, 4.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-box_ne": {
       "name": "car-box_ne",
       "kind": "car",
       "car": "box",
       "view": "ne",
-      "w": 40,
-      "h": 36,
+      "w": 24,
+      "h": 22,
       "anchor": [
-        20,
-        27
+        12,
+        17
       ],
       "footprint": [
         1,
@@ -1166,23 +1166,23 @@
       ],
       "moving": true,
       "box2x": [
-        80,
-        72
+        48,
+        44
       ],
       "lenTiles": 0.6,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_box, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_box, 7.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-tank_ne": {
       "name": "car-tank_ne",
       "kind": "car",
       "car": "tank",
       "view": "ne",
-      "w": 40,
-      "h": 32,
+      "w": 24,
+      "h": 20,
       "anchor": [
-        20,
-        24
+        12,
+        14
       ],
       "footprint": [
         1,
@@ -1190,23 +1190,23 @@
       ],
       "moving": true,
       "box2x": [
-        80,
-        64
+        48,
+        40
       ],
       "lenTiles": 0.556,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_tank, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_tank, 6.7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "car-flat_ne": {
       "name": "car-flat_ne",
       "kind": "car",
       "car": "flat",
       "view": "ne",
-      "w": 42,
-      "h": 28,
+      "w": 22,
+      "h": 16,
       "anchor": [
-        21,
-        20
+        11,
+        10
       ],
       "footprint": [
         1,
@@ -1214,12 +1214,12 @@
       ],
       "moving": true,
       "box2x": [
-        84,
-        56
+        44,
+        32
       ],
       "lenTiles": 0.515,
       "widthTiles": 0.315,
-      "note": "ART-3D (#504): Meshy model rail_flat, 12 m long, rendered for this heading by tools/meshy/render.mjs --moving."
+      "note": "ART-3D (#504): Meshy model rail_flat, 6.2 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     }
   }
 }
