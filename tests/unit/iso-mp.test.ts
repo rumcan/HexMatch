@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { sessionSabotage } from "../../src/iso/black-market";
 //
 // MP-05 — the acceptance test, end to end through the REAL game.
 //
@@ -103,6 +104,8 @@ interface MpHook {
   /** The Black Market twin (refuses on a guest, exactly as the click path
    *  does) and the rival plant board. */
   buyBlack: (key: string) => void;
+  blackMarketStates: import("../../src/iso/black-market").BlackMarketState[];
+  market: { ms: number; advance: (ms: number) => void };
   rivalPlant: {
     status: () => { frozen: number; girders: number };
     board: import("../../src/game/board").Board;
@@ -1128,6 +1131,40 @@ describe("audit regressions: two real games, one room", () => {
     } as never);
     expect(guestSeat.wood).toBe(forgedWood);
     expect(guestSeat.gold).toBe(forgedGold);
+  });
+
+  it("BM-2: guest sabotage targets the host, syncs both ways, and cannot bypass cooldown", async () => {
+    const { host, guest, guestEnd, hostEnd } = await bootPair();
+    host.purses[1].gold = 100;
+    host.purses[0].gold = 100;
+    forcePublish(guest); pump();
+    guest.buyBlack("frost");
+    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({ type: "intent", action: "blackMarket", payload: { key: "frost" } });
+    expect(host.blackMarketStates[0].frostUntil).toBe(0);
+    pump();
+    expect(host.purses[1].gold).toBe(100 - SABOTAGE.frost.gold);
+    expect(host.blackMarketStates[0].frostUntil).toBeGreaterThan(0);
+    expect(host.blackMarketStates[1].frostUntil).toBe(0);
+    expect(guest.blackMarketStates[1]).toEqual(host.blackMarketStates[0]);
+    expect(guest.blackMarketStates[0]).toEqual(host.blackMarketStates[1]);
+    guest.buyBlack("redTape"); pump();
+    expect(host.purses[1].gold).toBe(100 - SABOTAGE.frost.gold);
+    expect(host.blackMarketStates[0].redTapeUntil).toBe(0);
+    host.buyBlack("redTape"); pump();
+    expect(guest.blackMarketStates[0].redTapeUntil).toBeGreaterThan(0);
+    expect(guest.blackMarketStates[1].redTapeUntil).toBe(0);
+    // Join/resync carries the same deadlines, not a fresh duration.
+    await new Promise((r) => setTimeout(r, 320));
+    hostEnd.deliver({ type: "resync" }); pump();
+    expect(guest.blackMarketStates[0]).toEqual(host.blackMarketStates[1]);
+    expect(guest.blackMarketStates[1]).toEqual(host.blackMarketStates[0]);
+    host.market.advance(180001);
+    forcePublish(guest); pump();
+    expect(sessionSabotage(guest.blackMarketStates[0], guest.market.ms)).toEqual({ frost: 0, girders: 0, lostMoves: 0 });
+    expect(sessionSabotage(guest.blackMarketStates[1], guest.market.ms)).toEqual({ frost: 0, girders: 0, lostMoves: 0 });
+    guest.buyBlack("redTape"); pump();
+    expect(host.purses[1].gold).toBe(100 - SABOTAGE.frost.gold - SABOTAGE.redTape.gold);
+    expect(guest.blackMarketStates[1]).toEqual(host.blackMarketStates[0]);
   });
 
   it("guest balances follow authoritative purse updates, in place (#114)", async () => {

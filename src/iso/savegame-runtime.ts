@@ -150,6 +150,8 @@ export interface SaveGamePayload {
     manager?: string | null;
     /** CAST-1: Rafael's free Black Market allowance. */
     fixer?: { window: number; used: number };
+    /** BM-2: remaining milliseconds; rebased to the new match clock on restore. */
+    blackMarket?: import("./black-market").BlackMarketState;
   }[];
   clearedFields?: number[];
   /** 2026-09: conquest mode — no ★ line, play until a player is bankrupt. */

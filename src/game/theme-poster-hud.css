@@ -190,12 +190,22 @@
 .ui-root .topbar .chip { padding: 0 7px; gap: 4px; }
 .ui-root .topbar .top-right { gap: 8px; }
 .ui-root .aside.right .pane .panel { background: transparent !important; border: 0 !important; box-shadow: none !important; color: inherit; padding: 0; }
-/* the Black Market's noir cards stay dark: light text inside them */
-.ui-root .aside.right .pane .sab-btn {
-  --txt: #f2e8d4; --txt-dim: #d3c6ae; --txt-mute: #aa9c86;
-  --sa-bone: #f2e8d4; --sa-bone-dim: #d3c6ae; --sa-bone-mute: #aa9c86; --c-bone: 242 232 212;
-  color: #f2e8d4; border: 2px solid #11191d; border-radius: 0;
+/* BM-2: UIX paper cards, flat ink and orange actions; no painted gradients. */
+.ui-root .sab-btn {
+  --txt: #182126; --txt-dim: #4b514e;
+  color: #182126; background: #fbf5e8 !important;
+  border: 2px solid #182126; border-radius: 0;
+  padding: 12px; box-shadow: none;
 }
+.ui-root .sab-btn::before { display: none; }
+.ui-root .sab-btn:hover { border-color: #e46b0e; }
+.ui-root .sab-btn .sab-desc { display: block; color: #4b514e; }
+.ui-root .sab-btn .sab-cost { color: #182126; }
+.ui-root .sab-action {
+  display: inline-block; margin-top: 8px; padding: 5px 10px;
+  background: #e46b0e; color: #fff; font-weight: 700;
+}
+.ui-root .sab-status { padding: 8px; background: #fbf5e8; color: #182126; border-left: 3px solid #e46b0e; }
 .ui-root .aside.right .pane, .ui-root .br-dock .plant-card {
   --felt: none; --ledger: none; --flat: none; --iron: none; --iron-big: none; --plate-body: none; --plate-wash-brass: none;
 }

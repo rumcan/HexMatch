@@ -1,3 +1,4 @@
+import { isSessionSabotage } from "../iso/black-market";
 import { storageRentLabel } from "../iso/storage-rent";
 // ══════════════════════════════════════════════════════════════════════════
 // U1 — the restored HexMatch interface, driven by the iso game.
@@ -220,6 +221,9 @@ export interface UiRailRow {
 
 /** CAST-1: the seat's Black Market prices and the Fixer's counter. */
 export interface UiBlackMarket {
+  cooldownSeconds?: number;
+  frostSeconds?: number;
+  redTapeSeconds?: number;
   gold: Record<string, number>;
   security: Partial<Record<Cargo, number>>;
   /** Rafael only: free cards left this window, of `max`, and the refill clock. */
@@ -2732,6 +2736,12 @@ export function createOriginalUi(
   function renderSabotage() {
     sabList.innerHTML = "";
     const bm = blackMarketView;
+    for (const [label, seconds] of [["Frost / Iron Girders", bm?.frostSeconds], ["Red Tape", bm?.redTapeSeconds]] as const) {
+      if (!seconds) continue;
+      const status = h("div", "sab-status");
+      status.textContent = `${label} on your new sessions · ${seconds}s left`;
+      sabList.appendChild(status);
+    }
     // CAST-1: Rafael's counter chip stands at the head of the shop.
     const freeLeft = bm?.fixer?.left ?? 0;
     if (bm?.fixer) {
@@ -2739,17 +2749,18 @@ export function createOriginalUi(
       const chip = h("div", "sab-fixer" + (freeLeft > 0 ? "" : " spent"));
       chip.dataset.left = String(freeLeft);
       chip.innerHTML = `<b>Fixer · ${freeLeft}/${bm.fixer.max} free</b>`
-        + `<small>${freeLeft > 0 ? "Blockade or Protest, on the house" : "all used"} · refill ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</small>`;
+        + `<small>${freeLeft > 0 ? "Any sabotage card, on the house" : "all used"} · refill ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}</small>`;
       sabList.appendChild(chip);
     }
     for (const key of Object.keys(SABOTAGE)) {
       const s = SABOTAGE[key];
       const gold = bm?.gold[key] ?? s.gold;
-      const afford = freeLeft > 0 || (seat.res.gold ?? 0) >= gold;
+      const cooldown = isSessionSabotage(key) ? bm?.cooldownSeconds ?? 0 : 0;
+      const afford = !cooldown && (freeLeft > 0 || (seat.res.gold ?? 0) >= gold);
       const b = h("button", "sab-btn sb-" + key + (afford ? "" : " disabled"));
       const price = freeLeft > 0 ? `<span class="sab-cost free">free</span>` : `<span class="sab-cost">${gold}${cargoIconHtml("gold")}</span>`;
       b.innerHTML = `<div class="sab-top"><b>${s.name}</b>${price}</div>` +
-        `<div class="sab-desc">${s.desc}</div>`;
+        `<div class="sab-desc">${s.desc}</div><span class="sab-action">${cooldown ? `Ready in ${cooldown}s` : "Hire"}</span>`;
       b.disabled = !afford;
       b.dataset.black = key;
       b.onclick = () => hooks.onBlackAction(key);
@@ -5415,7 +5426,7 @@ export function createOriginalUi(
     // (the refill clock ticks by the second, so the chip stays honest).
     blackMarketView = state.blackMarket ?? null;
     const bmv = blackMarketView;
-    const sabKey = `${seat.res.gold ?? 0}:${matAfford(bmv?.security ?? SECURITY_ISO)}:${
+    const sabKey = `${bmv?.cooldownSeconds ?? 0}:${bmv?.frostSeconds ?? 0}:${bmv?.redTapeSeconds ?? 0}:${seat.res.gold ?? 0}:${matAfford(bmv?.security ?? SECURITY_ISO)}:${
       bmv ? `${JSON.stringify(bmv.gold)}|${bmv.fixer ? `${bmv.fixer.left}/${Math.ceil(bmv.fixer.refillMs / 1000)}` : ""}` : ""}`;
     if (sabKey !== lastSabKey) {
       lastSabKey = sabKey;
