@@ -205,6 +205,19 @@ harness, measured results). Every knob that pass turned, and where it lives:
 | `RIVAL_SKILLS.trainee` | `src/iso/skill.ts` | session 120s, tune 0.30, townReserve 1.25, winTarget 6★ | FTUE-1's (#464) Starter Island rival — measured 0 wins vs novice |
 | `DIFFICULTY_RULES.trainee` (new row) | `src/iso/config.ts` | gentle floor (minYield 1.5), no obstacles | the Starter Island's player side — FTUE-1 (#464), not a race knob |
 
+**BAL-2 (#530) — the recalibration after #431 landed (2026-09-27):**
+
+| knob | file | change | why |
+| --- | --- | --- | --- |
+| `RIVAL_SKILLS.hard.sessionMs` | `src/iso/skill.ts` | session 54s → **56s** | #431 removed the gold-opener stall the #523 harness counted as a non-win: hard's 30-seed win rate climbed 60.0% → 66.7% (±5pp band 55–65) and the smoke's 8-seed slice reached 75% (band edge). The pacing surface is bistable (54s≈66.7%, 58s+≈53.3% win-rate plateaus); 56s is the slower clipping of the fast attractor — measured 53.3% full run (1.7pp shy of the band; the only in-band-proximate point measured) and 50% on the smoke slice. |
+| `RIVAL_SKILLS.hard.idleMs` | `src/iso/skill.ts` | idle 1.2s → **1.3s** | paired with the session clock above (the two clocks share a pacing stripe; idle alone measured inert over 30 seeds). |
+| `RIVAL_SKILLS.normal` (all knobs) | `src/iso/skill.ts` | **held at shipped values** — measured, not moved | the 30-seed Normal row reads 43.3% (target 40% ±5pp → in band) at the shipped clamps on today's maps, so no knob moved. The smoke's 8-seed slice reads 75% at EVERY measured in-band setting (50+ measured variants): seeds 1–8 run +15–25pp rival-hot relative to seeds 9–30 — a seed-slice structure problem, not a pacing one (see docs/BALANCE.md §5 for the full sweep table and the follow-up options). |
+
+Held on purpose, per #530's scope: the ★ line (`VICTORY.loop.target` = 12★),
+every price (`START_MONEY`, `BASE_PRICE` and the derived `BUILD_COSTS_MONEY`
+table), and the #431 purchase rule (`goalOutOfReach` / `planGoalPurchase` /
+`rivalBuyTowardGoal`) — none were touched for this pass.
+
 Considered and **held at their shipped values** (measured, then documented
 here so the next pass does not re-open them blind):
 

@@ -299,7 +299,10 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     // L6 (#220): the only row where the yield is not permanent.
     economyLine: "A tuned Depot cools off on the clock — re-tune it any time, and a bad session can cost you.",
     buildMs: 4_500,
-    idleMs: 1_200,
+    // BAL-2 (#530): the retry clock, nudged 1.2s → 1.3s alongside the session
+    // clock below (both measured; the stripe the two clocks sit on is what the
+    // smoke's 8-seed slice reads, so they move together).
+    idleMs: 1_300,
     expandPerTurn: 3,
     paveTiles: 16,
     raidEveryMs: 90_000,
@@ -317,7 +320,14 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     // L14 (#229): buys the upgrade early — the ×1.6 is worth more than the
     // tempo the next Depot loses, and a hard rival is playing a compound game.
     townReserve: 0.6,
-    sessionMs: 54_000,
+    // BAL-2 (#530): #431 removed the gold-opener stall the #523 harness had
+    // counted as a non-win, and hard's win rate jumped 60.0% → 66.7% over 30
+    // seeds (the smoke's 8-seed slice hit 75%, the drift-gate edge). The
+    // pacing surface is bistable — sessions of 54s and 60s+ land on two
+    // attractors (66.7% / 53.3%); 56s is the slower clipping of the fast
+    // attractor, measured at 53.3% full / 50% on the smoke slice (docs §5 of
+    // BALANCE.md records the gap to the 60% ±5pp band).
+    sessionMs: 56_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
     // RIVAL-3 (#467): sharp and quick — 6 s to beat it there.
     claimLeadMs: 6_000,
