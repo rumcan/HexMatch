@@ -1215,7 +1215,7 @@ html, body, #root {
   color: var(--gold2); text-shadow: none;
 }
 .sr-moves { font-family: var(--mono); font-size: 11.5px; color: var(--txt-mute); }
-.sr-stars { display: flex; gap: 10px; margin-top: 6px; font-size: 34px; line-height: 1; }
+.sr-stars { display: flex; gap: 8px; margin-top: 6px; font-size: 32px; line-height: 1; }
 .sr-star {
   display: inline-block;
   color: rgb(var(--c-line) / 0.2); text-shadow: none;
@@ -1344,9 +1344,21 @@ html, body, #root {
   font-family: var(--mono); font-size: 10px; color: var(--txt-dim);
   white-space: nowrap; min-width: 3ch;
 }
+/* MATCH-2 (#566): the five star bars on the meter — dim until the score passes. */
+.tp-meter-track { position: relative; flex: 1 1 auto; min-width: 60px; display: flex; align-items: center; }
+.tp-meter-track .tp-meter-bar { flex: 1 1 auto; }
+.tp-meter-star {
+  position: absolute; top: 50%; transform: translate(-50%, -52%);
+  font-size: 13px; line-height: 1; color: rgba(210, 190, 150, .45);
+  text-shadow: 0 1px 0 #000; pointer-events: none;
+  transition: color .2s ease-out, scale .25s cubic-bezier(.2, 1.6, .3, 1);
+}
+.tp-meter-star[data-stars="1"] { transform: translate(-10%, -52%); }
+.tp-meter-star[data-stars="5"] { transform: translate(-90%, -52%); }
+.tp-meter-star.lit { color: var(--gold2); text-shadow: 0 0 6px var(--gold), 0 1px 0 #000; scale: 1.2; }
 @media (prefers-reduced-motion: reduce) {
   .target-card { animation: none; }
-  .tp-meter-fill { transition: none; }
+  .tp-meter-fill, .tp-meter-star { transition: none; }
 }
 
 /* the rail's plant card: the plate's idle half between sessions — the one
@@ -1586,6 +1598,89 @@ html, body, #root {
   .gem.gone { scale: 1; }
 }
 
+/* ── MATCH-2 (#566): the board canvas ──────────────────────────────────────
+   Fable's renderer (src/game/board-canvas.ts → src/match3/renderer.ts) draws
+   the board under the gem buttons. The buttons stay as the INPUT layer —
+   taps, drags, keyboard focus, every test that clicks them — but draw
+   nothing of their own once the canvas is up (`.canvas-board`). */
+.grid .board-canvas {
+  position: absolute; left: 0; top: 0; z-index: 0;
+  pointer-events: none;
+}
+.grid.canvas-board .gem > *,
+.grid.canvas-board .gem-remnant { visibility: hidden; }
+.grid.canvas-board .gem::before,
+.grid.canvas-board .gem::after { display: none; }
+.grid.canvas-board .gem:focus-visible { outline: 2px solid var(--gold2); outline-offset: -3px; border-radius: 8px; }
+
+/* ── MATCH-2 (#566): the star moment ────────────────────────────────────────
+   Crossing ★★★★ mid-cascade stamps OVERDRIVE over the board; crossing ★★★★★
+   is the Legendary finale — the board pushes in six percent and glows while
+   the cascades still in the air play at a quarter speed (the game's clock),
+   the stars stamp in one by one and stones burst across the felt. `scale`,
+   not `transform`: the board is already fitted with `zoom`, and the two
+   compose. */
+.board-wrap { transition: scale 1.6s cubic-bezier(.4, 0, .2, 1), box-shadow .6s ease-out; }
+.board-wrap.m3-finale-5 {
+  scale: 1.06;
+  transition: scale .5s cubic-bezier(.2, .9, .3, 1.15), box-shadow .3s ease-out;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, .8),
+    inset 0 6px 18px rgba(0, 0, 0, .55),
+    0 0 0 2px var(--gold2),
+    0 0 42px 8px rgba(255, 186, 64, .55);
+}
+.board-wrap.m3-finale-4 {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, .8),
+    inset 0 6px 18px rgba(0, 0, 0, .55),
+    0 0 0 1px var(--gold2),
+    0 0 26px 4px rgba(255, 186, 64, .42);
+}
+.m3-finale-banner {
+  position: absolute; left: 50%; top: 44%; z-index: 11;
+  transform: translate(-50%, -50%);
+  pointer-events: none; text-align: center; white-space: nowrap;
+}
+.m3-finale-stars { font-size: 44px; line-height: 1; letter-spacing: 6px; color: var(--gold2); }
+.m3-finale-stars span {
+  display: inline-block;
+  text-shadow: 0 0 16px var(--gold), 0 0 34px rgba(255, 176, 46, .7), 0 3px 0 #000;
+  animation: m3-star-in .5s cubic-bezier(.2, 1.6, .3, 1) both;
+}
+.m3-finale-stars span:nth-child(2) { animation-delay: .12s; }
+.m3-finale-stars span:nth-child(3) { animation-delay: .24s; }
+.m3-finale-stars span:nth-child(4) { animation-delay: .36s; }
+.m3-finale-stars span:nth-child(5) { animation-delay: .48s; }
+.m3-finale-word {
+  margin-top: 6px;
+  font-family: var(--display); font-size: 34px; letter-spacing: 7px; text-transform: uppercase;
+  color: #fff4d6;
+  text-shadow: 0 0 18px var(--gold), 0 0 40px rgba(255, 176, 46, .6), 0 3px 0 #000;
+  animation: m3-word-in .55s cubic-bezier(.2, 1.4, .3, 1) .6s both;
+}
+.m3-finale-banner-4 .m3-finale-stars { font-size: 34px; }
+.m3-finale-banner-4 .m3-finale-word { font-size: 26px; animation-delay: .5s; }
+.m3-finale-banner.out { animation: m3-banner-out .5s ease-in forwards; }
+@keyframes m3-star-in {
+  0%   { transform: scale(0) rotate(-45deg); opacity: 0; }
+  60%  { transform: scale(1.45) rotate(8deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+@keyframes m3-word-in {
+  0%   { transform: scale(.4); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes m3-banner-out {
+  to { opacity: 0; transform: translate(-50%, -62%) scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The rating still lands — no push, no stamp, no rise. */
+  .board-wrap, .board-wrap.m3-finale-5 { scale: 1; transition: none; }
+  .m3-finale-stars span, .m3-finale-word, .m3-finale-banner.out { animation: none; }
+  .m3-finale-banner.out { opacity: 0; }
+}
+
 .gem.token .face {
   border-color: var(--gold2);
   box-shadow: inset 0 3px 7px rgba(255,255,255,.45), inset 0 -6px 9px rgba(0,0,0,.45),
@@ -1603,7 +1698,7 @@ html, body, #root {
 .gem .badge.show { display: grid; }
 .gem .badge.t2 { background: linear-gradient(180deg, #fff6dd, var(--brass-hi)); box-shadow: 0 0 12px rgba(255, 214, 140, .8); }
 
-.gem.bomb .face {
+.gem.bomb .face:not(.stone) {
   border-radius: 50%;
   background: radial-gradient(circle at 34% 28%, #4c4640, #14100d 75%) !important;
   animation: bombPulse 1s infinite;

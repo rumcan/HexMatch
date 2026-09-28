@@ -200,11 +200,12 @@ export const TUNING = {
 /** #300: one row of `TUNING_STARS`. */
 export interface TuningStarRow {
   /** The rating this row awards. */
-  stars: 1 | 2 | 3;
+  stars: 1 | 2 | 3 | 4 | 5;
   /**
-   * WHERE on the score→yield curve the star is earned: the share (0…1) of the
+   * WHERE on the score→yield curve the star is earned, in shares of the
    * climb from the floor (score 0) to `TUNING.maxYield` (score
-   * `TUNING.targetScore`). The curve is linear (`tuningYieldFor`), so the score
+   * `TUNING.targetScore`) — past 1 is past the target, where the curve runs on
+   * at the same slope. The curve is linear (`tuningYieldFor`), so the score
    * the row asks for is `curve × TUNING.targetScore` (`tuningStarScores` in
    * tuning.ts). A share, not a yield, so the bar is the same on every
    * difficulty: Easy's raised floor lifts the yield a star is worth, not the
@@ -216,28 +217,40 @@ export interface TuningStarRow {
 }
 
 /**
- * #300 — THE star table: how the results pop-up a tuning session ends on
- * rates it, one to three stars.
+ * #300 / MATCH-2 (#566) — THE star table: how the results pop-up a tuning
+ * session ends on rates it, one to FIVE stars.
  *
- * Derived from the score→yield curve rather than invented beside it, so the
- * stars and the yield can never disagree about what a good session is:
+ * Read off the score→yield curve rather than invented beside it: each row is
+ * a point on the line `tuningYieldFor` draws, so a star is always worth the
+ * yield its score pays. The curve itself did not move (owner call, 2026-09:
+ * no ceiling, every score pays on at the same slope); only the bars did.
  *
- *   ★      any cleared gem — the session lifted the yield off its floor
- *   ★★     half the climb — score 30: ×1.75 on Normal, ×2 on Easy
- *   ★★★    the whole climb — score 60, `TUNING.maxYield`: a max-yield session
+ *   ★      any cleared gem           score ≥ 1     "Tuned"
+ *   ★★     past the target           score ≥ 96    "Well tuned"
+ *   ★★★    a strong session          score ≥ 177   "Precision"
+ *   ★★★★   a great run               score ≥ 300   "Overdrive"
+ *   ★★★★★  rare — the finale         score ≥ 480   "Legendary"
+ *
+ * Why these bars: the old three-star table put ★★★ at the target (60), and
+ * the cargo-biased depot board cascades so readily that nearly every session
+ * cleared it — the owner's "too easy to get 3 stars". The bars are set from
+ * the measured bot sweep (`src/match3/bot.ts`, docs/match3-stars.md): an average
+ * player lands on ★★ (mean 2.0 ± 0.3) and a competent one reaches ★★★★★ in
+ * under 5% of sessions. `tests/unit/match3-balance-bot.test.ts` pins both.
  *
  * A session that cleared nothing earns NO star — the same line the rest of
  * the game draws (`closeTuningSession`'s `played`: an empty session opens no
  * rung and confirms no city upgrade). The rows are in rising order and this
  * is the only place the thresholds live: `tuningStarsFor` (tuning.ts) reads
  * them, the pop-up lights its stars off them, and the city's session is rated
- * on the same table (its `townBonusFor` climbs to the full ceiling at the same
- * `targetScore`).
+ * on the same table.
  */
 export const TUNING_STARS: readonly TuningStarRow[] = [
   { stars: 1, curve: 0, label: "Tuned" },
-  { stars: 2, curve: 0.5, label: "Well tuned" },
-  { stars: 3, curve: 1, label: "Max yield" },
+  { stars: 2, curve: 1.6, label: "Well tuned" },
+  { stars: 3, curve: 2.95, label: "Precision" },
+  { stars: 4, curve: 5, label: "Overdrive" },
+  { stars: 5, curve: 8, label: "Legendary" },
 ];
 
 // ── L6 (#220): difficulty = decay, not whether match-3 exists ─────────────

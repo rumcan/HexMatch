@@ -40,6 +40,7 @@ import { CUE_NAMES, CUE_NOTES, isCue, playCue, type Cue, type CueOptions } from 
 // SFX-1 (#463): the recordings behind the catalogue. Prewarmed on the first
 // real gesture, so the synth only ever voices the opening bars.
 import { prewarmSamples } from "./samples";
+import { preloadMatch3Samples } from "../match3/audio";
 
 /** Every element that may make a sound when the pointer meets it. */
 const INTERACTIVE =
@@ -178,6 +179,9 @@ export interface SfxApi {
 function arm(): void {
   unlock();
   prewarmSamples();
+  // MATCH-2 (#566): the board's stones — clack, roll, settle, crack, the stars
+  // and the finale music — decode alongside the rest of the catalogue.
+  preloadMatch3Samples();
 }
 
 export const sfx: SfxApi = {

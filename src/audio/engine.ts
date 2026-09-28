@@ -473,18 +473,35 @@ function contextOf(node: AudioNode): AudioContext | null {
  * all, and the cue falls back to its synth recipe instead.
  */
 export function sample(out: AudioNode, t0: number, buffer: AudioBuffer, gain = 1): number {
+  return sampleVoice(out, t0, buffer, gain)?.ms ?? 0;
+}
+
+/**
+ * MATCH-2 (#566): the same one-shot, with a playback `rate` (a pitch ratio —
+ * the board's cues jitter every play a few cents) and a handle that fades it
+ * out early (the finale music stops when its card closes). Null when it could
+ * not be built.
+ */
+export function sampleVoice(
+  out: AudioNode, t0: number, buffer: AudioBuffer, gain = 1, rate = 1,
+): { ms: number; stop: (fadeSec?: number) => void } | null {
   const c = contextOf(out);
-  if (!c) return 0;
-  if (typeof c.createBufferSource !== "function") return 0;
+  if (!c) return null;
+  if (typeof c.createBufferSource !== "function") return null;
   let dur = 0;
-  try { dur = buffer?.duration ?? 0; } catch { return 0; }
-  if (!Number.isFinite(dur) || dur <= 0) return 0;
+  try { dur = buffer?.duration ?? 0; } catch { return null; }
+  if (!Number.isFinite(dur) || dur <= 0) return null;
+  const r = Number.isFinite(rate) && rate > 0 ? Math.min(4, Math.max(0.25, rate)) : 1;
+  const len = dur / r;
   const t = Math.max(0, t0);
-  if (!takeVoice(now() + (dur + 0.05) * 1000)) return 0;
+  if (!takeVoice(now() + (len + 0.05) * 1000)) return null;
   try {
     const src = c.createBufferSource();
     src.buffer = buffer;
     src.loop = false;
+    if (r !== 1 && src.playbackRate) {
+      try { src.playbackRate.setValueAtTime(r, t); } catch { /* fixed rate */ }
+    }
     const g = c.createGain();
     // A 3 ms fade-in so a sample that starts away from zero never clicks;
     // the file itself owns its ending.
@@ -498,11 +515,26 @@ export function sample(out: AudioNode, t0: number, buffer: AudioBuffer, gain = 1
     src.connect(g);
     g.connect(out);
     src.start(t);
-    src.stop(t + dur + 0.02);
+    src.stop(t + len + 0.02);
     release(src, g);
-    return dur * 1000;
+    let stopped = false;
+    return {
+      ms: len * 1000,
+      stop: (fadeSec = 0.6) => {
+        if (stopped) return;
+        stopped = true;
+        try {
+          const at = Math.max(c.currentTime, t);
+          const f = Math.max(0.01, fadeSec);
+          g.gain.cancelScheduledValues(at);
+          g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), at);
+          g.gain.exponentialRampToValueAtTime(0.0001, at + f);
+          src.stop(at + f + 0.02);
+        } catch { /* already ended */ }
+      },
+    };
   } catch {
-    return 0;
+    return null;
   }
 }
 

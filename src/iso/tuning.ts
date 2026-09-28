@@ -462,8 +462,8 @@ export const tuningSessionGold = (s: TuningSession): number => tuningGoldFor(s.s
 //     card shows is the yield the Depot gets.
 // ══════════════════════════════════════════════════════════════════════════
 
-/** #300: a session's rating. 0 = nothing cleared (no star at all). */
-export type TuningStars = 0 | 1 | 2 | 3;
+/** #300 / MATCH-2: a session's rating on the 5★ scale. 0 = nothing cleared (no star at all). */
+export type TuningStars = 0 | 1 | 2 | 3 | 4 | 5;
 
 /**
  * #300: the score each row of `TUNING_STARS` asks for, in table order — the

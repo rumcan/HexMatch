@@ -482,6 +482,9 @@ import {
 import { RankRuntime, type RankStore } from "../net/rank-runtime";
 import { fmtRating, fmtRatingDelta, type RankVerdict } from "../net/rating";
 import type { EndingRankLine } from "./ending";
+// MATCH-2 (#566): the star moment — the finale clock and the board's own cues.
+import { FinaleController } from "../match3/finale";
+import { playMatch3Cue, stopFinaleMusic } from "../match3/audio";
 
 // ── tuning (E8's rebalance surface, all in one place) ─────────────────────
 /**
@@ -2547,6 +2550,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // L12 (#227): bank the gems as the pass's score so the popup the pass
       // ends with can float what it earned.
       pendingScore += n;
+      noteTuningStars();
     }
   };
   // L12 (#227) — the board's REWARDS: a cross (holy outscores broken), a big
@@ -2559,7 +2563,41 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const pts = TUNING_REWARD_SCORE[kind];
     recordTuningCleared(tuning, pts);
     pendingScore += pts;
+    noteTuningStars();
   };
+  // MATCH-2 (#566) — the star moment. Crossing ★★★★ mid-session rings a
+  // flourish over the board; crossing ★★★★★ is the Legendary finale: the
+  // cascades still in the air play at a quarter speed and ease back (the
+  // board divides every wait by this clock), the board pushes in and bursts,
+  // and the Ode to Joy plays over it. The session's results wait for it to
+  // land (`quarryTick`). Reduced motion keeps the music and the banner and
+  // drops the slow-mo and the push; the performance preset drops the slow-mo.
+  const finale = new FinaleController({
+    onStart: (plan) => ui.boardFinale(plan.stars, plan.durationMs),
+    onFlourish: (cue) => { playMatch3Cue(cue); },
+    onMusic: (cue) => { playMatch3Cue(cue); },
+  });
+  /** The highest rating this session has already celebrated. */
+  let finaleStars = 0;
+  quarry.board.timeScale = () => finale.timeScale();
+  function noteTuningStars(): void {
+    if (!tuning || tuningResult) return;
+    const stars = tuningStarsFor(tuning.score);
+    if (stars < 4 || stars <= finaleStars) return;
+    finaleStars = stars;
+    finale.trigger(stars, {
+      reducedMotion: typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches,
+      perfMode: renderer?.performanceMode ?? false,
+    });
+  }
+  /** A Legendary finale is still playing: the session's results wait for it. */
+  const finaleHolds = (): boolean => finale.active && finale.plan?.stars === 5;
+  /** A new session starts un-celebrated (and the last one's music is over). */
+  function resetFinale(): void {
+    finale.reset();
+    finaleStars = 0;
+    stopFinaleMusic();
+  }
   // L12 (#227) — the new loop's board pays SCORE, not cargo. Set at boot, not
   // per session, so a settle that ever runs outside a session (a test, a save
   // restored mid-cascade) still cannot reach the purse. The old loop and the
@@ -5676,6 +5714,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry.board.resetNeutral();
     quarry.board.setBias(CARGO_TO_GEM[cargo], TUNING.cargoBias);
     tuning = createTuningSession(depot.id, cargo);
+    resetFinale();
     applySessionSabotageMoves();
     // The obstacles go on AFTER the fresh fill and BEFORE the plate opens:
     // they are part of the board the session deals, so the first thing the
@@ -5965,6 +6004,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry.board.resetNeutral();
     quarry.board.setBias(null);
     tuning = createTownSession();
+    resetFinale();
     applySessionSabotageMoves();
     const plan = sabotagedObstacles({ frost: 0, girders: 0, frostHard: 1 }, me.blackMarket, marketMs);
     sessionObstacles = quarry.board.seedObstacles(plan.frost, plan.girders, plan.frostHard);
@@ -6215,7 +6255,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const s = tuning;
     if (!s) return false;
     if (tuningResult) return true;
-    if (quarry.board.busy) {
+    // MATCH-2 (#566): a Legendary finale is let land too — Finish during it is
+    // remembered exactly like a Finish mid-cascade, and `quarryTick` ends the
+    // session the moment both are over.
+    if (quarry.board.busy || finaleHolds()) {
       tuningEndAsked = true;
       return false;
     }
@@ -6274,6 +6317,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     tuningEndAsked = false;
     tuning = null;
     quarry.board.setBias(null);
+    // MATCH-2: the finale's music bows out with the session it celebrated.
+    stopFinaleMusic(1.2);
     const played = r.played;
     // A town session has no Depot (`depotId` is -1), so this is `undefined`
     // there and the city branch below settles instead.
@@ -9437,7 +9482,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // #300: it ends into the RESULTS pop-up (score, yield, stars) rather than
     // straight onto the map; the yield lands on its one Confirm key. A Finish
     // pressed mid-cascade (`tuningEndAsked`) ends here on the same settle.
-    if (tuning && !tuningResult && !quarry.board.busy && (tuningEndAsked || tuningOver(tuning))) {
+    // MATCH-2 (#566): the finale runs on real time; a Legendary one holds the
+    // results until it has landed (the music plays on under the card).
+    finale.tick();
+    if (tuning && !tuningResult && !quarry.board.busy && !finaleHolds() && (tuningEndAsked || tuningOver(tuning))) {
       endTuningSession();
     }
     // AI-03: the rival's own plant plays: same board clock as yours, then

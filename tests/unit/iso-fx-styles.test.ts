@@ -15,7 +15,8 @@ import { readFileSync } from "node:fs";
 const css = readFileSync("src/game/styles.css", "utf8");
 const ui = readFileSync("src/game/ui.ts", "utf8");
 const floats = readFileSync("src/iso/floats.ts", "utf8");
-const board = readFileSync("src/game/board.ts", "utf8");
+// MATCH-2 (#566): src/game/board.ts re-exports the rebuilt board; its types live in src/match3/types.ts.
+const board = readFileSync("src/match3/types.ts", "utf8");
 
 /**
  * The selectors the FX code actually puts on the page — written the way the
@@ -71,7 +72,7 @@ describe("A1 the FX classes the UI emits are really styled", () => {
   });
 
   it("gives every FxType the board can fire its own class", () => {
-    // `FxType` in board.ts is the contract; a new type with no CSS is exactly
+    // `FxType` (src/match3/types.ts) is the contract; a new type with no CSS is exactly
     // how a callout ends up invisible.
     const union = /export type FxType =([^;]+);/.exec(board)![1];
     const types = [...union.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);

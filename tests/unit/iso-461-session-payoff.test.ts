@@ -132,12 +132,14 @@ describe("#461 yields unchanged", () => {
     }
   });
 
-  it("star thresholds unchanged", () => {
-    expect(tuningStarScores()).toEqual([1, TUNING.targetScore / 2, TUNING.targetScore]);
+  // MATCH-2 (#566) moved the bars onto the 5★ scale (the yields above did not move).
+  it("star thresholds are the 5★ table", () => {
+    expect(tuningStarScores()).toEqual([1, 96, 177, 300, 480]);
     expect(tuningStarsFor(0)).toBe(0);
     expect(tuningStarsFor(1)).toBe(1);
-    expect(tuningStarsFor(TUNING.targetScore / 2)).toBe(2);
-    expect(tuningStarsFor(TUNING.targetScore)).toBe(3);
+    expect(tuningStarsFor(TUNING.targetScore)).toBe(1);
+    expect(tuningStarsFor(96)).toBe(2);
+    expect(tuningStarsFor(480)).toBe(5);
   });
 
   it("rival tuning still deterministic per skill", () => {
@@ -183,7 +185,8 @@ describe("#461 star rating stored per Depot — save and wire", () => {
     expect(applied.harvesters[0].lastStars).toBe(3);
     expect(applied.harvesters[1].lastStars).toBe(0);
 
-    const bad = { ...snap, harvesters: [{ ...snap.harvesters[0], lastStars: 5 }] };
+    // MATCH-2: 4 and 5 are legal on the 5★ scale; 6 is not.
+    const bad = { ...snap, harvesters: [{ ...snap.harvesters[0], lastStars: 6 }] };
     expect(() => applySnapshot(bad)).toThrow(/malformed/i);
     const bad2 = { ...snap, harvesters: [{ ...snap.harvesters[0], lastStars: "lots" }] };
     expect(() => applySnapshot(bad2 as any)).toThrow(/malformed/i);

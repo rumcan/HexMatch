@@ -1,0 +1,205 @@
+<!doctype html>
+<!-- MATCH-2 (#566): the board's special pieces (bomb, frost). Driven by tools/board-art/render-board-art.mjs. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>html, body { margin: 0; background: transparent; } canvas { display: block; }</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+
+// One sun from the upper left (the painted icons' light), a cool fill, a rim
+// from behind, and a studio environment for the glints. The board's cargo
+// icons are painted art; these two pieces are modelled so they can turn
+// (the bomb spins on the board) or sit over any icon (the frost cube).
+const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.setClearColor(0x000000, 0);
+document.body.appendChild(renderer.domElement);
+const envTex = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.03).texture;
+
+function lights(scene) {
+  scene.environment = envTex;
+  const key = new THREE.DirectionalLight(0xfff0d8, 3.2);
+  key.position.set(-1.7, 2.1, 2.6);
+  const fill = new THREE.DirectionalLight(0xbcd2ff, 0.75);
+  fill.position.set(2.2, -1.2, 1.4);
+  const rim = new THREE.DirectionalLight(0xffffff, 1.3);
+  rim.position.set(0.8, 1.8, -2.6);
+  scene.add(key, fill, rim, new THREE.AmbientLight(0xffffff, 0.16));
+}
+
+function bomb() {
+  const root = new THREE.Group();
+  const iron = new THREE.MeshPhysicalMaterial({ color: 0x23262c, metalness: 0.55, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.4 });
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.74, 48, 32), iron);
+  ball.position.y = -0.1;
+  root.add(ball);
+  const brass = new THREE.MeshPhysicalMaterial({ color: 0xc8963c, metalness: 1, roughness: 0.3, envMapIntensity: 1.4, flatShading: true });
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.16, 12), brass);
+  collar.position.y = 0.64;
+  root.add(collar);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.745, 0.035, 8, 64), brass);
+  band.rotation.x = Math.PI / 2;
+  band.position.y = -0.1;
+  root.add(band);
+  const rivet = new THREE.SphereGeometry(0.05, 12, 8);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const r = new THREE.Mesh(rivet, brass);
+    r.position.set(Math.sin(a) * 0.775, -0.1, Math.cos(a) * 0.775);
+    root.add(r);
+  }
+  // a painted warning stripe, so the turn shows on the iron itself
+  const stripe = new THREE.Mesh(
+    new THREE.SphereGeometry(0.742, 48, 16, -0.28, 0.56, 0.9, 0.5),
+    new THREE.MeshPhysicalMaterial({ color: 0xe8661c, roughness: 0.45, clearcoat: 0.6, emissive: 0x3a1000 }));
+  stripe.position.y = -0.1;
+  root.add(stripe);
+  const fusePath = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.7, 0), new THREE.Vector3(0.05, 0.86, 0.02), new THREE.Vector3(0.2, 0.96, 0.05), new THREE.Vector3(0.34, 0.95, 0.06),
+  ]);
+  root.add(new THREE.Mesh(new THREE.TubeGeometry(fusePath, 24, 0.04, 8), new THREE.MeshPhysicalMaterial({ color: 0xd8c08c, roughness: 0.85 })));
+  const spark = new THREE.Mesh(new THREE.SphereGeometry(0.075, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffe08a }));
+  spark.position.set(0.36, 0.95, 0.06);
+  root.add(spark);
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 12), new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: 0.45 }));
+  glow.position.copy(spark.position);
+  root.add(glow);
+  root.userData.view = 1.14;
+  return root;
+}
+
+function frostTexture(level) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const x = c.getContext("2d");
+  let seed = level * 101 + 3;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  // milky at the rim, clearing toward the middle so the icon shows
+  const thick = level === 2;
+  const base = x.createRadialGradient(128, 128, 18, 128, 128, 150);
+  base.addColorStop(0, `rgba(214, 240, 255, ${thick ? 0.34 : 0.1})`);
+  base.addColorStop(0.62, `rgba(226, 246, 255, ${thick ? 0.6 : 0.24})`);
+  base.addColorStop(1, `rgba(246, 252, 255, ${thick ? 0.95 : 0.6})`);
+  x.fillStyle = base;
+  x.fillRect(0, 0, 256, 256);
+  // rime creeping in from the rim
+  for (let i = 0; i < 2600; i++) {
+    const px = rnd() * 256, py = rnd() * 256;
+    const edge = Math.max(Math.abs(px - 128), Math.abs(py - 128)) / 128;
+    if (rnd() > edge * edge * (thick ? 1 : 0.7)) continue;
+    x.fillStyle = `rgba(255,255,255,${0.25 + rnd() * 0.5})`;
+    const w = 1 + rnd() * 3;
+    x.fillRect(px, py, w, w);
+  }
+  // feathered crystals reaching in from the edges
+  x.strokeStyle = "rgba(255,255,255,0.55)";
+  x.lineWidth = 1.5;
+  for (let i = 0; i < (thick ? 18 : 9); i++) {
+    const side = Math.floor(rnd() * 4);
+    const t = 30 + rnd() * 196;
+    const [px, py, dir] = side === 0 ? [t, 6, Math.PI / 2] : side === 1 ? [250, t, Math.PI] : side === 2 ? [t, 250, -Math.PI / 2] : [6, t, 0];
+    const d = dir + (rnd() - 0.5) * 0.8;
+    const len = 18 + rnd() * 26;
+    x.beginPath();
+    x.moveTo(px, py);
+    x.lineTo(px + Math.cos(d) * len, py + Math.sin(d) * len);
+    for (let k = 1; k <= 3; k++) {
+      const bx = px + Math.cos(d) * len * (k / 4), by = py + Math.sin(d) * len * (k / 4);
+      for (const sgn of [-1, 1]) {
+        x.moveTo(bx, by);
+        x.lineTo(bx + Math.cos(d + sgn * 0.8) * 7, by + Math.sin(d + sgn * 0.8) * 7);
+      }
+    }
+    x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function ice(level) {
+  // A cube of ice the icon is frozen into: two hits left (thick rime), one (cracked through).
+  const root = new THREE.Group();
+  const geo = new RoundedBoxGeometry(1.86, 1.86, 1.1, 4, 0.22);
+  const m = new THREE.MeshPhysicalMaterial({
+    color: 0xe6f8ff, map: frostTexture(level), roughness: 0.06, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.03,
+    transparent: true, opacity: level === 2 ? 0.92 : 0.8, envMapIntensity: 2.6,
+    emissive: 0x86cdf2, emissiveIntensity: level === 2 ? 0.4 : 0.25, depthWrite: false,
+  });
+  root.add(new THREE.Mesh(geo, m));
+  if (level === 1) {
+    const crack = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
+    const lines = [[-0.78, 0.42, 0.7, -0.35], [-0.1, 0.16, 0.6, -1.05], [-0.1, 0.16, 0.72, 0.3], [0.32, -0.12, 0.46, -0.2], [0.55, 0.08, 0.34, 1.1]];
+    for (const [x, y, len, rot] of lines) {
+      const sl = new THREE.Mesh(new THREE.BoxGeometry(len, 0.034, 0.01), crack);
+      sl.position.set(x + (len / 2) * Math.cos(rot), y + (len / 2) * Math.sin(rot), 0.57);
+      sl.rotation.z = rot;
+      root.add(sl);
+    }
+  }
+  root.userData.view = 1.06;
+  root.userData.noOutline = true;
+  return root;
+}
+
+/** Silhouette outline behind the render: the painted icons' dark edge. */
+function outlined(src, px, color) {
+  const w = src.width, h = src.height;
+  const sil = document.createElement("canvas");
+  sil.width = w; sil.height = h;
+  const s = sil.getContext("2d");
+  s.drawImage(src, 0, 0);
+  s.globalCompositeOperation = "source-in";
+  s.fillStyle = color;
+  s.fillRect(0, 0, w, h);
+  const out = document.createElement("canvas");
+  out.width = w; out.height = h;
+  const o = out.getContext("2d");
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    o.drawImage(sil, Math.cos(a) * px, Math.sin(a) * px);
+  }
+  o.drawImage(src, 0, 0);
+  return out;
+}
+
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 40);
+
+window.renderPiece = async (p) => {
+  const scene = new THREE.Scene();
+  lights(scene);
+  const model = p.kind === "bomb" ? bomb() : ice(p.kind === "ice2" ? 2 : 1);
+  scene.add(model);
+  renderer.setSize(p.size, p.size, false);
+  const v = model.userData.view ?? 1.2;
+  camera.left = -v; camera.right = v; camera.top = v; camera.bottom = -v;
+  camera.updateProjectionMatrix();
+  camera.position.set(0, Math.sin(p.tilt) * 10, Math.cos(p.tilt) * 10);
+  camera.lookAt(0, 0, 0);
+  const out = [];
+  for (let i = 0; i < p.frames; i++) {
+    model.rotation.y = (i / p.frames) * Math.PI * 2;
+    renderer.render(scene, camera);
+    const pic = renderer.domElement;
+    const edged = p.outline > 0 && !model.userData.noOutline ? outlined(pic, p.outline, "rgba(18, 12, 6, 0.94)") : pic;
+    out.push(edged.toDataURL("image/png"));
+  }
+  return out;
+};
+window.ready = true;
+</script>
+</body>
+</html>

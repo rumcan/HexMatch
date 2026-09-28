@@ -97,6 +97,9 @@ import { coarsePointer } from "../iso/touch";
 // One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
+import { STAR_SCALE, starGlyphs, tuningStarScores } from "../match3/stars";
+import { attachBoardVoice } from "../match3/audio";
+import { mountBoardCanvas, type BoardCanvas } from "./board-canvas";
 import {
   HUD_ICONS, cargoIconHtml, costMarkup, moneyMarkup, depotButtonMarkup, soundIconHtml,
 } from "./hud-icons";
@@ -594,8 +597,8 @@ export interface UiTuningResult {
   reason: "out-of-moves" | "finished";
   /** The final score — the count-up's target. */
   score: number;
-  /** The rating off `TUNING_STARS` (config.ts); 0 = nothing cleared. */
-  stars: 0 | 1 | 2 | 3;
+  /** The rating off `TUNING_STARS` (config.ts), 0–5; 0 = nothing cleared. */
+  stars: 0 | 1 | 2 | 3 | 4 | 5;
   /** The score each star asks for, in table order — they light as the count passes. */
   starScores: readonly number[];
   /** The verdict word for `stars` (the table's `label`); empty for none. */
@@ -815,6 +818,13 @@ export interface OriginalUi {
   /** A brief, non-modal exchange beside the HUD. The portrait switches with
    *  each speaker; game.ts also records every beat in the Feed for later. */
   rivalQuip: (beats: readonly UiRivalryBeat[]) => void;
+  /**
+   * MATCH-2 (#566): the board's star moment, painted. 5★ is the Legendary
+   * finale — the board pushes in and glows, the stars stamp in one by one and
+   * stones burst across it for `durationMs`; 4★ is the smaller flourish. The
+   * game owns WHEN (the score crossing the bar), the slow-mo and the music.
+   */
+  boardFinale: (stars: 4 | 5, durationMs: number) => void;
   /** All messages enter Feed. Routine gains (good) default to low priority;
    *  callers can promote important good news or quiet a routine notice. */
   toast: (text: string, kind?: "good" | "bad" | "info" | "danger" | "success", priority?: "normal" | "low") => void;
@@ -1432,7 +1442,19 @@ export function createOriginalUi(
   const tpMeterFill = h("div", "tp-meter-fill");
   const tpMeterLabel = h("span", "tp-meter-label", "");
   tpMeterBar.appendChild(tpMeterFill);
-  tpMeter.append(tpMeterBar, tpMeterLabel);
+  // MATCH-2 (#566): the five star bars ride the meter — the bar runs from 0 to
+  // the ★★★★★ bar and each star sits where its score lands, lighting as the
+  // count passes it. The same table the results pop-up rates on.
+  const tpMeterTrack = h("div", "tp-meter-track");
+  const tpMeterStars = tuningStarScores().map((bar, i, bars) => {
+    const star = h("span", "tp-meter-star", "★");
+    star.style.left = `${Math.min(100, (bar / bars[bars.length - 1]) * 100)}%`;
+    star.dataset.stars = String(i + 1);
+    star.setAttribute("aria-hidden", "true");
+    return star;
+  });
+  tpMeterTrack.append(tpMeterBar, ...tpMeterStars);
+  tpMeter.append(tpMeterTrack, tpMeterLabel);
   tpRow.append(tpScore, tpYield, tpMeter, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
   const tpIdleText = h("span", "tp-idle-text");
@@ -1469,6 +1491,8 @@ export function createOriginalUi(
   const boardWrap = h("div", "board-wrap");
   const grid = h("div", "grid");
   grid.id = "iso-gems";
+  // MATCH-2 (#566): the board canvas (mounted below, once the gem map exists).
+  let boardCanvas: BoardCanvas | null = null;
   // SFX-01: gems sound from `selectOrSwap` (above), never from the hover/press
   // delegation — see the comment there.
   grid.dataset.sfx = "off";
@@ -1609,7 +1633,7 @@ export function createOriginalUi(
   const srMoves = h("div", "sr-moves");
   const srStars = h("div", "sr-stars");
   srStars.setAttribute("role", "img");
-  const srStar = [1, 2, 3].map((n) => {
+  const srStar = Array.from({ length: STAR_SCALE }, (_, i) => i + 1).map((n) => {
     const star = h("span", "sr-star", "★");
     star.dataset.n = String(n);
     star.setAttribute("aria-hidden", "true");
@@ -1743,9 +1767,7 @@ export function createOriginalUi(
       tcPossible.textContent = `Possible: ×${maxY.toFixed(2).replace(/0$/, "")}`;
     }
     if (info.lastStars !== undefined && info.lastStars > 0) {
-      const filled = "★".repeat(info.lastStars);
-      const empty = "☆".repeat(3 - info.lastStars);
-      tcLast.textContent = `Last: ${filled}${empty}${info.isRetune ? " — beat it!" : ""}`;
+      tcLast.textContent = `Last: ${starGlyphs(info.lastStars)}${info.isRetune ? " — beat it!" : ""}`;
       tcLast.classList.remove("hidden");
     } else {
       tcLast.classList.add("hidden");
@@ -2471,6 +2493,27 @@ export function createOriginalUi(
 
   // ── gem / HUD DOM state ──────────────────────────────────────────────────
   const gemEls = new Map<number, HTMLElement>();
+  // MATCH-2 (#566): the board sounds on its own beats — the wenwan clack at
+  // the contact frame, the roll after it, the settle at the landing, the
+  // crack of a clear (src/match3/audio.ts, off `Board.onPhase`).
+  attachBoardVoice(board);
+  // MATCH-2 (#566): the board is DRAWN by Fable's canvas renderer (the owner's
+  // call — the DOM board read as clunky); the DOM gems below stay as the input
+  // layer, invisible (styles.css "the board canvas"). The phase stream feeds
+  // both the voice (above) and the picture, in that order.
+  boardCanvas = mountBoardCanvas({
+    board, grid, cell: CELL,
+    reduceMotion: () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches,
+    gemEl: (id) => gemEls.get(id),
+  });
+  if (boardCanvas) {
+    const voiced = board.onPhase;
+    board.onPhase = (phase, ms) => {
+      voiced(phase, ms);
+      boardCanvas?.ingest(phase, ms);
+    };
+    grid.addEventListener("pointerleave", () => boardCanvas?.setHover(null));
+  }
   let selected: { r: number; c: number } | null = null;
   const feedEntries: { who: string; colour: string; text: string }[] = [];
   // U1: the restored HUD paints on the game's rAF loop. Re-rendering the
@@ -3043,10 +3086,9 @@ export function createOriginalUi(
 
   const selectOrSwap = (cell: { r: number; c: number }) => {
     if (selected && adj(selected, cell)) {
-      // SFX-01: a soft thud as the gem settles — the board's own `bad` fx
-      // answers a swap that did not match, so this one is deliberately
-      // neutral, just the gesture, then the verdict.
-      sfx.play("swap");
+      // MATCH-2 (#566): no sound at the tap — the two stones clack at the
+      // frame they touch and roll past each other (src/match3/audio.ts, voiced
+      // off the board's own swap phase), and a dud still answers with `bad`.
       // #163: the player has played into the board — any session-added
       // rows/columns are earned now and the fit becomes grow-only.
       markBoardPlayed();
@@ -3173,10 +3215,14 @@ export function createOriginalUi(
     const els = d.peer ? [d.el, d.peer] : [d.el];
     const seen = els.map((el) => {
       const [bx, by] = baseOf(el), [tx, ty] = offsetOf(el);
+      boardCanvas?.dropAt(Number(el.dataset.id), tx, ty);
       return [bx + tx, by + ty] as const;
     });
     act();
     els.forEach((el, i) => glide(el, seen[i][0], seen[i][1], shake));
+    // …and whatever no swap claimed (a cancel, a refusal, a queued move)
+    // springs home from the hand.
+    for (const el of els) boardCanvas?.settleHome(Number(el.dataset.id));
   }
 
   // ── #162: invalid-swap shake + idle hint ─────────────────────────────────
@@ -3189,6 +3235,7 @@ export function createOriginalUi(
   const SHAKE_MS = 260;
   function shakeCells(a: Cell, b: Cell) {
     if (reduceMotion) return;
+    boardCanvas?.shake([a, b].map((cell) => board.grid[cell.r]?.[cell.c]?.id ?? -1));
     for (const cell of [a, b]) {
       const g = board.grid[cell.r]?.[cell.c];
       const el = g ? gemEls.get(g.id) : undefined;
@@ -3239,6 +3286,7 @@ export function createOriginalUi(
   });
 
   grid.addEventListener("pointermove", (e) => {
+    if (boardCanvas && e.pointerType !== "touch") boardCanvas.setHover(drag ? null : cellFrom(e));
     if (!drag) return;
     if (e.pointerId !== drag.pointerId) return;
     // #162: leaving the board voids the gesture — with pointer capture the
@@ -3309,7 +3357,7 @@ export function createOriginalUi(
     }
     const to = d.to;
     releaseGems(d, () => {
-      sfx.play("swap");
+      // MATCH-2: the clack is voiced at the stones' contact frame, not here.
       markBoardPlayed();   // #163: a drag swap earns the grown band too
       noteSwap(d.from.r, d.from.c, to.r, to.c);
       hooks.onSwap(d.from.r, d.from.c, to.r, to.c);
@@ -3345,6 +3393,7 @@ export function createOriginalUi(
 
   function renderSelection() {
     gemEls.forEach((elem) => elem.classList.remove("sel", "neighbor"));
+    boardCanvas?.setSelected(selected && board.grid[selected.r]?.[selected.c] ? selected : null);
     if (!selected) return;
     const g = board.grid[selected.r]?.[selected.c];
     if (!g) return;
@@ -3506,6 +3555,7 @@ export function createOriginalUi(
     const combo = board.comboCount;
     setCombo(combo, Board.COMBOS_PER_GOLD);
     renderSelection();
+    boardCanvas?.sync();
   }
 
   /** Issue #152 — clone a cleared gem into an inert `.gem-remnant` that
@@ -3536,6 +3586,34 @@ export function createOriginalUi(
   // behaviour the old stacked floats could never produce.
   let floatEl: HTMLElement | null = null;
   let floatTimer = 0;
+
+  // ── MATCH-2 (#566): the star moment ─────────────────────────────────────
+  // Its own banner, not the callout slot: the cascades still resolving under
+  // it keep shouting their COMBO/CHAIN in the slot above while the rating
+  // stamps in over the middle of the board. The push-in and glow are the
+  // wrap's classes (styles.css "the star moment"); reduced motion keeps the
+  // banner and drops the motion there.
+  let finaleTimer = 0;
+  let finaleBanner: HTMLElement | null = null;
+  function boardFinale(stars: 4 | 5, durationMs: number): void {
+    window.clearTimeout(finaleTimer);
+    finaleBanner?.remove();
+    boardWrap.classList.remove("m3-finale-4", "m3-finale-5");
+    void boardWrap.offsetWidth;   // restart the push-in
+    boardWrap.classList.add(`m3-finale-${stars}`);
+    const banner = h("div", `m3-finale-banner m3-finale-banner-${stars}`);
+    banner.setAttribute("role", "status");
+    const row = h("div", "m3-finale-stars");
+    for (let i = 0; i < stars; i++) row.appendChild(h("span", "", "★"));
+    banner.append(row, h("div", "m3-finale-word", stars === 5 ? "Legendary" : "Overdrive"));
+    boardWrap.appendChild(banner);
+    finaleBanner = banner;
+    finaleTimer = window.setTimeout(() => {
+      boardWrap.classList.remove("m3-finale-4", "m3-finale-5");
+      banner.classList.add("out");
+      window.setTimeout(() => { banner.remove(); if (finaleBanner === banner) finaleBanner = null; }, 520);
+    }, Math.max(900, durationMs));
+  }
 
   function showFloat(text: string, big: boolean) {
     floatEl?.remove();
@@ -3578,6 +3656,10 @@ export function createOriginalUi(
       const tier = Number(/x(\d+)/.exec(text ?? "")?.[1] ?? 0);
       sfx.play(cue, tier > 1 ? { step: tier - 1 } : undefined);
     }
+    // MATCH-2 (#566): the canvas draws the shards, the shockwave, the frost
+    // chips, the minted pop and the callout itself (Fable's look) — the DOM
+    // adds only what it alone can draw, the cross icons.
+    if (boardCanvas && type !== "cross" && type !== "bcross") return;
     const e = h("div", `fx fx-${type}`);
     e.style.left = (c * CELL + CELL / 2) + "px";
     e.style.top = (r * CELL + CELL / 2) + "px";
@@ -3814,6 +3896,7 @@ export function createOriginalUi(
     grid.style.width = CELL * board.w + "px";
     grid.style.height = CELL * board.h + "px";
     grid.style.setProperty("--gem", (CELL - 6) + "px");
+    boardCanvas?.resize();
   }
 
   /**
@@ -4581,7 +4664,7 @@ export function createOriginalUi(
     const moved = r.to !== r.from;
     srYieldFrom.textContent = moved ? `${srFmt(r, r.from)} →` : "";
     srYieldFrom.classList.toggle("hidden", !moved);
-    srStars.setAttribute("aria-label", `${r.stars} of 3 stars`);
+    srStars.setAttribute("aria-label", `${r.stars} of ${STAR_SCALE} stars`);
     srStar.forEach((star, i) => {
       const bar = r.starScores[i];
       star.title = bar === undefined ? "" : `${i + 1}★ from score ${bar}`;
@@ -4635,7 +4718,7 @@ export function createOriginalUi(
     srGold.textContent = `+${r.gold} ${CARGO.gold.icon}`;
     srGoldRow.classList.toggle("hidden", r.gold <= 0);
     srSummary.textContent = `${srHead.textContent}. Score ${r.score}. ${depot ? "Yield" : "Base rate"} ${
-      srFmt(r, r.to)}. ${r.stars} of 3 stars${r.verdict ? ` — ${r.verdict}` : ""}.${
+      srFmt(r, r.to)}. ${r.stars} of ${STAR_SCALE} stars${r.verdict ? ` — ${r.verdict}` : ""}.${
       r.gold > 0 ? ` Plus ${r.gold} Gold.` : ""}`;
     // The FINAL numbers ride on the card from the first frame — a test (or a
     // stylesheet) never has to wait out the count-up to read the result.
@@ -4820,13 +4903,20 @@ export function createOriginalUi(
     tpYield.innerHTML = town
       ? `Base rate <b>+${Math.round(t.yield * 100)}%</b>`
       : `Yield <b>×${fmtYield(t.yield)}</b>`;
-    // #461 TUNE-1: live yield meter climbs as you clear (maps score→yield).
-    // Progress is score/targetScore (0…1) capped, but yield keeps climbing past.
-    const tgtScore = TUNING.targetScore || 60;
-    const prog = Math.min(1, Math.max(0, t.score / tgtScore));
-    tpMeterFill.style.width = `${Math.round(prog * 100)}%`;
-    tpMeterLabel.textContent = `${t.score}/${tgtScore}`;
-    tpMeter.title = `Score ${t.score} of ${tgtScore} for max yield — yield ×${fmtYield(t.yield)}`;
+    // #461 TUNE-1 / MATCH-2 (#566): the live meter climbs as you clear, from 0
+    // to the ★★★★★ bar, and the star ticks light as the score passes them;
+    // the label names the next star. The yield keeps climbing past the top.
+    const bars = tuningStarScores();
+    const top = bars[bars.length - 1] || 1;
+    const prog = Math.min(1, Math.max(0, t.score / top));
+    tpMeterFill.style.width = `${(prog * 100).toFixed(1)}%`;
+    tpMeterStars.forEach((star, i) => star.classList.toggle("lit", t.score >= bars[i]));
+    // The next bar worth naming: ★ is "any cleared gem", so the chase starts at ★★.
+    const nextIdx = bars.findIndex((bar, i) => i > 0 && t.score < bar);
+    tpMeterLabel.textContent = nextIdx < 0
+      ? `${t.score} ${"★".repeat(STAR_SCALE)}`
+      : `${t.score}/${bars[nextIdx]} ${"★".repeat(nextIdx + 1)}`;
+    tpMeter.title = `Score ${t.score} — ${bars.map((bar, i) => `${"★".repeat(i + 1)} at ${bar}`).join(", ")} · yield ×${fmtYield(t.yield)}`;
     tpMeter.classList.toggle("full", prog >= 1);
     // #301: Finish is enabled when moves are 0 — it is the ONLY highlighted
     // action then. It is disabled only while the board is animating.
@@ -5303,7 +5393,7 @@ export function createOriginalUi(
   function showDepotCard(o: DepotCardInfo): void {
     const full = o.yieldNow >= o.cap;
     const lastLine = o.lastStars !== undefined && o.lastStars > 0
-      ? `Last: ${"★".repeat(o.lastStars)}${"☆".repeat(3 - o.lastStars)} — beat it!`
+      ? `Last: ${starGlyphs(o.lastStars)} — beat it!`
       : o.lastStars === 0 ? "Last: no stars — retune for more!"
       : null;
     showActionCard({
@@ -5857,6 +5947,7 @@ export function createOriginalUi(
     minimapHost,
     radioHost,
     renderBoard,
+    boardFinale,
     setReach,
     setCombo,
     paint,
