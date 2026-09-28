@@ -1470,6 +1470,24 @@ export const TOWN_PARK_VARIANTS = [
   "park_allotment_1x1",
 ] as const;
 
+/**
+ * MAP-2 (#559): the trees a town plants on its OPEN LOTS — the single tiles the
+ * buildings leave over (a clipped block, the odd strip in a grown district).
+ *
+ * They are the scenery's own tree sprites (`TREE_SPRITES` in scenery.ts), not
+ * new art: `loadScenerySprites` installs every one of them into the shared
+ * atlas as an ordinary 1×1 centre-anchored sprite, so a town lot can draw a
+ * tree through exactly the same draw-item road as a park.
+ *
+ * A CURATED subset, on purpose: the dead trunks and the lowest bushes stay in
+ * the country — a town lot gets a proper tree. `iso-559-town-trees.test.ts`
+ * pins every name against the scenery manifest and `TREE_SPRITES`, so a
+ * renamed tree fails a test instead of silently drawing nothing.
+ */
+export const TOWN_TREE_VARIANTS = [
+  "tree_oak_a", "tree_oak_c", "tree_maple_b", "tree_birch_a", "tree_pine_b", "tree_bush_b",
+] as const;
+
 /** A village's whole-block homes (low, 2×2): the terrace with gardens. */
 export const TOWN_VILLAGE_BLOCKS = [
   "town_townhouse_gardens_2", "village_homes_2x2_a", "village_homes_2x2_b", "village_homes_2x2_c",

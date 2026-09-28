@@ -16,7 +16,7 @@ import { deriveTownNames } from "./town-names";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
-  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN,
+  buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN, TOWN_TREE_VARIANTS,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
 } from "./config";
@@ -1762,6 +1762,14 @@ export interface TownBuildingsOptions {
    * exactly today's layout.
    */
   shapes?: boolean;
+  /**
+   * MAP-2 (#559): can the renderer actually DRAW this sprite? The game passes
+   * the atlas (`atlas.has`), because the scenery TREE defs land in a load of
+   * their own, after the first sync — until then a lot must fall back to a
+   * park or a lawn rather than to a sprite that draws nothing. Absent (the
+   * pure callers, tests) means every named sprite is assumed drawable.
+   */
+  spriteKnown?: (sprite: string) => boolean;
 }
 
 /**
@@ -1809,13 +1817,17 @@ function townBuildingsLaid(
   });
   void full; void villageBlockPool;
   // Owner (2026-09-26): a VILLAGE keeps its small 1×1 homes. From the first
-  // upgrade on there are NO 1×1 buildings: a single house tile is a park.
+  // upgrade on there are NO 1×1 buildings: a single house tile is an open lot
+  // — a tree, a park or a lawn (`lotArtAt`), the owner's MAP-2 direction
+  // (#559) that a town's grass gaps should carry trees rather than sit bare.
   const villageHomes: readonly string[] = TOWN_VILLAGE_VARIANTS.filter((v) => {
     const [fw, fh] = footprintOf(v);
     return fw === 1 && fh === 1 && buildingFootprint(v) !== null;
   });
-  const houseArt: readonly string[] = village && villageHomes.length ? villageHomes : parkPool(footprintOf);
-  const tileArt: readonly string[] = parkPool(footprintOf);
+  const homeArt = village && villageHomes.length ? villageHomes : null;
+  /** The sprite a leftover single lot draws: a home (village), else a lot. */
+  const singleArt = (x: number, y: number): string =>
+    homeArt ? pickTownVariant(x, y, homeArt) : lotArtAt(x, y, footprintOf, opts.spriteKnown);
   // Whole blocks: 2×2-or-larger art only (a village places no block art).
   const blockArt: readonly string[] = village
     ? []
@@ -1853,57 +1865,48 @@ function townBuildingsLaid(
   const blockOrigin = (v: number, centre: number) =>
     centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
   const blocks = new Map<number, [number, number]>();
+  // Every house tile of each block, not a fixed 2×2 square: `mergeTownBlocks`
+  // (F4 #275) turns the lane between two blocks into house tiles, so a block
+  // can be 2×3 — and the seam tiles are still this block's to draw on.
+  const blockTiles = new Map<number, [number, number][]>();
   for (const [hx, hy] of t.houses) {
     const ox = blockOrigin(hx, t.tx), oy = blockOrigin(hy, t.ty);
-    blocks.set(idx(ox, oy), [ox, oy]);
+    const key = idx(ox, oy);
+    blocks.set(key, [ox, oy]);
+    const list = blockTiles.get(key);
+    if (list) list.push([hx, hy]); else blockTiles.set(key, [[hx, hy]]);
   }
   // Row-major over the block origins: a fixed order, so the output is stable.
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+
+  /** An open lot on every free house tile of the list, one per tile. */
+  const fillSingles = (tiles: readonly [number, number][]) => {
+    for (const [x, y] of tiles) {
+      const i = idx(x, y);
+      if (!houses.has(i) || used.has(i)) continue;
+      place(singleArt(x, y), x, y);
+    }
+  };
 
   for (const [ox, oy] of origins) {
     // The BLOCK pick runs on the FULL list at every non-village tier — that is
     // where the 2×2 towers, banks and cinemas come from — while the village
     // picks inside its small-homes list (and never places block art at all).
-    const pick = blockArt.length ? pickTownVariant(ox, oy, blockArt) : houseArt[0];
+    const pick = blockArt.length ? pickTownVariant(ox, oy, blockArt) : singleArt(ox, oy);
     const [fw, fh] = footprintOf(pick);
     const wholeBlock = blockArt.length > 0
       && (fw > 1 || fh > 1)
       && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
-    if (wholeBlock) { place(pick, ox, oy); continue; }
-    // Single houses, one per free tile of the block.
-    for (const [x, y] of span(ox, oy, BLOCK, BLOCK)) {
-      const i = idx(x, y);
-      if (!houses.has(i) || used.has(i)) continue;
-      place(pickTownVariant(x, y, houseArt), x, y);
-    }
+    // Open lots, one per free tile of the block: a small home in a village,
+    // else a tree / park / lawn (`singleArt`). Runs after a whole-block pick
+    // too, so a merged block's seam tiles are drawn instead of left bare.
+    if (wholeBlock) place(pick, ox, oy);
+    fillSingles(blockTiles.get(idx(ox, oy)) ?? []);
   }
 
   // The grown ring (tier 2+): the new districts beyond the old street plan.
-  // Laid last, so a ring tile can never steal art from the original blocks,
-  // and always as singles — the ring's depth is whole blocks, but it borders
-  // the old streets and the town's clipped edges, so per-tile placement keeps
-  // the "no art on a tile that is not this town's" guarantee for free.
-  if (tier >= 2 && opts.grid) {
-    const rings = townGrownRings(tier);
-    const ring = grownTownHouses(t, opts.grid, rings, opts.blocked);
-    const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
-    const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
-      const [fw, fh] = footprintOf(v);
-      return fw === 2 && fh === 2;
-    });
-    // Row-major, so the greedy 2×2 packing is deterministic.
-    for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
-      const i = idx(x, y);
-      if (used.has(i)) continue;
-      const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
-      if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
-        place(pickTownVariant(x, y, ring2), x, y);
-        continue;
-      }
-      place(pickTownVariant(x, y, tileArt), x, y);
-    }
-  }
+  layGrownRing(t, opts, footprintOf, used, place);
   return out;
 }
 
@@ -1936,8 +1939,9 @@ function townBuildingsShapes(
     return fw === 1 && fh === 1;
   });
   void full;
-  // Owner (2026-09-26): NO 1×1 buildings - leftover single tiles are parks.
-  const tileArt: readonly string[] = parkPool(footprintOf);
+  // Owner (2026-09-26): NO 1×1 buildings — a leftover single tile is an open
+  // lot. MAP-2 (#559): and an open lot draws a TREE, a park or a lawn
+  // (`lotArtAt`), so the new districts' strips do not read as bare grass.
 
   const houses = new Set<number>();
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
@@ -1954,12 +1958,12 @@ function townBuildingsShapes(
     out.push({ sprite, tx: ox, ty: oy });
     for (const [x, y] of span(ox, oy, fw, fh)) used.add(idx(x, y));
   };
-  /** Single houses on every free house tile of the list, one per tile. */
+  /** An open lot on every free house tile of the list, one per tile. */
   const fillSingles = (tiles: [number, number][]) => {
     for (const [x, y] of tiles) {
       const i = idx(x, y);
       if (!houses.has(i) || used.has(i)) continue;
-      place(pickTownVariant(x, y, tileArt), x, y);
+      place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
     }
   };
 
@@ -1969,9 +1973,14 @@ function townBuildingsShapes(
   const blockOrigin = (v: number, centre: number) =>
     centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
   const blocks = new Map<number, [number, number]>();
+  // As in the legacy path: a merged block's own house tiles, seams included.
+  const blockTiles = new Map<number, [number, number][]>();
   for (const [hx, hy] of t.houses) {
     const ox = blockOrigin(hx, t.tx), oy = blockOrigin(hy, t.ty);
-    blocks.set(idx(ox, oy), [ox, oy]);
+    const key = idx(ox, oy);
+    blocks.set(key, [ox, oy]);
+    const list = blockTiles.get(key);
+    if (list) list.push([hx, hy]); else blockTiles.set(key, [[hx, hy]]);
   }
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
   const fullBlock = (ox: number, oy: number): boolean =>
@@ -2046,36 +2055,104 @@ function townBuildingsShapes(
     const [fw, fh] = footprintOf(pick);
     const fits = (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
-    if (fits) {
-      place(pick, ox, oy);
-      fillSingles(span(ox, oy, BLOCK, BLOCK));
-      continue;
-    }
-    fillSingles(span(ox, oy, BLOCK, BLOCK));
+    if (fits) place(pick, ox, oy);
+    fillSingles(blockTiles.get(idx(ox, oy)) ?? []);
   }
 
   // The grown ring, exactly as the legacy path lays it.
-  if (tier >= 2 && opts.grid) {
-    const rings = townGrownRings(tier);
-    const ring = grownTownHouses(t, opts.grid, rings, opts.blocked);
-    const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
-    const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
-      const [fw, fh] = footprintOf(v);
-      return fw === 2 && fh === 2;
-    });
-    // Row-major, so the greedy 2×2 packing is deterministic.
-    for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
-      const i = idx(x, y);
-      if (used.has(i)) continue;
-      const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
-      if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
-        place(pickTownVariant(x, y, ring2), x, y);
+  layGrownRing(t, opts, footprintOf, used, place);
+  return out;
+}
+
+/**
+ * MAP-2 (#559): what an OPEN LOT of a town draws — a tree, a park or a tended
+ * lawn, mixed by the tile hash.
+ *
+ * Before this, every leftover single tile drew the lawn (`TOWN_LAWN`) and
+ * nothing else, so a town's clipped blocks and a grown district's 1-wide
+ * strips read as flat grass fields in the middle of the buildings. The owner
+ * asked for trees on exactly those lots. The pick is per tile and pure, so a
+ * re-sync, another client and a restored save all draw the same thing.
+ */
+function lotArtAt(
+  x: number, y: number,
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): string {
+  const trees = townTreePool(footprintOf, known);
+  const parks = parkPool(footprintOf);
+  const roll = hashPick(x + 0x5b, y + 0x27, 100);
+  if (trees.length && roll < 55) return trees[hashPick(x, y, trees.length)];
+  if (roll < 70) return parks[hashPick(x + 7, y + 13, parks.length)];
+  return buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : parks[0];
+}
+
+/** The town trees the atlas can draw as a 1×1 lot (MAP-2, #559). */
+function townTreePool(
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): string[] {
+  return TOWN_TREE_VARIANTS.filter((v) => {
+    if (known && !known(v)) return false;
+    try { const [fw, fh] = footprintOf(v); return fw === 1 && fh === 1; } catch { return false; }
+  });
+}
+
+/**
+ * The GROWN RING (tier 2+): the districts beyond the old street plan. Laid
+ * last, so a ring tile can never steal art from the original blocks, and
+ * always inside the ring — a footprint is only ever placed on tiles
+ * `grownTownHouses` returned, which keeps the "no art on a tile that is not
+ * this town's" guarantee.
+ *
+ * Packing: the biggest block building that fits a 2×2 quad first (that is
+ * what makes a district read as a city), then a 1×2/2×1 terrace for the
+ * 1-wide strips the quads leave over (MAP-2 #559 — the strips used to be
+ * lawn), then a single open lot (a tree, a park or a lawn).
+ */
+function layGrownRing(
+  t: Town,
+  opts: TownBuildingsOptions,
+  footprintOf: (sprite: string) => [number, number],
+  used: Set<number>,
+  place: (sprite: string, ox: number, oy: number) => void,
+): void {
+  const tier = opts.tier ?? TOWN_TIER_LEGACY;
+  if (tier < 2 || !opts.grid) return;
+  const ring = grownTownHouses(t, opts.grid, townGrownRings(tier), opts.blocked);
+  const ringSet = new Set(ring.map(([x, y]) => idx(x, y)));
+  const free = (x: number, y: number): boolean => ringSet.has(idx(x, y)) && !used.has(idx(x, y));
+  const ring2 = TOWN_HOUSE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return fw === 2 && fh === 2;
+  });
+  // The terrace pair: the two orientations of the 1×2 art (#273), each of
+  // which covers exactly one strip tile and its neighbour along the strip.
+  const strips = TOWN_SHAPE_VARIANTS.filter((v) => {
+    const [fw, fh] = footprintOf(v);
+    return (fw === 2 && fh === 1) || (fw === 1 && fh === 2);
+  });
+  // Row-major, so the greedy packing is deterministic.
+  for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
+    const i = idx(x, y);
+    if (used.has(i)) continue;
+    const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
+    if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
+      place(pickTownVariant(x, y, ring2), x, y);
+      continue;
+    }
+    if (strips.length) {
+      const pick = strips[hashPick(x + 3, y + 5, strips.length)];
+      const [fw, fh] = footprintOf(pick);
+      const tiles: [number, number][] = [];
+      for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) tiles.push([x + dx, y + dy]);
+      if (tiles.every(([tx, ty]) => free(tx, ty))) {
+        place(pick, x, y);
         continue;
       }
-      place(pickTownVariant(x, y, tileArt), x, y);
     }
+    place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
   }
-  return out;
 }
 
 /** 4-neighbourhood, in a fixed order (keeps every BFS below deterministic). */

@@ -861,6 +861,10 @@ export function scatterScenery(grid: Grid): Scenery {
 
   plantForestResourceWoods(grid, plant, tryForestBlock);
 
+  // MAP-2 (#559): last, so the country scatter keeps the ground it already
+  // chose, and the town trees only take the gaps it had to refuse.
+  scatterTownTrees(grid, trees, underForest);
+
   return { decals, gardens: scatterTownGardens(grid), trees, forests, fields };
 }
 
@@ -954,6 +958,82 @@ export function scatterTownGardens(grid: Grid): Decal[] {
     }
   }
   return gardens;
+}
+
+// ── MAP-2 (#559): trees in the town's grass gaps ────────────────────────────
+
+/** Tiles out from a town's own ground that its gap trees may stand in. */
+export const TOWN_TREE_REACH = 2;
+/** Tiles of clearance a town tree keeps from any street and from a highway. */
+export const TOWN_TREE_STREET_CLEARANCE = 2;
+/** Share of the eligible gap tiles that get a tree. */
+const TOWN_TREE_DENSITY = 0.45;
+
+/**
+ * MAP-2 (#559) — the trees a TOWN keeps in its grass gaps.
+ *
+ * The owner's report was that trees "have been removed from towns", and the
+ * mechanism was exact: `buildable` refuses every tile the occupancy claims, so
+ * a town's houses and streets are excluded, and `TREE_ROAD_CLEARANCE` then
+ * excludes everything within three tiles of a street — which, in a town, is
+ * every tile there is. The generic scatter can never put a tree in a
+ * settlement, and the whole town plus its skirt reads bare.
+ *
+ * So the town gets its own pass, the same shape as `scatterTownGardens`:
+ *
+ *   • only the GAP RING: one to `TOWN_TREE_REACH` tiles out from the town's
+ *     own ground (its houses, its centre and its streets). The open country
+ *     beyond is the generic scatter's business, with its own densities;
+ *   • `TOWN_TREE_STREET_CLEARANCE` from every street and highway, because the
+ *     town lanes are what the player is looking at — the same reason the
+ *     country scatter keeps three tiles off a road. A tree beside a HOUSE is
+ *     fine and is the point;
+ *   • open ground only (`occupancy === -1`, GRASS or ROUGH, never sand, never
+ *     a reserved field or forest tile), and never on a tile that already
+ *     carries a tree.
+ *
+ * The grown-ring houses a tier-up draws later land exactly on these tiles, and
+ * that is correct: `world.sceneryBlocked` hides a tree the town has built
+ * over, the same way it hides one a road was laid across. Writes into `trees`
+ * (0 = none, else 1-based `TREE_SPRITES` index) and returns how many it
+ * planted. Own seed stream — nothing else in the scenery moves.
+ */
+export function scatterTownTrees(grid: Grid, trees: Uint8Array, reserved?: Uint8Array): number {
+  if (!grid.towns.length) return 0;
+  const ground = new Set<number>();
+  const streets = new Set<number>();
+  for (const t of grid.towns) {
+    ground.add(idx(t.tx, t.ty));
+    for (const [hx, hy] of t.houses) if (inBounds(hx, hy)) ground.add(idx(hx, hy));
+    for (const [rx, ry] of t.roads ?? []) {
+      if (!inBounds(rx, ry)) continue;
+      ground.add(idx(rx, ry));
+      streets.add(idx(rx, ry));
+    }
+  }
+  // A highway counts as a street here too: same canopy, same rule.
+  for (const [x, y] of grid.publicRoads ?? []) if (inBounds(x, y)) streets.add(idx(x, y));
+  const toGround = chebyshevField(ground);
+  const toStreet = chebyshevField(streets);
+  const rng = mulberry32((grid.seed ^ 0x7b3f1c9d) >>> 0);
+  let planted = 0;
+  for (let i = 0; i < trees.length; i++) {
+    const d = toGround[i];
+    if (d === 0 || d > TOWN_TREE_REACH) continue;
+    const v = grid.terrain[i];
+    if (v !== GRASS && v !== ROUGH) continue;
+    if (grid.occupancy[i] !== -1) continue;
+    if (toStreet[i] < TOWN_TREE_STREET_CLEARANCE) continue;
+    if (reserved?.[i] || trees[i]) continue;
+    // Both draws happen whether or not the tile is planted, so retuning the
+    // density cannot reshuffle the species of the tiles that stay.
+    const roll = rng();
+    const species = weighted(PRIMARY_MIX, rng());
+    if (roll >= TOWN_TREE_DENSITY) continue;
+    trees[i] = species;
+    planted++;
+  }
+  return planted;
 }
 
 /**
