@@ -269,10 +269,10 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blurb: "The classic rival — the VP-01 tuning the game shipped with.",
     // L6 (#220): one session per Depot, one more per upgrade, monotone.
     economyLine: "One tuning session per Depot and one more per upgrade — your yield never drops.",
-    buildMs: 7_200,
-    idleMs: 2_100,
+    buildMs: 8_400,
+    idleMs: 2_400,
     expandPerTurn: 2,
-    paveTiles: 11,
+    paveTiles: 10,
     raidEveryMs: RAID_EVERY,   // the classic 2-minute raid clock
     blockades: true,
     moveMs: 2_600,
@@ -289,7 +289,7 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     tuningSkill: 0.67,
     // L14 (#229): the shipped city timing — the next Depot stays funded.
     townReserve: 0.90,
-    sessionMs: 79_000,
+    sessionMs: 88_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
     // RIVAL-3 (#467): the shipped lead — 12 s of warning per claim.
     claimLeadMs: 12_000,
