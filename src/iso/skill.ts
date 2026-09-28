@@ -220,6 +220,14 @@ export interface RivalSkill {
    * other preset aliases the shipped line so the two can never drift.
    */
   winTarget: number;
+  /**
+   * RIVAL-3 (#467): the claim telegraph's lead time — how long the rival's
+   * claim flag flies over a site BEFORE its build lands there. This is the
+   * player's pre-empt window, so it scales against the player, not the bot:
+   * trainee/easy 20 s (an honest, beatable announcement), normal 12 s,
+   * hard 6 s (a fast, sharp rival you have to answer immediately).
+   */
+  claimLeadMs: number;
 }
 
 export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
@@ -252,6 +260,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     sessionMs: 85_000,
     // AI-04: the easy chair is a SHORT race — 5★ instead of the shipped 10★.
     winTarget: 5,
+    // RIVAL-3 (#467): a generous pre-empt window.
+    claimLeadMs: 20_000,
   },
   normal: {
     key: "normal",
@@ -279,6 +289,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     townReserve: 0.85,
     sessionMs: 74_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
+    // RIVAL-3 (#467): the shipped lead — 12 s of warning per claim.
+    claimLeadMs: 12_000,
   },
   hard: {
     key: "hard",
@@ -307,6 +319,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     townReserve: 0.6,
     sessionMs: 54_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
+    // RIVAL-3 (#467): sharp and quick — 6 s to beat it there.
+    claimLeadMs: 6_000,
   },
   // FTUE-1 (#464) — the TRAINEE: the Starter Island's rival, and the only
   // skill a first-timer meets. It is a real seat (it builds, it scores, the
@@ -344,6 +358,8 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     sessionMs: 120_000,
     // FTUE-1 (#464): the Starter Island is a SHORT, winnable race — 6★.
     winTarget: 6,
+    // RIVAL-3 (#467): the trainee telegraphs loudly and early — 20 s.
+    claimLeadMs: 20_000,
   },
 };
 
