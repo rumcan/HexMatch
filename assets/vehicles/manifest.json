@@ -8,11 +8,53 @@
   },
   "sprites": {
     "truck_blue_ne": {
-      "w": 28,
-      "h": 18,
+      "w": 26,
+      "h": 20,
       "anchor": [
-        9,
-        17
+        13,
+        14
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        52,
+        40
+      ],
+      "bodyTop1x": 0,
+      "owner": 1,
+      "view": "ne",
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
+    },
+    "truck_blue_se": {
+      "w": 26,
+      "h": 20,
+      "anchor": [
+        13,
+        13
+      ],
+      "footprint": [
+        1,
+        1
+      ],
+      "moving": true,
+      "box2x": [
+        52,
+        40
+      ],
+      "bodyTop1x": 1,
+      "owner": 1,
+      "view": "se",
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
+    },
+    "truck_blue_sw": {
+      "w": 28,
+      "h": 20,
+      "anchor": [
+        13,
+        13
       ],
       "footprint": [
         1,
@@ -21,61 +63,19 @@
       "moving": true,
       "box2x": [
         56,
-        36
-      ],
-      "bodyTop1x": 0,
-      "owner": 1,
-      "view": "ne",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 56×36 at 2×."
-    },
-    "truck_blue_se": {
-      "w": 30,
-      "h": 16,
-      "anchor": [
-        20,
-        15
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        60,
-        32
-      ],
-      "bodyTop1x": 1,
-      "owner": 1,
-      "view": "se",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 60×32 at 2×."
-    },
-    "truck_blue_sw": {
-      "w": 24,
-      "h": 18,
-      "anchor": [
-        8,
-        17
-      ],
-      "footprint": [
-        1,
-        1
-      ],
-      "moving": true,
-      "box2x": [
-        48,
-        36
+        40
       ],
       "bodyTop1x": 0,
       "owner": 1,
       "view": "sw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 48×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
     },
     "truck_blue_nw": {
-      "w": 30,
+      "w": 26,
       "h": 20,
       "anchor": [
-        19,
-        19
+        13,
+        14
       ],
       "footprint": [
         1,
@@ -83,20 +83,20 @@
       ],
       "moving": true,
       "box2x": [
-        60,
+        52,
         40
       ],
       "bodyTop1x": 1,
       "owner": 1,
       "view": "nw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 60×40 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
     },
     "truck_blue_n": {
-      "w": 8,
+      "w": 12,
       "h": 18,
       "anchor": [
-        4,
-        17
+        6,
+        14
       ],
       "footprint": [
         1,
@@ -104,20 +104,20 @@
       ],
       "moving": true,
       "box2x": [
-        16,
+        24,
         36
       ],
       "bodyTop1x": 0,
       "owner": 1,
       "view": "n",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), north. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
     },
     "truck_blue_e": {
       "w": 28,
-      "h": 12,
+      "h": 16,
       "anchor": [
-        15,
-        11
+        14,
+        12
       ],
       "footprint": [
         1,
@@ -126,19 +126,19 @@
       "moving": true,
       "box2x": [
         56,
-        24
+        32
       ],
       "bodyTop1x": 0,
       "owner": 1,
       "view": "e",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), east. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
     },
     "truck_blue_s": {
-      "w": 8,
-      "h": 18,
+      "w": 14,
+      "h": 20,
       "anchor": [
-        4,
-        17
+        6,
+        14
       ],
       "footprint": [
         1,
@@ -146,20 +146,20 @@
       ],
       "moving": true,
       "box2x": [
-        16,
-        36
+        28,
+        40
       ],
       "bodyTop1x": 0,
       "owner": 1,
       "view": "s",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), south. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
     },
     "truck_blue_w": {
       "w": 28,
-      "h": 12,
+      "h": 16,
       "anchor": [
-        13,
-        11
+        14,
+        12
       ],
       "footprint": [
         1,
@@ -168,19 +168,19 @@
       "moving": true,
       "box2x": [
         56,
-        24
+        32
       ],
       "bodyTop1x": 0,
       "owner": 1,
       "view": "w",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 1 (human), west. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving (paint turned to 215°)."
     },
     "truck_red_ne": {
       "w": 26,
       "h": 20,
       "anchor": [
-        11,
-        19
+        13,
+        14
       ],
       "footprint": [
         1,
@@ -194,14 +194,14 @@
       "bodyTop1x": 1,
       "owner": 2,
       "view": "ne",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper right. Keyed off pure magenta by tools/make-truck-art.mjs; 52×40 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_se": {
       "w": 26,
       "h": 20,
       "anchor": [
-        18,
-        18
+        13,
+        13
       ],
       "footprint": [
         1,
@@ -215,14 +215,14 @@
       "bodyTop1x": 1,
       "owner": 2,
       "view": "se",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower right. Keyed off pure magenta by tools/make-truck-art.mjs; 52×40 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_sw": {
       "w": 28,
-      "h": 18,
+      "h": 20,
       "anchor": [
-        10,
-        17
+        13,
+        13
       ],
       "footprint": [
         1,
@@ -231,19 +231,19 @@
       "moving": true,
       "box2x": [
         56,
-        36
+        40
       ],
       "bodyTop1x": 0,
       "owner": 2,
       "view": "sw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), toward the lower left. Keyed off pure magenta by tools/make-truck-art.mjs; 56×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_nw": {
       "w": 26,
-      "h": 18,
+      "h": 20,
       "anchor": [
-        17,
-        17
+        13,
+        14
       ],
       "footprint": [
         1,
@@ -252,19 +252,19 @@
       "moving": true,
       "box2x": [
         52,
-        36
+        40
       ],
       "bodyTop1x": 0,
       "owner": 2,
       "view": "nw",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), away to the upper left. Keyed off pure magenta by tools/make-truck-art.mjs; 52×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_n": {
-      "w": 8,
+      "w": 12,
       "h": 18,
       "anchor": [
-        4,
-        17
+        6,
+        14
       ],
       "footprint": [
         1,
@@ -272,20 +272,20 @@
       ],
       "moving": true,
       "box2x": [
-        16,
+        24,
         36
       ],
       "bodyTop1x": 0,
       "owner": 2,
       "view": "n",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), north. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_e": {
       "w": 28,
-      "h": 12,
+      "h": 16,
       "anchor": [
-        15,
-        11
+        14,
+        12
       ],
       "footprint": [
         1,
@@ -294,19 +294,19 @@
       "moving": true,
       "box2x": [
         56,
-        24
+        32
       ],
       "bodyTop1x": 0,
       "owner": 2,
       "view": "e",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), east. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_s": {
-      "w": 8,
-      "h": 18,
+      "w": 14,
+      "h": 20,
       "anchor": [
-        4,
-        17
+        6,
+        14
       ],
       "footprint": [
         1,
@@ -314,20 +314,20 @@
       ],
       "moving": true,
       "box2x": [
-        16,
-        36
+        28,
+        40
       ],
       "bodyTop1x": 0,
       "owner": 2,
       "view": "s",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), south. Keyed off pure magenta by tools/make-truck-art.mjs; 16×36 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     },
     "truck_red_w": {
       "w": 28,
-      "h": 12,
+      "h": 16,
       "anchor": [
-        13,
-        11
+        14,
+        12
       ],
       "footprint": [
         1,
@@ -336,12 +336,12 @@
       "moving": true,
       "box2x": [
         56,
-        24
+        32
       ],
       "bodyTop1x": 0,
       "owner": 2,
       "view": "w",
-      "note": "TRUCK-BRAND: 1950s delivery lorry, player 2 (rival), west. Keyed off pure magenta by tools/make-truck-art.mjs; 56×24 at 2×."
+      "note": "ART-3D (#504): Meshy model vehicle_truck, 7 m long, rendered for this heading by tools/meshy/render.mjs --moving."
     }
   }
 }

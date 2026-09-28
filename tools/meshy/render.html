@@ -110,6 +110,66 @@ window.renderSprite = async (p) => {
   renderer.dispose();
   return { url, heightM, planM: [size.x * k, size.z * k], autoYawDeg: (auto * 180) / Math.PI };
 };
+
+// --moving (vehicles, train cars): no footprint fit. The model is squared to
+// the grid with its LONG axis on world +X (the front at +X after `flip`),
+// scaled so its length is `lengthM` metres, centred on the origin at ground
+// level, then turned to the heading: `headingDeg` rotates +X (screen SE)
+// toward −Z (screen NE). The origin — the ground point under the centre —
+// lands on the anchor pixel (`drawOriginMoving`).
+window.renderVehicle = async (p) => {
+  // p: { glb, width, height, anchorX, anchorY, ss, lengthM, flip, headingDeg, yaw, sun, ambient }
+  const gltf = await loader.loadAsync(p.glb);
+  const model = gltf.scene;
+  const holder = new THREE.Group();
+  const spin = new THREE.Group();
+  spin.add(model);
+  holder.add(spin);
+  const auto = p.yaw == null ? squareToGrid(model) : (p.yaw * Math.PI) / 180;
+  model.rotation.y = auto;
+  spin.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(spin);
+  let size = box.getSize(new THREE.Vector3());
+  if (size.z > size.x) model.rotation.y += Math.PI / 2;
+  if (p.flip) model.rotation.y += Math.PI;
+  spin.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(spin);
+  size = box.getSize(new THREE.Vector3());
+  const k = p.lengthM / size.x;
+  spin.scale.setScalar(k);
+  spin.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(spin);
+  const c = box.getCenter(new THREE.Vector3());
+  spin.position.set(-c.x, -box.min.y, -c.z);
+  holder.rotation.y = (p.headingDeg * Math.PI) / 180;
+  holder.updateMatrixWorld(true);
+
+  const W = p.width, H = p.height, s = PX_PER_M;
+  const cam = new THREE.OrthographicCamera(
+    -p.anchorX / s, (W - p.anchorX) / s, p.anchorY / s, -(H - p.anchorY) / s, -1000, 1000);
+  const dir = new THREE.Vector3(Math.cos(ELEV) / Math.SQRT2, Math.sin(ELEV), Math.cos(ELEV) / Math.SQRT2);
+  cam.position.copy(dir.multiplyScalar(200));
+  cam.up.set(0, 1, 0);
+  cam.lookAt(0, 0, 0);
+  const scene = new THREE.Scene();
+  scene.add(holder);
+  scene.add(new THREE.HemisphereLight(0xfff4e0, 0x5a5040, p.ambient));
+  const sun = new THREE.DirectionalLight(0xfff1d6, p.sun);
+  sun.position.set(-0.25, 1.35, 1.0).multiplyScalar(100);
+  scene.add(sun);
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(p.ss);
+  renderer.setSize(W, H);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.setClearColor(0x000000, 0);
+  document.body.innerHTML = "";
+  document.body.appendChild(renderer.domElement);
+  renderer.render(scene, cam);
+  const url = renderer.domElement.toDataURL("image/png");
+  renderer.dispose();
+  return { url, lengthM: p.lengthM, widthM: size.z * k, heightM: size.y * k };
+};
 window.ready = true;
 </script>
 </body>

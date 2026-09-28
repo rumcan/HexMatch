@@ -932,7 +932,11 @@ describe("TRUCK-BRAND vehicle layers", () => {
       // sits ON the last row or one inside it, because the compiler clamps the
       // anchor into the box (`w2-2`) so a sprite can never be placed with a
       // pixel of itself hanging off its own canvas.
-      expect(Math.abs(d.anchor[1] - (d.h - 1)), name).toBeLessThanOrEqual(1);
+      // ART-3D (#504): a 3D render anchors on the ground point under the
+      // vehicle's CENTRE (`drawOriginMoving`), which sits a few px above the
+      // lowest wheel in a 2:1 view — inside the lower half, never off the box.
+      expect(d.anchor[1], name).toBeGreaterThanOrEqual(Math.floor(d.h / 2));
+      expect(d.anchor[1], name).toBeLessThanOrEqual(d.h - 1);
       for (const [suffix, z] of [["0.5x", 0.5], ["1x", 1], ["2x", 2]] as const) {
         const [pw, ph] = pngSize(`assets/vehicles/${name}@${suffix}.png`);
         expect([pw, ph], `${name}@${suffix}.png`).toEqual([Math.round(d.w * z), Math.round(d.h * z)]);
