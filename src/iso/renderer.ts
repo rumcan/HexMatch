@@ -1997,6 +1997,12 @@ export class IsoRenderer {
       ? rects.map((d) => ({ x: d.x0, y: d.y0, w: d.x1 - d.x0, h: d.y1 - d.y0 }))
       : [{ x: 0, y: 0, w: canvas.width, h: canvas.height }];
     const css = gradeCss(this.lighting.grade);
+    // Owner fix (2026-09-28): the multiply fill below mixes the tint INTO a
+    // translucent pixel (tree shading, soft edges, contact shadows), which
+    // read as a pale white halo. Where the canvas takes SVG filters, grade
+    // through a colour matrix instead: it scales R, G and B and leaves alpha
+    // alone, so every translucent pixel keeps its own darkness.
+    const matrix = gradeFilter(this.lighting.grade);
     for (const rc of regions) {
       if (rc.w <= 0 || rc.h <= 0) continue;
       scratch.ctx.clearRect(rc.x, rc.y, rc.w, rc.h);
@@ -2004,6 +2010,15 @@ export class IsoRenderer {
         scratch.ctx.drawImage(canvas, rc.x, rc.y, rc.w, rc.h, rc.x, rc.y, rc.w, rc.h);
       } catch {
         return;
+      }
+      if (matrix && "filter" in ctx) {
+        ctx.save();
+        ctx.clearRect(rc.x, rc.y, rc.w, rc.h);
+        ctx.filter = matrix;
+        ctx.drawImage(scratch.canvas as unknown as CanvasImageSource, rc.x, rc.y, rc.w, rc.h, rc.x, rc.y, rc.w, rc.h);
+        ctx.filter = "none";
+        ctx.restore();
+        continue;
       }
       ctx.save();
       ctx.beginPath();
@@ -2385,3 +2400,39 @@ export const flatPick = (wx: number, wy: number): [number, number] => {
 };
 
 export { GRASS, WATER, ROUGH, TILE_W, TILE_H, HW, HH };
+
+/**
+ * The grade as an SVG colour-matrix filter reference (`url(#…)`) for
+ * `ctx.filter`, created once in the document and retuned per grade. Null
+ * without a DOM (node tests), where the multiply fallback runs.
+ */
+let gradeSvg: SVGFEColorMatrixElement | null = null;
+let gradeKey = "";
+function gradeFilter(grade: readonly [number, number, number]): string | null {
+  if (typeof document === "undefined" || !document.body || typeof document.createElementNS !== "function") return null;
+  try {
+    if (!gradeSvg || !gradeSvg.isConnected) {
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("width", "0"); svg.setAttribute("height", "0");
+      svg.setAttribute("aria-hidden", "true");
+      svg.style.position = "absolute"; svg.style.width = "0"; svg.style.height = "0";
+      const filter = document.createElementNS(NS, "filter");
+      filter.setAttribute("id", "hm-grade");
+      filter.setAttribute("color-interpolation-filters", "sRGB");
+      gradeSvg = document.createElementNS(NS, "feColorMatrix") as SVGFEColorMatrixElement;
+      gradeSvg.setAttribute("type", "matrix");
+      filter.appendChild(gradeSvg); svg.appendChild(filter); document.body.appendChild(svg);
+      gradeKey = "";
+    }
+    const [r, g, b] = grade.map((c) => Math.max(0, Math.min(2, c)).toFixed(4));
+    const key = `${r},${g},${b}`;
+    if (key !== gradeKey) {
+      gradeSvg.setAttribute("values", `${r} 0 0 0 0  0 ${g} 0 0 0  0 0 ${b} 0 0  0 0 0 1 0`);
+      gradeKey = key;
+    }
+    return "url(#hm-grade)";
+  } catch {
+    return null;
+  }
+}
