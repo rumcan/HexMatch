@@ -212,7 +212,7 @@ export interface UiRailRow {
   kind: "platform" | "depot" | "train";
   label: string;
   detail: string;
-  actions: ("assign" | "recall" | "sell" | "buy" | "start")[];
+  actions: ("assign" | "recall" | "sell" | "buy" | "start" | "lane")[];
   /** `assign`: the partner platform. `buy`: the line the train is bought for. */
   partnerId?: number;
   /** What the action costs, in the game's own cargo wording. */
@@ -633,7 +633,7 @@ export interface UiHooks {
    * the line the train is bought for, and `start` sends a parked train off. The game owns the
    * rules and the prices; this chrome only reports the click.
    */
-  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start", partnerId?: number) => void;
+  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start" | "lane", partnerId?: number) => void;
   /**
    * NAMES: the top-bar "Names" button reports a toggle. The game owns the
    * state and the localStorage record; the chrome only repaints its pressed
@@ -5626,7 +5626,10 @@ export function createOriginalUi(
           line.innerHTML = `<b>${row.label}</b><small>${row.detail}${row.hint ? ` · ${row.hint}` : ""}</small>`;
           for (const action of row.actions) {
             const b = h("button", "rail-act", action === "assign" ? "Assign line" : action === "buy" ? "Buy train"
-              : action === "start" ? "Start" : action === "recall" ? "Recall" : "Sell");
+              : action === "start" ? "Start" : action === "recall" ? "Recall"
+                // RAIL-6 (#575): the station upgrade — the click arms the lane
+                // tool, the next click beside the station picks the side.
+                : action === "lane" ? "Add lane" : "Sell");
             b.dataset.railAction = `${row.id}:${action}`;
             b.dataset.sfx = "click";
             b.onclick = () => hooks.onRailAction(row.id, action, row.partnerId);

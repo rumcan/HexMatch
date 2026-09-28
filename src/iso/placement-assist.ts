@@ -166,6 +166,8 @@ export const RAIL_ASSIST: Readonly<Record<RailRefusal, AssistCopy>> = {
   "too-steep": { reason: "Slope", fix: SLOPE_ASSIST.fix },
   "slope-diagonal": { reason: "Slope", fix: "no diagonal across a slope" },
   "not-flat": { reason: "Slope", fix: SLOPE_ASSIST.fix },
+  // RAIL-6 (#575): the station upgrade's own refusals, in the assist's voice.
+  "max-lanes": { reason: "Station full", fix: "four lanes is the most a station holds" },
   "too-sharp": { reason: "Turn too sharp", fix: "turns must be 45° or less" },
 };
 

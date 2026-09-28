@@ -424,7 +424,15 @@ describe("F2 (#272) — live example: rail platforms (1×3/3×1) beside moving t
     const m = JSON.parse(readFileSync("assets/railway/manifest.json", "utf8")) as {
       sprites: Record<string, SpriteDef>;
     };
-    return { images: {}, tileW: 64, tileH: 32, sprites: { ...m.sprites, ...f2Manifest().sprites } };
+    // RAIL-6 (#575): the station pieces are 1×1 ground items (warehouse, slab,
+    // cap) — synthetic defs stand in for the PNGs the browser loads.
+    const station: Record<string, SpriteDef> = {};
+    for (const n of ["station_wh_1", "station_wh_1_r", "station_wh_2", "station_wh_2_r",
+      "station_wh_3", "station_wh_3_r", "station_cap", "station_cap_r",
+      "station_lane_ne", "station_lane_se", "station_lane_sw", "station_lane_nw"]) {
+      station[n] = { x: 0, y: 0, w: 64, h: 48, footprint: [1, 1], anchor: [32, 44] };
+    }
+    return { images: {}, tileW: 64, tileH: 32, sprites: { ...m.sprites, ...station, ...f2Manifest().sprites } };
   };
   const mkState = () => {
     const state = createRailState();
@@ -439,14 +447,22 @@ describe("F2 (#272) — live example: rail platforms (1×3/3×1) beside moving t
     route, dist, planRevision: 0, dwellMs: 0, dirBit: 2, resold: false,
   });
 
-  it("platforms carry their 1×3/3×1 footprints from the rail structure to the draw item", () => {
+  it("stations carry their lane tiles from the rail structure to the draw items", () => {
     const at = new Atlas(railManifest());
     const state = mkState();
     const items = railStructureItems(state);
-    expect(items.map((i) => i.sprite)).toEqual(["platform_se", "platform_nw"]);
+    // RAIL-6 (#575): a platform draws as its station — warehouse at the head
+    // of the first lane, one slab item per strip tile after it, a cap at the
+    // lane's end — every piece a 1×1 item on its own tile.
+    expect(items.map((i) => i.sprite)).toEqual([
+      "station_wh_1_r", "station_lane_se", "station_cap_r",
+      "station_wh_1_r", "station_lane_nw", "station_cap_r",
+    ]);
     const placed = items.map((i) => P2(at, i.sprite, i.tx, i.ty));
-    expect(placed.map(fp2)).toEqual([[1, 3], [1, 3]]);
-    expect(placed.map(maxKeyOf)).toEqual([5 + 7, 10 + 7]);
+    expect(placed.map(fp2)).toEqual([[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]]);
+    // The painter order IS the lane order: keys rise tile by tile along each
+    // row, so a station can never flicker between its own pieces.
+    expect(placed.map(maxKeyOf)).toEqual([5 + 5, 5 + 6, 5 + 7, 10 + 5, 10 + 6, 10 + 7]);
   });
 
   it("a train on the track lane draws OVER the platform it is passing (R2)", () => {

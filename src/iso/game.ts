@@ -363,10 +363,14 @@ import {
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainBasedAt, railPanelRows, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
+  // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
+  // the preview, the guest intent and the rival.
+  laneRefusal, addStationLane, laneOriginAt, laneSlabTiles, laneTrackTiles, laneStopTile,
+  laneSlabSprite, stationLanes, structureById, MAX_LANES,
   RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
 } from "./rail";
-import { loadRailwaySprites } from "./rail-art";
+import { loadRailwaySprites, loadStationSprites, makeLaneSlabSprites } from "./rail-art";
 import { loadRiverSprites } from "./rivers-art";
 import { createOriginalUi, RAIL_TOOL_KEYS, type OriginalUi } from "../game/ui";
 import { HUD_ICONS, cargoIconHtml, moneyMarkup } from "../game/hud-icons";
@@ -2136,6 +2140,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       } else if (action === "recall") railRecall(id);
       else if (action === "buy") { if (partnerId !== undefined) railBuy(id, partnerId); }
       else if (action === "start") railStart(id);
+      // RAIL-6 (#575): "Add lane" arms the upgrade; the next map click picks
+      // the side. The panel row's hint prints the price the click will charge.
+      else if (action === "lane") {
+        laneToolStation = laneToolStation === id ? null : id;
+        if (laneToolStation !== null) {
+          toast("Click the side of the station the new lane should run on — Esc cancels.", "info");
+        }
+      }
       else railSell(id);
       paintOverlayNow();
     },
@@ -4272,7 +4284,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // sprites in the same static list (`railStructureItems` names them from
       // the manifest, and `syncWorld` is the only writer). A missing PNG just
       // means the sprite name is unknown to the atlas and nothing is drawn.
-      ...railStructureItems(rail),
+      // RAIL-6 (#575): the atlas decides whether a platform draws as its
+      // STATION (warehouse, slabs, caps) or as the platform sprite it always
+      // was — the same non-gating contract, probed per sprite family.
+      ...railStructureItems(rail, atlasRef ?? undefined),
       // R3 (#270): the hydro dams — the same non-gating contract. `dam_y`
       // spans a river along x (the 1×2 footprint), `dam_x` a river along y
       // (the 2×1), each anchored on its footprint's south vertex by the
@@ -4839,6 +4854,63 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (tuning?.depotId === removed.id) {
       closeTuningSession(false, "The tuned platform was removed — tuning session closed.");
     }
+  }
+
+  // ── RAIL-6 (#575): the station upgrade ──────────────────────────────────
+  /**
+   * The station the "Add lane" click armed, or null. While armed, the next
+   * map click picks the SIDE the new lane runs on (the side of the station
+   * the click fell on), the preview paints the lane it would build, and Esc
+   * puts the tool down. The rule, the price and the refusal are the rail
+   * module's — this is only the hand that holds it.
+   */
+  let laneToolStation: number | null = null;
+
+  /** Which side of a station a click tile names: the side it falls on. */
+  const laneSideFor = (s: RailStructure, tx: number, ty: number): 1 | -1 => {
+    const l0 = stationLanes(s)[0];
+    const along = (x: number, y: number): number => (s.view === "se" || s.view === "nw" ? x : y);
+    return along(tx, ty) >= along(l0.tx, l0.ty) ? 1 : -1;
+  };
+
+  /**
+   * Grow a station by one lane on one side — the refusal first (the same
+   * `laneRefusal` the preview and the host intent read), then the money (the
+   * shared table, the seat's perk class `rail`), then the build.
+   */
+  function addStationLaneAt(stationId: number, side: 1 | -1, p: PlayerState): boolean {
+    const ownerId = p.i + 1;
+    const why = laneRefusal(grid, rail, ownerId, stationId, side);
+    if (why !== "ok") {
+      if (p.human) {
+        toast(RAIL_REFUSAL_TEXT[why], "bad");
+        const s = structureById(rail, stationId);
+        if (s) flashAt(s.tx, s.ty, RAIL_REFUSAL_TEXT[why]);
+      }
+      return false;
+    }
+    if (!canPayBuild(p, RAIL_COSTS.lane, "rail")) {
+      if (p.human) {
+        toast(`Not enough money — a lane costs $${seatCostOf(p, RAIL_COSTS.lane, "rail")}.`, "bad");
+        const s = structureById(rail, stationId);
+        if (s) flashAt(s.tx, s.ty, `A lane costs $${seatCostOf(p, RAIL_COSTS.lane, "rail")}`);
+      }
+      return false;
+    }
+    if (!spendBuild(p, RAIL_COSTS.lane, "rail")) return false;
+    const res = addStationLane(grid, track, rail, ownerId, stationId, side);
+    if (!res.ok || !res.lane) {
+      refundBuild(p, RAIL_COSTS.lane, 1, "rail");   // the refusal moved mid-click
+      return false;
+    }
+    syncWorld();
+    if (p.human) {
+      sfx.play("build");
+      const s = structureById(rail, stationId);
+      const n = s ? stationLanes(s).length : 0;
+      toast(`Lane added — the station now holds ${n} of ${MAX_LANES} lanes.`, "good");
+    }
+    return true;
   }
 
   /**
@@ -11523,6 +11595,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             else placeRailDepot(tx, ty, p, view);
           }
         }
+      } else if (what === "lane") {
+          // RAIL-6 (#575): a guest's lane upgrade — the host runs the SAME
+          // `laneRefusal` and charges the guest seat, exactly like the click.
+          const stationId = typeof payload.stationId === "number" && Number.isInteger(payload.stationId)
+            ? payload.stationId : null;
+          const side = payload.side === -1 ? -1 as const : 1 as const;
+          if (stationId !== null) {
+            const why = laneRefusal(grid, rail, p.i + 1, stationId, side);
+            if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
+            else addStationLaneAt(stationId, side, p);
+          }
       } else if (what === "railact") {
         // The panel's verbs. Malformed bodies are ignored, exactly like
         // every other intent: the rules below are the only validation.
@@ -12034,6 +12117,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // The outpost art is the cargo's, so the preview shows the mill/rig/mine
       // this site would actually raise (see `depotPreviewSprite`).
       ghost = { sprite: depotPreviewSprite(grid, tx, ty, depotView), tx, ty, valid: plan.valid };
+    } else if (laneToolStation !== null) {
+      // RAIL-6 (#575): the upgrade preview — the lane the click would build
+      // (strip banded, its three stopping tiles banded soft, the stop tile
+      // marked), green when `laneRefusal` says ok and red when it does not,
+      // with the concrete slab as the ghost. The SAME refusal the click runs.
+      const st = structureById(rail, laneToolStation);
+      if (st && st.kind === "platform") {
+        const side = laneSideFor(st, tx, ty);
+        const why = laneRefusal(grid, rail, me.i + 1, st.id, side);
+        const ok = why === "ok";
+        const origin = laneOriginAt(st, side);
+        const probe = { view: st.view, tx: origin.tx, ty: origin.ty };
+        for (const [x, y] of laneSlabTiles(probe)) {
+          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) items.push({ sprite: ok ? "highlight" : "highlight_bad", tx: x, ty: y });
+        }
+        for (const [x, y] of laneTrackTiles(probe)) {
+          if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) items.push({ sprite: ok ? "highlight_soft" : "highlight_bad", tx: x, ty: y });
+        }
+        const stop = laneStopTile(probe);
+        items.push({ sprite: "node_mark", tx: stop[0], ty: stop[1] });
+        ghost = { sprite: laneSlabSprite(st.view), tx: origin.tx, ty: origin.ty, valid: ok };
+      }
     } else if (tool === "platform" || tool === "raildepot") {
       // RAIL-02 (#176): the same overlay contract as every other placement
       // tool — the footprint green or red, and the transparent building
@@ -12268,6 +12373,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       if (why !== null) return PLANT_ASSIST[why];
       if (!canPayBuild(me, PLANT_COST)) return MONEY_ASSIST(moneyCostOf(PLANT_COST), me.money);
+      return null;
+    }
+    // RAIL-6 (#575): the armed upgrade reads its refusal in the assist's
+    // voice, priced like every other build — the hover card and the click
+    // share `laneRefusal`, so they cannot disagree.
+    if (laneToolStation !== null) {
+      const st = structureById(rail, laneToolStation);
+      if (!st) return null;
+      const why = laneRefusal(grid, rail, me.i + 1, st.id, laneSideFor(st, tx, ty));
+      if (why !== "ok") return RAIL_ASSIST[why];
+      if (!canPayBuild(me, RAIL_COSTS.lane, "rail")) {
+        return MONEY_ASSIST(seatCostOf(me, RAIL_COSTS.lane, "rail"), me.money);
+      }
       return null;
     }
     if (tool === "platform" || tool === "raildepot") {
@@ -13025,9 +13143,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: {
         rows: railPanelRows(rail, me.i + 1).map((r) => ({
           ...r,
-          hint: r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
-            : r.actions.includes("sell") ? `refund ${railCostLabel(resaleValue(RAIL_COSTS.train))} once`
-              : undefined,
+          // RAIL-6 (#575): the upgrade preview in the HUD — the row prints
+          // what the next lane costs this seat (perk included), and while the
+          // tool is armed, what the click will do.
+          hint: r.actions.includes("lane")
+            ? `next lane $${seatCostOf(me, RAIL_COSTS.lane, "rail")}`
+              + (laneToolStation === r.id ? " · click a side of the station" : "")
+            : r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
+              : r.actions.includes("sell") ? `refund ${railCostLabel(resaleValue(RAIL_COSTS.train))} once`
+                : undefined,
         })),
         view: railView,
       },
@@ -13559,6 +13683,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // A bought protest intercepts the click: it stages on a public road
     // (or refuses and stays armed), and never runs the current tool.
     if (pendingProtest) placeProtest(p.tx, p.ty);
+    // RAIL-6 (#575): the armed station upgrade intercepts too — the click
+    // tile names the SIDE the new lane runs on, and a committed lane puts
+    // the tool down again.
+    else if (laneToolStation !== null) {
+      const st = structureById(rail, laneToolStation);
+      if (!st || st.kind !== "platform") laneToolStation = null;
+      else {
+        const side = laneSideFor(st, p.tx, p.ty);
+        if (isGuest()) {
+          net?.sendIntent("build", { do: "lane", stationId: st.id, side });
+          laneToolStation = null;
+        } else if (addStationLaneAt(st.id, side, me)) laneToolStation = null;
+      }
+    }
     // PP-05: every Depot after the setup allowance pays DEPOT_COST.
     else if (t === "harvester") {
       if (isGuest()) {
@@ -13928,6 +14066,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // listener, so this never fires underneath one of them.)
       if (guideRunning() || storyView) return;
       if (endingView && !endingView.element.classList.contains("hidden")) return;
+      // RAIL-6 (#575): the armed lane upgrade is a tool in the hand — Esc
+      // puts it down like any other.
+      if (laneToolStation !== null) { laneToolStation = null; toast("Lane upgrade cancelled.", "info"); return; }
       if (drag || preview) { cancelPlacement(); toast("Drag cancelled.", "info"); return; }
       if (tool !== "select") { cancelPlacement(); toast("Tool cancelled.", "info"); return; }
     }
@@ -14989,6 +15130,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // lorries (eager glob, per-zoom, non-gating), so a quality change
           // fills the levels the new cap asks for and never re-fetches.
           loadRailwaySprites(a, cap),
+          // RAIL-6 (#575): the station's warehouse tiers and caps ride the
+          // same promise; the code-painted lane slab is generated once, here,
+          // whenever a quality pass lands the family.
+          loadStationSprites(a, cap).then((n) => { makeLaneSlabSprites(a); return n; }),
           // R3 (#270): the dam's two sprites — the same non-gating contract,
           // and only when the game can actually build one.
           ...(riversOn && newLoop ? [loadRiverSprites(a, cap)] : []),
@@ -15298,7 +15443,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // rail standing — and it lands as its own tracked job so the loading screen
     // reports it like every other layer.
     // With the railway flag down there is nothing to draw, so nothing loads.
-    if (railAvailable) void loading.track("railway", loadRailwaySprites(atlas, cap0).then((n) => {
+    if (railAvailable) void loading.track("railway", Promise.all([
+      loadRailwaySprites(atlas, cap0),
+      loadStationSprites(atlas, cap0),
+    ]).then(([railway, stations]) => {
+      makeLaneSlabSprites(atlas);   // RAIL-6: the code-painted lane slab
+      const n = railway + stations;
       if (disposed || !n) return;
       // A late-landing def can be TALLER than anything the cull pad was built
       // against, and the sprite table just changed: re-sync and re-pad, exactly
@@ -16464,6 +16614,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // local tool state — the same shape the host's intent handler uses.
       return placeRailPlatform(tx, ty, p, v);
     },
+    /**
+     * RAIL-6 (#575): the test twin of the station upgrade — the panel's
+     * "Add lane" plus the side-picking click, in one call. A guest sends the
+     * same intent the click sends.
+     */
+    addStationLane: (stationId: number, side: 1 | -1, who: "you" | "ai" = "you") => {
+      const p = who === "ai" ? rival : me;
+      if (who === "you" && isGuest()) {
+        return net?.sendIntent("build", { do: "lane", stationId, side }) ?? false;
+      }
+      return addStationLaneAt(stationId, side, p);
+    },
+    /** The armed lane tool, for tests and the debug console. */
+    get laneTool() { return laneToolStation; },
+    setLaneTool: (id: number | null) => { laneToolStation = id; return laneToolStation; },
     placeRailDepot: (tx: number, ty: number, view?: string, who: "you" | "ai" = "you") => {
       const p = who === "ai" ? rival : me;
       const v = view && (RAIL_VIEWS as readonly string[]).includes(view) ? view as RailView : railView;

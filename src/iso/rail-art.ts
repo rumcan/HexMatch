@@ -126,3 +126,139 @@ export async function loadRailwaySprites(atlas: Atlas, maxZ = atlas.detailCap): 
   }));
   return installed;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// RAIL-6 (#575) — THE STATION ART (art drop #578).
+//
+// Two families, both non-gating like the railway's own:
+//
+//   1. THE PAINTED PNGs — `assets/stations/station_wh_{1,2,3}@2x.png` (the
+//      warehouse tiers) and `station_cap@2x.png` (the platform end), each with
+//      an `_r` orientation for the other axis. Authored at 2× only, so the 2×
+//      bitmap is installed and the atlas's own zoom fallback serves the rest.
+//      The defs (footprint 1×1, anchor on the south vertex of the sprite's
+//      ground pad) are measured from the PNGs' alpha, once, by hand.
+//   2. THE CODE-PAINTED LANE SLAB — `station_lane_<view>`: one tile of flat
+//      concrete with a light edge line along the side the track runs on,
+//      generated here at load (there is no lane sprite; the owner's note on
+//      #575 says paint it in code). No canvas (Node, jsdom) means no slab
+//      sprite, and a station simply draws without its concrete — the rules
+//      and the track never notice.
+// ══════════════════════════════════════════════════════════════════════════
+
+const stationUrls = import.meta.glob<string>(
+  "../../assets/stations/*.png", { eager: true, import: "default" },
+);
+
+interface StationDef { w: number; h: number; anchor: [number, number] }
+/** 1× world-pixel geometry, measured off each PNG's lowest opaque row. */
+const STATION_DEFS: Record<string, StationDef> = {
+  station_wh_1: { w: 120, h: 144, anchor: [59, 134] },
+  station_wh_1_r: { w: 120, h: 144, anchor: [60, 134] },
+  station_wh_2: { w: 120, h: 144, anchor: [56, 132.5] },
+  station_wh_2_r: { w: 120, h: 144, anchor: [61.5, 133] },
+  station_wh_3: { w: 160, h: 192, anchor: [79.5, 173] },
+  station_wh_3_r: { w: 160, h: 192, anchor: [80, 173] },
+  station_cap: { w: 80, h: 96, anchor: [44, 90] },
+  station_cap_r: { w: 80, h: 96, anchor: [35, 90] },
+};
+
+/** Every station sprite name the loader may install (tiers, caps, slabs). */
+export const STATION_SPRITE_NAMES: readonly string[] = [
+  ...Object.keys(STATION_DEFS),
+  "station_lane_ne", "station_lane_se", "station_lane_sw", "station_lane_nw",
+];
+
+/** Install the painted station PNGs. Returns how many landed (0 = no art). */
+export async function loadStationSprites(atlas: Atlas, maxZ = atlas.detailCap): Promise<number> {
+  if (maxZ < 2) maxZ = 2;   // authored at 2× only; the zoom fallback serves the rest
+  let installed = 0;
+  await Promise.all(Object.entries(STATION_DEFS).map(async ([name, def]) => {
+    const url = stationUrls[`../../assets/stations/${name}@2x.png`];
+    if (!url || atlas.buildingImages.get(name)?.has(2)) return;
+    try {
+      const img = await loadBitmap(url);
+      atlas.buildingImages.set(name, new Map<number, AtlasImage>([[2, img]]));
+      atlas.manifest.sprites[name] = {
+        x: 0, y: 0, w: def.w, h: def.h,
+        footprint: [1, 1],
+        anchor: def.anchor,
+      };
+      installed++;
+    } catch (err) {
+      if (!atlas.buildingImages.get(name)?.size) delete atlas.manifest.sprites[name];
+      console.warn(`[station] ${name}: not installed`, err);
+    }
+  }));
+  return installed;
+}
+
+/** Flat concrete + one lit edge line: the lane slab, painted per view. */
+const SLAB_CONCRETE = "#c9c3b6";
+const SLAB_EDGE = "#ece7db";
+const SLAB_GRAVEL = "#a49d8f";
+
+/**
+ * The four edges of the 2× tile diamond (centre 64,32), in cycle order, and
+ * which one faces the lane's track side per view: se track at +x (the SE
+ * edge), nw at -x (NW), sw at +y (SW), ne at -y (NE).
+ */
+const SLAB_VERTS: [number, number][] = [[64, 2], [126, 32], [64, 62], [2, 32]];
+const SLAB_EDGES: [[number, number], [number, number]][] = [
+  [SLAB_VERTS[0], SLAB_VERTS[1]], [SLAB_VERTS[1], SLAB_VERTS[2]],
+  [SLAB_VERTS[2], SLAB_VERTS[3]], [SLAB_VERTS[3], SLAB_VERTS[0]],
+];
+const slabTrackEdge = (view: string): number =>
+  (view === "ne" ? 0 : view === "se" ? 1 : view === "sw" ? 2 : 3);
+
+/** Generate and install the four lane-slab sprites. 0 when there is no canvas. */
+export function makeLaneSlabSprites(atlas: Atlas): number {
+  if (typeof document === "undefined") return 0;
+  let installed = 0;
+  for (const view of ["ne", "se", "sw", "nw"]) {
+    const name = `station_lane_${view}`;
+    if (atlas.buildingImages.has(name)) continue;
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return installed;              // headless: no slab, no crash
+    // The concrete diamond, a hair inside the tile so neighbouring slabs read
+    // as one strip while the grass still shows between stations.
+    ctx.beginPath();
+    ctx.moveTo(64, 2);
+    ctx.lineTo(126, 32);
+    ctx.lineTo(64, 62);
+    ctx.lineTo(2, 32);
+    ctx.closePath();
+    ctx.fillStyle = SLAB_CONCRETE;
+    ctx.fill();
+    // A gravel shoulder on the three quiet sides…
+    const trackEdge = slabTrackEdge(view);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = SLAB_GRAVEL;
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      if (i === trackEdge) continue;
+      ctx.moveTo(SLAB_EDGES[i][0][0], SLAB_EDGES[i][0][1]);
+      ctx.lineTo(SLAB_EDGES[i][1][0], SLAB_EDGES[i][1][1]);
+    }
+    ctx.stroke();
+    // …and the lit platform edge along the track side, the line a train
+    // stops beside.
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = SLAB_EDGE;
+    ctx.beginPath();
+    ctx.moveTo(SLAB_EDGES[trackEdge][0][0], SLAB_EDGES[trackEdge][0][1]);
+    ctx.lineTo(SLAB_EDGES[trackEdge][1][0], SLAB_EDGES[trackEdge][1][1]);
+    ctx.stroke();
+    atlas.buildingImages.set(name, new Map<number, AtlasImage>([[2, canvas]]));
+    atlas.manifest.sprites[name] = {
+      x: 0, y: 0, w: 64, h: 32,
+      footprint: [1, 1],
+      anchor: [32, 32],
+    };
+    installed++;
+  }
+  return installed;
+}

@@ -148,6 +148,8 @@ export function rotateView(view: RailView, quarterTurns = 1): RailView {
  */
 export const RAIL_COSTS: Readonly<{
   rail: Purse; platform: Purse; depot: Purse; train: Purse; bridge: Purse;
+  /** RAIL-6 (#575): one more lane at a standing station. */
+  lane: Purse;
 }> = {
   rail: BUILD_COSTS.rail,
   platform: BUILD_COSTS.platform,
@@ -155,6 +157,7 @@ export const RAIL_COSTS: Readonly<{
   train: BUILD_COSTS.train,
   // R2 (#266): the deck, per water tile spanned. Three rail tiles' stone.
   bridge: BUILD_COSTS.railBridge,
+  lane: BUILD_COSTS.stationLane,
 };
 
 /** RAIL-01: exactly one Victory Point per platform, on construction. */
@@ -377,7 +380,35 @@ export interface RailStructure {
   view: RailView;
   /** Platform only: the industry or owned plant it was anchored to. */
   anchor?: RailAnchor | null;
+  /**
+   * RAIL-6 (#575) — THE STATION'S LANES. A platform is a station: a warehouse
+   * plus 1–4 lanes, each a platform track one train uses at a time. Absent on
+   * structures read from an old save or an old wire: `stationLanes` then
+   * materialises the ONE lane the footprint always carried, so a pre-RAIL-6
+   * single platform loads as a 1-lane station and nothing else changes.
+   */
+  lanes?: RailLane[];
 }
+
+/**
+ * RAIL-6 (#575): one platform track of a station — the strip a train stands
+ * beside and the three stopping tiles beside it. `lineId` is the lane's
+ * standing assignment (which line's train calls it home); a lane with no
+ * assignment is free for a new line. The runtime holder (the train actually
+ * inbound or dwelling) is read off the trains, never stored here.
+ */
+export interface RailLane {
+  id: number;
+  view: RailView;
+  /** Slab origin (the strip's top corner); the track runs along its view side. */
+  tx: number;
+  ty: number;
+  /** The line this lane is assigned to, or null while it is unassigned. */
+  lineId: number | null;
+}
+
+/** RAIL-6 (#575): the lanes a station holds — one to four. */
+export const MAX_LANES = 4;
 
 export interface RailState {
   rail: Rail;
@@ -474,6 +505,298 @@ export const platformTrackAt = (tx: number, ty: number, view: RailView): [number
 export function stopTile(s: RailStructure): [number, number] {
   const lane = s.kind === "platform" ? platformTrack(s) : laneTiles(s);
   return lane[(lane.length - 1) >> 1];
+}
+
+// ── RAIL-6 (#575): the station and its lanes ──────────────────────────────
+//
+// A platform IS a station: one warehouse plus 1–4 lanes. Lane 0 is the
+// footprint the platform was placed with (its strip and its three stopping
+// tiles), so every pre-RAIL-6 platform is a 1-lane station and every rule that
+// read "the platform's track" keeps reading lane 0. An upgrade adds a lane: a
+// parallel strip two tiles over — its own track, its own switch, its own stop
+// tile — on whichever side the player picks, if the ground there is free and
+// flat. The warehouse art follows the lane count (three tiers); the lane slab
+// is painted in code over the track bed.
+//
+// Lanes are the station's CAPACITY: one train per lane at a time. A train
+// books the lane it is running to; when every lane at a station is booked the
+// next train holds at the THROAT — the last tile of its approach outside the
+// station's tracks — and picks a lane up the moment one frees. Nothing about
+// that waits on another train standing still (a dwelling train always departs
+// after its dwell and frees its lane), so a full station queues, never
+// deadlocks.
+
+/**
+ * The station's lanes, materialised on first read: an old save or an old wire
+ * carries no `lanes`, and its platform's footprint IS lane 0. Depot structures
+ * have none.
+ */
+export function stationLanes(s: RailStructure): RailLane[] {
+  if (s.kind !== "platform") return [];
+  if (!s.lanes || !s.lanes.length) {
+    s.lanes = [{ id: s.id, view: s.view, tx: s.tx, ty: s.ty, lineId: null }];
+  }
+  return s.lanes;
+}
+
+/** The warehouse art tier a lane count draws (1–3 tiers for 1–4 lanes). */
+export const stationWarehouseTier = (lanes: number): 1 | 2 | 3 =>
+  (lanes <= 1 ? 1 : lanes === 2 ? 2 : 3);
+
+/** The strip tiles of one lane (its 1×3 / 3×1 platform slab). */
+export function laneSlabTiles(l: Pick<RailLane, "view" | "tx" | "ty">): [number, number][] {
+  const [w, h] = PLATFORM_FOOTPRINT[l.view];
+  const out: [number, number][] = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out.push([l.tx + x, l.ty + y]);
+  return out;
+}
+
+/** The three stopping tiles of one lane — ordinary rail, laid with the lane. */
+export function laneTrackTiles(l: Pick<RailLane, "view" | "tx" | "ty">): [number, number][] {
+  const out: [number, number][] = [];
+  const [w, h] = PLATFORM_FOOTPRINT[l.view];
+  if (l.view === "se" || l.view === "nw") {
+    const x = l.view === "se" ? l.tx + w : l.tx - 1;
+    for (let y = 0; y < h; y++) out.push([x, l.ty + y]);
+  } else {
+    const y = l.view === "sw" ? l.ty + h : l.ty - 1;
+    for (let x = 0; x < w; x++) out.push([l.tx + x, y]);
+  }
+  return out;
+}
+
+/** The tile a train stops at on one lane: the middle of its track. */
+export function laneStopTile(l: Pick<RailLane, "view" | "tx" | "ty">): [number, number] {
+  const t = laneTrackTiles(l);
+  return t[(t.length - 1) >> 1];
+}
+
+/** Every tile a station stands on: every lane's strip and stopping track. */
+export function stationTiles(s: RailStructure): [number, number][] {
+  const out: [number, number][] = [];
+  for (const l of stationLanes(s)) out.push(...laneSlabTiles(l), ...laneTrackTiles(l));
+  return out;
+}
+
+/**
+ * Where a new lane's strip would start on one side of the station: two tiles
+ * out from the outermost lane already on that side, across the axis the
+ * station's heading runs along (a lane is a strip plus its track — two tiles
+ * wide across the row).
+ */
+export function laneOriginAt(s: RailStructure, side: 1 | -1): { tx: number; ty: number } {
+  const lanes = stationLanes(s);
+  const along = (l: RailLane): number => (l.view === "se" || l.view === "nw" ? l.tx : l.ty);
+  const base = side === 1
+    ? lanes.reduce((a, b) => (along(b) > along(a) ? b : a))
+    : lanes.reduce((a, b) => (along(b) < along(a) ? b : a));
+  return s.view === "se" || s.view === "nw"
+    ? { tx: base.tx + 2 * side, ty: base.ty }
+    : { tx: base.tx, ty: base.ty + 2 * side };
+}
+
+/** A probe lane as a structure-shaped record, for the shared footprint rules. */
+function laneProbe(l: Pick<RailLane, "view" | "tx" | "ty">): RailStructure {
+  const [w, h] = PLATFORM_FOOTPRINT[l.view];
+  return { id: -1, kind: "platform", ownerId: 0, owner: "", tx: l.tx, ty: l.ty, w, h, view: l.view };
+}
+
+/**
+ * RAIL-6 (#575): may this station grow a lane on this side? The same
+ * vocabulary as every other placement refusal — the HUD, the click, the rival
+ * and the host all read this one answer. The lane's strip AND its three
+ * stopping tiles must be free, flat ground inside the map, clear of diagonal
+ * track and overpasses, exactly as a placed platform's are.
+ */
+export function laneRefusal(
+  grid: Grid, state: RailState, ownerId: number, stationId: number, side: 1 | -1,
+): RailRefusal {
+  const s = structureById(state, stationId);
+  if (!s || s.kind !== "platform") return "missing";
+  if (s.ownerId !== ownerId) return "not-yours";
+  const lanes = stationLanes(s);
+  if (lanes.length >= MAX_LANES) return "max-lanes";
+  const origin = laneOriginAt(s, side);
+  const probe = laneProbe({ view: s.view, ...origin });
+  for (const [x, y] of [...laneSlabTiles(probe), ...laneTrackTiles(probe)]) {
+    if (!inMapT(x, y)) return "off-map";
+    if (!railTerrainOk(grid, x, y)) return "water";
+    if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "occupied";
+    const b = grid.builtAt?.(x, y);
+    if (b === "depot" || b === "plant" || b === "platform" || b === "bridge" || b === "dam") return "occupied";
+    if (state.rail.tile[tIdx(x, y)] & RAIL_OVERPASS) return "overpass-stop";
+    // Foreign rail under the new track: the lane's tiles are laid by the
+    // station's owner and cannot steal another seat's bed. Own rail is fine —
+    // a lane may close over the player's own siding (the merge is `buildRail`'s).
+    if (hasRail(state.rail, x, y) && state.rail.owner[tIdx(x, y)] !== ownerId) return "foreign-rail";
+  }
+  if (laneTrackTiles(probe).some(([x, y]) => diagNeighbours(state.rail, x, y).length > 0)) return "axis-only";
+  // Laying the lane's track must not hang an arm no train can turn through on
+  // the network beside it — the same 45° rule `buildRail` commits under, asked
+  // up front so the HUD and the click refuse with the reason BEFORE the pay.
+  for (const [x, y] of laneTrackTiles(probe)) {
+    for (const [nx, ny] of railNeighbours(state, ownerId, x, y)) {
+      if (!railJoinTurnOk(state, ownerId, x, y, nx, ny, grid)) return "too-sharp";
+    }
+  }
+  if (state.structures.some((o) => o !== s && overlaps(o, origin.tx, origin.ty, probe.w, probe.h))) return "overlap";
+  for (const [x, y] of laneTrackTiles(probe)) {
+    if (state.structures.some((o) => overlaps(o, x, y, 1, 1))) return "track-blocked";
+  }
+  // E4 (#268): the strip and its track sit on one plane, like every footprint.
+  if (footprintFlatTiles(grid, [...laneSlabTiles(probe), ...laneTrackTiles(probe)])) return "not-flat";
+  return "ok";
+}
+
+/**
+ * RAIL-6 (#575): grow a station by one lane on one side. The lane's three
+ * stopping tiles are laid with it (they are inside the lane's price, exactly
+ * as a placed platform's are), and the rail revision moves so every planned
+ * leg and every renderer cache notices the new track.
+ */
+export function addStationLane(
+  grid: Grid, track: Track, state: RailState, ownerId: number, stationId: number, side: 1 | -1,
+): { ok: boolean; lane?: RailLane; why?: RailRefusal } {
+  const why = laneRefusal(grid, state, ownerId, stationId, side);
+  if (why !== "ok") return { ok: false, why };
+  const s = structureById(state, stationId)!;
+  const lanes = stationLanes(s);
+  const origin = laneOriginAt(s, side);
+  const lane: RailLane = { id: state.seq++, view: s.view, tx: origin.tx, ty: origin.ty, lineId: null };
+  lanes.push(lane);
+  // Keep the lane list in map order along the row, so the draw pass (and the
+  // panel) visit lanes back-to-front every frame — a stable order is what
+  // keeps a station from flickering between its lanes.
+  const along = (l: RailLane): number => (l.view === "se" || l.view === "nw" ? l.tx : l.ty);
+  lanes.sort((a, b) => along(a) - along(b) || a.id - b.id);
+  // The lane's track is laid with it — and the lay is judged by `buildRail`'s
+  // own commit rules (a connector running past the lane can make the join
+  // "too-sharp" for a train). A refused lay takes the lane back off the
+  // station: a lane without its stopping track would be a dead berth.
+  const laid = previewRailBuild(grid, track, state, ownerId, laneTrackTiles(lane));
+  if (laid.why !== "ok") {
+    lanes.splice(lanes.indexOf(lane), 1);
+    return { ok: false, why: laid.why };
+  }
+  buildRail(grid, track, state, ownerId, laneTrackTiles(lane));
+  state.rail.revision++;
+  return { ok: true, lane };
+}
+
+/**
+ * RAIL-6 (#575): would `addStationLane` COMMIT right now — the whole answer,
+ * `laneRefusal` plus `buildRail`'s commit rules (a connector running past the
+ * lane can make the join "too-sharp" only once the autolink sees it), asked of
+ * a copy nothing else can observe. The rival gates its lane proposals on this,
+ * so a lane it plans is a lane it builds; the HUD's cheap `laneRefusal` keeps
+ * its own answer for the hover colour, and the click still refunds if the
+ * world moved in between.
+ */
+export function probeStationLane(
+  grid: Grid, track: Track, state: RailState, ownerId: number, stationId: number, side: 1 | -1,
+): { state: RailState; lane: RailLane } | null {
+  const s = structureById(state, stationId);
+  if (!s) return null;
+  const probe: RailState = {
+    ...state,
+    structures: state.structures.map((o) => o === s ? { ...o, lanes: o.lanes?.map((l) => ({ ...l })) } : o),
+    rail: { ...state.rail, tile: state.rail.tile.slice(), owner: state.rail.owner.slice() },
+  };
+  const res = addStationLane(grid, track, probe, ownerId, stationId, side);
+  return res.ok && res.lane ? { state: probe, lane: res.lane } : null;
+}
+
+export function canAddStationLane(
+  grid: Grid, track: Track, state: RailState, ownerId: number, stationId: number, side: 1 | -1,
+): boolean {
+  return probeStationLane(grid, track, state, ownerId, stationId, side) !== null;
+}
+
+/**
+ * RAIL-6 (#575): give a fresh line its standing lane at each end — the first
+ * unassigned lane of the station, when one is free. A line whose end has no
+ * free lane runs on whatever lane its train can book at runtime (and queues
+ * at the throat when none is free).
+ */
+export function assignLineLanes(state: RailState, line: RailLine): void {
+  for (const end of ["source", "dest"] as const) {
+    const st = structureById(state, line[end]);
+    if (!st || st.kind !== "platform") continue;
+    const lane = stationLanes(st).find((l) => l.lineId == null);
+    if (!lane) continue;
+    lane.lineId = line.id;
+    if (end === "source") line.sourceLane = lane.id;
+    else line.destLane = lane.id;
+  }
+}
+
+/** Drop every lane assignment a line held (the line is gone). */
+export function clearLineLanes(state: RailState, lineId: number): void {
+  for (const st of state.structures) {
+    if (st.kind !== "platform" || !st.lanes) continue;
+    for (const l of st.lanes) if (l.lineId === lineId) l.lineId = null;
+  }
+}
+
+/** The station a train's current target names, or null (depot / no line). */
+export function trainTargetStation(state: RailState, t: Train): number | null {
+  if (t.target === "depot") return null;
+  const line = lineOfTrain(state, t);
+  if (!line) return null;
+  return t.target === "source" ? line.source : line.dest;
+}
+
+/**
+ * The train that currently holds one lane of a station: inbound to it,
+ * dwelling at it, or holding at its throat with the lane booked. A train
+ * heading home or parked holds nothing.
+ */
+export function laneHolder(state: RailState, stationId: number, laneId: number): Train | null {
+  for (const t of state.trains) {
+    if (t.laneId !== laneId) continue;
+    if (t.status === "stored" || t.status === "returning") continue;
+    if (trainTargetStation(state, t) !== stationId) continue;
+    return t;
+  }
+  return null;
+}
+
+/**
+ * RAIL-6 (#575): the lane a train runs into at a station — its line's assigned
+ * lane when that one is free, else any free lane, else null (the train holds
+ * at the throat). Booking is the write: the caller sets `train.laneId` from
+ * the answer, and frees it again when the train departs the stop.
+ */
+/**
+ * RAIL-6 (#575): every FREE lane of the station this train may run into, best
+ * first: the lane its line was assigned, then the rest in map order. "Free"
+ * means no other train is booked into it — the train's own booking is free to
+ * it. `planLeg` walks this list and takes the first lane it can legally ROUTE
+ * to: a queued train's throat faces only some of a station's lanes (each lane
+ * has its own 45° fan), so a free lane on a far approach must not tempt the
+ * train into a 90° "no route".
+ */
+export function pickStationLanes(state: RailState, train: Train, station: RailStructure): RailLane[] {
+  const lanes = stationLanes(station);
+  const free = (l: RailLane): boolean => {
+    const holder = laneHolder(state, station.id, l.id);
+    return !holder || holder.id === train.id;
+  };
+  const line = lineOfTrain(state, train);
+  const assigned = line ? lanes.find((l) => l.id === (train.target === "source" ? line.sourceLane : line.destLane))
+    ?? lanes.find((l) => l.lineId === line.id) : undefined;
+  const rest = lanes.filter((l) => l !== assigned && free(l));
+  return assigned && free(assigned) ? [assigned, ...rest] : rest;
+}
+
+export function pickStationLane(state: RailState, train: Train, station: RailStructure): RailLane | null {
+  return pickStationLanes(state, train, station)[0] ?? null;
+}
+
+/** Free the lane a train holds (it is leaving the stop, or leaving service). */
+export function releaseTrainLane(train: Train): void {
+  train.laneId = null;
+  train.holdStation = null;
 }
 
 export interface RailPort {
@@ -843,6 +1166,8 @@ export type RailRefusal =
   | "slope-diagonal"
   /** E4 (#268): a platform's / a rail depot's footprint straddles a level change. */
   | "not-flat"
+  /** RAIL-6 (#575): the station already carries four lanes — the maximum. */
+  | "max-lanes"
   | "too-sharp";
 
 export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
@@ -876,6 +1201,9 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "too-steep": "Too steep — rail needs 2 flat tiles between climbs; end on level ground and climb again.",
   "slope-diagonal": "Diagonals must be level — turn on flat ground, not across a slope.",
   "not-flat": "A flat footprint: the whole site must sit on one level.",
+  // RAIL-6 (#575): the station's lane count is capped; the sentence names the
+  // cap so an upgrade that cannot happen says why.
+  "max-lanes": "That station already has four lanes — the most a station holds.",
   "too-sharp": "Too sharp for rail: turns must be 45° or less",
 };
 
@@ -1771,6 +2099,7 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
     for (const line of [...state.lines]) {
       if (line.source !== id && line.dest !== id) continue;
       state.lines.splice(state.lines.indexOf(line), 1);
+      clearLineLanes(state, line.id);   // RAIL-6: lanes it held at OTHER stations
       for (const t of [...state.trains]) {
         if (t.lineId === line.id) state.trains.splice(state.trains.indexOf(t), 1);
       }
@@ -1788,12 +2117,23 @@ export interface RailLine {
   /** Platform structure ids: where the freight comes from and where it goes. */
   source: number;
   dest: number;
+  /**
+   * RAIL-6 (#575): the lane each end of the line runs into at its station —
+   * the standing assignment a lane's `lineId` mirrors. Absent (an old save, an
+   * old wire) reads as "the station's first lane", which is what every line
+   * had before stations grew.
+   */
+  sourceLane?: number | null;
+  destLane?: number | null;
 }
 
-export type TrainStatus = "stored" | "departing" | "moving" | "dwelling" | "returning" | "blocked";
+export type TrainStatus =
+  | "stored" | "departing" | "moving" | "dwelling" | "returning" | "blocked"
+  /** RAIL-6 (#575): waiting at the station throat — every lane is busy. */
+  | "holding";
 
 export const TRAIN_STATUSES: TrainStatus[] = [
-  "stored", "departing", "moving", "dwelling", "returning", "blocked",
+  "stored", "departing", "moving", "dwelling", "returning", "blocked", "holding",
 ];
 
 export interface Train {
@@ -1818,6 +2158,17 @@ export interface Train {
   resold: boolean;
   /** Why a blocked train is blocked, for the panel. */
   blockedWhy?: string;
+  /**
+   * RAIL-6 (#575): the lane this train is booked into at the stop it is
+   * currently heading for (or dwelling at). One train per lane at a time —
+   * the lane IS the station's capacity. Null while no lane is held.
+   */
+  laneId?: number | null;
+  /**
+   * RAIL-6 (#575): the station whose throat a `holding` train waits at, while
+   * every lane there is busy. Null unless the train is holding.
+   */
+  holdStation?: number | null;
 }
 
 export interface LinePlan {
@@ -2127,6 +2478,9 @@ export function createLine(
     dest: destId,
   };
   state.lines.push(line);
+  // RAIL-6 (#575): a fresh line takes a standing lane at each end when the
+  // station has one free — the lane ledger the HUD and the save carry.
+  assignLineLanes(state, line);
   return { ok: true, line };
 }
 
@@ -2300,18 +2654,56 @@ export function planLeg(
   const targetStruct = train.target === "depot" ? depot! : train.target === "source" ? source : dest;
   // The leg ends at ONE tile — the middle of a platform's lane, or the depot's
   // shed door — so a train parks inside the platform instead of on its port.
-  const stop: [number, number] = train.target === "depot" ? [exit.tx, exit.ty] : stopTile(targetStruct);
-  const goal = new Set([tIdx(stop[0], stop[1])]);
-  const route = railPath(state, train.ownerId, [start], goal, startOct, grid)
-    // Reversal is legal (recall / a platform departure), but dropping the
-    // heading entirely let a train resume right on a legacy 90° corner.
-    ?? railPath(state, train.ownerId, [start], goal, startOct < 0 ? -1 : (startOct + 4) % 8, grid);
+  // RAIL-6 (#575): a station has several such tiles, one per lane, and a train
+  // books the first lane that is free AND legally routable from where it
+  // stands. With no lane to book the leg ends at the THROAT instead — the last
+  // tile of the approach outside the station's tracks — and the train holds
+  // there until a lane frees (`tickTrains`).
+  let holding = false;
+  // One routing attempt: the current heading first, then the legal reversal.
+  const tryRoute = (goalTile: [number, number]): [number, number][] | null => {
+    const goal = new Set([tIdx(goalTile[0], goalTile[1])]);
+    return railPath(state, train.ownerId, [start], goal, startOct, grid)
+      // Reversal is legal (recall / a platform departure), but dropping the
+      // heading entirely let a train resume right on a legacy 90° corner.
+      ?? railPath(state, train.ownerId, [start], goal, startOct < 0 ? -1 : (startOct + 4) % 8, grid);
+  };
+  let route: [number, number][] | null = null;
+  if (train.target === "depot") {
+    releaseTrainLane(train);
+    route = tryRoute([exit.tx, exit.ty]);
+  } else {
+    for (const lane of pickStationLanes(state, train, targetStruct)) {
+      route = tryRoute(laneStopTile(lane));
+      if (!route) continue;
+      train.laneId = lane.id;
+      train.holdStation = null;
+      break;
+    }
+    if (!route) {
+      train.laneId = null;
+      train.holdStation = targetStruct.id;
+      holding = true;
+      route = tryRoute(laneStopTile(stationLanes(targetStruct)[0]));
+    }
+  }
   if (!route) {
     train.status = "blocked";
     train.blockedWhy = train.target === "depot" ? "No route back to the depot"
       : "No route to the platform (a train cannot take a 90° bend)";
     train.planRevision = state.rail.revision;
     return false;
+  }
+  if (holding) {
+    // Trim the leg back out of the station: the throat is the last tile of the
+    // approach that is not one of the station's lane tracks. A train that
+    // starts its hold already inside the station (a fresh spawn, a cut route)
+    // holds where it stands rather than driving deeper in.
+    const tracks = new Set<number>();
+    for (const l of stationLanes(targetStruct)) for (const [x, y] of laneTrackTiles(l)) tracks.add(tIdx(x, y));
+    let i = route.length - 1;
+    while (i > 0 && tracks.has(tIdx(route[i][0], route[i][1]))) i--;
+    route = i > 0 ? route.slice(0, i + 1) : [route[0]];
   }
   train.route = route;
   // A replan must not teleport a train that is already rolling: carry the
@@ -2330,7 +2722,11 @@ export function planLeg(
   train.planRevision = state.rail.revision;
   train.blockedWhy = undefined;
   // A depot-less (automatic) train is never "departing": it starts on its line.
-  train.status = train.target === "depot" ? "returning" : train.target === "source" && depot ? "departing" : "moving";
+  // RAIL-6 (#575): a train with no free lane at its stop is "holding" — running
+  // to the throat, then waiting there with the station's lanes in view.
+  train.status = holding ? "holding"
+    : train.target === "depot" ? "returning"
+      : train.target === "source" && depot ? "departing" : "moving";
   return true;
 }
 
@@ -2361,6 +2757,22 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
     if (train.status === "moving" || train.status === "departing" || train.status === "returning") {
       if (train.planRevision !== state.rail.revision) planLeg(state, train, undefined, grid);
     }
+    // RAIL-6 (#575): a holding train asks for a lane again every tick — the
+    // moment a dwelling train departs and frees one, the holder plans in and
+    // rolls. A dwell always ends and a departure always frees the lane, so a
+    // full station is a QUEUE, never a deadlock.
+    if (train.status === "holding") {
+      const st = train.holdStation != null ? structureById(state, train.holdStation) : null;
+      const lane = st && st.kind === "platform" ? pickStationLane(state, train, st) : null;
+      if (lane) {
+        train.laneId = lane.id;
+        train.holdStation = null;
+        planLeg(state, train, undefined, grid);
+      } else if (train.planRevision !== state.rail.revision) {
+        planLeg(state, train, undefined, grid);   // the throat itself was cut
+      }
+      if (train.status === "holding" && train.route.length <= 1) continue;  // held in place
+    }
     if (train.status === "blocked") {
       if (train.planRevision !== state.rail.revision) planLeg(state, train, undefined, grid);
       if (train.status === "blocked") continue;
@@ -2381,6 +2793,9 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
         train.dwellMs = 0;
         // The dwell is over: reverse at the platform and run to the other stop.
         // The train turns round where it stands — its last car leads out.
+        // RAIL-6 (#575): leaving the stop frees the lane — the queued train at
+        // the throat picks it up on its very next tick.
+        releaseTrainLane(train);
         train.target = train.target === "source" ? "dest" : "source";
         if (!planLeg(state, train, turnRound(state, train), grid)) break;
         continue;
@@ -2415,6 +2830,9 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
         train.dist = 0;
         continue;
       }
+      // RAIL-6 (#575): arriving at the THROAT is not arriving at the station —
+      // the train waits where it stands (every lane is busy) and keeps asking.
+      if (train.status === "holding") { ms = 0; break; }
       train.status = "dwelling";
       train.dwellMs = DWELL_MS;
     }
@@ -2443,6 +2861,7 @@ export function autoTrains(state: RailState, ownerId: number, grid?: Grid): bool
     const stuck = state.trains.some((t) => t.lineId === line.id && t.status === "blocked");
     if (joined && !(stuck && !drivable(src!, dst!))) continue;
     state.lines.splice(state.lines.indexOf(line), 1);
+    clearLineLanes(state, line.id);       // RAIL-6: its lanes are free again
     for (const t of state.trains.filter((x) => x.lineId === line.id)) state.trails?.delete(t.id);
     state.trains = state.trains.filter((t) => t.lineId !== line.id);
     changed = true;
@@ -2463,24 +2882,42 @@ export function autoTrains(state: RailState, ownerId: number, grid?: Grid): bool
       if (route && route.length > 1) { dst = p; break; }
     }
     if (!dst || !route) continue;
+    // RAIL-6 (#575): a line only exists when BOTH of its stations have a lane
+    // free to assign it — one train per lane at a time is the station's
+    // capacity. A second resource wanting the same plant station waits for
+    // the upgrade that adds the lane; the pass runs again every frame, so the
+    // line appears the moment the lane does.
+    if (!stationLanes(src).some((l) => l.lineId == null)) continue;
+    const free = stationLanes(dst).find((l) => l.lineId == null);
+    if (!free) continue;
+    // The leg runs to the lane the line WILL be assigned (`assignLineLanes`
+    // books the first free one — `free`) — and that berth must be DRIVABLE
+    // now: a lane whose switch has not been laid yet holds the line back. The
+    // pass runs again every frame, so the line appears the moment the lane
+    // becomes reachable — never a train aimed at an island.
+    const run = railPath(state, ownerId, [route[0]], new Set([tIdx(...laneStopTile(free))]), -1, grid);
+    if (!run || run.length < 2) continue;
     const made = createLine(state, ownerId, src.id, dst.id);
     if (!made.ok || !made.line) continue;
     const train: Train = {
       id: state.seq++, ownerId, lineId: made.line.id, depotId: 0,
-      status: "moving", target: "dest", route, dist: 0,
+      status: "moving", target: "dest", route: run, dist: 0,
       planRevision: state.rail.revision, dwellMs: 0,
-      dirBit: dirBitBetween(route[0], route[1]), resold: false,
+      dirBit: dirBitBetween(run[0], run[1] ?? run[0]), resold: false,
+      // The destination lane is booked from the first metre: two lines into
+      // one station never aim at the same platform track.
+      laneId: made.line.destLane ?? null,
     };
     state.trains.push(train);
     // The train starts already PULLED OUT of the platform: the locomotive a
     // train's length along the route, every car behind it on real track — never
     // five cars stacked on the stop tile (the platform's track dead-ends
     // behind it, so there is no room to lay them out backwards).
-    const cum = polyline(route);
+    const cum = polyline(run);
     const lead = Math.min(trainLength(train) - CAR_LEN.loco / 2, cum[cum.length - 1] - 0.01);
     const trail = trailOf(state, train);
     trail.length = 0;
-    trail.push([route[0][0], route[0][1]]);
+    trail.push([run[0][0], run[0][1]]);
     recordTrail(state, train, cum, 0, lead);
     train.dist = lead;
     changed = true;
@@ -2514,7 +2951,10 @@ export function sellTrain(state: RailState, train: Train): { ok: boolean; why?: 
   const line = state.lines.find((l) => l.id === train.lineId);
   train.resold = true;
   state.trains.splice(state.trains.indexOf(train), 1);
-  if (line) state.lines.splice(state.lines.indexOf(line), 1);
+  if (line) {
+    state.lines.splice(state.lines.indexOf(line), 1);
+    clearLineLanes(state, line.id);   // RAIL-6: the line's lanes are free again
+  }
   return { ok: true, refund };
 }
 
@@ -2580,7 +3020,11 @@ export const platformVp = (state: RailState, ownerId: number): number =>
   structuresOf(state, ownerId, "platform").length * PLATFORM_VP;
 
 // ── the Railway panel's model ─────────────────────────────────────────────
-export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start";
+/**
+ * RAIL-6 (#575): `lane` arms the station upgrade — the next click beside the
+ * station picks the side the new lane goes on.
+ */
+export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start" | "lane";
 
 export interface RailPanelRow {
   id: number;
@@ -2609,20 +3053,31 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
     const anchor = s.anchor
       ? `${s.anchor.kind === "industry" ? "industry" : "plant"} #${s.anchor.id}`
       : "unanchored";
-    const line = state.lines.find((l) => l.source === s.id || l.dest === s.id);
+    const lines = state.lines.filter((l) => l.source === s.id || l.dest === s.id);
+    const line = lines[0];
     let partnerId: number | undefined;
     if (!line && s.anchor?.kind === "industry") {
       const dest = myPlatforms.find((p) => p.anchor?.kind === "plant");
       if (dest) partnerId = dest.id;
     }
+    // RAIL-6 (#575): a platform reads as what it is — a station with lanes.
+    // The row says how many lanes stand, how many are busy right now, and
+    // offers the upgrade (priced by the game, which owns the money table)
+    // until the station holds four.
+    const lanes = stationLanes(s);
+    const busy = lanes.filter((l) => laneHolder(state, s.id, l.id)).length;
     rows.push({
       id: s.id,
       kind: "platform",
-      label: `Platform (${s.view}) · ${anchor}`,
-      detail: line ? `line: ${line.name}` : `${PLATFORM_VP}★ · not on a line`,
+      label: `Station · ${lanes.length} lane${lanes.length === 1 ? "" : "s"} (${s.view}) · ${anchor}`,
+      detail: line
+        ? `line${lines.length > 1 ? "s" : ""}: ${lines.map((l) => l.name).join(", ")}`
+          + ` · ${busy}/${lanes.length} lane${lanes.length === 1 ? "" : "s"} busy`
+        : `${PLATFORM_VP}★ · not on a line`,
       // Playtest (2026-09): trains spawn on their own (`autoTrains`), so a
-      // platform offers nothing to click — connecting it by rail is the action.
-      actions: [],
+      // platform offers nothing to click — connecting it by rail is the
+      // action. RAIL-6: the one click a station does offer is the lane.
+      actions: lanes.length < MAX_LANES ? ["lane"] : [],
       partnerId,
     });
   }
@@ -2686,6 +3141,8 @@ export function trainStatusText(t: Train): string {
     case "dwelling": return `dwelling at the ${t.target} — ${(Math.ceil(t.dwellMs / 100) / 10).toFixed(1)}s`;
     case "returning": return "returning to the depot";
     case "blocked": return `blocked — ${t.blockedWhy ?? "no route"}`;
+    // RAIL-6 (#575): the queue at a full station, in the player's words.
+    case "holding": return "waiting at the throat — every lane of the station is busy";
   }
 }
 
@@ -2693,6 +3150,39 @@ export function trainStatusText(t: Train): string {
 /** Art sprite names (see tools/make-railway-art.mjs for the authored files). */
 export const platformSprite = (view: RailView): string => `platform_${view}`;
 export const depotSprite = (view: RailView): string => `train-depot_${view}`;
+/**
+ * RAIL-6 (#575) — THE STATION ART (art drop #578). The warehouse ships in three
+ * tiers (`assets/stations/station_wh_{1,2,3}@2x.png`, the tier following the
+ * lane count) and the platform end as a cap (`station_cap@2x.png`), each with
+ * an `_r` orientation for the other axis. The lane slab between them is
+ * painted in code — flat concrete with an edge line over the track bed — and
+ * installed as `station_lane_<view>`; there is no lane sprite. A station draws
+ * as warehouse + one slab item per lane strip tile + a cap at every lane end:
+ * each its own depth-sorted item, lanes visited in map order, so the draw
+ * order is stable and nothing flickers between lanes.
+ */
+export const stationWhSprite = (tier: number, view: RailView): string =>
+  `station_wh_${Math.min(3, Math.max(1, tier))}${view === "se" || view === "nw" ? "_r" : ""}`;
+export const stationCapSprite = (view: RailView): string =>
+  (view === "se" || view === "nw" ? "station_cap_r" : "station_cap");
+export const laneSlabSprite = (view: RailView): string => `station_lane_${view}`;
+/**
+ * The tile the warehouse stands on: the HEAD of the station's first lane — the
+ * platform's own end tile, exactly where a station house sits at the end of a
+ * platform. Keeping it ON the lane (never beside it) is what keeps the painter
+ * order exact: warehouse, then slab tile by slab tile, then the cap — depth
+ * keys rising along the row, so nothing ever draws over anything it stands
+ * behind.
+ */
+export function stationWarehouseTile(s: RailStructure): [number, number] {
+  const l = stationLanes(s)[0];
+  return [l.tx, l.ty];
+}
+/** The lane strip tile a cap finishes: the far end of the lane from the warehouse. */
+export const laneCapTile = (l: RailLane): [number, number] => {
+  const slab = laneSlabTiles(l);
+  return slab[slab.length - 1];
+};
 export const VIEW_NAME: Record<number, RailView> = { [NE]: "ne", [SE]: "se", [SW]: "sw", [NW]: "nw" };
 
 export interface RailSpriteSource { has(name: string): boolean }
@@ -2702,14 +3192,42 @@ export interface RailSpriteSource { has(name: string): boolean }
  * placed at the footprint origin with a `ref` payload, so clicking an arm of the
  * platform selects the platform. Rail TILES are not draw items — they are
  * ground, painted by the renderer's chunk pass from the layer bytes.
+ *
+ * RAIL-6 (#575): a platform draws as its STATION — warehouse, lane slabs, caps —
+ * when the station art is installed; with no `atlas` (or the art missing) it
+ * falls back to the one platform sprite it always had, so a map without the
+ * station PNGs is the same map, only undressed.
  */
-export function railStructureItems(state: RailState): DrawItem[] {
-  return state.structures.map((s) => ({
-    sprite: s.kind === "platform" ? platformSprite(s.view) : depotSprite(s.view),
-    tx: s.tx,
-    ty: s.ty,
-    ref: { kind: "rail", structure: s.id, railKind: s.kind, ownerId: s.ownerId },
-  }));
+export function railStructureItems(state: RailState, atlas?: RailSpriteSource): DrawItem[] {
+  const out: DrawItem[] = [];
+  for (const s of state.structures) {
+    const ref = { kind: "rail", structure: s.id, railKind: s.kind, ownerId: s.ownerId };
+    if (s.kind === "depot") {
+      out.push({ sprite: depotSprite(s.view), tx: s.tx, ty: s.ty, ref });
+      continue;
+    }
+    const lanes = stationLanes(s);
+    const tier = stationWarehouseTier(lanes.length);
+    if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {
+      out.push({ sprite: platformSprite(s.view), tx: s.tx, ty: s.ty, ref });
+      continue;
+    }
+    const [wx, wy] = stationWarehouseTile(s);
+    out.push({ sprite: stationWhSprite(tier, s.view), tx: wx, ty: wy, ref });
+    for (let li = 0; li < lanes.length; li++) {
+      const l = lanes[li];
+      const slab = laneSlabTiles(l);
+      // The cap finishes the lane's far end; the slab tiles before it are the
+      // code-painted concrete strip. The first lane's head tile is the
+      // warehouse's own ground, so no slab is painted under it.
+      for (let i = li === 0 ? 1 : 0; i < slab.length - 1; i++) {
+        out.push({ sprite: laneSlabSprite(l.view), tx: slab[i][0], ty: slab[i][1], ref });
+      }
+      const [cx, cy] = laneCapTile(l);
+      out.push({ sprite: stationCapSprite(l.view), tx: cx, ty: cy, ref });
+    }
+  }
+  return out;
 }
 
 /**
@@ -2763,6 +3281,12 @@ export function railToWire(
       anchor: s.anchor
         ? { kind: s.anchor.kind, id: s.anchor.id, tiles: s.anchor.tiles.map((t) => [...t] as [number, number]) }
         : null,
+      // RAIL-6 (#575): the station's lanes ride with the structure — a guest's
+      // station has the same lanes, the same assignments, the same warehouse
+      // tier, from the same bytes.
+      lanes: s.kind === "platform"
+        ? stationLanes(s).map((l) => ({ id: l.id, view: l.view, tx: l.tx, ty: l.ty, lineId: l.lineId }))
+        : undefined,
     })),
     lines: state.lines.map((l) => ({ ...l })),
     trains: state.trains.map((t) => {
@@ -2868,6 +3392,20 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
             tiles: (s.anchor.tiles ?? []).map((t) => [...t] as [number, number]),
           }
         : null,
+      // RAIL-6 (#575): tolerant like every other field here — a lane record
+      // without coordinates is skipped, and a structure with NO lanes array
+      // stays lane-less until `stationLanes` materialises its lane 0 (the
+      // pre-RAIL-6 shape, from an old host or an old save).
+      lanes: asKind(s.kind) === "platform" && Array.isArray(s.lanes)
+        ? s.lanes
+          .filter((l) => l && typeof l.tx === "number" && typeof l.ty === "number")
+          .map((l) => ({
+            id: typeof l.id === "number" ? l.id : 0,
+            view: asView(l.view),
+            tx: l.tx, ty: l.ty,
+            lineId: typeof l.lineId === "number" ? l.lineId : null,
+          }))
+        : undefined,
     });
   }
   state.lines.length = 0;
@@ -2894,6 +3432,10 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
       )) ? -1 : t.planRevision,
       dwellMs: t.dwellMs,
       dirBit: t.dirBit, resold: !!t.resold, blockedWhy: t.blockedWhy,
+      // RAIL-6 (#575): the lane booking and the queue position ride with the
+      // train; an old record without them reads as "no lane held".
+      laneId: typeof t.laneId === "number" ? t.laneId : null,
+      holdStation: typeof t.holdStation === "number" ? t.holdStation : null,
     });
   }
   return true;

@@ -329,9 +329,13 @@ describe("RAIL-03 the renderer diffs the railway by revision", () => {
     const source = { has: () => true };
     // Exactly the game's split: a platform and a depot are STATIC draw items,
     // the train rides the MOVING list beside the lorries (`world.vehicles`).
-    const items = () => [...railStructureItems(state), ...trainItems(state, source)];
+    // RAIL-6 (#575): this harness's atlas ships the railway art but no station
+    // art, so the structures are drawn through the platform fallback — the
+    // station composition itself is pinned in iso-rail/iso-depth.
+    const noStationArt = { has: () => false };
+    const items = () => [...railStructureItems(state, noStationArt), ...trainItems(state, source)];
     world.rail = railDrawLayer(state);
-    world.extra = railStructureItems(state);
+    world.extra = railStructureItems(state, noStationArt);
     world.vehicles = trainItems(state, source);
     renderer.setWorld(world);
     renderer.drawStructures();
