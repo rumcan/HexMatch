@@ -1134,51 +1134,188 @@ html, body, #root {
    to the rail card (`.plant-card`) and the window waits shut for the next
    Depot. On a phone the window IS the screen — the full-bleed regime the
    trade sheet used to own for the board (see the media pair at the end). */
+/* UIX-6 (#601): the board page is the new UI card. The frame is a paper
+   card — the .px-card's 3px ink border and radius with the shared
+   --px-paper-bg texture — under an INK header bar that holds the session
+   title and the star bar. The side readouts (moves, score, the reward, the
+   Tuned → Legendary star curve) are textured paper sub-cards; the numbers
+   wear the menu's display font. Buttons use the menu's orange. Flat colours
+   throughout: the only gradient on the page is the paper recipe itself. */
 .session-window { position: fixed; inset: 0; z-index: 52; display: grid; place-items: center; }
 .session-back {
   position: absolute; inset: 0;
-  background:
-    radial-gradient(60% 55% at 50% 46%, rgba(1, 4, 5, 0.58), rgba(1, 4, 5, 0.92) 82%),
-    rgba(1, 4, 5, 0.86);
+  background: rgba(4, 10, 14, 0.86);
 }
+/* the frame and its panel shed the old plate's ornaments — the ink border
+   and the paper ARE the frame now */
+.session-frame::before, .session-frame > #iso-quarry::before { content: none; display: none; }
 .session-frame {
-  position: relative; z-index: 1;
+  position: relative; z-index: 1; overflow: hidden;
   display: flex; flex-direction: column;
-  width: fit-content; max-width: min(96vw, 760px);
+  width: fit-content; max-width: min(96vw, 820px);
   max-height: min(94vh, 94dvh);
-  padding: 10px 12px;
-  box-shadow:
-    none;
-  filter: saturate(1.02);
+  padding: 0;
+  background: var(--px-paper-bg, #efe5d0);
+  border: 3px solid var(--px-ink-2, #0e171b);
+  border-radius: 11px;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .53);
 }
+/* The plant panel IS the card's content. The plate dissolves into the
+   frame's grid (display: contents below): its head becomes the ink header
+   bar, its row becomes the side readouts and the action row, and the board
+   slot is the big cell in between. The retired loop's furniture (the
+   upgrade bar, the token reach strip, the panel's own banner) has nothing
+   to say about a bounded session. */
 .session-frame > #iso-quarry {
-  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
-  margin: 0; padding: 0; border: 0; background: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto auto;
+  gap: 8px 0;
+  flex: 1 1 auto; min-height: 0;
+  margin: 0; padding: 12px; border: 0; background: none;
   box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
 }
-/* The plate's title line IS this window's header — the panel's own "Your
-   Processing Plant" banner would only restate it, and the retired loop's
-   furniture (the upgrade bar, the token reach strip) has nothing to say
-   about a bounded session. */
+.session-frame .quarry-head { display: contents; }
 .session-frame .quarry-head .panel-title { display: none; }
 .session-frame .iso-reach, .session-frame .upbar { display: none; }
-.session-frame .quarry-head { margin-bottom: 2px; }
-.session-frame .tuning-plate { margin: 4px 0 7px; padding: 8px 10px; }
-.session-frame .tp-title { font-size: 13px; }
-.session-frame .tp-moves { font-size: 12px; }
-.session-frame .tp-row { flex-wrap: wrap; gap: 10px; margin-top: 6px; }
-.session-frame .tp-score b, .session-frame .tp-yield b { font-size: 13px; }
-.session-frame .tp-finish { padding: 5px 16px; font-size: 11px; }
-.session-frame .tp-abandon { padding: 5px 12px; font-size: 10.5px; }
+.session-frame .quarry-status { display: none; }
+.session-frame .tuning-plate { display: contents; }
+.session-frame .tp-head { display: contents; }
+.session-frame .tp-row { display: contents; }
 /* the idle line, the Retune key and the city key are BETWEEN-sessions
    affordances — a session running means the window is up, so none of them
-   exists here. The window's board answers to the slot rule below, the same
-   box the phone fit measures. */
+   exists here. */
+.session-frame .tp-idle { display: none; }
 .session-frame .tp-city { display: none; }
+
+/* the ink header bar: the session title in the left cell, the star bar in
+   the right — no column gap, so the two cells read as ONE bar */
+.session-frame .tp-title {
+  grid-column: 1; grid-row: 1;
+  display: flex; align-items: center; min-height: 46px; padding: 8px 14px;
+  margin: 0;
+  background: var(--px-ink-2, #0e171b);
+  color: #fff5df;
+  font: 700 17px/1.1 var(--px-display, "Barlow Condensed", "Arial Narrow", sans-serif);
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.session-frame .tp-meter {
+  grid-column: 2; grid-row: 1;
+  display: flex; align-items: center; gap: 8px; min-height: 46px;
+  margin: 0; padding: 8px 14px 8px 4px;
+  background: var(--px-ink-2, #0e171b);
+}
+.session-frame .tp-meter-bar { background: rgba(255, 244, 222, .16); border-color: rgba(255, 244, 222, .32); }
+.session-frame .tp-meter-fill { background: var(--px-orange-hi, #fa7b19); }
+.session-frame .tp-meter-label {
+  color: #f3e3c2; min-width: 6ch; text-align: right;
+  font: 600 11px/1.2 var(--px-display, "Barlow Condensed", sans-serif); letter-spacing: .04em;
+}
+.session-frame .tp-meter-star { color: rgba(255, 244, 222, .35); text-shadow: none; }
+.session-frame .tp-meter-star.lit {
+  color: var(--px-orange-hi, #fa7b19); text-shadow: 0 0 8px rgba(250, 123, 25, .75);
+}
+/* the tools row under the bar: the combo bank and the reset key */
+.session-frame .reset-btn {
+  grid-column: 1; grid-row: 2; justify-self: end;
+  min-height: 26px; padding: 3px 10px;
+  background: transparent; border: 1.5px solid #1e2527;
+  color: #354144;
+  font: 700 11px/1.2 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.session-frame .reset-btn:hover:not(:disabled) { background: #10191e; border-color: #10191e; color: #f2e8d4; }
+.session-frame .combo-bank { grid-column: 2; grid-row: 2; justify-self: end; }
+.session-frame .combo-bank { background: rgba(17, 25, 29, .08); border-color: #11191d; }
+
+/* the side readouts: moves, score, the reward — textured paper sub-cards,
+   the menu's display font on the numbers.
+   ≤ 420px the cards are the base layout: each spans BOTH columns, so the
+   four of them stack full-width under the board (the ticket's phone rule);
+   ≥ 421px the media below runs them in the 176px column beside it. */
+.session-frame :is(.tp-moves, .tp-score, .tp-yield) {
+  grid-column: 1 / -1;
+  display: grid; align-content: center; justify-items: start; gap: 1px;
+  min-height: 54px; padding: 8px 12px;
+  background: var(--px-paper-bg, #efe5d0);
+  border: 2px solid #11191d; border-radius: 8px;
+  box-shadow: 0 2px 0 rgba(17, 25, 29, .5);
+  color: #3d474a;
+  font: 700 11px/1.2 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .14em; text-transform: uppercase;
+}
+.session-frame :is(.tp-moves, .tp-score, .tp-yield) b {
+  color: #111b20;
+  font: 700 22px/1.05 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .02em; text-transform: none; font-variant-numeric: tabular-nums;
+}
+/* the star curve — Tuned → Legendary — the same table the bars rate on */
+.session-frame .tp-curve {
+  grid-column: 1 / -1;
+  display: grid; align-content: center; gap: 3px;
+  padding: 8px 12px;
+  background: var(--px-paper-bg, #efe5d0);
+  border: 2px solid #11191d; border-radius: 8px;
+  box-shadow: 0 2px 0 rgba(17, 25, 29, .5);
+}
+.session-frame .tp-curve-label {
+  color: #6c665b; white-space: nowrap;
+  font: 600 11px/1.3 var(--px-display, "Barlow Condensed", sans-serif); letter-spacing: .05em;
+}
+.session-frame .tp-curve-label.lit { color: #b94c04; font-weight: 800; }
+
+/* the board sits in the slot the phone fit already measures */
 .session-frame .board-slot {
-  display: flex; flex: 1 1 auto; min-height: 0;
+  grid-column: 1 / -1; grid-row: 3;
+  display: flex; min-height: 0;
   align-items: center; justify-content: center;
   overflow: hidden;
+}
+/* the action row: Abandon (the ink ghost) left, Finish (the menu orange)
+   right — the menu's button language */
+.session-frame .tp-abandon {
+  grid-column: 1; grid-row: 8; justify-self: start;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 0 16px; margin: 0;
+  background: transparent; border: 1.5px solid #1e2527; border-radius: 0;
+  color: #162024; cursor: pointer;
+  font: 700 13px/1 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .06em; text-transform: uppercase;
+  transition: background .2s ease, color .2s ease, transform .2s ease;
+}
+.session-frame .tp-abandon:hover:not(:disabled) { background: #10191e; border-color: #10191e; color: #f2e8d4; transform: translateY(-2px); }
+.session-frame .tp-abandon:disabled { opacity: .5; cursor: not-allowed; }
+.session-frame .tp-finish {
+  grid-column: 2; grid-row: 8; justify-self: end;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 0 24px; margin: 0;
+  background: #e6690c; border: 1px solid #ff982a; border-radius: 0;
+  color: #fff; cursor: pointer;
+  font: 700 16px/1 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .08em; text-transform: uppercase;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .35);
+  transition: transform .2s ease, background .2s ease;
+}
+.session-frame .tp-finish:hover:not(:disabled) { background: var(--px-orange-hi, #fa7b19); transform: translateY(-2px); }
+.session-frame .tp-finish:disabled { opacity: .5; cursor: not-allowed; }
+/* #301: moves spent — Finish is the one action, so it burns brighter */
+.session-frame .tp-finish.primary { background: var(--px-orange-hi, #fa7b19); }
+
+/* ≥ 421px wide: the side cards run in a column beside the board (the
+   ticket's phone rule stacks them under it at ≤ 420px, which is the base
+   layout above). */
+@media (min-width: 421px) {
+  .session-frame > #iso-quarry {
+    grid-template-columns: minmax(0, 1fr) 176px;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto;
+  }
+  .session-frame .board-slot { grid-column: 1; grid-row: 3 / span 4; padding-right: 12px; }
+  .session-frame .tp-moves { grid-column: 2; grid-row: 3; }
+  .session-frame .tp-score { grid-column: 2; grid-row: 4; }
+  .session-frame .tp-yield { grid-column: 2; grid-row: 5; }
+  .session-frame .tp-curve { grid-column: 2; grid-row: 6; }
+  .session-frame .tp-abandon { grid-row: 7; }
+  .session-frame .tp-finish { grid-row: 7; }
 }
 
 /* #300 — the RESULTS pop-up a tuning session ends on. It rides in the
@@ -1187,79 +1324,83 @@ html, body, #root {
    counts up, then the yield it sets; the stars light as the count passes
    their bars (`TUNING_STARS`, config.ts). `.counting` is the count-up,
    `.done` its end — the final numbers also ride on data-* from frame one. */
+/* UIX-6 (#601): the results card is the same paper card language as the
+   frame it rides in — texture, 3px ink border, the menu's orange Confirm. */
 .session-results {
   position: absolute; inset: 0; z-index: 3;
   display: flex; align-items: center; justify-content: center;
   padding: 12px;
-  background: rgba(1, 4, 5, 0.6);
+  background: rgba(17, 25, 29, 0.45);
   border-radius: 0;
   animation: sr-in .18s ease-out both;
 }
 .sr-card {
   display: flex; flex-direction: column; align-items: center; gap: 5px;
-  width: min(340px, 100%); max-height: 100%; overflow: auto;
-  padding: 18px 22px 16px;
+  width: min(360px, 100%); max-height: 100%; overflow: auto;
+  padding: 20px 22px 18px;
   text-align: center;
-  background: #101618;
-  border: 1px solid var(--brass); border-radius: 0;
-  box-shadow:
-    none;
+  background: var(--px-paper-bg, #efe5d0);
+  border: 3px solid #11191d; border-radius: 11px;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .53);
   animation: sr-card-in .26s cubic-bezier(.2, .9, .3, 1.2) both;
 }
 .sr-kicker {
-  font-family: var(--serif); font-size: 12px; letter-spacing: 1.5px;
-  text-transform: uppercase; color: var(--txt-dim);
+  font: 700 12px/1.3 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .16em; text-transform: uppercase; color: #6c665b;
 }
 .sr-head {
-  margin: 0; font-family: var(--display); font-size: 24px; letter-spacing: 3px;
-  color: var(--gold2); text-shadow: none;
+  margin: 0; font: 400 30px/1 var(--px-poster, "Anton", Impact, sans-serif);
+  letter-spacing: .01em; text-transform: uppercase; color: #111b20; text-shadow: none;
 }
-.sr-moves { font-family: var(--mono); font-size: 11.5px; color: var(--txt-mute); }
+.sr-moves { font: 500 12px/1.3 var(--px-body, "Barlow", Arial, sans-serif); color: #3d474a; }
 .sr-stars { display: flex; gap: 8px; margin-top: 6px; font-size: 32px; line-height: 1; }
 .sr-star {
   display: inline-block;
-  color: rgb(var(--c-line) / 0.2); text-shadow: none;
+  color: #c7b795; text-shadow: none;
   transition: color .2s ease-out, text-shadow .2s ease-out;
 }
 .sr-star.lit {
-  color: var(--gold);
-  text-shadow: none;
+  color: var(--px-orange-hi, #fa7b19);
+  text-shadow: 0 0 10px rgba(250, 123, 25, .5);
   animation: sr-star-pop .42s cubic-bezier(.2, .9, .3, 1.4) both;
 }
 .sr-verdict {
-  min-height: 16px; font-family: var(--serif); font-size: 13px;
-  letter-spacing: .5px; color: var(--brass-hi);
+  min-height: 16px; font: 600 13px/1.3 var(--px-body, "Barlow", Arial, sans-serif);
+  letter-spacing: .3px; color: #b94c04;
 }
 .sr-rows {
   display: grid; gap: 4px; width: 100%; margin: 6px 0 2px; padding: 8px 12px;
-  border: 1px solid var(--line); border-radius: 0; background: rgba(0, 0, 0, .28);
+  border: 1.5px solid #11191d; border-radius: 6px; background: #fbf5e8;
 }
 .sr-row { display: flex; align-items: baseline; gap: 8px; }
 .sr-k {
   flex: 1 1 auto; text-align: left;
-  font-family: var(--serif); font-size: 12px; letter-spacing: 1px;
-  text-transform: uppercase; color: var(--txt-dim);
+  font: 700 11px/1.3 var(--px-display, "Barlow Condensed", sans-serif); letter-spacing: .12em;
+  text-transform: uppercase; color: #3d474a;
 }
-.sr-from { font-family: var(--mono); font-size: 12px; color: var(--txt-mute); font-variant-numeric: tabular-nums; }
+.sr-from { font: 500 12px/1.3 var(--px-display, "Barlow Condensed", sans-serif); color: #6c665b; font-variant-numeric: tabular-nums; }
 .sr-num {
   min-width: 3.4ch; text-align: right;
-  font-family: var(--mono); font-size: 20px; color: var(--txt); font-variant-numeric: tabular-nums;
+  font: 700 20px/1.1 var(--px-display, "Barlow Condensed", sans-serif);
+  color: #111b20; font-variant-numeric: tabular-nums;
 }
-.sr-yield { color: var(--gold2); }
-.sr-gold { font-size: 16px; color: var(--gold); }
+.sr-yield { color: #b94c04; }
+.sr-gold { font-size: 16px; color: var(--px-orange, #e8700f); }
 /* the Gold is the settlement's last line: it lands when the count does */
 .sr-row-gold { transition: opacity .3s ease-out; }
 .session-results.counting .sr-row-gold { opacity: 0; }
-.sr-note { max-width: 36ch; font-family: var(--mono); font-size: 11.5px; line-height: 1.35; color: var(--txt-dim); }
+.sr-note { max-width: 36ch; font: 400 12px/1.4 var(--px-body, "Barlow", Arial, sans-serif); color: #3d474a; }
 .sr-confirm {
-  margin-top: 8px; padding: 9px 32px;
-  font-family: var(--display); font-size: 13px; letter-spacing: 2px; text-transform: uppercase;
-  color: #0c1213; background: var(--gold2);
-  border: 1px solid var(--gold-d); border-radius: 0; cursor: pointer;
-  box-shadow: none;
+  margin-top: 8px; padding: 10px 34px; min-height: 44px;
+  font: 700 15px/1 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .1em; text-transform: uppercase;
+  color: #fff; background: #e6690c;
+  border: 1px solid #ff982a; border-radius: 0; cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .35);
+  transition: transform .2s ease, background .2s ease;
 }
-.sr-confirm:hover { filter: brightness(1.08); }
-.sr-confirm:focus-visible { outline: 2px solid var(--brass-hi); outline-offset: 2px; }
+.sr-confirm:hover { background: var(--px-orange-hi, #fa7b19); transform: translateY(-2px); }
+.sr-confirm:focus-visible { outline: 2px solid #b94c04; outline-offset: 2px; }
 @keyframes sr-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sr-card-in {
   from { opacity: 0; transform: translateY(8px) scale(.94); }
@@ -1285,46 +1426,54 @@ html, body, #root {
   animation: sr-in .18s ease-out both;
 }
 .target-card.hidden { display: none !important; }
+/* UIX-6 (#601): the target card is paper, like the frame it rides in;
+   Start is the menu's orange. */
 .tc-card {
   display: flex; flex-direction: column; gap: 8px;
-  width: min(380px, 100%); max-height: 100%; overflow: auto;
-  padding: 20px 22px 16px;
+  width: min(400px, 100%); max-height: 100%; overflow: auto;
+  padding: 22px 24px 18px;
   text-align: left;
-  background: #101618;
-  border: 1px solid var(--brass);
+  background: var(--px-paper-bg, #efe5d0);
+  border: 3px solid #11191d; border-radius: 11px;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .53);
 }
 .tc-kicker {
-  font-family: var(--serif); font-size: 11px; letter-spacing: 1.5px;
-  text-transform: uppercase; color: var(--txt-dim);
+  font: 700 12px/1.3 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .16em; text-transform: uppercase; color: #e06e13;
 }
 .tc-head {
-  margin: 0; font-family: var(--display); font-size: 20px; letter-spacing: 1px;
-  color: var(--gold2);
+  margin: 0; font: 400 27px/1 var(--px-poster, "Anton", Impact, sans-serif);
+  letter-spacing: .01em; text-transform: uppercase; color: #162024;
 }
 .tc-rows { display: grid; gap: 4px; margin: 4px 0; }
 .tc-row {
-  font-family: var(--mono); font-size: 12px; line-height: 1.35;
-  color: var(--txt-dim);
+  font: 400 13px/1.4 var(--px-body, "Barlow", Arial, sans-serif);
+  color: #354144;
 }
-.tc-row.tc-target { color: var(--txt); font-weight: 600; }
+.tc-row.tc-target { color: #162024; font-weight: 700; }
 .tc-actions { display: flex; gap: 10px; margin-top: 8px; }
 .tc-start {
-  padding: 8px 20px;
-  font-family: var(--display); font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase;
-  color: #0c1213; background: var(--gold2);
-  border: 1px solid var(--gold-d); cursor: pointer;
+  padding: 9px 22px; min-height: 44px;
+  font: 700 14px/1 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .08em; text-transform: uppercase;
+  color: #fff; background: #e6690c;
+  border: 1px solid #ff982a; cursor: pointer;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .35);
+  transition: transform .2s ease, background .2s ease;
 }
-.tc-start:hover { filter: brightness(1.08); }
+.tc-start:hover { background: var(--px-orange-hi, #fa7b19); transform: translateY(-2px); }
 .tc-skip {
-  padding: 8px 16px;
-  font-family: var(--serif); font-size: 11px; letter-spacing: .8px; text-transform: uppercase;
-  color: var(--txt-mute); background: rgba(255,255,255,.04);
-  border: 1px solid var(--line); cursor: pointer;
+  padding: 9px 16px; min-height: 44px;
+  font: 700 12px/1 var(--px-display, "Barlow Condensed", sans-serif);
+  letter-spacing: .06em; text-transform: uppercase;
+  color: #162024; background: transparent;
+  border: 1.5px solid #1e2527; cursor: pointer;
+  transition: background .2s ease, color .2s ease, transform .2s ease;
 }
-.tc-skip:hover { color: var(--txt); border-color: var(--brass-lo); }
+.tc-skip:hover { background: #10191e; border-color: #10191e; color: #f2e8d4; transform: translateY(-2px); }
 .tc-opt {
   display: flex; align-items: center; gap: 6px; margin-top: 6px;
-  font-family: var(--mono); font-size: 11px; color: var(--txt-mute); cursor: pointer;
+  font: 400 12px/1.3 var(--px-body, "Barlow", Arial, sans-serif); color: #354144; cursor: pointer;
 }
 .tp-meter {
   display: flex; align-items: center; gap: 6px;
@@ -1337,7 +1486,8 @@ html, body, #root {
 }
 .tp-meter-fill {
   height: 100%; width: 0%;
-  background: linear-gradient(90deg, var(--brass), var(--gold2));
+  /* UIX-6 (#601): flat orange — the match-3 page paints no gradients but the paper */
+  background: var(--gold2);
   transition: width .3s ease-out;
 }
 .tp-meter-label {
@@ -1637,15 +1787,22 @@ html, body, #root {
     0 0 0 1px var(--gold2),
     0 0 26px 4px rgba(255, 186, 64, .42);
 }
+/* UIX-6 (#601): the finale overlay is a paper card stamped over the board —
+   the frame's own language (texture, ink border, flat orange and ink), the
+   glow traded for the card's drop shadow. */
 .m3-finale-banner {
   position: absolute; left: 50%; top: 44%; z-index: 11;
   transform: translate(-50%, -50%);
   pointer-events: none; text-align: center; white-space: nowrap;
+  padding: 16px 30px 14px;
+  background: var(--px-paper-bg, #efe5d0);
+  border: 3px solid #11191d; border-radius: 11px;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .53);
 }
-.m3-finale-stars { font-size: 44px; line-height: 1; letter-spacing: 6px; color: var(--gold2); }
+.m3-finale-stars { font-size: 44px; line-height: 1; letter-spacing: 6px; color: var(--px-orange-hi, #fa7b19); }
 .m3-finale-stars span {
   display: inline-block;
-  text-shadow: 0 0 16px var(--gold), 0 0 34px rgba(255, 176, 46, .7), 0 3px 0 #000;
+  text-shadow: none;
   animation: m3-star-in .5s cubic-bezier(.2, 1.6, .3, 1) both;
 }
 .m3-finale-stars span:nth-child(2) { animation-delay: .12s; }
@@ -1654,9 +1811,9 @@ html, body, #root {
 .m3-finale-stars span:nth-child(5) { animation-delay: .48s; }
 .m3-finale-word {
   margin-top: 6px;
-  font-family: var(--display); font-size: 34px; letter-spacing: 7px; text-transform: uppercase;
-  color: #fff4d6;
-  text-shadow: 0 0 18px var(--gold), 0 0 40px rgba(255, 176, 46, .6), 0 3px 0 #000;
+  font-family: var(--px-poster, var(--display)); font-size: 34px; letter-spacing: 5px; text-transform: uppercase;
+  color: #111b20;
+  text-shadow: none;
   animation: m3-word-in .55s cubic-bezier(.2, 1.4, .3, 1) .6s both;
 }
 .m3-finale-banner-4 .m3-finale-stars { font-size: 34px; }
@@ -5722,16 +5879,23 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   .session-frame {
     width: auto; max-width: none; max-height: none;
     border: 0; border-radius: 0; box-shadow: none; filter: none;
-    background: rgba(14, 20, 21, 0.97);
+    /* UIX-6 (#601): full-bleed, but still the paper — the card IS the screen */
+    background: var(--px-paper-bg, #efe5d0);
     padding: calc(var(--safe-top) + 8px) 8px calc(10px + env(safe-area-inset-bottom, 0px));
   }
+  .session-frame > #iso-quarry { padding: 8px; gap: 6px 0; }
   .session-frame .board-slot .board-wrap {
     width: 100%; height: 100%;
     display: flex; align-items: center; justify-content: center;
     border-radius: calc(var(--r) - 2px);
   }
-  .session-frame .tuning-plate { padding: 6px 8px; }
-  .session-frame .tp-title { font-size: 11.5px; }
+  .session-frame .tp-title { min-height: 40px; padding: 6px 10px; font-size: 14px; }
+  .session-frame .tp-meter { min-height: 40px; padding: 6px 10px 6px 4px; }
+  .session-frame :is(.tp-moves, .tp-score, .tp-yield) { min-height: 44px; padding: 6px 10px; }
+  .session-frame :is(.tp-moves, .tp-score, .tp-yield) b { font-size: 18px; }
+  .session-frame .tp-curve { padding: 6px 10px; }
+  .session-frame .tp-finish { min-height: 40px; padding: 0 18px; font-size: 14px; }
+  .session-frame .tp-abandon { min-height: 40px; font-size: 11px; }
   /* #300: the results card pays the same safe areas, and is compact enough
      for a landscape phone's ~360px (it scrolls inside itself past that). */
   .session-results {
