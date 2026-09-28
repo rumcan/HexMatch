@@ -269,10 +269,10 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blurb: "The classic rival — the VP-01 tuning the game shipped with.",
     // L6 (#220): one session per Depot, one more per upgrade, monotone.
     economyLine: "One tuning session per Depot and one more per upgrade — your yield never drops.",
-    buildMs: 6_500,
-    idleMs: 1_800,
+    buildMs: 8_400,
+    idleMs: 2_400,
     expandPerTurn: 2,
-    paveTiles: 12,
+    paveTiles: 10,
     raidEveryMs: RAID_EVERY,   // the classic 2-minute raid clock
     blockades: true,
     moveMs: 2_600,
@@ -283,11 +283,13 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     contests: true,
     challenges: true,
     // L4 (#218): the shipped tuning hand — the middle of the multiplier.
-    // BAL-1: set to the measured "normal wins ~40% vs steady" line.
+    // BAL-1: set to the measured "normal wins ~40% vs steady" line. BAL-2
+    // (#530): clocks/pave/city-timing re-measured after #431's purchase rule
+    // (36.7% over 30 seeds, mean 19.0 min — docs/BALANCE.md §6).
     tuningSkill: 0.67,
     // L14 (#229): the shipped city timing — the next Depot stays funded.
-    townReserve: 0.85,
-    sessionMs: 74_000,
+    townReserve: 0.90,
+    sessionMs: 88_000,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
     // RIVAL-3 (#467): the shipped lead — 12 s of warning per claim.
     claimLeadMs: 12_000,
@@ -298,10 +300,10 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     blurb: "Plays the scoreboard: expands three builds at a time, paves hard, fights back.",
     // L6 (#220): the only row where the yield is not permanent.
     economyLine: "A tuned Depot cools off on the clock — re-tune it any time, and a bad session can cost you.",
-    buildMs: 4_500,
-    idleMs: 1_200,
+    buildMs: 4_800,
+    idleMs: 1_300,
     expandPerTurn: 3,
-    paveTiles: 16,
+    paveTiles: 15,
     raidEveryMs: 90_000,
     blockades: true,
     moveMs: 1_800,
@@ -316,8 +318,11 @@ export const RIVAL_SKILLS: Record<SkillKey, RivalSkill> = {
     tuningSkill: 0.88,
     // L14 (#229): buys the upgrade early — the ×1.6 is worth more than the
     // tempo the next Depot loses, and a hard rival is playing a compound game.
-    townReserve: 0.6,
-    sessionMs: 54_000,
+    // BAL-2 (#530): clocks/pave/city-timing re-measured after #431 — 53.3%
+    // over 30 seeds, the closest point the harness's lattice allows (see
+    // docs/BALANCE.md §6).
+    townReserve: 0.62,
+    sessionMs: 56_500,
     winTarget: VICTORY.target,   // AI-04: the shipped 10★ line, aliased
     // RIVAL-3 (#467): sharp and quick — 6 s to beat it there.
     claimLeadMs: 6_000,
