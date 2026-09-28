@@ -134,3 +134,43 @@ describe("specials on frost", () => {
     expect(clear.minted.filter((m) => m.what === "line").length).toBe(1);
   });
 });
+
+describe("a line gem swapped into a match", () => {
+  it("fires its row AND its column", () => {
+    const e = board();
+    // (3,3) is a line gem of ore; ore at (2,4),(4,4) — swap it right into a vertical three
+    e.grid[3][3]!.res = "ore"; e.grid[3][3]!.special = "line";
+    e.grid[2][4]!.res = "ore"; e.grid[4][4]!.res = "ore";
+    e.grid[3][4]!.res = "gold";
+    const phases = drain(e, e.resolveSwap(3, 3, 3, 4));
+    const clear = phases.find((p) => p.type === "clear")!;
+    const rows = new Set(clear.removed!.filter((x) => x.c === 4).map((x) => x.r));
+    const cols = new Set(clear.removed!.filter((x) => x.r === 3).map((x) => x.c));
+    expect(rows.size).toBe(e.h);
+    expect(cols.size).toBe(e.w);
+  });
+});
+
+describe("every shape its own power", () => {
+  it("a T (broken cross) makes a blast gem; swapped it clears the 3×3", () => {
+    const e = board();
+    // T: row 2 cols 1..3, col 2 rows 2..4
+    for (const c of [1, 2, 3]) e.grid[2][c]!.res = "wheat";
+    for (const r of [3, 4]) e.grid[r][2]!.res = "wheat";
+    const clear = e.resolve(e.findGroups(), {}, 1);
+    const minted = clear.minted.map((m) => m.what);
+    expect(minted.includes("blast") || minted.includes("nova") || minted.includes("bomb")).toBe(true);
+    const f = board();
+    f.grid[3][3]!.special = "blast";
+    const phases = drain(f, f.resolveSwap(3, 3, 3, 4));
+    const blast = phases.find((p) => p.type === "bombClear")!;
+    expect(blast.removed!.length).toBe(9);
+  });
+  it("a nova clears the 5×5", () => {
+    const f = board();
+    f.grid[3][3]!.special = "nova";
+    const phases = drain(f, f.resolveSwap(3, 3, 3, 4));
+    const blast = phases.find((p) => p.type === "bombClear")!;
+    expect(blast.removed!.length).toBe(25);
+  });
+});

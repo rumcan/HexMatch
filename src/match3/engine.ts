@@ -45,6 +45,11 @@ import {
 } from "./types";
 
 /** The colours a board boots with — gold only joins once a mine is reached. */
+
+/** The callout each kind of blast shouts. */
+const BLAST_LABEL: Record<"row" | "col" | "all" | "r1" | "r2", string> = {
+  row: "LINE BLAST", col: "LINE BLAST", all: "DISCO!", r1: "BLAST!", r2: "NOVA!",
+};
 export const BASE_POOL: ResKey[] = ["wood", "brick", "sheep", "wheat", "ore"];
 
 /** Where in the swap beat the two stones touch (see `SwapPhase.contactAt`). */
@@ -295,8 +300,12 @@ export class Match3Engine {
 
   /** Resolve `groups`: remove, crack, forge, mint — and report what happened. */
   /** The gems a line gem at (r, c) sweeps: its row, its column, or both. */
-  lineCells(r: number, c: number, axis: "row" | "col" | "both" | "all"): Gem[] {
+  lineCells(r: number, c: number, axis: "row" | "col" | "both" | "all" | "r1" | "r2"): Gem[] {
     if (axis === "all") return this.gems();
+    if (axis === "r1" || axis === "r2") {
+      const k = axis === "r1" ? 1 : 2;
+      return this.gems().filter((g) => Math.abs(g.r - r) <= k && Math.abs(g.c - c) <= k);
+    }
     const out: Gem[] = [];
     if (axis !== "col") for (let x = 0; x < this.w; x++) { const g = this.grid[r][x]; if (g) out.push(g); }
     if (axis !== "row") for (let y = 0; y < this.h; y++) { const g = this.grid[y][c]; if (g && y !== r) out.push(g); }
@@ -308,10 +317,10 @@ export class Match3Engine {
    * column once (girders stand, frost cracks instead). Returns where each
    * line fired, for the blast fx.
    */
-  private expandLines(removeIds: Set<number>, crackIds: Set<number>, first?: { gem: Gem; axis: "row" | "col" | "both" | "all" }): CellRef[] {
+  private expandLines(removeIds: Set<number>, crackIds: Set<number>, first?: { gem: Gem; axis: "row" | "col" | "both" | "all" | "r1" | "r2" }): CellRef[] {
     const fired = new Set<number>();
     const at: CellRef[] = [];
-    const fire = (g: Gem, axis: "row" | "col" | "both" | "all") => {
+    const fire = (g: Gem, axis: "row" | "col" | "both" | "all" | "r1" | "r2") => {
       fired.add(g.id);
       at.push({ r: g.r, c: g.c });
       for (const o of this.lineCells(g.r, g.c, axis)) {
@@ -327,6 +336,8 @@ export class Match3Engine {
         if (!removeIds.has(g.id) || fired.has(g.id)) continue;
         if (g.special === "line") { fire(g, "both"); grew = true; }
         else if (g.special === "disco") { fire(g, "all"); grew = true; }
+        else if (g.special === "blast") { fire(g, "r1"); grew = true; }
+        else if (g.special === "nova") { fire(g, "r2"); grew = true; }
       }
     }
     return at;
@@ -336,7 +347,7 @@ export class Match3Engine {
    * A line gem SWAPPED: it clears just its row (a left/right swap) or just its
    * column (up/down), then the board settles as after any clear.
    */
-  *lineBlast(line: Gem, axis: "row" | "col" | "all"): Resolution {
+  *lineBlast(line: Gem, axis: "row" | "col" | "all" | "r1" | "r2"): Resolution {
     const removeIds = new Set<number>();
     const crackIds = new Set<number>();
     const at = this.expandLines(removeIds, crackIds, { gem: line, axis });
@@ -371,10 +382,10 @@ export class Match3Engine {
     yield {
       type: "bombClear", chain: 1, removed, cracked, minted: [], fx, rewards, bonus: [], crosses: [],
       cleared: purged, pass: { cleared: {}, biggest: 0, shaped: false, chain: 1, purged },
-      bombAt: { r: line.r, c: line.c }, label: axis === "all" ? "DISCO!" : "LINE BLAST",
+      bombAt: { r: line.r, c: line.c }, label: BLAST_LABEL[axis],
       ...(axis === "all" || removed.length >= this.w * this.h - 2 ? { wipe: true } : {}),
     };
-    yield { type: "end", gains, label: axis === "all" ? "DISCO!" : "LINE BLAST", maxChain: 0 };
+    yield { type: "end", gains, label: BLAST_LABEL[axis], maxChain: 0 };
     const fall = this.gravity(2);
     yield { ...fall, type: "bombFall" };
     // Owner (2026-09-28): a disco ball's own cascade mints no bombs and no
@@ -436,10 +447,12 @@ export class Match3Engine {
 
     // …and the BOMB is minted by the shapes: an L's corner, a cross's middle.
     const shapeCrosses = this.crosses(groups);
-    if (!this.quietSpecials) for (const x of shapeCrosses) bombs.push({ r: x.mid.r, c: x.mid.c, res: x.mid.res });
+    // …a T / broken cross makes a BLAST (3×3), a holy cross (+) a NOVA (5×5)
+    const areas: { r: number; c: number; res: ResKey; what: "blast" | "nova" }[] = [];
+    if (!this.quietSpecials) for (const x of shapeCrosses) areas.push({ r: x.mid.r, c: x.mid.c, res: x.mid.res, what: x.kind === "holy" ? "nova" : "blast" });
     for (const ell of this.quietSpecials ? [] : this.lShapes(groups)) {
       const corner = ell.find((g) => ell.some((o) => o !== g && o.r === g.r) && ell.some((o) => o !== g && o.c === g.c));
-      if (corner && !bombs.some((b) => b.r === corner.r && b.c === corner.c)) bombs.push({ r: corner.r, c: corner.c, res: corner.res });
+      if (corner && !bombs.some((b) => b.r === corner.r && b.c === corner.c) && !areas.some((b) => b.r === corner.r && b.c === corner.c)) bombs.push({ r: corner.r, c: corner.c, res: corner.res });
     }
 
     // A line gem caught in a match clears its whole row and column; a line gem
@@ -508,6 +521,14 @@ export class Match3Engine {
       this.grid[l.r][l.c] = g;
       minted.push({ r: l.r, c: l.c, what: "line" });
       fx.push({ type: "up", r: l.r, c: l.c });
+    }
+    for (const a of areas) {
+      if (this.grid[a.r][a.c]) continue;
+      const g = this.newGem(a.res, a.r, a.c);
+      g.special = a.what;
+      this.grid[a.r][a.c] = g;
+      minted.push({ r: a.r, c: a.c, what: a.what });
+      fx.push({ type: "boom", r: a.r, c: a.c });
     }
     for (const b of bombs) {
       if (this.grid[b.r][b.c]) continue;
@@ -668,7 +689,7 @@ export class Match3Engine {
             if (!bombMove) bombMove = [r, c, r2, c2];
             continue;
           }
-          if ((a.special === "line" || b.special === "line" || a.special === "disco" || b.special === "disco") && !bombMove) bombMove = [r, c, r2, c2];
+          if ((a.special || b.special) && !bombMove) bombMove = [r, c, r2, c2];
           if (!this.wouldMatch(r, c, r2, c2)) continue;
           const mv: Move = [r, c, r2, c2];
           if (!score) return mv;
@@ -688,7 +709,7 @@ export class Match3Engine {
       for (let c = 0; c < this.w; c++) {
         const a = this.grid[r][c];
         if (!a || a.block) continue;
-        if (a.special === "bomb" || a.special === "line" || a.special === "disco") {
+        if (a.special) {
           const free = ([[0, 1], [0, -1], [1, 0], [-1, 0]] as const).some(([dr, dc]) => {
             const n = this.grid[r + dr]?.[c + dc];
             return !!n && !n.block;
@@ -771,6 +792,18 @@ export class Match3Engine {
       yield* this.detonate(b, other.res);
       return true;
     }
+    const area = g1.special === "blast" || g1.special === "nova" ? g1 : g2.special === "blast" || g2.special === "nova" ? g2 : null;
+    if (area && !this.findGroups().some((grp) => grp.includes(area))) {
+      yield* this.fireSwapped(area);
+      return true;
+    }
+    // A line gem swapped INTO a match is matched: it fires its row AND its
+    // column (the settle below). Swapped without one, the swap aims it.
+    const lineGem = g1.special === "line" ? g1 : g2.special === "line" ? g2 : null;
+    if (lineGem && this.findGroups().some((grp) => grp.includes(lineGem))) {
+      yield* this.settle(0);
+      return true;
+    }
     if (g1.special === "line" || g2.special === "line") {
       yield* this.lineBlast(g1.special === "line" ? g1 : g2, r1 === r2 ? "row" : "col");
       return true;
@@ -790,6 +823,11 @@ export class Match3Engine {
     }
     yield* this.settle(0);
     return true;
+  }
+
+  /** A special swapped with no match fires where it stands. */
+  private *fireSwapped(g: Gem): Resolution {
+    return yield* this.lineBlast(g, g.special === "nova" ? "r2" : "r1");
   }
 
   /** Owner (2026-09-28): bomb into bomb — the crazy combos this session. */
