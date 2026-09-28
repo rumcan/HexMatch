@@ -270,6 +270,8 @@ const DECAL_CELL = 8;
  * handful per map is the point — roughly two dozen on a 144x144 island.
  */
 const FOREST_DENSITY = 1 / 700;
+/** Block spacing inside a wood: one tile less than the footprint, so canopies overlap. */
+const WOOD_STEP = FOREST_FOOTPRINT - 1;
 /** Tree clumps per land tile, and the size of one clump. */
 const CLUMP_DENSITY = 1 / 150;
 const CLUMP_MIN = 4, CLUMP_MAX = 17;
@@ -769,10 +771,13 @@ export function scatterScenery(grid: Grid): Scenery {
         const d = Math.hypot(bx, by);
         if (d > radius) continue;
         if (d > radius - 1 && rng() < 0.45) continue;   // a ragged rim
-        spots.push([cx + bx * FOREST_FOOTPRINT, cy + by * FOREST_FOOTPRINT]);
+        // a step of footprint−1: neighbouring blocks overlap a tile, so the
+        // painted canopies meet with no meadow strip between them
+        spots.push([cx + bx * WOOD_STEP, cy + by * WOOD_STEP]);
       }
     }
   }
+  const inWood = new Uint8Array(MAP_W * MAP_H);   // tiles a wood block already covers
   for (const [tx, ty] of spots) {
     let ok = true;
     for (let dy = 0; dy < FOREST_FOOTPRINT && ok; dy++) {
@@ -782,13 +787,14 @@ export function scatterScenery(grid: Grid): Scenery {
         const j = idx(x, y);
         // The art's canopy overhangs the footprint generously, so the block
         // needs clearance from the coast as well as clear ground.
-        if (underForest[j] || !open(j) || toWater[j] < FOREST_FOOTPRINT) ok = false;
+        // (overlapping this wood's own blocks is the point; anything else reserved is not)
+        if ((underForest[j] && !inWood[j]) || !open(j) || toWater[j] < FOREST_FOOTPRINT) ok = false;
         else if (!clearOfRoads(j)) ok = false;
       }
     }
     if (!ok) continue;
     for (let dy = 0; dy < FOREST_FOOTPRINT; dy++) {
-      for (let dx = 0; dx < FOREST_FOOTPRINT; dx++) underForest[idx(tx + dx, ty + dy)] = 1;
+      for (let dx = 0; dx < FOREST_FOOTPRINT; dx++) { underForest[idx(tx + dx, ty + dy)] = 1; inWood[idx(tx + dx, ty + dy)] = 1; }
     }
     forests.push({
       tx, ty,

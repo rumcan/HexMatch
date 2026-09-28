@@ -110,9 +110,11 @@ describe("scenery scatter", () => {
     }
   });
 
-  it("places forest blocks on clear ground, never overlapping", () => {
+  it("places forest blocks on clear ground; blocks overlap only within a wood (owner 2026-09-28: no meadow gaps)", () => {
     expect(scenery.forests.length).toBeGreaterThan(0);
     const used = new Set<number>();
+    const origins = new Set(scenery.forests.map((f) => `${f.tx},${f.ty}`));
+    expect(origins.size, "no two blocks on the same spot").toBe(scenery.forests.length);
     for (const f of scenery.forests) {
       expect(FOREST_SPRITES).toContain(f.sprite);
       for (let dy = 0; dy < FOREST_FOOTPRINT; dy++) {
@@ -121,7 +123,6 @@ describe("scenery scatter", () => {
           expect(grid.terrain[i]).not.toBe(WATER);
           expect(grid.terrain[i]).not.toBe(SAND);
           expect(grid.occupancy[i]).toBe(-1);
-          expect(used.has(i)).toBe(false);   // no two blocks share a tile
           used.add(i);
           // and no 1×1 tree sprouts out of the middle of a painted wood
           expect(scenery.trees[i]).toBe(0);
