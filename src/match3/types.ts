@@ -114,7 +114,7 @@ export interface PassReport {
 }
 
 /** L12 (#227) — the kinds of board reward a score-paying board reports. */
-export type RewardKind = "holyCross" | "brokenCross" | "shape" | "combo" | "frost" | "girder" | "disco";
+export type RewardKind = "holyCross" | "brokenCross" | "shape" | "combo" | "frost" | "girder" | "disco" | "crazy";
 
 export const HOLY_CROSS_PICKS = 6;
 export const BROKEN_CROSS_PICKS = 3;

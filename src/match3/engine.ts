@@ -161,6 +161,7 @@ export class Match3Engine {
 
   /** A fresh board with no match on it (and the previous rectangle kept). */
   initFill(): void {
+    this.crazyCount = 0;
     const W = this.w;
     const H = this.h;
     this.grid = [];
@@ -420,10 +421,15 @@ export class Match3Engine {
       }
       const mid = grp[Math.floor(size / 2)];
       // Owner (2026-09-28): a match of 4 leaves a LINE gem of its colour behind.
-      if (size === 4) lines.push({ r: mid.r, c: mid.c, res: anchor });
+      // (on a cell that actually clears: a frozen gem only cracks and keeps its cell)
+      if (size === 4) {
+        const spot = [mid, ...grp].find((g) => g.hard === 0) ?? mid;
+        lines.push({ r: spot.r, c: spot.c, res: anchor });
+      }
       // Owner (2026-09-28): a match of 5 is the DISCO BALL now (wipes the board).
       if (size >= 5 && !this.quietSpecials) {
-        discos.push({ r: mid.r, c: mid.c, res: anchor });
+        const spot = [mid, ...grp].find((g) => g.hard === 0) ?? mid;
+        discos.push({ r: spot.r, c: spot.c, res: anchor });
         if (!tokenPresent && !this.paysScore) forge.push({ r: grp[0].r, c: grp[0].c, res: anchor, tier: 2 });
       }
     }
@@ -659,7 +665,7 @@ export class Match3Engine {
           const b = this.grid[r2][c2];
           if (!b || b.block) continue;
           if (a.special === "bomb" || b.special === "bomb") {
-            if (!(a.special === "bomb" && b.special === "bomb") && !bombMove) bombMove = [r, c, r2, c2];
+            if (!bombMove) bombMove = [r, c, r2, c2];
             continue;
           }
           if ((a.special === "line" || b.special === "line" || a.special === "disco" || b.special === "disco") && !bombMove) bombMove = [r, c, r2, c2];
@@ -755,6 +761,10 @@ export class Match3Engine {
       yield* this.lineBlast(g1.special === "disco" ? g1 : g2, "all");
       return true;
     }
+    if (g1.special === "bomb" && g2.special === "bomb") {
+      yield* this.crazyCombo(g1, g2);
+      return true;
+    }
     if (bomb) {
       const b = g1.special === "bomb" ? g1 : g2;
       const other = g1.special === "bomb" ? g2 : g1;
@@ -779,6 +789,65 @@ export class Match3Engine {
       return true;
     }
     yield* this.settle(0);
+    return true;
+  }
+
+  /** Owner (2026-09-28): bomb into bomb — the crazy combos this session. */
+  crazyCount = 0;
+
+  /**
+   * CRAZY COMBO: two bombs swapped into each other both go off — every gem of
+   * both their colours goes (two bombs of one colour take a second colour
+   * with them), and the counter climbs with every one this session.
+   */
+  *crazyCombo(a: Gem, b: Gem): Resolution {
+    this.crazyCount++;
+    const colours = new Set<ResKey>([a.res, b.res]);
+    if (colours.size < 2) {
+      const others = [...new Set(this.gems().filter((g) => !g.block && !g.special && g.res !== a.res).map((g) => g.res))];
+      if (others.length) colours.add(others[Math.floor(this.rand() * others.length)]);
+    }
+    const gains: Partial<Record<ResKey, number>> = {};
+    const removed: CellGem[] = [];
+    const cracked: ClearPhase["cracked"] = [];
+    const fx: FxEvent[] = [{ type: "boom", r: a.r, c: a.c }, { type: "boom", r: b.r, c: b.c }];
+    const rewards: RewardKind[] = [];
+    for (let r = 0; r < this.h; r++) {
+      for (let c = 0; c < this.w; c++) {
+        const g = this.grid[r][c];
+        if (!g || g.block) continue;
+        const hit = g === a || g === b || (colours.has(g.res) && g.special !== "disco");
+        if (!hit) continue;
+        if (g.hard > 0 && g !== a && g !== b) {
+          g.hard = (g.hard - 1) as 0 | 1 | 2;
+          cracked.push({ r, c, kind: "frost", left: g.hard });
+          fx.push({ type: "crack", r, c });
+          if (this.paysScore) rewards.push("frost");
+          continue;
+        }
+        if (g.tier > 0) {
+          const paid = this.credit(g.res, g.tier, g.forged === true);
+          if (paid > 0) gains[g.res] = (gains[g.res] ?? 0) + paid;
+        }
+        g.dead = true;
+        this.grid[r][c] = null;
+        removed.push({ r, c, id: g.id, res: g.res });
+        fx.push({ type: "pop", r, c });
+      }
+    }
+    if (this.paysScore) for (let i = 0; i < this.crazyCount; i++) rewards.push("crazy");
+    const label = `CRAZY COMBO ×${this.crazyCount}!`;
+    fx.push({ type: "combo", r: b.r, c: b.c, text: label });
+    const purged = removed.length;
+    yield {
+      type: "bombClear", chain: 1, removed, cracked, minted: [], fx, rewards, bonus: [], crosses: [],
+      cleared: purged, pass: { cleared: {}, biggest: 0, shaped: false, chain: 1, purged },
+      bombAt: { r: b.r, c: b.c }, label, wipe: true,
+    };
+    yield { type: "end", gains, label, maxChain: 0 };
+    const fall = this.gravity(2);
+    yield { ...fall, type: "bombFall" };
+    yield* this.settle(2);
     return true;
   }
 
