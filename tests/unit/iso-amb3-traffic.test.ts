@@ -24,6 +24,7 @@ import {
   selectOnScreen, spawnPedestrians, stepGhost, stepPedestrians, tickAmbience,
   tickTruckGhosts, townTrafficWeight,
   type Ped, type SignalMap,
+  setAmbientStandIns,
 } from "../../src/iso/ambience";
 import {
   createCarState, gapToActors, planCars, tickCars,
@@ -64,6 +65,24 @@ function handTruck(): Truck {
     _yieldMs: 0, _stuckMs: 0, _lastSpeed: 0,
   };
 }
+
+// The painter tests below draw the vector stand-ins; the shipped game keeps
+// them off until the sprites land (see the first test).
+setAmbientStandIns(true);
+
+describe("AMB-3 stand-ins are off in the shipped game", () => {
+  it("paints nothing until the sprites land", async () => {
+    const mod = await import("../../src/iso/ambience");
+    mod.setAmbientStandIns(false);
+    const calls: string[] = [];
+    const ctx = new Proxy({}, { get: (_t, k) => (typeof k === "string" ? (...a: unknown[]) => { calls.push(k); return a; } : undefined) }) as never;
+    const state = mod.createAmbience(1);
+    const n = mod.paintAmbience(ctx, { x: 0, y: 0, zoom: 2, vw: 800, vh: 600 } as never, null, state, [], { performance: false });
+    expect(n).toBe(0);
+    expect(calls).toEqual([]);
+    mod.setAmbientStandIns(true);
+  });
+});
 
 describe("AMB-3 delivery clock", () => {
   it("delivery ticks and the economic pose match with ambience on and off", () => {

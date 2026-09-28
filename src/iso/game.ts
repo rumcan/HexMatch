@@ -14935,8 +14935,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function composeVehicles() {
     const atlas = atlasRef ?? undefined;
     const showCars = ambienceVisible("cars", cam.zoom, currentGraphics().performance);
-    const hasModels = !!atlas?.has("car_sedan_se");
-      const carDraw = showCars && hasModels ? carItems(cars, track, atlas, seed) : [];
+    // Lead (2026-09-28): the shipped car sprites keep driving — `carItems`
+    // takes the 1950s model sprites when the atlas has them and the car1_*
+    // cells otherwise. The vector stand-ins stay off (ambience.ts).
+    const carDraw = showCars ? carItems(cars, track, atlas, seed) : [];
     return carDraw
       .concat(truckItems(ghostTruckState(), atlas, track))
       .concat(trainItems(rail, atlas));

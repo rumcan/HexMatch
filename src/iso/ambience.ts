@@ -859,6 +859,16 @@ function viewCentre(view: PaintView | undefined): [number, number] {
 }
 
 /**
+ * Lead (2026-09-28): no placeholder art reaches players. Until the sprites in
+ * `AMBIENT_ART_NEEDED` ship, the vector stand-ins stay OFF (the simulation —
+ * density, lights, walkers, trucks held at red — still runs underneath, and
+ * cars keep drawing from their shipped sprites). Tests and a local art
+ * session can turn them on.
+ */
+let DRAW_STAND_INS = false;
+export function setAmbientStandIns(on: boolean): void { DRAW_STAND_INS = on; }
+
+/**
  * Draw the stand-ins. Returns how many marks were painted. Skips cars when
  * the atlas already has the model sprites (those ride the depth sort).
  * A context without `beginPath` paints nothing — unit tests and jsdom.
@@ -872,6 +882,7 @@ export function paintAmbience(
   opts: { performance: boolean; view?: PaintView; atlasHasModels?: boolean },
 ): number {
   if (!ctx || typeof ctx.beginPath !== "function") return 0;
+  if (!DRAW_STAND_INS) return 0;
   const zoom = cam.zoom;
   if (opts.performance) return 0;
   const showCars = ambienceVisible("cars", zoom, false) && !opts.atlasHasModels;
