@@ -45,7 +45,7 @@ describe("#300 the star table (TUNING_STARS)", () => {
       expect(bars[i]).toBe(Math.max(1, Math.ceil(row.curve * TUNING.targetScore)));
     });
     // The shipped table, spelled out (MATCH-2: set from the measured bot sweep).
-    expect(bars).toEqual([1, 96, 177, 300, 480]);
+    expect(bars).toEqual([1, 135, 360, 600, 870]);
   });
 
   it("rates a max-yield session one star now — the curve is unchanged, the bars moved (MATCH-2)", () => {
@@ -59,7 +59,7 @@ describe("#300 the star table (TUNING_STARS)", () => {
 
   it("rates the boundaries — 0 stars only when nothing was cleared", () => {
     const cases: [number, number][] = [
-      [0, 0], [1, 1], [95, 1], [96, 2], [176, 2], [177, 3], [299, 3], [300, 4], [479, 4], [480, 5], [5000, 5],
+      [0, 0], [1, 1], [134, 1], [135, 2], [359, 2], [360, 3], [599, 3], [600, 4], [869, 4], [870, 5], [5000, 5],
     ];
     for (const [score, stars] of cases) expect(tuningStarsFor(score), `score ${score}`).toBe(stars);
     expect(tuningStarsFor(-5)).toBe(0);

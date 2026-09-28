@@ -134,12 +134,12 @@ describe("#461 yields unchanged", () => {
 
   // MATCH-2 (#566) moved the bars onto the 5★ scale (the yields above did not move).
   it("star thresholds are the 5★ table", () => {
-    expect(tuningStarScores()).toEqual([1, 96, 177, 300, 480]);
+    expect(tuningStarScores()).toEqual([1, 135, 360, 600, 870]);
     expect(tuningStarsFor(0)).toBe(0);
     expect(tuningStarsFor(1)).toBe(1);
     expect(tuningStarsFor(TUNING.targetScore)).toBe(1);
-    expect(tuningStarsFor(96)).toBe(2);
-    expect(tuningStarsFor(480)).toBe(5);
+    expect(tuningStarsFor(135)).toBe(2);
+    expect(tuningStarsFor(870)).toBe(5);
   });
 
   it("rival tuning still deterministic per skill", () => {

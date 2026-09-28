@@ -151,14 +151,14 @@ describe("MATCH-2 the star moment", () => {
     const h = await depotSession();
     expect(h.board.timeScale()).toBe(1);
 
-    h.board.onClear(300, 1);                 // the pass that crosses ★★★★
-    expect(h.tuning!.score).toBeGreaterThanOrEqual(300);
+    h.board.onClear(600, 1);                 // the pass that crosses ★★★★
+    expect(h.tuning!.score).toBeGreaterThanOrEqual(600);
     expect(banner(4), "the OVERDRIVE banner").toBeTruthy();
     expect(banner(4)!.textContent).toContain("Overdrive");
     expect(wrap().classList.contains("m3-finale-4")).toBe(true);
     expect(h.board.timeScale(), "4★ never slows the board").toBe(1);
 
-    h.board.onClear(200, 1);                 // …and the one that crosses ★★★★★
+    h.board.onClear(300, 1);                 // …and the one that crosses ★★★★★
     expect(banner(5), "the LEGENDARY banner").toBeTruthy();
     expect(banner(5)!.textContent).toContain("Legendary");
     expect(banner(5)!.querySelectorAll(".m3-finale-stars span").length).toBe(5);
@@ -168,7 +168,7 @@ describe("MATCH-2 the star moment", () => {
 
   it("holds the results until a Legendary finale has landed — Finish during it lands with it", async () => {
     const h = await depotSession();
-    h.board.onClear(500, 1);
+    h.board.onClear(900, 1);
     expect(h.board.busy).toBe(false);
     const t0 = Date.now();
     h.tuningEnd();                           // Finish, mid-finale
@@ -184,7 +184,7 @@ describe("MATCH-2 the star moment", () => {
     (window as unknown as { matchMedia: (q: string) => { matches: boolean } }).matchMedia =
       (q: string) => ({ matches: q.includes("reduce"), addEventListener() {}, removeEventListener() {} }) as never;
     const h = await depotSession();
-    h.board.onClear(500, 1);
+    h.board.onClear(900, 1);
     expect(banner(5), "the rating still lands").toBeTruthy();
     expect(h.board.timeScale(), "no slow-mo").toBe(1);
   });

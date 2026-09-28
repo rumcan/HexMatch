@@ -244,7 +244,7 @@ export class Board {
     const g2 = this.grid[nxt.r2]?.[nxt.c2];
     if (!g1 || !g2) return true;
     if (g1.block || g2.block) return false;
-    if (g1.special === "bomb" || g2.special === "bomb") return true;
+    if (g1.special || g2.special) return true;
     return this.engine.swapGain(nxt.r1, nxt.c1, nxt.r2, nxt.c2) > 0;
   }
 

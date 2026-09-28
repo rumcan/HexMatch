@@ -54,7 +54,7 @@ export interface Gem {
   id: number;
   res: ResKey;
   tier: 0 | 1 | 2;
-  special: null | "bomb";
+  special: Special;
   /** Frost: 0 = clear, 1 = one match frees it, 2 = two. */
   hard: 0 | 1 | 2;
   /** Iron girder: the cell is out of play until a removal beside it breaks it. */
@@ -97,6 +97,10 @@ export const FAST_ANIMATION_MS = {
 export type AnimationKey = keyof typeof BOARD_ANIMATION_MS;
 
 export type FxType = "pop" | "crack" | "up" | "boom" | "bad" | "chain" | "combo" | "cross" | "bcross";
+/** A gem's special: a bomb (match 5) purges a colour; a line gem (match 4)
+ * clears its row and column — or, swapped, just the row (left/right) or the
+ * column (up/down). */
+export type Special = null | "bomb" | "line";
 export type CrossKind = "holy" | "broken";
 
 /** B1 (#246) — one resolved pass, seen by the battle engine. */
@@ -164,7 +168,7 @@ export interface ClearPhase {
   removed: CellGem[];
   cracked: { r: number; c: number; kind: "frost" | "girder"; left: number }[];
   /** Tokens forged / bombs minted in place this pass (drawn as an `up`/`boom`). */
-  minted: { r: number; c: number; what: "token" | "bomb" }[];
+  minted: { r: number; c: number; what: "token" | "bomb" | "line" }[];
   fx: FxEvent[];
   rewards: RewardKind[];
   bonus: { res: ResKey; amount: number; reason: string }[];

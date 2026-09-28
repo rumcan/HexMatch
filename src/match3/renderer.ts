@@ -34,7 +34,7 @@
 
 import type { Board } from "./board";
 import { STONE_PALETTE, drawFlatGem, frameIndex, stripTypeFor, type StoneStrip, type StripType } from "./stones";
-import type { BoardPhase, CellRef, ClearPhase, FallPhase, ResKey, SwapPhase } from "./types";
+import type { BoardPhase, CellRef, ClearPhase, FallPhase, ResKey, SwapPhase, Special } from "./types";
 
 export interface RendererArt {
   /** The Iron Girder blocker (the painted anvil). */
@@ -86,7 +86,7 @@ interface Tween {
 interface Sprite {
   id: number;
   res: ResKey;
-  special: null | "bomb";
+  special: Special;
   hard: number;
   block: boolean;
   tier: number;
@@ -322,7 +322,7 @@ export class BoardRenderer {
     return typeof performance !== "undefined" ? performance.now() : Date.now();
   }
 
-  private makeSprite(g: { id: number; res: ResKey; special: null | "bomb"; hard: number; block: boolean; tier: number }, x: number, y: number): Sprite {
+  private makeSprite(g: { id: number; res: ResKey; special: Special; hard: number; block: boolean; tier: number }, x: number, y: number): Sprite {
     const s: Sprite = {
       id: g.id, res: g.res, special: g.special, hard: g.hard, block: g.block, tier: g.tier,
       x, y, angle: 0, twist: 0, scale: 1, sx: 1, sy: 1, alpha: 1, jx: 0,
@@ -747,7 +747,8 @@ export class BoardRenderer {
     const hovered = !s.dying && this.hover?.r === Math.round(s.y) && this.hover?.c === Math.round(s.x);
     const ice = s.hard > 0 ? (s.hard >= 2 ? strip?.ice2 : strip?.ice1) : undefined;
     const posed = s.pose ? (s.pose.kind === "boom" ? strip?.boom : strip?.wiggle)?.[s.pose.frame] : undefined;
-    const wiggling = !perf && rich && !ice && (hovered || isSel || !!off) && strip?.wiggle?.length;
+    // a line gem is never still: its own wiggle, all the time
+    const wiggling = !perf && rich && !ice && (hovered || isSel || !!off || s.special === "line") && strip?.wiggle?.length;
     if (posed) ctx.drawImage(posed, -size / 2, -size / 2, size, size);
     else if (ice) ctx.drawImage(ice, -size / 2, -size / 2, size, size);
     else if (wiggling) ctx.drawImage(strip!.wiggle![Math.floor(now / 120) % strip!.wiggle!.length], -size / 2, -size / 2, size, size);
@@ -761,6 +762,7 @@ export class BoardRenderer {
       ctx.arc(0, 0, size * 0.48 + k * 2, 0, Math.PI * 2);
       ctx.stroke();
     }
+    if (s.special === "line") this.drawLineBeams(ctx, size, rich ? now : 0);
     if (s.hard > 0 && !ice) {
       const ice = s.hard >= 2 ? this.opts.art?.ice2 : this.opts.art?.ice1;
       if (ice) {
@@ -769,6 +771,36 @@ export class BoardRenderer {
       } else this.drawFrost(ctx, size, s.hard);
     }
     if (s.tier > 0) this.drawBadge(ctx, size, s.tier);
+    ctx.restore();
+  }
+
+  /** A line gem's mark: a row beam and a column beam of light through it, pulsing. */
+  private drawLineBeams(ctx: CanvasRenderingContext2D, size: number, now: number): void {
+    const k = 0.5 + 0.5 * Math.sin(now / 220);
+    const reach = size * (0.58 + 0.06 * k);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const [w, a] of [[size * 0.16, 0.18 + 0.12 * k], [size * 0.05, 0.75 + 0.2 * k]] as const) {
+      ctx.strokeStyle = `rgba(255, 226, 150, ${a})`;
+      ctx.lineWidth = w;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(-reach, 0); ctx.lineTo(reach, 0);
+      ctx.moveTo(0, -reach); ctx.lineTo(0, reach);
+      ctx.stroke();
+    }
+    // arrowheads at the four ends: the way the blast will run
+    ctx.fillStyle = `rgba(255, 240, 200, ${0.8 + 0.2 * k})`;
+    const t = size * 0.09;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const x = dx * reach, y = dy * reach;
+      ctx.beginPath();
+      ctx.moveTo(x + dx * t, y + dy * t);
+      ctx.lineTo(x - dy * t * 0.8, y + dx * t * 0.8);
+      ctx.lineTo(x + dy * t * 0.8, y - dx * t * 0.8);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.restore();
   }
 
