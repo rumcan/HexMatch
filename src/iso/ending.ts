@@ -1023,6 +1023,9 @@ export function showEndingScreen(
   primary.classList.add("ending-primary");
   if (!nextContractBtn && !continueBtn) restart.textContent = "Play again";
   actions.append(primary, review,
+    // A won contract offers both doors: "Next contract" leads, and the way
+    // back to the campaign list must still stand beside it.
+    ...(continueBtn && primary !== continueBtn ? [continueBtn] : []),
     ...(primary !== restart ? [restart] : []),
     ...(mainMenuBtn ? [mainMenuBtn] : []));
   card.appendChild(actions);
