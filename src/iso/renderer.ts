@@ -641,7 +641,7 @@ export interface ClaimFlagView {
  * claim (feet on the tile's ground point, like the protest crowd), and the
  * pulsing "Contested" ring + label wherever both seats are racing the site.
  * Vector-drawn — no art assets, Space Age palette (charcoal #1f2427,
- * lemon #f2d64b, bone #eee6d4). Called from the game's `overlayPainter`,
+ * orange #ed7414, bone #eee6d4). Called from the game's `overlayPainter`,
  * after protests: a flag is a statement, it stands on top.
  */
 export function paintClaimFlags(
@@ -663,7 +663,7 @@ export function paintClaimFlags(
       ctx.save();
       ctx.beginPath();
       ctx.ellipse(bx, by, (13 + 5 * pulse) * z, (6 + 2.5 * pulse) * z, 0, 0, Math.PI * 2);
-      ctx.strokeStyle = "#f2d64b";
+      ctx.strokeStyle = "#ed7414";
       ctx.globalAlpha = 0.45 + 0.45 * pulse;
       ctx.lineWidth = Math.max(1.5, 2.5 * z);
       ctx.stroke();
@@ -673,7 +673,7 @@ export function paintClaimFlags(
       ctx.textAlign = "center";
       ctx.lineWidth = 3;
       ctx.strokeStyle = "rgba(31,36,39,0.85)";
-      ctx.fillStyle = "#f2d64b";
+      ctx.fillStyle = "#ed7414";
       const ly = by - 52 * z;
       ctx.strokeText("Contested", bx, ly);
       ctx.fillText("Contested", bx, ly);
