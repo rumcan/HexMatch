@@ -1133,38 +1133,17 @@ describe("audit regressions: two real games, one room", () => {
     expect(guestSeat.gold).toBe(forgedGold);
   });
 
-  it("BM-2: guest sabotage targets the host, syncs both ways, and cannot bypass cooldown", async () => {
-    const { host, guest, guestEnd, hostEnd } = await bootPair();
+  it("BM-2: session sabotage is solo-only — multiplayer has no tuning sessions", async () => {
+    const { host, guest } = await bootPair();
     host.purses[1].gold = 100;
     host.purses[0].gold = 100;
     forcePublish(guest); pump();
-    guest.buyBlack("frost");
-    expect(guestEnd.sent[guestEnd.sent.length - 1]).toMatchObject({ type: "intent", action: "blackMarket", payload: { key: "frost" } });
-    expect(host.blackMarketStates[0].frostUntil).toBe(0);
-    pump();
-    expect(host.purses[1].gold).toBe(100 - SABOTAGE.frost.gold);
-    expect(host.blackMarketStates[0].frostUntil).toBeGreaterThan(0);
-    expect(host.blackMarketStates[1].frostUntil).toBe(0);
-    expect(guest.blackMarketStates[1]).toEqual(host.blackMarketStates[0]);
-    expect(guest.blackMarketStates[0]).toEqual(host.blackMarketStates[1]);
-    guest.buyBlack("redTape"); pump();
-    expect(host.purses[1].gold).toBe(100 - SABOTAGE.frost.gold);
-    expect(host.blackMarketStates[0].redTapeUntil).toBe(0);
+    guest.buyBlack("frost"); pump();
     host.buyBlack("redTape"); pump();
-    expect(guest.blackMarketStates[0].redTapeUntil).toBeGreaterThan(0);
-    expect(guest.blackMarketStates[1].redTapeUntil).toBe(0);
-    // Join/resync carries the same deadlines, not a fresh duration.
-    await new Promise((r) => setTimeout(r, 320));
-    hostEnd.deliver({ type: "resync" }); pump();
-    expect(guest.blackMarketStates[0]).toEqual(host.blackMarketStates[1]);
-    expect(guest.blackMarketStates[1]).toEqual(host.blackMarketStates[0]);
-    host.market.advance(180001);
-    forcePublish(guest); pump();
-    expect(sessionSabotage(guest.blackMarketStates[0], guest.market.ms)).toEqual({ frost: 0, girders: 0, lostMoves: 0 });
-    expect(sessionSabotage(guest.blackMarketStates[1], guest.market.ms)).toEqual({ frost: 0, girders: 0, lostMoves: 0 });
-    guest.buyBlack("redTape"); pump();
-    expect(host.purses[1].gold).toBe(100 - SABOTAGE.frost.gold - SABOTAGE.redTape.gold);
-    expect(guest.blackMarketStates[1]).toEqual(host.blackMarketStates[0]);
+    expect(host.purses[0].gold).toBe(100);
+    expect(host.purses[1].gold).toBe(100);
+    expect(host.blackMarketStates[0].frostUntil ?? 0).toBe(0);
+    expect(host.blackMarketStates[1].redTapeUntil ?? 0).toBe(0);
   });
 
   it("guest balances follow authoritative purse updates, in place (#114)", async () => {

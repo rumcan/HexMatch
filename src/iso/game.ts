@@ -8969,6 +8969,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase === "won") return false;
     const now = performance.now();
     if (isSessionSabotage(key)) {
+      // Multiplayer has no tuning sessions, so these cards would take Gold for nothing.
+      if (!isSolo()) {
+        toast(`${SABOTAGE[key].name} only works against tuning sessions — not available in multiplayer.`, "info");
+        return false;
+      }
       const state = actor.blackMarket ??= readBlackMarket();
       if (marketMs < state.readyAt) {
         toast(`The permit office is lying low — ready in ${Math.ceil((state.readyAt - marketMs) / 1000)}s.`, "info");

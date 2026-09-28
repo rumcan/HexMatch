@@ -49,3 +49,7 @@ were added. Covers real Depot/city sessions, no mid-session mutation, exact
 expiry, legal moves, cost/cooldown/security, AI purchases and simulated results,
 save/reload at a different clock origin, and MP intents/deltas/resync/expiry.
 E2E is intentionally delegated to the pre-merge reviewer per the owner's request.
+
+## Multiplayer
+
+Multiplayer has no tuning sessions, so Frost / Iron Girders and Red Tape are refused there (no Gold is taken). They are solo-only until MP gains tuning.
