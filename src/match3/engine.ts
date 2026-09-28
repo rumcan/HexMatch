@@ -376,9 +376,19 @@ export class Match3Engine {
     yield { type: "end", gains, label: axis === "all" ? "DISCO!" : "LINE BLAST", maxChain: 0 };
     const fall = this.gravity(2);
     yield { ...fall, type: "bombFall" };
-    yield* this.settle(2);
+    // Owner (2026-09-28): a disco ball's own cascade mints no bombs and no
+    // disco balls — the wipe is the payday, not a machine for more wipes.
+    this.quietSpecials = axis === "all";
+    try {
+      yield* this.settle(2);
+    } finally {
+      this.quietSpecials = false;
+    }
     return true;
   }
+
+  /** True while a disco ball's cascade settles: no bombs, no disco balls minted. */
+  private quietSpecials = false;
 
   resolve(groups: Gem[][], gains: Partial<Record<ResKey, number>>, chain = 1): ClearPhase {
     const removeIds = new Set<number>();
@@ -412,7 +422,7 @@ export class Match3Engine {
       // Owner (2026-09-28): a match of 4 leaves a LINE gem of its colour behind.
       if (size === 4) lines.push({ r: mid.r, c: mid.c, res: anchor });
       // Owner (2026-09-28): a match of 5 is the DISCO BALL now (wipes the board).
-      if (size >= 5) {
+      if (size >= 5 && !this.quietSpecials) {
         discos.push({ r: mid.r, c: mid.c, res: anchor });
         if (!tokenPresent && !this.paysScore) forge.push({ r: grp[0].r, c: grp[0].c, res: anchor, tier: 2 });
       }
@@ -420,8 +430,8 @@ export class Match3Engine {
 
     // …and the BOMB is minted by the shapes: an L's corner, a cross's middle.
     const shapeCrosses = this.crosses(groups);
-    for (const x of shapeCrosses) bombs.push({ r: x.mid.r, c: x.mid.c, res: x.mid.res });
-    for (const ell of this.lShapes(groups)) {
+    if (!this.quietSpecials) for (const x of shapeCrosses) bombs.push({ r: x.mid.r, c: x.mid.c, res: x.mid.res });
+    for (const ell of this.quietSpecials ? [] : this.lShapes(groups)) {
       const corner = ell.find((g) => ell.some((o) => o !== g && o.r === g.r) && ell.some((o) => o !== g && o.c === g.c));
       if (corner && !bombs.some((b) => b.r === corner.r && b.c === corner.c)) bombs.push({ r: corner.r, c: corner.c, res: corner.res });
     }

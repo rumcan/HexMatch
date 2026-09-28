@@ -94,3 +94,18 @@ describe("the disco ball and the shape bomb", () => {
     expect(clear.minted.some((m) => m.what === "bomb" && m.r === 5 && m.c === 0)).toBe(true);
   });
 });
+
+describe("a disco ball's cascade", () => {
+  it("mints no bombs and no disco balls, whatever falls in", () => {
+    for (let seed = 1; seed <= 25; seed++) {
+      const e = new Match3Engine({ rng: mulberry32(seed) });
+      e.initFill();
+      e.grid[4][3]!.special = "disco";
+      const minted: string[] = [];
+      e.drain(e.resolveSwap(4, 3, 4, 4), (p) => {
+        if (p.type === "clear") for (const m of p.minted) minted.push(m.what);
+      });
+      expect(minted.filter((w) => w === "bomb" || w === "disco"), `seed ${seed}`).toEqual([]);
+    }
+  });
+});
