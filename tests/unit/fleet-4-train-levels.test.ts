@@ -61,7 +61,8 @@ describe("FLEET-4: train levels", () => {
       setTrainLevel(train, lv);
       expect(wagonCount(train)).toBe(TRAIN_LEVELS.wagons[lv - 1]);
       expect(consistOf(train).length).toBe(2 + lv);
-      expect(trainLoadFactorOf(state, 7)).toBe(lv);
+      // wagons × speed (lead, 2026-09-29: speed pays too, as with trucks)
+      expect(trainLoadFactorOf(state, 7)).toBeCloseTo(TRAIN_LEVELS.wagons[lv - 1] * TRAIN_LEVELS.speed[lv - 1], 6);
     }
     expect(trainLoadFactorOf(state, 99)).toBe(1);
   });
