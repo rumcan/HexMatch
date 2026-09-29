@@ -181,9 +181,11 @@
 }
 #iso-guide .guide-key:not(.ghost) { border-color: #e46b0e; background: #e46b0e; color: #fff; }
 #iso-guide .guide-key:hover { background: #10191e; border-color: #10191e; color: #f2e8d4; }
-.ui-root .topbar .kingdoms { flex: 0 0 auto; margin-left: auto; }
+.ui-root .topbar .kingdoms { flex: 0 0 auto; margin-left: 14px; }
 .ui-root .topbar .king { flex-shrink: 0; }
-.ui-root .topbar .chipbar { min-width: 0; flex: 0 1 auto; }
+/* Owner (2026-09-29): the roster follows the logo; the resources take the free
+   space's far side (they were on the left, the roster on the right). */
+.ui-root .topbar .chipbar { min-width: 0; flex: 0 1 auto; margin-left: auto; }
 .ui-root .topbar .chip { padding: 0 9px; }
 @media (max-width: 1280px) { .ui-root .topbar .chip-n { font-size: 16px !important; } .ui-root .topbar .chip { padding: 0 6px; } }
 .ui-root .topbar .vp-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; }
