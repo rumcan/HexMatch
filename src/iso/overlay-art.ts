@@ -296,12 +296,19 @@ export interface OverlayScene {
  * standing on the footprint it would occupy. `valid` picks the tint — a
  * refused site shows the same building in the refusal hue, which is the whole
  * answer to "why won't it let me" without reading a line of text.
+ *
+ * RAIL-7 (#603): a station ghost is MULTIPLE sprites (warehouse + lane slab +
+ * cap) — the same sprites `railStructureItems` draws for the placed station.
+ * `sprites` carries the full list; `sprite/tx/ty` stays the first entry for
+ * backward compat (tests, stats, and the single-sprite path).
  */
 export interface GhostSpec {
   sprite: string;
   tx: number;
   ty: number;
   valid: boolean;
+  /** RAIL-7: when present, the ghost is this list — same sprites as the placed structure. */
+  sprites?: { sprite: string; tx: number; ty: number }[];
 }
 
 export const emptyScene = (): OverlayScene =>
@@ -646,11 +653,16 @@ export class PlacementOverlay {
     const s = this.style;
     const z = cam.zoom;
     const tone = ghost.valid ? s.valid : s.bad;
-    const placed = place(atlas, { sprite: ghost.sprite, tx: ghost.tx, ty: ghost.ty }, this.grid);
-    if (!placed) return false;
+    // RAIL-7: a station ghost is multiple sprites (warehouse + lane + cap).
+    // The light pool is still clipped to the footprint loops — the ground the
+    // building will occupy — so the pool logic stays before the per-sprite loop.
+    const entries = ghost.sprites && ghost.sprites.length
+      ? ghost.sprites
+      : [{ sprite: ghost.sprite, tx: ghost.tx, ty: ghost.ty }];
+    // The light pool comes from the site loops, not the sprites, so it previews
+    // even before any art has loaded.
     const b = siteLoops.length ? loopsBounds(cam, siteLoops) : null;
     if (b) {
-      // The light pool: the ground the building will occupy, lit from below.
       const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
       const r = Math.max(1, Math.max(b.x1 - b.x0, b.y1 - b.y0) * 0.62);
       ctx.save();
@@ -664,26 +676,33 @@ export class PlacementOverlay {
       ctx.fillRect(b.x0 - 1, b.y0 - 1, b.x1 - b.x0 + 2, b.y1 - b.y0 + 2);
       ctx.restore();
     }
-    const art = this.ghostArt(atlas, ghost.sprite, z, ghost.valid, makeSurface);
-    if (!art) return false;   // tinted copy unavailable (art loading) — the pool alone still previews
     // A legal ghost breathes and floats a pixel or two; a refused one sits
-    // still — movement is the reward, stillness is the refusal.
+    // still — movement is the reward, stillness is the refusal. Same bob/alpha
+    // for every sprite so the station moves as one.
     const bob = ghost.valid && !this.reducedMotion
       ? Math.sin(t / 780) * s.ghostBob * z
       : 0;
     const alpha = ghost.valid
       ? s.ghostAlpha + (this.reducedMotion ? 0 : 0.06 * Math.sin(t / 780 + 1))
       : s.ghostAlpha * 0.82;
-    const [sx, sy] = worldToScreen(cam, placed.wx, placed.wy);
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-    ctx.drawImage(
-      art.image as unknown as CanvasImageSource,
-      Math.floor(sx), Math.floor(sy - bob),
-      art.dw, art.dh,
-    );
-    ctx.restore();
-    return true;
+    let drawn = false;
+    for (const entry of entries) {
+      const placed = place(atlas, { sprite: entry.sprite, tx: entry.tx, ty: entry.ty }, this.grid);
+      if (!placed) continue;
+      const art = this.ghostArt(atlas, entry.sprite, z, ghost.valid, makeSurface);
+      if (!art) continue;
+      const [sx, sy] = worldToScreen(cam, placed.wx, placed.wy);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+      ctx.drawImage(
+        art.image as unknown as CanvasImageSource,
+        Math.floor(sx), Math.floor(sy - bob),
+        art.dw, art.dh,
+      );
+      ctx.restore();
+      drawn = true;
+    }
+    return drawn;
   }
 
   /**

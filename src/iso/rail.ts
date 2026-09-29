@@ -3202,32 +3202,68 @@ export function railStructureItems(state: RailState, atlas?: RailSpriteSource): 
   const out: DrawItem[] = [];
   for (const s of state.structures) {
     const ref = { kind: "rail", structure: s.id, railKind: s.kind, ownerId: s.ownerId };
-    if (s.kind === "depot") {
-      out.push({ sprite: depotSprite(s.view), tx: s.tx, ty: s.ty, ref });
-      continue;
-    }
-    const lanes = stationLanes(s);
-    const tier = stationWarehouseTier(lanes.length);
-    if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {
-      out.push({ sprite: platformSprite(s.view), tx: s.tx, ty: s.ty, ref });
-      continue;
-    }
-    const [wx, wy] = stationWarehouseTile(s);
-    out.push({ sprite: stationWhSprite(tier, s.view), tx: wx, ty: wy, ref });
-    for (let li = 0; li < lanes.length; li++) {
-      const l = lanes[li];
-      const slab = laneSlabTiles(l);
-      // The cap finishes the lane's far end; the slab tiles before it are the
-      // code-painted concrete strip. The first lane's head tile is the
-      // warehouse's own ground, so no slab is painted under it.
-      for (let i = li === 0 ? 1 : 0; i < slab.length - 1; i++) {
-        out.push({ sprite: laneSlabSprite(l.view), tx: slab[i][0], ty: slab[i][1], ref });
-      }
-      const [cx, cy] = laneCapTile(l);
-      out.push({ sprite: stationCapSprite(l.view), tx: cx, ty: cy, ref });
-    }
+    for (const it of structureSprites(s, atlas)) out.push({ ...it, ref });
   }
   return out;
+}
+
+/**
+ * The sprites one rail structure draws. RAIL-7 (#603): the ONE source of truth
+ * — the placed structure (`railStructureItems`) and the placement ghost
+ * (`platformGhostItems` / `depotGhostItems` / `laneGhostItems`) both come from
+ * here, so the ghost can never again show different art from what lands.
+ */
+export function structureSprites(s: RailStructure, atlas?: RailSpriteSource): GhostDrawItem[] {
+  if (s.kind === "depot") return [{ sprite: depotSprite(s.view), tx: s.tx, ty: s.ty }];
+  const lanes = stationLanes(s);
+  const tier = stationWarehouseTier(lanes.length);
+  if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {
+    return [{ sprite: platformSprite(s.view), tx: s.tx, ty: s.ty }];
+  }
+  const out: GhostDrawItem[] = [];
+  const [wx, wy] = stationWarehouseTile(s);
+  out.push({ sprite: stationWhSprite(tier, s.view), tx: wx, ty: wy });
+  for (let li = 0; li < lanes.length; li++) out.push(...laneSprites(lanes[li], li === 0));
+  return out;
+}
+
+/**
+ * One lane's slab strip and cap. The cap finishes the lane's far end; the slab
+ * tiles before it are the code-painted concrete strip. The first lane's head
+ * tile is the warehouse's own ground, so no slab is painted under it.
+ */
+function laneSprites(l: Pick<RailLane, "view" | "tx" | "ty">, first: boolean): GhostDrawItem[] {
+  const out: GhostDrawItem[] = [];
+  const slab = laneSlabTiles(l);
+  for (let i = first ? 1 : 0; i < slab.length - 1; i++) {
+    out.push({ sprite: laneSlabSprite(l.view), tx: slab[i][0], ty: slab[i][1] });
+  }
+  const [cx, cy] = slab[slab.length - 1];
+  out.push({ sprite: stationCapSprite(l.view), tx: cx, ty: cy });
+  return out;
+}
+
+export interface GhostDrawItem { sprite: string; tx: number; ty: number; }
+
+/** A structure the click would build, for its ghost (never added to the state). */
+const virtualStructure = (kind: RailKind, tx: number, ty: number, view: RailView): RailStructure => {
+  const [w, h] = kind === "platform" ? PLATFORM_FOOTPRINT[view] : DEPOT_FOOTPRINT;
+  return { id: -1, kind, ownerId: 0, owner: "", tx, ty, w, h, view };
+};
+
+/** RAIL-7: what a new 1-lane station placement will build. */
+export function platformGhostItems(tx: number, ty: number, view: RailView, atlas?: RailSpriteSource): GhostDrawItem[] {
+  return structureSprites(virtualStructure("platform", tx, ty, view), atlas);
+}
+
+/** RAIL-7: a train depot ghost — the placed depot's sprite. */
+export function depotGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
+  return structureSprites(virtualStructure("depot", tx, ty, view));
+}
+
+/** RAIL-7: the lane a station upgrade will add (slabs + cap; never the first lane). */
+export function laneGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
+  return laneSprites({ view, tx, ty }, false);
 }
 
 /**

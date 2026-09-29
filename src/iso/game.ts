@@ -365,7 +365,8 @@ import {
   // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
   // the preview, the guest intent and the rival.
   laneRefusal, addStationLane, laneOriginAt, laneSlabTiles, laneTrackTiles, laneStopTile,
-  laneSlabSprite, stationLanes, structureById, MAX_LANES,
+  stationLanes, structureById, MAX_LANES,
+  platformGhostItems, depotGhostItems, laneGhostItems,
   RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
 } from "./rail";
@@ -12194,7 +12195,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
         const stop = laneStopTile(probe);
         items.push({ sprite: "node_mark", tx: stop[0], ty: stop[1] });
-        ghost = { sprite: laneSlabSprite(st.view), tx: origin.tx, ty: origin.ty, valid: ok };
+        // RAIL-7 (#603): ghost draws exactly what will be placed — same sprites
+        // as the lane that `addStationLane` will build, via the shared
+        // `laneGhostItems` helper (one source of truth with `railStructureItems`).
+        const g = laneGhostItems(origin.tx, origin.ty, st.view);
+        ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
       }
     } else if (tool === "platform" || tool === "raildepot") {
       // RAIL-02 (#176): the same overlay contract as every other placement
@@ -12228,10 +12233,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const exit = depotExit({ id: -1, kind: "depot", ownerId: me.i + 1, owner: "", tx, ty, w: fw, h: fh, view: railView });
         items.push({ sprite: "node_mark", tx: exit.tx, ty: exit.ty });
       }
-      ghost = {
-        sprite: `${kind === "platform" ? "platform" : "train-depot"}_${railView}`,
-        tx, ty, valid: ok,
-      };
+      // RAIL-7 (#603): ghost draws exactly what will be placed — same sprites
+      // as `railStructureItems` for the structure the click would build, via
+      // the shared helpers `platformGhostItems` / `depotGhostItems` (one source
+      // of truth, so they can't drift again).
+      if (kind === "platform") {
+        const g = platformGhostItems(tx, ty, railView, atlasRef ?? undefined);
+        ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
+      } else {
+        const g = depotGhostItems(tx, ty, railView);
+        ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
+      }
     } else if (tool === "interchange") {
       const plan = planInterchange(grid, track, me.i + 1, tx, ty, me.purse, previewBalance(me, "road"));
       for (const [x, y] of plan.tiles.length ? plan.tiles : [[tx, ty, 0]])
