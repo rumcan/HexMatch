@@ -685,10 +685,10 @@ test("consolidated economy tabs and disabled purchases", async ({ page }) => {
     contracts: '.quests-pane:not(.hidden)',
     quests: '.quests-pane:not(.hidden)',
   };
-  for (const tab of [\"bank\", \"market\", \"black\", \"plant\", \"feed\", \"contracts\"]) {
-    const tabLocator = page.locator(`[data-tab=\"${tab}\"]`);
+  for (const tab of ["bank", "market", "black", "plant", "feed", "contracts"]) {
+    const tabLocator = page.locator(`[data-tab="${tab}"]`);
     // Fallback to quests if contracts not present (old bundle)
-    const toClick = await tabLocator.count() ? tabLocator : page.locator(`[data-tab=\"quests\"]`);
+    const toClick = await tabLocator.count() ? tabLocator : page.locator(`[data-tab="quests"]`);
     await toClick.click();
     const paneSel = tabToPane[tab] ?? '.pane:not(.hidden)';
     // Accept either the specific pane or any pane/quarry visible — the drawer may be collapsed
