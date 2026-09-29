@@ -227,12 +227,12 @@ describe("RAIL-6 the station and its lanes", () => {
       .toEqual([["platform_sw", 40, 20]]);
   });
 
-  it("the panel row shows the lanes, the busy count, and the lane action", () => {
+  it("the panel row shows the lanes, the busy count, and NO lane action (the on-map + invite adds lanes)", () => {
     const w = twoLineWorld();
     const rows = railPanelRows(w.state, 1);
     const p = rows.find((r) => r.id === w.P.id)!;
     expect(p.label).toBe("Station · 2 lanes (sw) · plant #0");
-    expect(p.actions).toEqual(["lane"]);
+    expect(p.actions).toEqual([]);
     // Both trains are booked into their lanes from the first metre.
     expect(p.detail).toMatch(/lines: Line 1, Line 2 · 2\/2 lanes busy/);
     const a = rows.find((r) => r.id === w.A.id)!;
@@ -240,7 +240,7 @@ describe("RAIL-6 the station and its lanes", () => {
     expect(a.detail).toMatch(/line: Line 1 · 0\/1 lane busy/);
     const c = rows.find((r) => r.id === w.C.id)!;
     expect(c.detail).toMatch(/not on a line/);
-    expect(c.actions).toEqual(["lane"]);
+    expect(c.actions).toEqual([]);
 
     // At four lanes the upgrade is gone — nothing left to click.
     const bare = bareWorld();

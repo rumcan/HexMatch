@@ -5893,7 +5893,15 @@ export function createOriginalUi(
         railRows.appendChild(h("div", "rail-empty",
           "No railway yet — drag Rail to a resource, then place a Platform beside it and a Train Depot on the line."));
       } else {
-        for (const row of railState!.rows) {
+        // Owner (2026-09-29): stations and lines read as two labelled groups.
+        const groups: [string, UiRailRow[]][] = [
+          ["Stations", railState!.rows.filter((r) => r.kind === "platform")],
+          ["Lines", railState!.rows.filter((r) => r.kind !== "platform")],
+        ];
+        for (const [title, list] of groups) {
+        if (!list.length) continue;
+        railRows.appendChild(h("div", "rail-sub", title));
+        for (const row of list) {
           const line = h("div", "rail-row");
           line.innerHTML = `<b>${row.label}</b><small>${row.detail}${row.hint ? ` · ${row.hint}` : ""}</small>`;
           // FLEET-4 (#598): the train's level as pips, and its Upgrade button
@@ -5904,7 +5912,7 @@ export function createOriginalUi(
             line.querySelector("b")?.appendChild(pips);
           }
           if (row.kind === "train" && row.upgrade) {
-            const up = h("button", "rail-act", row.upgrade.label) as HTMLButtonElement;
+            const up = h("button", "rail-act post-btn", row.upgrade.label) as HTMLButtonElement;
             up.dataset.railAction = `${row.id}:upgrade`;
             up.dataset.sfx = "click";
             up.disabled = !!row.upgrade.why;
@@ -5923,7 +5931,7 @@ export function createOriginalUi(
               o.value = String(l.id);
               pick.appendChild(o);
             }
-            const buy = h("button", "rail-act", `Buy train ${row.buyPrice ?? ""}`) as HTMLButtonElement;
+            const buy = h("button", "rail-act post-btn", `Buy train ${row.buyPrice ?? ""}`) as HTMLButtonElement;
             buy.dataset.railAction = `${row.id}:buy`;
             buy.dataset.sfx = "click";
             const why = h("small", "rail-why");
@@ -5942,17 +5950,16 @@ export function createOriginalUi(
           for (const action of row.actions) {
             // FLEET-1: the picker above owns Buy on a depot row that has one.
             if (action === "buy" && row.kind === "depot" && row.buyLines?.length) continue;
-            const b = h("button", "rail-act", action === "assign" ? "Assign line" : action === "buy" ? "Buy train"
-              : action === "start" ? "Start" : action === "recall" ? "Recall"
-                // RAIL-6 (#575): the station upgrade — the click arms the lane
-                // tool, the next click beside the station picks the side.
-                : action === "lane" ? "Add lane" : "Sell");
+            // (Owner 2026-09-29: no "Add lane" here - lanes come from the on-map "+" invite.)
+            const b = h("button", "rail-act post-btn", action === "assign" ? "Assign line" : action === "buy" ? "Buy train"
+              : action === "start" ? "Start" : action === "recall" ? "Recall" : "Sell");
             b.dataset.railAction = `${row.id}:${action}`;
             b.dataset.sfx = "click";
             b.onclick = () => hooks.onRailAction(row.id, action, row.partnerId);
             line.appendChild(b);
           }
           railRows.appendChild(line);
+        }
         }
       }
     }
