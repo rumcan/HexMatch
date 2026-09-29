@@ -345,6 +345,8 @@ export interface RailLineWire {
   /** RAIL-6 (#575): the lane each end runs into (absent = the first lane). */
   sourceLane?: number | null;
   destLane?: number | null;
+  /** FLEET-3 (#597): what the line carries (absent on an old host). */
+  cargo?: string;
 }
 export interface TrainWire {
   id: number;
@@ -372,6 +374,9 @@ export interface TrainWire {
   laneId?: number | null;
   /** RAIL-6 (#575): the station a `holding` train queues at. */
   holdStation?: number | null;
+  /** FLEET-3 (#597): wagon count (absent = 1) and the cargo the wagons carry. */
+  wagons?: number;
+  wagonCargo?: string;
 }
 /**
  * The whole railway. Structures, lines and trains are a handful of records and

@@ -204,8 +204,126 @@ export const CAR_LEN: Record<CarKind, number> = {
 };
 /** Buffer-to-buffer gap between two coupled cars, tiles. */
 export const CAR_GAP = 0.03;
-/** The cars of a train, locomotive first: every wagon kind, the oil tanker included. */
-export const consistOf = (_t: Train): CarKind[] => ["loco", "tender", "box", "tank", "flat"];
+
+// ── FLEET-3 (#597): the right wagon for the cargo ─────────────────────────
+/**
+ * Owner direction (2026-09-28): "trains should have the right train cars for
+ * the job". A line's cargo picks the wagon TYPE; the train is a locomotive and
+ * tender plus N wagons of that type (N = 1 today, FLEET-4 raises it).
+ */
+export type WagonType =
+  | "grain-hopper" | "log-flatcar" | "ore-hopper" | "gondola" | "tank-car" | "armoured-boxcar";
+export const WAGON_OF_CARGO: Record<Cargo, WagonType> = {
+  grain: "grain-hopper", wood: "log-flatcar", ore: "ore-hopper",
+  stone: "gondola", oil: "tank-car", gold: "armoured-boxcar",
+};
+/**
+ * The shipped car body a wagon type is dressed on until its own art lands
+ * (`wagon_<cargo>_<heading>[_loaded]`): the closed types ride the boxcar, the
+ * open ones the flatcar, the oil wagon the tanker.
+ */
+export const WAGON_BASE_KIND: Record<WagonType, CarKind> = {
+  "grain-hopper": "box", "log-flatcar": "flat", "ore-hopper": "box",
+  "gondola": "flat", "tank-car": "tank", "armoured-boxcar": "box",
+};
+/** What the train panel calls each wagon ("Loco + 2 tank cars"). */
+export const WAGON_NAME: Record<WagonType, [string, string]> = {
+  "grain-hopper": ["covered hopper", "covered hoppers"],
+  "log-flatcar": ["log flatcar", "log flatcars"],
+  "ore-hopper": ["ore hopper", "ore hoppers"],
+  "gondola": ["open gondola", "open gondolas"],
+  "tank-car": ["tank car", "tank cars"],
+  "armoured-boxcar": ["armoured boxcar", "armoured boxcars"],
+};
+/** How many wagons a train pulls: an absent count (every old save) is one. */
+export const wagonCount = (t: { wagons?: number }): number =>
+  Math.max(1, Math.floor(Number.isFinite(t.wagons) ? (t.wagons as number) : 1));
+/** The wagon type a train is pulling right now, or null before it has a cargo. */
+export const wagonTypeOf = (t: { wagonCargo?: Cargo }): WagonType | null =>
+  t.wagonCargo && WAGON_OF_CARGO[t.wagonCargo] ? WAGON_OF_CARGO[t.wagonCargo] : null;
+/**
+ * Loaded on the way to the plant, empty on the way back: a train heading for
+ * its destination carries the freight it took on at the source.
+ */
+export const trainLoaded = (t: { status: TrainStatus; target: "source" | "dest" | "depot" }): boolean =>
+  t.target === "dest" && t.status !== "stored";
+/** "Loco + 1 tank car" — the panel's words for a train's consist. */
+export function consistLabel(t: { wagons?: number; wagonCargo?: Cargo }): string {
+  if (!t.wagonCargo && t.wagons == null) return "Loco + 3 wagons";   // the legacy mixed consist
+  const n = wagonCount(t);
+  const type = wagonTypeOf(t);
+  const [one, many] = type ? WAGON_NAME[type] : ["wagon", "wagons"];
+  return `Loco + ${n} ${n === 1 ? one : many}`;
+}
+/**
+ * The sprite names a wagon may draw with, best first: its own loaded or empty
+ * art (`wagon_<cargo>_<heading>[_loaded]`), then its empty art, then the
+ * shipped car it is dressed on.
+ */
+export function wagonSpriteChain(kind: CarKind, cargo: Cargo | undefined, heading: string, loaded: boolean): string[] {
+  const base = `car-${kind}_${heading}`;
+  if (!cargo) return [base];
+  const own = `wagon_${cargo}_${heading}`;
+  return loaded ? [`${own}_loaded`, own, base] : [own, base];
+}
+/** The first sprite of the chain the atlas has; with no atlas, the best one. */
+export function wagonSpriteName(
+  kind: CarKind, cargo: Cargo | undefined, heading: string, loaded: boolean,
+  atlas?: { has(name: string): boolean },
+): string {
+  const chain = wagonSpriteChain(kind, cargo, heading, loaded);
+  if (!atlas) return chain[0];
+  return chain.find((n) => atlas.has(n)) ?? chain[chain.length - 1];
+}
+
+/**
+ * FLEET-3 (#597): the cargo a line carries — that of the industry its source
+ * station is anchored to (the plant end has no cargo of its own). Needs the
+ * grid, which knows what each industry is; null when neither end is anchored
+ * to an industry.
+ */
+export function lineCargoOf(state: RailState, line: RailLine, grid: Grid): Cargo | null {
+  for (const end of [line.source, line.dest]) {
+    const a = structureById(state, end)?.anchor;
+    if (a?.kind !== "industry") continue;
+    const ind = grid.industries[a.id];
+    const c = ind ? INDUSTRY_BY_KEY[ind.type]?.cargo : undefined;
+    if (c) return c;
+  }
+  return null;
+}
+
+/** Stamp every line with its cargo. Returns true when any line changed. */
+export function refreshLineCargo(state: RailState, grid: Grid): boolean {
+  let changed = false;
+  for (const line of state.lines) {
+    const c = lineCargoOf(state, line, grid);
+    if (c && line.cargo !== c) { line.cargo = c; changed = true; }
+  }
+  return changed;
+}
+
+/** A train's wagons take the type of its line's cargo as of now (a departure). */
+export function stampWagons(state: RailState, train: Train): void {
+  const c = state.lines.find((l) => l.id === train.lineId)?.cargo;
+  if (c) train.wagonCargo = c;
+}
+
+/**
+ * The cars of a train, locomotive and tender first, then its wagons. The wagon
+ * kind follows the cargo the train was last loaded for (`Train.wagonCargo`); a
+ * train with none yet pulls the plain boxcar.
+ */
+export function consistOf(t: Train): CarKind[] {
+  const type = wagonTypeOf(t);
+  // No cargo known yet (a hand-built train, a line with no industry): the
+  // playtest's mixed demo consist, so nothing that predates FLEET-3 changes.
+  if (!type && t.wagons == null) return ["loco", "tender", "box", "tank", "flat"];
+  const kind: CarKind = type ? WAGON_BASE_KIND[type] : "box";
+  const out: CarKind[] = ["loco", "tender"];
+  for (let i = wagonCount(t); i > 0; i--) out.push(kind);
+  return out;
+}
 
 /** Distance from the locomotive's centre (the train's position) to each car's centre. */
 export function carOffsets(cars: CarKind[]): number[] {
@@ -2252,6 +2370,12 @@ export interface RailLine {
    */
   sourceLane?: number | null;
   destLane?: number | null;
+  /**
+   * FLEET-3 (#597): what the line carries — the cargo of the industry its
+   * source station is anchored to. Stamped by `refreshLineCargo`; absent on an
+   * old save until the next tick.
+   */
+  cargo?: Cargo;
 }
 
 export type TrainStatus =
@@ -2296,6 +2420,14 @@ export interface Train {
    * every lane there is busy. Null unless the train is holding.
    */
   holdStation?: number | null;
+  /** FLEET-3 (#597): how many wagons it pulls. Absent = 1 (FLEET-4 raises it). */
+  wagons?: number;
+  /**
+   * FLEET-3 (#597): the cargo its wagons were built for, taken from the line
+   * at each departure from the source — so a line whose cargo changes gets the
+   * new wagon type on the NEXT departure, never mid-run.
+   */
+  wagonCargo?: Cargo;
 }
 
 export interface LinePlan {
@@ -2405,7 +2537,11 @@ function routeOctant(t: Train): number {
 }
 
 /** Where each car of a train stands, and which way it faces. */
-export interface CarPlacement { kind: CarKind; fx: number; fy: number; oct: number }
+export interface CarPlacement {
+  kind: CarKind; fx: number; fy: number; oct: number;
+  /** FLEET-3 (#597): a wagon (not the loco or tender): its cargo and whether it is carrying it. */
+  wagon?: { cargo: Cargo; loaded: boolean };
+}
 export function carPlacements(state: RailState, t: Train): CarPlacement[] {
   if (!t.route.length) return [];
   const head = pointAt(t.route, t.dist);
@@ -2415,13 +2551,18 @@ export function carPlacements(state: RailState, t: Train): CarPlacement[] {
   const cars = consistOf(t);
   const offs = carOffsets(cars);
   const fallback = routeOctant(t);
+  const loaded = trainLoaded(t);
   return cars.map((kind, i) => {
     const [fx, fy] = walkTrail(pts, offs[i]);
     const half = CAR_LEN[kind] * 0.4;
     const front = walkTrail(pts, Math.max(0, offs[i] - half));
     const rear = walkTrail(pts, offs[i] + half);
     const o = octantNear(front[0] - rear[0], front[1] - rear[1]);
-    return { kind, fx, fy, oct: o < 0 ? fallback : o };
+    const isWagon = kind !== "loco" && kind !== "tender";
+    return {
+      kind, fx, fy, oct: o < 0 ? fallback : o,
+      ...(isWagon && t.wagonCargo ? { wagon: { cargo: t.wagonCargo, loaded } } : {}),
+    };
   });
 }
 
@@ -2667,6 +2808,7 @@ export function buyTrain(
     dwellMs: 0,
     dirBit: exit.dir,
     resold: false,
+    wagonCargo: (grid ? lineCargoOf(state, line, grid) : null) ?? line.cargo,
   };
   state.trains.push(train);
   return { ok: true, train };
@@ -2883,7 +3025,11 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
   ownerMult?: (ownerId: number) => number,
 ): void {
   if (dtMs <= 0) return;
+  if (grid) refreshLineCargo(state, grid);
   for (const train of state.trains) {
+    // FLEET-3 (#597): a train that has no wagon type yet (a fresh buy, an old
+    // save) takes its line's now; after that it changes only at a departure.
+    if (!train.wagonCargo) stampWagons(state, train);
     // A train that is out on the line replans the moment the graph moves under
     // it (RAIL-04's "only when the graph revision changes") — the one place a
     // broken route is noticed. `planLeg` parks it where it stands if there is no
@@ -2931,6 +3077,9 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
         // the throat picks it up on its very next tick.
         releaseTrainLane(train);
         train.target = train.target === "source" ? "dest" : "source";
+        // FLEET-3 (#597): leaving the source, the train is loaded with whatever
+        // the line carries NOW — a changed cargo means the new wagon type.
+        if (train.target === "dest") stampWagons(state, train);
         if (!planLeg(state, train, turnRound(state, train), grid)) break;
         continue;
       }
@@ -3035,8 +3184,10 @@ export function autoTrains(state: RailState, ownerId: number, grid?: Grid): bool
     if (!run || run.length < 2) continue;
     const made = createLine(state, ownerId, src.id, dst.id);
     if (!made.ok || !made.line) continue;
+    if (grid) refreshLineCargo(state, grid);
     const train: Train = {
       id: state.seq++, ownerId, lineId: made.line.id, depotId: 0,
+      wagonCargo: made.line.cargo,
       status: "moving", target: "dest", route: run, dist: 0,
       planRevision: state.rail.revision, dwellMs: 0,
       dirBit: dirBitBetween(run[0], run[1] ?? run[0]), resold: false,
@@ -3257,7 +3408,8 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       id: t.id,
       kind: "train",
       label: line?.name ?? "Train",
-      detail: trainStatusText(t),
+      // FLEET-3 (#597): the panel names the wagons — "Loco + 1 tank car".
+      detail: `${consistLabel(t)} · ${trainStatusText(t)}`,
       // A blocked train stopped on its depot exit is home (see `trainAtHome`)
       // and offers its 50% sale rather than a recall that can never route.
       // #179: a train parked in its shed on a line can be started as well as sold.
@@ -3416,7 +3568,11 @@ export function trainItems(state: RailState, atlas?: RailSpriteSource): DrawItem
   const out: DrawItem[] = [];
   for (const train of state.trains) {
     for (const c of carPlacements(state, train)) {
-      const name = `car-${c.kind}_${OCT_NAMES[c.oct]}`;
+      // FLEET-3 (#597): a wagon draws as its cargo's own (loaded or empty)
+      // art when the atlas has it, else the shipped car it is dressed on.
+      const name = c.wagon
+        ? wagonSpriteName(c.kind, c.wagon.cargo, OCT_NAMES[c.oct], c.wagon.loaded, atlas)
+        : `car-${c.kind}_${OCT_NAMES[c.oct]}`;
       if (atlas && !atlas.has(name)) continue;
       out.push({ sprite: name, tx: Math.round(c.fx), ty: Math.round(c.fy), fx: c.fx, fy: c.fy });
     }
@@ -3587,7 +3743,10 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
     });
   }
   state.lines.length = 0;
-  for (const l of Array.isArray(wire.lines) ? wire.lines : []) state.lines.push({ ...l });
+  for (const l of Array.isArray(wire.lines) ? wire.lines : []) {
+    const { cargo, ...rest } = l;
+    state.lines.push({ ...rest, ...(CARGOES.includes(cargo as Cargo) ? { cargo: cargo as Cargo } : {}) });
+  }
   // A train record with no `route` means "the route you hold is current"
   // (#142: routes ride only when replanned), so the previous leg is carried
   // over — for a train this guest has never seen, there is nothing to carry
@@ -3614,6 +3773,9 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
       // train; an old record without them reads as "no lane held".
       laneId: typeof t.laneId === "number" ? t.laneId : null,
       holdStation: typeof t.holdStation === "number" ? t.holdStation : null,
+      // FLEET-3 (#597): optional on the wire; an old host sends neither.
+      ...(typeof t.wagons === "number" && t.wagons > 1 ? { wagons: Math.floor(t.wagons) } : {}),
+      ...(CARGOES.includes(t.wagonCargo as Cargo) ? { wagonCargo: t.wagonCargo as Cargo } : {}),
     });
   }
   return true;
