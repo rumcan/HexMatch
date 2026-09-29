@@ -343,6 +343,7 @@ import {
   createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester, lorryTripsPerMin, DEPOT_LOAD_MS,
   type Truck,
 } from "./vehicles";
+import { trafficScaledHaul, trafficFactorOf } from "./traffic-income";
 import { truckCountOf, truckKey, fleetLoadFactor, truckBuyCheck, truckSellRefusal, truckSellRefund, truckBuyPrice, truckUpgradePrice, truckSpeedMultOf, truckLevelOf, truckSpeedMultAt, truckUpgradeCheck } from "./fleet";
 import {
   CAR_COUNT, createCarState, planCars, tickCars, carItems,
@@ -5976,7 +5977,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!isRailDepot(h)) return 1;
     return trainLoadFactorOf(rail, h.platformId);
   };
-  const haulFactor = (h: Harvester): number => transportFactor(h) * fleetLoadFactor(h) * trainLoadFactor(h);
+  // TRAFFIC-INCOME: town traffic slows the lorries, so it slows the income (0.4..1, host-local).
+  const haulFactor = (h: Harvester): number => trafficScaledHaul(transportFactor(h) * fleetLoadFactor(h) * trainLoadFactor(h), h.id);
   function cargoPerMinForDepot(depot: Harvester, yieldLevel: number): number {
     try {
       const now = performance.now();
@@ -7311,6 +7313,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       busy: !!tuning,
       statsLine: routeLedgerHtml(d, performance.now()),
       damLine: damC.dam > 0 ? `dam: ×${1 + damC.dam} — hydro dam nearby` : null,
+      // TRAFFIC-INCOME: town traffic slowing this depot's lorries costs income.
+      trafficLine: trafficFactorOf(d.id) < 0.95
+        ? `Traffic delay −${Math.round((1 - trafficFactorOf(d.id)) * 100)}% — build your own road to avoid town traffic`
+        : null,
       lastStars: d.lastStars,
       fleet: fleetCardFor(d),
       onUpgrade: () => upgradeDepot(d.id),
