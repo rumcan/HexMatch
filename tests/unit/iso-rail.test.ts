@@ -715,9 +715,8 @@ describe("the Railway panel's model", () => {
     const state = createRailState();
     const { source, dest } = buildLine(state, grid, track, 7, 3);
     const before = railPanelRows(state, 1);
-    // RAIL-6 (#575): a station's one click is the lane upgrade (trains still
-    // spawn on their own — there is no line to assign).
-    expect(before.find((r) => r.id === source.id)?.actions).toEqual(["lane"]);
+    // Owner (2026-09-29): a station row offers no "Add lane" (the on-map + invite does).
+    expect(before.find((r) => r.id === source.id)?.actions).toEqual([]);
     expect(before.find((r) => r.id === source.id)?.label).toMatch(/Station · 1 lane/);
     expect(before.find((r) => r.id === source.id)?.partnerId).toBe(dest.id);
     expect(before.find((r) => r.kind === "depot")?.detail).toBe("no train");
@@ -736,13 +735,10 @@ describe("the Railway panel's model", () => {
     const state = createRailState();
     const s = placePlatform(state, "you", 1, 7, 3, "se", null);
     const items = railStructureItems(state);
-    // RAIL-6 (#575): a platform draws as its STATION — the warehouse behind
-    // lane 0, one code-painted slab tile per strip tile but the last, and a
-    // cap finishing every lane — in a fixed back-to-front order.
-    expect(items.map((i) => i.sprite)).toEqual([
-      "station_wh_1_r", "station_lane_se", "station_lane_se", "station_cap_r",
-    ]);
-    expect(items.map((i) => [i.tx, i.ty])).toEqual([[7, 3], [7, 4], [7, 5], [7, 6]]);
+    // Owner art (2026-09-29, #637): a four-tile lane draws as the owner's
+    // platform drawing, one sprite at the lane's origin.
+    expect(items.map((i) => i.sprite)).toEqual(["platform_se"]);
+    expect(items.map((i) => [i.tx, i.ty])).toEqual([[7, 3]]);
     for (const i of items) {
       expect(i.ref).toMatchObject({ kind: "rail", structure: s.id, railKind: "platform" });
     }

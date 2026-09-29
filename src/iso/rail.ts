@@ -648,7 +648,7 @@ export const createRailState = (): RailState => ({
 });
 
 export const footprintFor = (kind: RailKind, view: RailView): [number, number] =>
-  kind === "depot" ? DEPOT_FOOTPRINT : PLATFORM_FOOTPRINT[view];
+  kind === "depot" ? DEPOT_FOOTPRINT : kind === "loop" ? LOOP_FOOTPRINT[view] : PLATFORM_FOOTPRINT[view];
 
 export const viewBit = (view: RailView): number => VIEW_BIT[view];
 
@@ -1217,22 +1217,8 @@ export function railDrawLayer(state: RailState): { tile: Uint8Array; owner: Uint
       tile[i] |= RAIL_PRESENT | laneMaskAt(s, x, y);
       owner[i] = s.ownerId;
     }
-    if (s.kind === "loop") {
-      // FLEET-2 (#596): the side track and its two switches, as plain vector
-      // track (the placeholder until `passing_loop_<view>` art lands): the
-      // strip runs along the axis and each end turns into the run's end tile.
-      const strip = footprintTiles(s), run = loopRun(s);
-      const alongY = s.view === "se" || s.view === "nw";
-      const prev = alongY ? NE : NW, next = alongY ? SW : SE;
-      const toRun = VIEW_BIT[s.view], toStrip = OPPOSITE[toRun];
-      strip.forEach(([x, y], k) => {
-        const i = tIdx(x, y);
-        tile[i] |= RAIL_PRESENT | (k > 0 ? prev : 0) | (k < strip.length - 1 ? next : 0)
-          | (k === 0 || k === strip.length - 1 ? toRun : 0);
-        owner[i] = s.ownerId;
-      });
-      for (const k of [0, run.length - 1]) tile[tIdx(run[k][0], run[k][1])] |= toStrip;
-    }
+    // FLEET-2c: a loop's side track is real layer track now (`layLoopTrack`),
+    // so the drawn layer above already carries it - with 45° switches.
   }
   return { tile, owner, revision: state.rail.revision };
 }
@@ -1295,6 +1281,26 @@ export function railComponents(state: RailState, ownerId: number): Map<number, n
 }
 
 /**
+ * FLEET-2c: a planned route always keeps to the MAIN line through a Passing
+ * Loop (the side track is the same length, so the search could pick either);
+ * `blockLimit` turns a train onto the side track only when it must wait.
+ */
+function straightenLoops(state: RailState, ownerId: number, path: [number, number][]): [number, number][] {
+  for (const s of state.structures) {
+    if (s.kind !== "loop" || s.ownerId !== ownerId) continue;
+    const side = loopSideTiles(s), lat = loopLateral(s);
+    for (let k = 1; k + 1 < path.length; k++) {
+      const [x, y] = path[k], [nx, ny] = path[k + 1];
+      if (side.some(([sx, sy]) => sx === x && sy === y) && side.some(([sx, sy]) => sx === nx && sy === ny)) {
+        path[k] = [x - lat[0], y - lat[1]];
+        path[k + 1] = [nx - lat[0], ny - lat[1]];
+      }
+    }
+  }
+  return path;
+}
+
+/**
  * Shortest tile route from any tile in `from` to any tile in `goals` over
  * `ownerId`'s drivable rail, crossing only mutually-facing effective bits. Null
  * when the two ends are not connected. The same BFS shape as `roadPath`, so a
@@ -1328,7 +1334,7 @@ export function railPath(
       const path: number[] = [];
       for (let k = key; k !== -1; k = parent.get(k) as number) path.push(Math.floor(k / 9));
       path.reverse();
-      return path.map((i) => [i % MAP_W, (i / MAP_W) | 0] as [number, number]);
+      return straightenLoops(state, ownerId, path.map((i) => [i % MAP_W, (i / MAP_W) | 0] as [number, number]));
     }
     const x = cur % MAP_W, y = (cur / MAP_W) | 0;
     for (const [nx, ny] of railNeighbours(state, ownerId, x, y)) {
@@ -2446,7 +2452,7 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
     // FLEET-2 (#596): a loop comes down when no train is on or holding it and
     // the trains that share the line can still pass without it.
     const key = placeKey("loop", s.id);
-    const runSet = new Set(loopRun(s).map(([x, y]) => tIdx(x, y)));
+    const runSet = new Set([...loopRun(s), ...loopSideTiles(s)].map(([x, y]) => tIdx(x, y)));
     if (state.trains.some((t) => t.resv?.includes(key)
       || carPlacements(state, t).some((c) => runSet.has(tIdx(Math.round(c.fx), Math.round(c.fy)))))) return null;
     state.structures.splice(at, 1);
@@ -2456,6 +2462,7 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
       state.rail.revision++;
       return null;
     }
+    unlayLoopTrack(state, s);
     return s;
   }
   const lane = laneTiles(s);
@@ -2494,12 +2501,16 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
 // `rail-blocks.ts` treats the run as a place two trains may occupy).
 
 /** Tiles in a Passing Loop's run and side track. */
-export const LOOP_LEN = PLATFORM_LEN;
+export const LOOP_LEN = 5;
+/** FLEET-2c: a loop is 5 tiles long: the side track (3 tiles) holds a whole train clear of both switches. */
+export const LOOP_FOOTPRINT: Record<RailView, [number, number]> = {
+  se: [1, LOOP_LEN], nw: [1, LOOP_LEN], sw: [LOOP_LEN, 1], ne: [LOOP_LEN, 1],
+};
 /** FLEET-2: the most trains one line may run. */
 export const MAX_TRAINS_PER_LINE = 3;
 /** The tooltip and build-card text (the owner's words). */
 export const LOOP_INFO =
-  "Passing Loop — a short second track beside the line. Two trains on the same line wait here to pass each other. Needs a straight run of 4 rail tiles.";
+  "Passing Loop — a short second track beside the line. Two trains on the same line wait here to pass each other. Needs a straight run of 5 rail tiles.";
 /** A train held at a boundary shows this in `blockedWhy`. */
 export const WAIT_TO_PASS = "Waiting to pass";
 
@@ -2511,13 +2522,13 @@ export function loopStripOrigin(tx: number, ty: number, view: RailView): [number
 
 /** The run tiles a loop placed at (tx, ty) would sit beside, in axis order. */
 export function loopRunAt(tx: number, ty: number, view: RailView): [number, number][] {
-  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [w, h] = LOOP_FOOTPRINT[view];
   return footprintTiles({ tx, ty, w, h });
 }
 
 /** The side-track tiles of a loop placed at run origin (tx, ty). */
 export function loopStripAt(tx: number, ty: number, view: RailView): [number, number][] {
-  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [w, h] = LOOP_FOOTPRINT[view];
   const [sx, sy] = loopStripOrigin(tx, ty, view);
   return footprintTiles({ tx: sx, ty: sy, w, h });
 }
@@ -2529,6 +2540,65 @@ export const loopRun = (s: RailStructure): [number, number][] => platformTrack(s
 export function loopRunOrigin(s: RailStructure): [number, number] {
   const d = DIR[VIEW_BIT[s.view]];
   return [s.tx + d[0], s.ty + d[1]];
+}
+
+/**
+ * FLEET-2c: the loop's SIDE TRACK, the two strip tiles level with the run's
+ * interior. It leaves the main line at the run's first tile and rejoins at the
+ * last one, both as 45° diagonals (owner: "no 90° bends - rail must use angled
+ * connections"), so a train that has to wait drives OFF the main line and waits
+ * here while the oncoming train passes.
+ */
+export function loopSideTiles(s: RailStructure): [number, number][] {
+  const strip = footprintTiles(s);
+  return strip.slice(1, strip.length - 1);
+}
+
+/** The sideways step from a run tile to its side-track tile. */
+export function loopLateral(s: RailStructure): [number, number] {
+  const strip = footprintTiles(s), run = loopRun(s);
+  return [strip[0][0] - run[0][0], strip[0][1] - run[0][1]];
+}
+
+/** The two diagonal links (run end <-> side-track end) that are the loop's switches. */
+export function loopSwitchLinks(s: RailStructure): [[number, number], [number, number]][] {
+  const run = loopRun(s), side = loopSideTiles(s);
+  return [[run[0], side[0]], [run[run.length - 1], side[side.length - 1]]];
+}
+
+/**
+ * Write the side track into the rail layer as ordinary track: two straight
+ * tiles and the two 45° diagonal links. Idempotent (a save or a wire that
+ * already carries them is left alone; an old save's loop gets its track here).
+ */
+export function layLoopTrack(state: RailState, s: RailStructure): void {
+  if (s.kind !== "loop") return;
+  const run = loopRun(s);
+  if (!run.every(([x, y]) => (state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0)) return;
+  const side = loopSideTiles(s);
+  const alongY = s.view === "se" || s.view === "nw";
+  const prev = alongY ? NE : NW, next = alongY ? SW : SE;
+  side.forEach(([x, y], k) => {
+    const i = tIdx(x, y);
+    state.rail.tile[i] |= RAIL_PRESENT | (k < side.length - 1 ? next : 0) | (k > 0 ? prev : 0);
+    state.rail.owner[i] = s.ownerId;
+  });
+  for (const [a, b] of loopSwitchLinks(s)) {
+    const { i, bit } = diagSlot(a[0], a[1], b[0], b[1]);
+    state.rail.tile[i] |= bit;
+  }
+}
+
+/** Take a loop's side track out of the layer again (the run stays: it is the player's main line). */
+export function unlayLoopTrack(state: RailState, s: RailStructure): void {
+  for (const [a, b] of loopSwitchLinks(s)) {
+    const { i, bit } = diagSlot(a[0], a[1], b[0], b[1]);
+    state.rail.tile[i] &= ~bit;
+  }
+  for (const [x, y] of loopSideTiles(s)) {
+    state.rail.tile[tIdx(x, y)] = 0;
+    state.rail.owner[tIdx(x, y)] = 0;
+  }
 }
 
 /**
@@ -2545,6 +2615,9 @@ export function loopRefusal(
   const run = loopRunAt(tx, ty, view);
   const strip = loopStripAt(tx, ty, view);
   if (![...run, ...strip].every(([x, y]) => inMapT(x, y))) return "off-map";
+  // FLEET-2c: a run that already has a loop is "overlap" (its own switches are diagonals now).
+  const runIn = new Set(run.map(([x, y]) => tIdx(x, y)));
+  if (state.structures.some((s) => s.kind === "loop" && loopRun(s).some(([x, y]) => runIn.has(tIdx(x, y))))) return "overlap";
   const rail = state.rail;
   for (const [x, y] of run) {
     const i = tIdx(x, y);
@@ -2589,7 +2662,7 @@ export function loopRefusal(
     if (b === "depot" || b === "plant" || b === "platform" || b === "bridge" || b === "dam"
       || b === "rail" || b === "rail-x" || b === "rail-y" || hasRail(rail, x, y)) return "occupied";
   }
-  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [w, h] = LOOP_FOOTPRINT[view];
   const [sx, sy] = loopStripOrigin(tx, ty, view);
   if (state.structures.some((s) => overlaps(s, sx, sy, w, h) || overlaps(s, tx, ty, w, h))) return "overlap";
   // Two loops never share a run.
@@ -2602,10 +2675,11 @@ export function loopRefusal(
 export function placeLoop(
   state: RailState, owner: string, ownerId: number, tx: number, ty: number, view: RailView,
 ): RailStructure {
-  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [w, h] = LOOP_FOOTPRINT[view];
   const [sx, sy] = loopStripOrigin(tx, ty, view);
   const s: RailStructure = { id: state.seq++, kind: "loop", ownerId, owner, tx: sx, ty: sy, w, h, view, anchor: null };
   state.structures.push(s);
+  layLoopTrack(state, s);     // FLEET-2c: the side track and its two 45° switches
   state.rail.revision++;      // the blocks are re-cut and the trains re-plan
   return s;
 }
@@ -2628,7 +2702,15 @@ export function blockMapFor(state: RailState, ownerId: number, fresh = false): B
   for (const s of state.structures) {
     if (s.ownerId !== ownerId) continue;
     if (s.kind === "loop") {
-      places.push({ key: placeKey("loop", s.id), kind: "loop", tiles: loopRun(s).map(([x, y]) => tIdx(x, y)), slots: 2, directional: true });
+      // FLEET-2c: the place is the SIDE TRACK plus the run's interior; the run's two
+      // end tiles (the switches) stay in the plain blocks either side, so a
+      // train waits on the side track, never on the main line before the loop.
+      const run = loopRun(s);
+      places.push({
+        key: placeKey("loop", s.id), kind: "loop",
+        tiles: [...loopSideTiles(s), ...run.slice(1, run.length - 1)].map(([x, y]) => tIdx(x, y)),
+        slots: 2, directional: true, axis: s.view === "se" || s.view === "nw" ? 1 : 0,
+      });
     } else if (s.kind === "platform") {
       const lanes = stationLanes(s);
       const tiles = new Set<number>();
@@ -2665,18 +2747,34 @@ export function passingPlacesOn(state: RailState, line: RailLine, grid?: Grid, f
 }
 
 /** How many of the owner's trains run on lines that share track with `line` (its own included). */
-export function trainsSharing(state: RailState, line: RailLine, grid?: Grid): number {
+export function trainsSharing(
+  state: RailState, line: RailLine, grid?: Grid, fresh = false, extra?: RailLine,
+): number {
+  // FLEET-2c: two lines SHARE when their routes touch one plain block of track
+  // (single track between passing places), not only when they cover the same
+  // tile - a Y-junction's two arms are one block too. `extra` is one more train
+  // on that line (the purchase being asked about).
+  const trainsOn = (l: RailLine): number => state.trains.filter((t) => t.lineId === l.id).length + (extra === l ? 1 : 0);
   const mine = lineRouteTiles(state, line, grid);
-  if (!mine) return state.trains.filter((t) => t.lineId === line.id).length;
-  const set = new Set(mine.map(([x, y]) => tIdx(x, y)));
+  if (!mine) return trainsOn(line);
+  const bm = blockMapFor(state, line.ownerId, fresh);
+  const blocksOf = (route: [number, number][]): Set<string> => {
+    const out = new Set<string>();
+    for (const [x, y] of route) {
+      const seg = bm.segOf.get(tIdx(x, y));
+      if (seg && !bm.places.has(seg)) out.add(seg);
+    }
+    return out;
+  };
+  const set = blocksOf(mine);
   let n = 0;
   for (const l of state.lines) {
     if (l.ownerId !== line.ownerId) continue;
-    const count = state.trains.filter((t) => t.lineId === l.id).length;
+    const count = trainsOn(l);
     if (!count) continue;
     if (l === line) { n += count; continue; }
     const r = lineRouteTiles(state, l, grid);
-    if (r && r.some(([x, y]) => set.has(tIdx(x, y)))) n += count;
+    if (r && [...blocksOf(r)].some((seg) => set.has(seg))) n += count;
   }
   return n;
 }
@@ -2690,7 +2788,7 @@ export function linesCanShare(
     const own = state.trains.filter((t) => t.lineId === l.id).length + (extra === l ? 1 : 0);
     if (own > MAX_TRAINS_PER_LINE) return false;
     if (!own) continue;
-    const sharing = trainsSharing(state, l, grid) + (extra === l ? 1 : 0);
+    const sharing = trainsSharing(state, l, grid, fresh, extra);
     if (sharing > 1 && passingPlacesOn(state, l, grid, fresh) < sharing - 1) return false;
   }
   return true;
@@ -2718,14 +2816,15 @@ export function planRivalLoop(
     if (passingPlacesOn(state, line, grid) >= sharing - 1) continue;
     const route = lineRouteTiles(state, line, grid);
     if (!route) continue;
-    const mid = (route.length - 4) / 2;
+    const mid = (route.length - LOOP_LEN) / 2;
     const spots: { i: number; tx: number; ty: number; views: RailView[] }[] = [];
-    for (let i = 0; i + 3 < route.length; i++) {
-      const w = route.slice(i, i + 4);
+    for (let i = 0; i + LOOP_LEN - 1 < route.length; i++) {
+      const w = route.slice(i, i + LOOP_LEN);
+      const last = w.length - 1;
       if (w.every(([, y]) => y === w[0][1]) && w.every(([x], k) => Math.abs(x - w[0][0]) === k)) {
-        spots.push({ i, tx: Math.min(w[0][0], w[3][0]), ty: w[0][1], views: ["sw", "ne"] });
+        spots.push({ i, tx: Math.min(w[0][0], w[last][0]), ty: w[0][1], views: ["sw", "ne"] });
       } else if (w.every(([x]) => x === w[0][0]) && w.every(([, y], k) => Math.abs(y - w[0][1]) === k)) {
-        spots.push({ i, tx: w[0][0], ty: Math.min(w[0][1], w[3][1]), views: ["se", "nw"] });
+        spots.push({ i, tx: w[0][0], ty: Math.min(w[0][1], w[last][1]), views: ["se", "nw"] });
       }
     }
     spots.sort((a, b) => Math.abs(a.i - mid) - Math.abs(b.i - mid) || a.i - b.i);
@@ -2743,10 +2842,15 @@ const stepSign = (a: readonly [number, number], b: readonly [number, number]): n
 /** Which way a train travels through place `seg`: +1 towards SE/SW, -1 the other way. */
 function dirIn(t: Train, bm: BlockMap, seg: string): number {
   const r = t.route;
+  const axis = bm.places.get(seg)?.axis;
+  // FLEET-2c: a loop's diagonal switches step sideways, so its direction is the
+  // move along the run's own axis.
+  const sign = (a: readonly [number, number], b: readonly [number, number]): number =>
+    axis === undefined ? stepSign(a, b) : (b[axis] - a[axis] >= 0 ? 1 : -1);
   for (let i = 0; i < r.length; i++) {
     if (bm.segOf.get(tIdx(r[i][0], r[i][1])) !== seg) continue;
-    if (i > 0) return stepSign(r[i - 1], r[i]);
-    if (r.length > 1) return stepSign(r[0], r[1]);
+    if (i > 0) return sign(r[i - 1], r[i]);
+    if (r.length > 1) return sign(r[0], r[1]);
     break;
   }
   const b = pointAt(r, t.dist).dirBit;
@@ -2780,6 +2884,91 @@ function pruneResv(bm: BlockMap, t: Train, cum: number[]): void {
   t.resv = keep.length ? keep : undefined;
 }
 
+/** What every OTHER train of the owner holds, by segment. */
+function holdsOf(state: RailState, bm: BlockMap, t: Train): Map<string, Hold[]> {
+  const holds = new Map<string, Hold[]>();
+  for (const o of state.trains) {
+    if (o === t || o.ownerId !== t.ownerId) continue;
+    for (const [seg, dir] of heldSegs(state, bm, o)) {
+      const list = holds.get(seg);
+      if (list) list.push({ trainId: o.id, dir }); else holds.set(seg, [{ trainId: o.id, dir }]);
+    }
+  }
+  return holds;
+}
+
+/** Is another train on, or about to drive onto, this loop's side track? */
+function sideTrackBusy(state: RailState, t: Train, sideSet: ReadonlySet<number>): boolean {
+  for (const o of state.trains) {
+    if (o === t || o.ownerId !== t.ownerId || !o.route.length) continue;
+    if (carPlacements(state, o).some((c) => sideSet.has(tIdx(Math.round(c.fx), Math.round(c.fy))))) return true;
+    const cum = polyline(o.route);
+    for (let k = 0; k < o.route.length; k++) {
+      if (cum[k] + 0.5 >= o.dist && sideSet.has(tIdx(o.route[k][0], o.route[k][1]))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * FLEET-2c: a train is about to step onto a Passing Loop's place (route index
+ * `i`). It keeps to the MAIN line when it can take everything up to the next
+ * place at once (so it never has to stop on the main line inside the loop);
+ * otherwise, if the side track is free, its route is turned over the side
+ * track - where it waits for the way out while the oncoming train passes on
+ * the main line. "wait" = neither; the train holds where it stands.
+ */
+function loopEntry(
+  state: RailState, bm: BlockMap, t: Train, ridx: number[], i: number, here: string, mine: Map<string, number>,
+  endPlace: string | null,
+): "ok" | "wait" | "diverted" {
+  const s = structureById(state, Number(here.slice(1)));
+  if (!s || s.kind !== "loop") return "ok";
+  const sideSet = new Set(loopSideTiles(s).map(([x, y]) => tIdx(x, y)));
+  const holds = holdsOf(state, bm, t);
+  const dirOf = (seg: string): number => dirIn(t, bm, seg);
+  const take = (wanted: string[]): void => {
+    t.resv = [...new Set([...(t.resv ?? []), ...wanted])];
+    for (const w of wanted) mine.set(w, 0);
+  };
+  const enter = mine.has(here) ? [] : [here];
+  if (sideSet.has(ridx[i])) {          // already turned onto the side track
+    if (enter.length && !canTake(bm, enter, dirOf, holds, t.id)) return "wait";
+    take(enter);
+    return "ok";
+  }
+  let j = i;
+  while (j + 1 < ridx.length && bm.segOf.get(ridx[j + 1]) === here) j++;
+  const exit = j + 1 < ridx.length ? stretchFor(bm, ridx, j + 1, endPlace) : [];
+  const through = [...enter, ...exit.filter((w) => !mine.has(w))];
+  if (canTake(bm, through, dirOf, holds, t.id)) { take(through); return "ok"; }
+  // The way out is closed. Behind a train going the SAME way there is nothing to
+  // pass - just wait for it; it is an ONCOMING train (one that will drive through
+  // this loop) that needs the main line, so only then turn onto the side track.
+  const placeTiles = new Set(bm.places.get(here)?.tiles ?? []);
+  const blockerIds = new Set<number>();
+  for (const w of through) for (const h of holds.get(w) ?? []) blockerIds.add(h.trainId);
+  const oncoming = state.trains.some((o) => {
+    if (!blockerIds.has(o.id) || !o.route.length) return false;
+    const cum = polyline(o.route);
+    return o.route.some(([x, y], k) => cum[k] + 0.5 >= o.dist && placeTiles.has(tIdx(x, y)));
+  });
+  if (!oncoming) return "wait";
+  // Turn onto the side track (its tiles replace the run's interior, exactly).
+  const run = loopRun(s);
+  const inner = new Set(run.slice(1, run.length - 1).map(([x, y]) => tIdx(x, y)));
+  const ends = new Set([run[0], run[run.length - 1]].map(([x, y]) => tIdx(x, y)));
+  if (j - i + 1 !== run.length - 2 || i < 1 || j + 1 >= ridx.length
+    || !inner.has(ridx[i]) || !inner.has(ridx[j]) || !ends.has(ridx[i - 1]) || !ends.has(ridx[j + 1])) return "wait";
+  if (sideTrackBusy(state, t, sideSet) || !canTake(bm, enter, dirOf, holds, t.id)) return "wait";
+  const lat = loopLateral(s);
+  const route = t.route.map((p) => [...p] as [number, number]);
+  for (let k = i; k <= j; k++) { route[k][0] += lat[0]; route[k][1] += lat[1]; }
+  t.route = route;
+  take(enter);
+  return "diverted";
+}
+
 /**
  * How far along its route may this train roll this tick? Infinity when no
  * boundary within reach is closed to it; otherwise the distance of the last
@@ -2797,20 +2986,22 @@ function blockLimit(state: RailState, bm: BlockMap, t: Train, cum: number[], ste
     const stopAt = cum[i - 1];
     if (stopAt < t.dist - 1e-9) continue;
     if (stopAt > t.dist + step + 1e-9) return Infinity;
+    const hereSeg = bm.segOf.get(ridx[i]);
+    if (hereSeg && bm.places.get(hereSeg)?.kind === "loop") {
+      // FLEET-2c: stepping onto a Passing Loop - keep to the main line if the
+      // way out is clear, else drive onto the side track and wait THERE.
+      mine ??= heldSegs(state, bm, t);
+      const res = loopEntry(state, bm, t, ridx, i, hereSeg, mine, endPlace);
+      if (res === "wait") return stopAt;
+      if (res === "diverted") return blockLimit(state, bm, t, polyline(t.route), step);
+      continue;
+    }
     const wanted = stretchFor(bm, ridx, i, endPlace);
     if (!wanted.length) continue;
     mine ??= heldSegs(state, bm, t);
     const need = wanted.filter((w) => !mine!.has(w));
     if (need.length) {
-      const holds = new Map<string, Hold[]>();
-      for (const o of state.trains) {
-        if (o === t || o.ownerId !== t.ownerId) continue;
-        for (const [seg, dir] of heldSegs(state, bm, o)) {
-          const list = holds.get(seg);
-          if (list) list.push({ trainId: o.id, dir }); else holds.set(seg, [{ trainId: o.id, dir }]);
-        }
-      }
-      if (!canTake(bm, need, (seg) => dirIn(t, bm, seg), holds, t.id)) return stopAt;
+      if (!canTake(bm, need, (seg) => dirIn(t, bm, seg), holdsOf(state, bm, t), t.id)) return stopAt;
     }
     t.resv = [...new Set([...(t.resv ?? []), ...wanted])];
     for (const w of wanted) mine.set(w, 0);
@@ -3607,7 +3798,11 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
       if (bm) {
         // FLEET-2 (#596): a closed block ahead stops the train at the last tile
         // before it - in a loop or a station lane if that is where it stands.
+        const routeBefore = train.route;
         const lim = blockLimit(state, bm, train, cum, step);
+        // FLEET-2c: the train turned onto a loop's side track - the route (and
+        // its distances) changed under `cum`, so run this slice again.
+        if (train.route !== routeBefore) continue;
         if (lim < Infinity) {
           train.blockedWhy = WAIT_TO_PASS;
           const room = lim - train.dist;
@@ -3889,7 +4084,9 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       // Playtest (2026-09): trains spawn on their own (`autoTrains`), so a
       // platform offers nothing to click — connecting it by rail is the
       // action. RAIL-6: the one click a station does offer is the lane.
-      actions: lanes.length < MAX_LANES ? ["lane"] : [],
+      // Owner (2026-09-29): "remove add lane as an option in that menu" - lanes are
+      // added with the on-map "+" invite (RAIL-8), never from the panel.
+      actions: [],
       partnerId,
     });
   }
@@ -4259,7 +4456,7 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
   }
   if (typeof wire.seq === "number" && Number.isFinite(wire.seq)) state.seq = wire.seq;
   state.structures.length = 0;
-  for (const s of Array.isArray(wire.structures) ? wire.structures : []) {
+  for (const s of Array.isArray(wire.structures) ? wire.structures : []) {  // (FLEET-2c: loops re-lay their track below)
     if (!s || typeof s.tx !== "number" || typeof s.ty !== "number") continue;
     state.structures.push({
       id: s.id, kind: asKind(s.kind), ownerId: s.ownerId, owner: s.owner,
@@ -4329,6 +4526,8 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
       ...(Array.isArray(t.resv) && t.resv.length ? { resv: t.resv.filter((r) => typeof r === "string") } : {}),
     });
   }
+  // FLEET-2c: a loop from an old save/host has no side track in its layer yet.
+  for (const s of state.structures) if (s.kind === "loop") layLoopTrack(state, s);
   return true;
 }
 

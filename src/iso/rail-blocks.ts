@@ -34,6 +34,12 @@ export interface BlockPlace {
   slots: number;
   /** A loop counts one train per travel direction; a station just counts. */
   directional: boolean;
+  /**
+   * FLEET-2c: which coordinate a directional place measures "direction" on (0 = x, 1 = y).
+   * A loop's diagonal switches step sideways, so the sign of `dx + dy` alone would read
+   * both ways as one; the axis component is the true travel direction.
+   */
+  axis?: 0 | 1;
 }
 
 export interface BlockMap {

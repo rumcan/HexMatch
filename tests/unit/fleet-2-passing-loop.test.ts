@@ -101,11 +101,11 @@ describe("FLEET-2 a Passing Loop is placed, refused with reasons, and demolished
     const s = loopAt(w, 15);
     expect(s.kind).toBe("loop");
     expect(w.state.rail.revision).toBeGreaterThan(rev);
-    expect(loopRun(s)).toEqual(row(OY, 15, 18));
+    expect(loopRun(s)).toEqual(row(OY, 15, 19));   // FLEET-2c: 5 tiles now
     expect(BUILD_COSTS_MONEY.loop).toBeGreaterThanOrEqual(1.8 * BUILD_COSTS_MONEY.platform);
     expect(BUILD_COSTS_MONEY.loop).toBeLessThanOrEqual(2.2 * BUILD_COSTS_MONEY.platform);
     expect(RAIL_COSTS.loop).toBeTruthy();
-    expect(LOOP_INFO).toBe("Passing Loop — a short second track beside the line. Two trains on the same line wait here to pass each other. Needs a straight run of 4 rail tiles.");
+    expect(LOOP_INFO).toBe("Passing Loop — a short second track beside the line. Two trains on the same line wait here to pass each other. Needs a straight run of 5 rail tiles.");
     // a loop on the same run twice is refused
     expect(loopRefusal(w.grid, w.state, 1, 15, OY, "sw")).toBe("overlap");
   });
@@ -127,7 +127,7 @@ describe("FLEET-2 a Passing Loop is placed, refused with reasons, and demolished
     expect(loopRefusal(jw.grid, jw.state, 1, 25, OY, "sw")).toBe("loop-junction");
     // a curve: a rail that turns at the run's end
     const track = w.track;
-    expect(buildRail(grid, track, state, 1, [[20, OY], [21, OY + 1], [22, OY + 2], [22, OY + 3], [22, OY + 4], [22, OY + 5]]).ok).toBe(true);
+    expect(buildRail(grid, track, state, 1, [[20, OY], [21, OY + 1], [22, OY + 2], [22, OY + 3], [22, OY + 4], [22, OY + 5], [22, OY + 6]]).ok).toBe(true);
     expect(loopRefusal(grid, state, 1, 22, OY + 2, "se")).toBe("loop-curve");
     // a slope: the side track's ground sits a level higher
     const height = new Uint8Array(MAP_W * MAP_H);
