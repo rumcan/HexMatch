@@ -330,12 +330,10 @@ function findDepotSpot(h: RailHook, cx: number, cy: number): [number, number] | 
  * Play both seats' openings — both Factories and both Depots, the guest's two
  * through intents — and hand the guest's seat a railway-sized purse.
  *
- * `__iso.placeDepot` runs `placeHarvester` and nothing else, so the host's own
- * phase stays `setup-harvester` where a real click would have flipped it: the
- * click's next line is `phase = "play"` (#181's guest side reads its phase off
- * the applied state, so the guest is already there). `finishSetup` is the
- * documented twin for exactly that flip, and the host has to be in `play` for
- * its own sim to run — which is the half of this suite that watches the host.
+ * START-1 (#604): the host's `placeFactory` flip is `play` outright now (a
+ * real match owes no setup Depot), and `finishSetup` remains the documented
+ * twin for fixtures that skip the click. The host has to be in `play` for its
+ * own sim to run — which is the half of this suite that watches the host.
  */
 async function seatBoth(host: RailHook, guest: RailHook): Promise<void> {
   const hostSpot = findFactorySpot(host.grid, host.track)!;
