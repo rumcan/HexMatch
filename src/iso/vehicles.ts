@@ -38,7 +38,7 @@ import {
   type Harvester,
 } from "./economy";
 import { depotRate, distanceFactor } from "./loop";
-import { truckCountOf, truckKey } from "./fleet";
+import { truckCountOf, truckKey, truckSpeedMultOf } from "./fleet";
 import { gradeOf, uphillSpeed } from "./slopes";
 import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import {
@@ -252,7 +252,9 @@ export function planTrucks(eco: EconomyState): Truck[] {
     // FLEET-1 (#595): one lorry per `Harvester.trucks`, spread evenly around
     // the ping-pong loop so a fresh plan does not stack them on the depot.
     const count = truckCountOf(h);
-    const rateMult = depotRate(h, distanceFactor(eco, h));
+    // FLEET-5 (#599): the fleet's level speeds every lorry (rides `rateMult`,
+    // which tickTrucks, the round-trip readout and the ambience all read).
+    const rateMult = depotRate(h, distanceFactor(eco, h)) * truckSpeedMultOf(h);
     for (let slot = 0; slot < count; slot++) {
       const pose = truckPhase(plan.route.length - 1, slot / count);
       out.push({

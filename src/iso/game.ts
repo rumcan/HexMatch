@@ -187,7 +187,7 @@ import {
   chooseRivalFactorySpot, deepPlanCandidates, planBankTrades, planGoalPurchase, goalOutOfReach,
   planUpgrades, executePaves,
   paveCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants, type RivalPace,
-  planRailMove, executeRailMove, planRivalTruck,
+  planRailMove, executeRailMove, planRivalTruck, planRivalTruckUpgrade,
   planCandidates, executeCandidate, ClaimLedger, claimContested,
   type ClaimSite, type RivalClaim, type PlayerIntent, type PlanOptions,
 } from "./ai";
@@ -343,7 +343,7 @@ import {
   createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester, lorryTripsPerMin, DEPOT_LOAD_MS,
   type Truck,
 } from "./vehicles";
-import { truckCountOf, truckKey, fleetLoadFactor, truckBuyCheck, truckSellRefusal, truckSellRefund, truckBuyPrice } from "./fleet";
+import { truckCountOf, truckKey, fleetLoadFactor, truckBuyCheck, truckSellRefusal, truckSellRefund, truckBuyPrice, truckUpgradePrice, truckSpeedMultOf, truckLevelOf, truckSpeedMultAt, truckUpgradeCheck } from "./fleet";
 import {
   CAR_COUNT, createCarState, planCars, tickCars, carItems,
 } from "./cars";
@@ -5730,6 +5730,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  // FLEET-5 (#599): upgrade the whole fleet one level (faster, same sprites).
+  function truckUpgradeWhy(depotId: number, p: PlayerState = me) {
+    const h = eco.harvesters.find((x) => x.id === depotId);
+    const connected = !!h && h.platformId === undefined && roadRouteForHarvester(eco, h) !== null;
+    return truckUpgradeCheck(h, p.i + 1, connected, p.money, p.manager);
+  }
+
+  function fleetUpgradeTrucks(depotId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "truck", act: "upgrade", depot: depotId }); return true; }
+    const check = truckUpgradeWhy(depotId, p);
+    if (!check.ok) {
+      if (p.human) toast(check.why ?? "That upgrade cannot be bought.", "bad");
+      return false;
+    }
+    const h = eco.harvesters.find((x) => x.id === depotId)!;
+    p.money -= check.price;
+    h.truckLevel = truckLevelOf(h) + 1;
+    trucksDirty = true;                 // replan restamps every lorry's pace
+    refreshTruckRates();
+    if (p.human) {
+      sfx.play("build");
+      toast(`Trucks upgraded - level ${h.truckLevel}, x${truckSpeedMultAt(h.truckLevel)} speed.`, "good");
+    }
+    return true;
+  }
+
   function fleetSellTruck(depotId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "truck", act: "sell", depot: depotId }); return true; }
     const h = eco.harvesters.find((x) => x.id === depotId);
@@ -7160,9 +7186,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const check = truckBuyWhy(d.id, me);
     const sellWhy = truckSellRefusal(d, me.i + 1);
     const rerun = () => depotCardFor(d);
+    const tl = truckLevelOf(d);
+    const upCheck = truckUpgradeWhy(d.id, me);
     return {
       heading: `Fleet - ${count} of ${FLEET.maxTrucks} trucks`,
       rows,
+      upgrade: {
+        level: tl,
+        max: FLEET.maxTruckLevel,
+        label: tl >= FLEET.maxTruckLevel ? "Trucks maxed" : "Upgrade trucks",
+        detail: tl >= FLEET.maxTruckLevel ? `x${truckSpeedMultAt(tl)} speed` : `to x${truckSpeedMultAt(tl + 1)} speed`,
+        price: tl >= FLEET.maxTruckLevel ? "-" : `$${upCheck.price}`,
+        why: upCheck.ok ? null : (upCheck.why ?? "Cannot upgrade."),
+        onClick: () => { fleetUpgradeTrucks(d.id, me); rerun(); },
+      },
       buy: {
         label: "Buy truck",
         price: `$${count >= FLEET.maxTrucks ? truckBuyPrice(count - 1, me.manager) : check.price}`,
@@ -10708,6 +10745,27 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return pick !== null && fleetBuyTruck(pick, rival);
   }
 
+  /** FLEET-5 (#599): the rival speeds up its busiest Depot's fleet when it is rich enough (same `fleetUpgradeTrucks` the button runs). */
+  function rivalTruckUpgradeStep(): boolean {
+    if (!newLoop) return false;
+    const owner = rival.i + 1;
+    const comp = componentsFor(owner);
+    const locks = industryLocks(eco);
+    const now = performance.now();
+    const cands = eco.harvesters.filter((h) => h.ownerId === owner && !isRailDepot(h) && !h.closed).map((h) => {
+      const res = harvesterYield(eco, comp, locks, h, now);
+      const amount = Object.values(res.yields).reduce((a, b) => a + (b as number), 0);
+      return {
+        id: h.id,
+        score: amount * depotYield(h) * distanceInfoFor(h.id).factor,
+        level: truckLevelOf(h),
+        connected: res.serviced && roadRouteForHarvester(eco, h) !== null,
+      };
+    });
+    const pick = planRivalTruckUpgrade(cands, rival.money, (l) => truckUpgradePrice(l, rival.manager), BUILD_COSTS_MONEY.depot);
+    return pick !== null && fleetUpgradeTrucks(pick, rival);
+  }
+
   function rivalDamStep(): boolean {
     if (!DAMS_ENABLED || !riversOn || !newLoop) return false;
     if (!canPayBuild(rival, DAM_COST)) return false;
@@ -10915,6 +10973,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     // ── 8. fleet (FLEET-1, #595) — a 2nd lorry on the busiest Depot ────────
     if (rivalTruckStep()) acted = true;
+    else if (rivalTruckUpgradeStep()) acted = true;
 
     if (acted) {
       noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
@@ -12196,8 +12255,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // refusal ladder and charges the guest's seat; a refusal echoes (a
         // guest seat toasts no one on the host).
         const depot = int(payload.depot);
-        if (depot !== null && (payload.act === "buy" || payload.act === "sell")) {
-          if (payload.act === "buy") {
+        if (depot !== null && (payload.act === "buy" || payload.act === "sell" || payload.act === "upgrade")) {
+          if (payload.act === "upgrade") {
+            const check = truckUpgradeWhy(depot, p);
+            if (!check.ok) echoed.push(check.why ?? "That upgrade cannot be bought.");
+            else fleetUpgradeTrucks(depot, p);
+          } else if (payload.act === "buy") {
             const check = truckBuyWhy(depot, p);
             if (!check.ok) echoed.push(check.why ?? "That truck cannot be bought.");
             else fleetBuyTruck(depot, p);
@@ -15953,7 +16016,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const t of trucks.trucks) {
       const h = byId.get(t.depotId);
       if (!h) continue;
-      t.rateMult = depotRate(h, distanceInfoFor(h.id).factor);
+      t.rateMult = depotRate(h, distanceInfoFor(h.id).factor) * truckSpeedMultOf(h);
     }
   }
 
@@ -17464,6 +17527,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** FLEET-1 (#595): the test twins of the Fleet card's Buy / Sell truck. */
     buyTruck: (depotId: number, who: "you" | "ai" = "you") =>
       fleetBuyTruck(depotId, who === "ai" ? rival : me),
+    /** FLEET-5 (#599): the test twin of the Fleet card's Upgrade trucks. */
+    upgradeTrucks: (depotId: number, who: "you" | "ai" = "you") =>
+      fleetUpgradeTrucks(depotId, who === "ai" ? rival : me),
     sellTruck: (depotId: number, who: "you" | "ai" = "you") =>
       fleetSellTruck(depotId, who === "ai" ? rival : me),
     railStart: (trainId: number, who: "you" | "ai" = "you") =>
