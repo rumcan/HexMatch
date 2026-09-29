@@ -7,6 +7,7 @@ import { showStorePanel } from "../game/store-panel";
 import { FREE_SETUP_TRACK } from "../iso/game";
 import { RIVAL_SKILLS, resolveSkillKey } from "../iso/skill";
 import { currentVersionLabel } from "./version";
+import { MP_PIN, multiplayerVisible, tryMultiplayerPin } from "./mp-gate";
 
 // ══════════════════════════════════════════════════════════════════════════
 // UI-3 (owner, 2026-09-27): the front-door shell from the UIX design.
@@ -58,6 +59,18 @@ const canFullscreen = (): boolean =>
 
 export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, onMultiplayer, onStarterIsland, onTutorialSection, children }: MenuShellProps) {
   const [popup, setPopup] = useState<Popup>(null);
+  // Owner (2026-09-29): Multiplayer hides behind a PIN (see mp-gate.ts).
+  const [mpOn, setMpOn] = useState(multiplayerVisible);
+  const versionTaps = useRef<number[]>([]);
+  const tapVersion = () => {
+    if (mpOn) return;
+    const now = Date.now();
+    versionTaps.current = [...versionTaps.current.filter((t) => now - t < 2500), now];
+    if (versionTaps.current.length < 5) return;
+    versionTaps.current = [];
+    const pin = window.prompt(`Enter the ${MP_PIN.length}-digit PIN to show Multiplayer`);
+    if (tryMultiplayerPin(pin)) setMpOn(true);
+  };
   const hostRef = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(() => typeof document !== "undefined" && !!document.fullscreenElement);
 
@@ -105,7 +118,9 @@ export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPl
     { id: "home", n: "01", label: "Home", on: tab === "home", go: onHome },
     { id: "play", n: "02", label: "Play", on: tab === "play", go: onPlay },
     { id: "ladder", n: "03", label: "Ladder", on: tab === "ladder", go: onLadder },
-    { id: "multiplayer", n: "04", label: "Multiplayer", on: tab === "multiplayer", go: onMultiplayer },
+    ...(mpOn || tab === "multiplayer"
+      ? [{ id: "multiplayer", n: "04", label: "Multiplayer", on: tab === "multiplayer", go: onMultiplayer }]
+      : []),
     { id: "settings", n: "05", label: "Settings", on: popup === "settings", go: () => setPopup("settings") },
     { id: "tutorial", n: "06", label: "Tutorial", on: popup === "tutorial", go: () => setPopup("tutorial") },
   ];
@@ -119,7 +134,7 @@ export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPl
       <header className="px-header">
         <div className="px-identity">
           <HexMark /> HEXMATCH <span className="px-slash">/</span> INDUSTRIES
-          <span className="px-version">{currentVersionLabel()}</span>
+          <span className="px-version" onClick={tapVersion}>{currentVersionLabel()}</span>
         </div>
         <nav className="px-tabs" aria-label="Menu">
           {tabs.map((t) => (

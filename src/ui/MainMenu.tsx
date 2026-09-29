@@ -36,6 +36,7 @@ import { rankStore } from "../net/rankstore";
 import { badgeUrlFor } from "./rank-badge";
 import { fmtRating, rankOf } from "../net/rating";
 import MenuShell from "./MenuShell";
+import { multiplayerVisible } from "./mp-gate";
 
 export interface MainMenuProps {
   onPlay: () => void;
@@ -119,7 +120,7 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onMultiplayer, 
               </>
             ) : (
               <button type="button" className="px-btn-primary menu-btn primary" data-sfx="open" onClick={onPlay}>
-                Play<span className="mb-tag">{STORY_MODE_ENABLED ? "campaign · sandbox · rooms" : "scenarios · sandbox · rooms"}</span><span className="px-arrow" aria-hidden="true">→</span>
+                Play<span className="mb-tag">{`${STORY_MODE_ENABLED ? "campaign" : "scenarios"} · sandbox${multiplayerVisible() ? " · rooms" : ""}`}</span><span className="px-arrow" aria-hidden="true">→</span>
               </button>
             )}
             {onScenarios ? (
