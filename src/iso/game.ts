@@ -436,6 +436,10 @@ import { createStoryDirector } from "../story/voices";
 import { advisorBeats, type AdvisorEvent } from "../story/advisor";
 import { advisorEnabled, recordChapterResult } from "../story/progress";
 import { recordScenarioResult, scenarioById, type ScenarioDef } from "../story/scenarios";
+import {
+  scenarioGoalDone, scenarioGoalHave, scenarioGoalLine,
+  type ScenarioGoalInput, type ScenarioObjective,
+} from "../story/scenario-goals";
 import { showScene, type SceneHandle } from "../story/stage";
 import type { UiRivalryBeat, UiTuningResult } from "../game/ui";
 import {
@@ -908,6 +912,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const scenarioDef: ScenarioDef | null =
     !storyChapter && opts.scenario && isSolo() ? scenarioById(opts.scenario) : null;
   const scenarioOn = scenarioDef !== null;
+  /**
+   * SCEN-2 (#602): the counters a scenario's objective reads — cargo carried
+   * into the player's plant, the best ★ a PLAYED Depot tuning reached, and the
+   * rival battles won. Plain match-local numbers: they are never saved, never
+   * on the wire, and stay zero on every boot that is not a scenario, so a
+   * sandbox game pays nothing for them. `trainLines` is not a counter — the
+   * rail state is the truth, so it is read live (`scenarioGoalState`).
+   */
+  let scenarioDelivered = 0;
+  let scenarioBestTuningStars = 0;
+  let scenarioBattlesWon = 0;
+  /** The completion line is fed once, the frame the goal closes. */
+  let scenarioGoalFed = false;
   /** PROG-1 (#475): where "Next contract ▸" walks (null past the ledger). */
   const nextChapter = storyChapter ? chapterAfter(storyChapter.id) : null;
   // RAIL-05 (#182): the feature flag. OFF everywhere by default: the release
@@ -929,8 +946,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // The new loop is sandbox-only: a networked room or a story contract ignores
   // the request and says so — the toast waits until no boot overlay covers the
   // map (see the frame loop's `loopToastPending`).
-  // PROG-1 (#475): scenarios play the contract's loop, like contracts.
-  const newLoop = newLoopRequested && isSolo() && !storyOn && !scenarioOn;
+  // SCEN-2 (#602) — owner, 2026-09-28: scenarios play the CURRENT game. The
+  // old loop left scenario 1 on a squashed Processing Plant tab and a board the
+  // rest of the build had retired: no tuning sessions, no Depots-and-clock
+  // economy, none of the new UI. A scenario is a PLACE, not a second game — it
+  // changes the map, the rival, the ★ line and the job, never the rules — so
+  // only a story contract (and a room, which never reads this flag) still
+  // holds the retired loop.
+  const newLoop = newLoopRequested && isSolo() && !storyOn;
   // Only someone who named the loop gets told a room or a contract refused it.
   // A default boot is not a refusal, it is the game, and every MP/story seat
   // would otherwise open with an apology for the loop it is correctly on.
@@ -1546,9 +1569,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   //
   // L13 (#228): the new loop scores from an entirely different table
   // (`VICTORY.loop`), so it races its own line — the shipped 10★ is calibrated
-  // against 0.25★ paves and would be reached by three depot types. `newLoop`
-  // is solo-only and story-free (L1a), so this branch can sit ahead of both
-  // without touching a contract's target or a room's setting.
+  // against 0.25★ paves and would be reached by three depot types. SCEN-2
+  // (#602) moved scenarios onto that loop, which is why the scenario branch
+  // (and the contract's) now sits ABOVE the flag: a scenario's ★ line is the
+  // race PROG-1 sold on its card ("first to 10★"), and `VICTORY.loop.target`
+  // must not silently rewrite it — the card, the HUD badge and the win check
+  // all read this one function.
   let conquest = opts.conquest === true;
   let lastConquestCheck = 0;
   // FTUE-1 (#464): the Starter Island is a SHORT, winnable race — the
@@ -1558,13 +1584,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const winTarget = (): number => opts.tutorialSection ? skill().winTarget
     : starterIsland
     ? skill().winTarget
-    : (newLoop
-      ? VICTORY.loop.target
-      : (storyChapter
-        ? storyChapter.target
-        : scenarioDef
-          ? scenarioDef.winTarget
-          : (isSolo() ? skill().winTarget : settings.winTarget)));
+    : storyChapter
+      ? storyChapter.target
+      : scenarioDef
+        ? scenarioDef.winTarget
+        : (newLoop
+          ? VICTORY.loop.target
+          : (isSolo() ? skill().winTarget : settings.winTarget));
 
   // R3 (#270): the standing dams live on the economy state — the clock reads
   // their bonus off it in `economyTick`, and the save/snapshot carry it as
@@ -2492,6 +2518,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         await storyView.promise;
         storyView = null;
         if (disposed) return;
+      } else if (scenarioDef) {
+        // SCEN-2 (#602): a scenario briefs in the NEW UI — the Feed, the one
+        // message channel HUD-1 (#469) left standing, beside the objective
+        // line the advisor's lane already paints (see `paintUi`). There is no
+        // reel to sit through: a scenario has no cast scenes, and its terms
+        // are three short lines the player can read while the map loads.
+        ui.feed(`${scenarioDef.name} — ${scenarioDef.tagline}`, "Scenario");
+        ui.feed(scenarioDef.brief, "Scenario");
+        ui.feed(`Objective: ${scenarioDef.objective.text}`, "Scenario");
       }
       // TUT-03 (#422): the card tour is gone. The guide never BLOCKS the boot
       // chain — it is a caption over a live game, so the difficulty prompt and
@@ -2505,6 +2540,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // `setRivalSkill`, persists for the next boot, and syncs the top-bar
       // selector the `onSkill` hook would otherwise own. A contract skips the
       // question: the chapter cast the rival, and re-asking would un-cast it.
+      // SCEN-2 (#602): a scenario casts its rival the same way (PROG-1's "the
+      // scenario IS the pacing"), and on the new loop the answer would not stop
+      // at the rival — the difficulty IS the economy's row
+      // (`difficultyRulesFor`), so a stray pick would re-tune the very map the
+      // scenario was built around.
       if (opts.tutorialSection) {
         // A lesson has its own setup and no difficulty prompt or first-game chain.
       } else if (starterIsland && newLoop) {
@@ -2515,7 +2555,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // voiced, and dismissible at any moment. It never blocks the clock:
         // the player reads it while the island runs.
         guide?.runFirstGame();
-      } else if (!storyChapter) {
+      } else if (!storyChapter && !scenarioDef) {
         await promptForRivalSkill(ui.el, {
           onPick: (key) => {
             setRivalSkill(key);
@@ -4508,37 +4548,52 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
     }
-    // The scoreboard's own tie-breaker: the first seat observed crossing the
-    // line wins. Capture the event that did it so the intertitle can say
-    // whether the last fraction came from pavement or a new plant.
-    if (phase === "play") {
-      for (const p of players) {
-        if (conquest || !hasWon(score, p.id, winTarget())) continue;
-        const decisive = [...events].reverse().find(
-          (e) => e.owner === p.id && e.type === "awarded",
-        )?.source ?? null;
-        phase = "won";
-        winner = p;
-        winningSource = decisive;
-        // RANK-01: the host is the ONLY seat that may file a result — it runs
-        // the simulation, so it is the only one that can say the line was
-        // crossed. The verdict goes to the room, which relays it back to both
-        // seats, so neither seat rates this match from its own opinion.
-        if (rankRuntime && !isGuest()) {
-          const other = p === players[0] ? players[1] : players[0];
-          rankRuntime.claimWin(wireIdOf(p), wireIdOf(other), (performance.now() - rankBootAt) / 1000);
-        }
-        const b = victoryBreakdown(eco, p.id, railPlatforms(), loopScoring());
-        // L13 (#228): the winning line names the sources the LIVE table paid.
-        const how = newLoop
-          ? `${b.types} depot type${b.types === 1 ? "" : "s"}, ${b.rungs} rung${b.rungs === 1 ? "" : "s"}, ${b.city} city upgrade${b.city === 1 ? "" : "s"}`
-            + (b.holds > 0 ? `, ${b.holds} contested site${b.holds === 1 ? "" : "s"} held` : "")
-          : `${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"}`;
-        toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ (${how})`,
-          p.human ? "good" : "bad");
-        presentEnding(decisive);
-        break;
+    // The scoreboard's own tie-breaker — see `checkWinLine`.
+    checkWinLine(events);
+  }
+
+  /**
+   * The scoreboard's own tie-breaker: the first seat observed crossing the
+   * line wins. Capture the event that did it so the intertitle can say whether
+   * the last fraction came from pavement, a new plant, or (the new loop) a
+   * Depot type starting to run.
+   *
+   * SCEN-2 (#602): split out of `applyVpEvents` so the SAME check can also be
+   * run on its own — `__iso.winCheck()` calls this straight after a test or a
+   * probe has driven `score.vp` to a seat's ★ line. A scenario's line is a
+   * number the acceptance drives directly, and a check that only ever ran at
+   * the end of an event batch would leave that hand-driven match running on
+   * its line forever. The live path is unchanged: `applyVpEvents` calls this
+   * once per batch, from the same place it always ran.
+   */
+  function checkWinLine(events: VpEvent[]) {
+    if (phase !== "play") return;
+    for (const p of players) {
+      if (conquest || !hasWon(score, p.id, winTarget())) continue;
+      const decisive = [...events].reverse().find(
+        (e) => e.owner === p.id && e.type === "awarded",
+      )?.source ?? null;
+      phase = "won";
+      winner = p;
+      winningSource = decisive;
+      // RANK-01: the host is the ONLY seat that may file a result — it runs
+      // the simulation, so it is the only one that can say the line was
+      // crossed. The verdict goes to the room, which relays it back to both
+      // seats, so neither seat rates this match from its own opinion.
+      if (rankRuntime && !isGuest()) {
+        const other = p === players[0] ? players[1] : players[0];
+        rankRuntime.claimWin(wireIdOf(p), wireIdOf(other), (performance.now() - rankBootAt) / 1000);
       }
+      const b = victoryBreakdown(eco, p.id, railPlatforms(), loopScoring());
+      // L13 (#228): the winning line names the sources the LIVE table paid.
+      const how = newLoop
+        ? `${b.types} depot type${b.types === 1 ? "" : "s"}, ${b.rungs} rung${b.rungs === 1 ? "" : "s"}, ${b.city} city upgrade${b.city === 1 ? "" : "s"}`
+          + (b.holds > 0 ? `, ${b.holds} contested site${b.holds === 1 ? "" : "s"} held` : "")
+        : `${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"}`;
+      toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ (${how})`,
+        p.human ? "good" : "bad");
+      presentEnding(decisive);
+      break;
     }
   }
 
@@ -6320,6 +6375,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // MATCH-2: the finale's music bows out with the session it celebrated.
     stopFinaleMusic(1.2);
     const played = r.played;
+    // SCEN-2 (#602): a scenario's tuning objective — the best ★ a PLAYED Depot
+    // session has reached. A town session is not a Depot tuning, and an
+    // abandoned board sets nothing: the level has to be earned.
+    if (scenarioDef && played && s.kind === "depot") {
+      scenarioBestTuningStars = Math.max(scenarioBestTuningStars, tuningStarsFor(s.score));
+    }
     // A town session has no Depot (`depotId` is -1), so this is `undefined`
     // there and the city branch below settles instead.
     // L10 (#225): the obstacles belong to the SESSION, so they go when it does
@@ -7958,6 +8019,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const loserSeat = playerWon ? 1 : 0;
         const t = (performance.now() - matchHistory.startMs) / 1000;
         recordEvent(matchHistory, { kind: "battle", winner: winnerSeat as 0 | 1, loser: loserSeat as 0 | 1, t });
+        // SCEN-2 (#602): a scenario's battle objective counts WINS, whichever
+        // side called the fight — a defended fight-off is a battle won.
+        if (playerWon && scenarioDef) scenarioBattlesWon++;
       }
     } catch {}
     if (verdict === "closed" && stake.kind === "town") {
@@ -12486,6 +12550,43 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return null;
   }
 
+  /**
+   * SCEN-2 (#602): the live counters a scenario's objective reads, in the
+   * shape `scenario-goals.ts` takes — the seat's cargo arrivals, the best
+   * PLAYED Depot tuning, the train lines it is running and the battles it has
+   * won. `trainLines` is read off the rail state rather than counted, because
+   * the rail IS the truth: recall the last train off a line and the line stops
+   * counting, which is what "a train line is running" is supposed to mean.
+   */
+  const scenarioGoalState = (): ScenarioGoalInput => ({
+    delivered: scenarioDelivered,
+    bestTuningStars: scenarioBestTuningStars,
+    trainLines: rail.lines.filter((l) => l.ownerId === me.i + 1
+      && rail.trains.some((tr) => tr.lineId === l.id)).length,
+    battlesWon: scenarioBattlesWon,
+  });
+
+  /**
+   * Where the objective lane's click should take the eye, per goal: the seat's
+   * Plant for a delivery job (cargo lands there) and its first Depot for a
+   * tuning one (that is what gets tuned). Rail and battle goals recentre on
+   * the player's anchor (null) — the lane's own contract for "no target".
+   */
+  const scenarioGoalTarget = (o: ScenarioObjective): { tx: number; ty: number } | null => {
+    // A delivery job lands at the Plant; a tuning job happens at a Depot.
+    if (o.kind === "deliver") {
+      const f = eco.factories.find((x) => x.owner === me.id);
+      return f ? { tx: f.tx, ty: f.ty } : null;
+    }
+    if (o.kind === "tune") {
+      const d = eco.harvesters.find((h) => h.owner === me.id);
+      if (d) return { tx: d.tx, ty: d.ty };
+      const f = eco.factories.find((x) => x.owner === me.id);
+      return f ? { tx: f.tx, ty: f.ty } : null;
+    }
+    return null;
+  };
+
   function paintUi(now: number) {
     // AI-03: what your ★ total is MADE OF, surfaced as the native hover
     // tooltip over each player's name in the header ("I want to see what I
@@ -12912,6 +13013,25 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // is wired through the same onTool/onRecenter doors the player uses.
     objectiveTarget = null;
     objectiveTool = null;
+    // SCEN-2 (#602): a scenario's own objective owns the lane while it is
+    // OPEN and the match is being PLAYED — the boot's first clicks are still
+    // the loop's own onboarding (plant, first Depot, connect it), which the
+    // advisor must keep saying, and the briefing already fed the scenario's
+    // terms. Once the goal is met it hands the lane straight back and says so
+    // in the Feed, once: `ui.feed` is the single message channel HUD-1 left.
+    if (newLoop && scenarioDef) {
+      const goal = scenarioGoalState();
+      if (scenarioGoalDone(scenarioDef.objective, goal)) {
+        if (!scenarioGoalFed) {
+          scenarioGoalFed = true;
+          ui.feed(`${scenarioDef.name}: ${scenarioDef.objective.done}`, "Scenario");
+        }
+      } else if (phase === "play") {
+        objective = scenarioGoalLine(scenarioDef.objective, goal);
+        objectiveKey = `scenario:${scenarioDef.id}`;
+        objectiveTarget = scenarioGoalTarget(scenarioDef.objective);
+      }
+    }
     if (newLoop) {
       const myDepots = eco.harvesters.filter((hh) => hh.owner === me.id);
       // Build the per-cargo price map for the idle-money/Stockpile rule.
@@ -12970,10 +13090,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         winTarget: winTarget(),
         newLoop: true,
       });
-      objective = step.text;
-      objectiveKey = step.key;
-      objectiveTarget = step.target;
-      objectiveTool = step.tool;
+      // The advisor only gets the lane when nothing else has claimed it — a
+      // scenario's open objective (above) outranks it, exactly as the tuning
+      // session outranks both inside `nextStepAdvisor`.
+      if (objectiveKey === null) {
+        objective = step.text;
+        objectiveKey = step.key;
+        objectiveTarget = step.target;
+        objectiveTool = step.tool;
+      }
 
       // The chip bar's rates: the same rows the inspector prices, summed per
       // cargo per second. One flood fill for the seat (`componentsFor`, cached
@@ -14403,6 +14528,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         recentTunePayoff.delete(truck.depotId);
       }
       if (truck.ownerId === mine) {
+        // SCEN-2 (#602): a scenario's OBJECTIVE still counts arrivals — on the
+        // new loop a Depot's cargo is paid by the clock, but the lorry run is
+        // what proves the route works, and "deliver N cargo" is the one thing
+        // a player can watch happen. Counted before the new loop's early exit
+        // below, so the number is taken either loop.
+        if (scenarioDef) scenarioDelivered += due;
         // L1c (#234): under the new loop your lorries are ANIMATION — the
         // frame keeps driving them (they leave, arrive and turn around exactly
         // as before) but an arrival mints no token and credits nothing: the
@@ -15872,8 +16003,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** E1 (#261): inspect the regenerated height map without coupling callers to its storage. */
     heightAt: (tx: number, ty: number) => heightAt(grid, tx, ty),
     /** L1a (#232): the new-loop feature flag, read-only — it is a boot fact
-     *  (`opts.newLoop`, or dev-only `?loop=new`; never on in production, in a
-     *  room or in a story contract). */
+     *  (`opts.newLoop`, or dev-only `?loop=new`). SCEN-2 (#602): scenarios
+     *  play it too; a room or a story contract still refuses it. */
     get newLoop() { return newLoop; },
     /**
      * L8 (#222): the readouts the last frame handed the HUD — the objective
@@ -15989,6 +16120,50 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** VP-01: the target and the two numbers behind a player's total.
      *  AI-04: the target is the difficulty's line (5★ on easy), not a constant. */
     get vpTarget() { return winTarget(); },
+    /**
+     * SCEN-2 (#602): the LIVE score ledger — the object `rescore` diffs into
+     * and `vpFor` reads. Exposed the way `purses` above is: a test that has to
+     * drive a seat to its ★ line (a scenario's win check, an end-game card)
+     * can set `vp` and hand it to `winCheck()` below, rather than simulating
+     * twenty minutes of building. No gameplay path reads this door.
+     */
+    get score() { return score; },
+    /**
+     * SCEN-2 (#602): the ★ line itself, runnable on demand — the same
+     * `checkWinLine` every build's rescore ends in, with no VP event to ride
+     * in on. Refused for a guest, exactly as the ranked verdict is: the host
+     * is the only seat that may call a match. Returns whether the match is now
+     * decided, so a probe can assert the line without reading `phase`.
+     */
+    winCheck: () => {
+      if (isGuest()) return false;
+      checkWinLine([]);
+      return phase === "won";
+    },
+    /**
+     * SCEN-2 (#602): the scenario this match is playing and its objective, as
+     * the objective lane paints it — null on every non-scenario boot. `line`
+     * is the paint string, `done` is the same question the game asks, both
+     * read through `scenario-goals.ts` so a probe reads what the player sees
+     * instead of re-deriving it.
+     */
+    get scenario() {
+      if (!scenarioDef) return null;
+      const state = scenarioGoalState();
+      return {
+        id: scenarioDef.id,
+        name: scenarioDef.name,
+        winTarget: scenarioDef.winTarget,
+        objective: {
+          kind: scenarioDef.objective.kind,
+          text: scenarioDef.objective.text,
+          target: scenarioDef.objective.target,
+          have: scenarioGoalHave(scenarioDef.objective, state),
+          done: scenarioGoalDone(scenarioDef.objective, state),
+          line: scenarioGoalLine(scenarioDef.objective, state),
+        },
+      };
+    },
     /**
      * L13 (#228): the ★ table the LIVE game is paying, so the twin can never
      * report rates the scoreboard is not using. On the shipped loop this is
