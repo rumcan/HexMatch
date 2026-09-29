@@ -136,25 +136,26 @@ describe("D5 rival eight-neighbour planning and explicit execution", () => {
     expect(diagonal.tiles).toEqual([[10, 10], [11, 11], [12, 12], [13, 13], [14, 14]]);
     expect(diagonal.cost).toBeCloseTo(4 * Math.SQRT2); expect(axis.cost).toBe(8);
   });
-  it("refuses blocked-corner, slope and direct Highway-to-Road diagonal steps", () => {
+  it("refuses blocked-corner and slope diagonal steps; a Highway joins a Road directly", () => {
     const g = flat(), t = createTrack(true);
     g.terrain[tIdx(10, 11)] = WATER; g.terrain[tIdx(11, 10)] = WATER;
     expect(stepCost(g, t, "road", 11, 11, 1, [10, 10])).toBe(Infinity);
     g.terrain.fill(GRASS); g.height = new Uint8Array(MAP_W * MAP_H); g.height[tIdx(11, 11)] = 2;
     expect(stepCost(g, t, "road", 11, 11, 1, [10, 10])).toBe(Infinity);
     g.height.fill(0); buildTile(t, "road", 11, 11, 1); setRoadTier(t, 11, 11, ROAD_TIER.highway);
-    expect(stepCost(g, t, "road", 11, 11, 1, [10, 10])).toBe(Infinity);
+    // owner (2026-09-29): any road joins a Highway, no Ramp needed
+    expect(Number.isFinite(stepCost(g, t, "road", 11, 11, 1, [10, 10]))).toBe(true);
     setRoadTier(t, 11, 11, ROAD_TIER.ramp);
     expect(Number.isFinite(stepCost(g, t, "road", 11, 11, 1, [10, 10]))).toBe(true);
   });
-  it("plans Highway ramps from diagonal branches before any tier changes", () => {
+  it("keeps stored ramps and leaves diagonal branch tiles as Highway (any road joins it)", () => {
     const grid = flat(), track = createTrack(true), path: Tile[] = [[10, 10], [11, 11], [12, 12]];
     for (const [x, y] of [...path, [12, 10] as Tile]) buildTile(track, "road", x, y, 1);
     for (let n = 1; n < path.length; n++) buildRoadDiagonal(grid, track, ...path[n - 1], ...path[n], 1);
     buildRoadDiagonal(grid, track, 11, 11, 12, 10, 1);
     setRoadTier(track, 10, 10, ROAD_TIER.ramp);
     const tiers = highwayRouteTiers(track, path);
-    expect(tiers).toEqual([ROAD_TIER.ramp, ROAD_TIER.ramp, ROAD_TIER.highway]);
+    expect(tiers).toEqual([ROAD_TIER.ramp, ROAD_TIER.highway, ROAD_TIER.highway]);
     path.forEach(([x, y], n) => setRoadTier(track, x, y, tiers[n]));
     expect(roadDiagLinked(track, 11, 11, 12, 10)).toBe(true);
     expect(roadPath(track, 1, [[10, 10]], new Set([tIdx(12, 12)]))).toEqual(path);

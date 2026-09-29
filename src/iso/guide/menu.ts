@@ -66,7 +66,7 @@ const REFERENCE: string[] = [
   "A Depot needs an industry inside its 4×4 catchment, and one Depot per industry.",
   "A Depot ticks cargo only while a continuous road or rail joins it to your factory.",
   "Rail turns at forty-five degrees, never a sharp corner, and never diagonally across a slope.",
-  "A Highway joins your roads through a Ramp; a Road dragged across it becomes an overpass.",
+  "A Highway is just a faster road: any road joins it, and a Road dragged straight across it becomes an overpass.",
   "Stars come from running Depots, fully paved routes, city tiers, top-level Depots and holds.",
 ];
 

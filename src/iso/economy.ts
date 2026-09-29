@@ -36,7 +36,7 @@ import { TRANSPORT, TIER_THROUGHPUT, INDUSTRY_BY_KEY, BASE_RATE, CARGO, DEPOT_TR
 import { factoryFootprintOf, type Grid, type Industry } from "./grid";
 import {
   DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, trackOpenTo, PUBLIC_OWNER, overpassJump, roadDiagNeighbours,
-  plantFootprintTiles, sideBranch, ROAD_TIER, TIER_RANK, ROAD_DIAG, ROAD_RAIL_DECK_X, ROAD_RAIL_DECK_Y,
+  plantFootprintTiles, ROAD_TIER, TIER_RANK, ROAD_DIAG, ROAD_RAIL_DECK_X, ROAD_RAIL_DECK_Y,
   type Track, type TrackKind,
 } from "./track";
 // RAIL-04 (#178): the railway is a SOURCE of throughput, not a second economy.
@@ -1195,7 +1195,6 @@ function stampStretch(
   const raised: [number, number][] = [];
   const want = ROAD_TIER[to];
   const wantRank = TIER_RANK[to];
-  const path = stretch.map(([x, y]) => [x, y] as [number, number]);
   if (!track.tier) track.tier = new Uint8Array(track.road.length);
   for (const [x, y] of stretch) {
     if (!inMapT(x, y)) continue;
@@ -1217,8 +1216,7 @@ function stampStretch(
       track.dirt[i] = 0;
       track.road[i] |= PRESENT | bits;
     }
-    const tier = to === "highway" && sideBranch(track, path, x, y) ? ROAD_TIER.ramp : want;
-    track.tier[i] = tier | (track.tier[i] & (ROAD_RAIL_DECK_X | ROAD_RAIL_DECK_Y));
+    track.tier[i] = want | (track.tier[i] & (ROAD_RAIL_DECK_X | ROAD_RAIL_DECK_Y));
     raised.push([x, y]);
   }
   return raised;

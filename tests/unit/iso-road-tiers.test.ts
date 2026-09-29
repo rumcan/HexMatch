@@ -57,13 +57,21 @@ describe("ROADS-2 road tiers", () => {
     expect(roadTierAt(t, 10, 10)).toBe(ROAD_TIER.road);
   });
 
-  it("a Highway refuses a level change between two tiles (gentle grades)", () => {
+  // Owner (2026-09-29): a Highway is just a faster road - it climbs by the same
+  // one-level-a-step rule as every road (ROADS-2's flat-only rule is retired).
+  it("a Highway climbs one level a step, like any road, and refuses a cliff", () => {
     const g = flatLand(), t = createTrack();
     g.height = new Uint8Array(144 * 144).fill(1);
     for (let y = 60; y < 70; y++) g.height[y * 144 + 26] = 2;
     const pv = previewDrag(g, t, "road", rich, 22, 64, 30, 64, true, undefined, 0, undefined, true, {}, "highway");
-    expect(pv.tiles.length).toBeLessThan(9);
-    expect(pv.truncated || pv.blocked.length > 0).toBe(true);
+    expect(pv.tiles.length).toBe(9);
+    expect(pv.truncated || pv.blocked.length > 0).toBe(false);
+    const same = previewDrag(g, createTrack(), "road", rich, 22, 64, 30, 64, true, undefined, 0, undefined, true, {}, "road");
+    expect(same.tiles.length).toBe(9);              // the plain Road climbs exactly the same
+    for (let y = 60; y < 70; y++) g.height[y * 144 + 26] = 3;  // now a two-level cliff
+    const cliff = previewDrag(g, createTrack(), "road", rich, 22, 64, 30, 64, true, undefined, 0, undefined, true, {}, "highway");
+    expect(cliff.tiles.length).toBeLessThan(9);
+    expect(cliff.truncated || cliff.blocked.length > 0).toBe(true);
   });
 
   it("tiers ride the multiplayer delta", () => {

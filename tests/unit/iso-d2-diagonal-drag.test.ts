@@ -152,22 +152,40 @@ describe("D2 refuses blocked links and respects tiers", () => {
     expect(pv.truncated).toBe(false); expect(pv.tiles).toHaveLength(4);
     commitDrag(t, "road", pv, 1, "highway"); assertLinks(t, pv);
   });
-  it("Highways keep their flat grade rule on a diagonal", () => {
-    const g = flat(), t = createTrack(true); g.height = new Uint8Array(MAP_W * MAP_H);
-    g.height[tIdx(11, 11)] = 1;
-    const pv = preview(g, t, "road", "highway", [13, 13]);
-    expect(pv.why).toBe("too-steep"); expect(pv.tiles).toEqual([[10, 10]]); assertBuilt(t, "road", pv, "highway");
+  // Owner (2026-09-29): a Highway is just a faster road - a diagonal over a slope
+  // is judged by the SAME rule as a plain Road diagonal, whatever the tier.
+  it("a diagonal Highway over a slope is judged exactly like a plain Road", () => {
+    const run = (tier: RoadTierKey, level: number) => {
+      const g = flat(), t = createTrack(true); g.height = new Uint8Array(MAP_W * MAP_H);
+      g.height[tIdx(11, 11)] = level;
+      const pv = preview(g, t, "road", tier, [13, 13]);
+      return { why: pv.why, tiles: pv.tiles.length };
+    };
+    for (const level of [1, 2]) expect(run("highway", level), `level ${level}`).toEqual(run("road", level));
+    expect(run("highway", 2).why).toBe("too-steep");   // a two-level step is refused for both
   });
-  it("diagonal road crossing a Highway has a clear reason (entry and departure)", () => {
+  // Owner (2026-09-29): any road joins a Highway - diagonals included. Only an
+  // Overpass (a highway carrying a road over it) is axis-only.
+  it("a diagonal road joins a plain Highway (entry and departure)", () => {
     for (const first of [true, false]) {
       const g = flat(), t = createTrack(true);
       for (let y = 5; y <= 20; y++) { buildTile(t, "road", 12, y, 1); setRoadTier(t, 12, y, ROAD_TIER.highway); }
       const pv = preview(g, t, "road", "road", [14, 12], first);
+      expect(pv.why ?? null).toBeNull();
+      commitDrag(t, "road", pv, 1);
+      for (let y = 5; y <= 20; y++) expect(roadTierAt(t, 12, y)).toBe(ROAD_TIER.highway);   // never downgraded
+    }
+  });
+  it("a diagonal road cannot meet an Overpass, and the reason says so (entry and departure)", () => {
+    for (const first of [true, false]) {
+      const g = flat(), t = createTrack(true);
+      for (let y = 5; y <= 20; y++) { buildTile(t, "road", 12, y, 1); setRoadTier(t, 12, y, OVERPASS_Y); }
+      const pv = preview(g, t, "road", "road", [14, 12], first);
       expect(pv.why).toBe("diagonal-highway");
-      expect(roadDragRefusalText(pv.why)).toContain("cannot cross a Highway");
+      expect(roadDragRefusalText(pv.why)).toContain("cannot meet an Overpass");
       expect(pv.blocked[0][0]).toBe(12);
       commitDrag(t, "road", pv, 1);
-      expect(roadTierAt(t, ...pv.blocked[0])).toBe(ROAD_TIER.highway);
+      expect(roadTierAt(t, ...pv.blocked[0])).toBe(OVERPASS_Y);
     }
   });
   it.each(["road", "street"] as const)("an axis crossing on the straight leg pays OVERPASS_COST for %s, then continues diagonally", (tier) => {
@@ -387,13 +405,14 @@ describe("D2 live pointer / R / overlay contract", () => {
     expect(h.money).toBe(0);
   });
 
-  it("a diagonal Highway crossing puts the refusal text in the live cost hint", async () => {
+  it("a diagonal Overpass meeting puts the refusal text in the live cost hint", async () => {
+    // Owner (2026-09-29): a plain Highway joins any road; only an Overpass is axis-only.
     const h = await boot(); h.setTool("road");
-    for (let y = 5; y <= 20; y++) { buildTile(h.track, "road", 12, y, 1); setRoadTier(h.track, 12, y, ROAD_TIER.highway); }
+    for (let y = 5; y <= 20; y++) { buildTile(h.track, "road", 12, y, 1); setRoadTier(h.track, 12, y, OVERPASS_Y); }
     pointer("pointerdown", 10, 10); pointer("pointermove", 14, 12);
     expect(h.activeRoadDrag!.preview.why).toBe("diagonal-highway");
     await settle();
-    expect(root.textContent).toContain("A diagonal road cannot cross a Highway");
+    expect(root.textContent).toContain("A diagonal road cannot meet an Overpass");
   });
 
   it("flag OFF keeps the L drag and R does not change its path", async () => {
