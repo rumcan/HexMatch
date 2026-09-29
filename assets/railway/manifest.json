@@ -25,23 +25,23 @@
       "name": "platform_ne",
       "kind": "platform",
       "view": "ne",
-      "w": 110,
-      "h": 80,
+      "w": 146,
+      "h": 102,
       "anchor": [
-        77,
-        78
+        113,
+        99
       ],
       "footprint": [
-        3,
+        4,
         1
       ],
       "moving": false,
       "box2x": [
-        220,
-        160
+        292,
+        204
       ],
       "alpha": {
-        "coverage": 0.2862,
+        "coverage": 0.2996,
         "corners": [
           0,
           0,
@@ -55,23 +55,23 @@
       "name": "platform_se",
       "kind": "platform",
       "view": "se",
-      "w": 110,
-      "h": 72,
+      "w": 146,
+      "h": 94,
       "anchor": [
-        13,
-        69
+        17,
+        91
       ],
       "footprint": [
         1,
-        3
+        4
       ],
       "moving": false,
       "box2x": [
-        220,
-        144
+        292,
+        188
       ],
       "alpha": {
-        "coverage": 0.318,
+        "coverage": 0.3251,
         "corners": [
           0,
           0,
@@ -85,23 +85,23 @@
       "name": "platform_sw",
       "kind": "platform",
       "view": "sw",
-      "w": 110,
-      "h": 72,
+      "w": 146,
+      "h": 94,
       "anchor": [
-        96,
-        69
+        128,
+        91
       ],
       "footprint": [
-        3,
+        4,
         1
       ],
       "moving": false,
       "box2x": [
-        220,
-        144
+        292,
+        188
       ],
       "alpha": {
-        "coverage": 0.318,
+        "coverage": 0.3251,
         "corners": [
           0,
           0,
@@ -115,23 +115,23 @@
       "name": "platform_nw",
       "kind": "platform",
       "view": "nw",
-      "w": 110,
-      "h": 80,
+      "w": 146,
+      "h": 102,
       "anchor": [
         32,
-        78
+        99
       ],
       "footprint": [
         1,
-        3
+        4
       ],
       "moving": false,
       "box2x": [
-        220,
-        160
+        292,
+        204
       ],
       "alpha": {
-        "coverage": 0.2862,
+        "coverage": 0.2996,
         "corners": [
           0,
           0,

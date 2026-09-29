@@ -118,12 +118,18 @@ export type RailView = typeof RAIL_VIEWS[number];
 const VIEW_BIT: Record<RailView, number> = { ne: NE, se: SE, sw: SW, nw: NW };
 export const VIEW_OF_BIT: Record<number, RailView> = { [NE]: "ne", [SE]: "se", [SW]: "sw", [NW]: "nw" };
 
-/** Platform footprints by heading: the lane along NE/SW is 2 wide × 3 deep. */
+/**
+ * Owner (2026-09-29): a platform is four tiles long (it was three). Stations
+ * placed before keep their own length — a lane carries it (`RailLane.len`).
+ */
+export const PLATFORM_LEN = 4;
+
+/** Platform footprints by heading: one tile deep, `PLATFORM_LEN` long. */
 export const PLATFORM_FOOTPRINT: Record<RailView, [number, number]> = {
-  // Playtest (2026-09): the platform is one tile deep and three long, with NO
-  // track of its own. Its view names the side its track runs along: se/nw
-  // lie along y (track at x+1 / x-1), sw/ne along x (track at y+1 / y-1).
-  se: [1, 3], nw: [1, 3], sw: [3, 1], ne: [3, 1],
+  // Playtest (2026-09): the platform is one tile deep with NO track of its
+  // own. Its view names the side its track runs along: se/nw lie along y
+  // (track at x+1 / x-1), sw/ne along x (track at y+1 / y-1).
+  se: [1, PLATFORM_LEN], nw: [1, PLATFORM_LEN], sw: [PLATFORM_LEN, 1], ne: [PLATFORM_LEN, 1],
 };
 export const DEPOT_FOOTPRINT: [number, number] = [2, 2];
 
@@ -403,6 +409,12 @@ export interface RailLane {
   /** Slab origin (the strip's top corner); the track runs along its view side. */
   tx: number;
   ty: number;
+  /**
+   * Tiles long. A station's lanes all share its length: `PLATFORM_LEN` for one
+   * placed now, 3 for one saved before the four-long platform. Absent on a
+   * probe for a new placement, which reads as `PLATFORM_LEN`.
+   */
+  len?: number;
   /** The line this lane is assigned to, or null while it is unassigned. */
   lineId: number | null;
 }
@@ -478,7 +490,7 @@ export function laneTiles(s: RailStructure): [number, number][] {
 }
 
 /**
- * Playtest (2026-09): the three tiles of ordinary rail a platform's train
+ * Playtest (2026-09): the tiles of ordinary rail a platform's train
  * stands on — the row along the platform's track side, in axis order. They are
  * laid for free with the platform (`layPlatformTrack`) and are player rail
  * like any other: demolishable, and joined by the player's own drags.
@@ -510,7 +522,7 @@ export function stopTile(s: RailStructure): [number, number] {
 // ── RAIL-6 (#575): the station and its lanes ──────────────────────────────
 //
 // A platform IS a station: one warehouse plus 1–4 lanes. Lane 0 is the
-// footprint the platform was placed with (its strip and its three stopping
+// footprint the platform was placed with (its strip and its stopping
 // tiles), so every pre-RAIL-6 platform is a 1-lane station and every rule that
 // read "the platform's track" keeps reading lane 0. An upgrade adds a lane: a
 // parallel strip two tiles over — its own track, its own switch, its own stop
@@ -534,27 +546,41 @@ export function stopTile(s: RailStructure): [number, number] {
 export function stationLanes(s: RailStructure): RailLane[] {
   if (s.kind !== "platform") return [];
   if (!s.lanes || !s.lanes.length) {
-    s.lanes = [{ id: s.id, view: s.view, tx: s.tx, ty: s.ty, lineId: null }];
+    s.lanes = [{ id: s.id, view: s.view, tx: s.tx, ty: s.ty, len: stationLaneLen(s), lineId: null }];
   }
+  // A lane record from before lanes carried a length is as long as its station.
+  for (const l of s.lanes) if (l.len == null) l.len = stationLaneLen(s);
   return s.lanes;
+}
+
+/** How long a station's lanes are: its own footprint's long side (3 or 4). */
+export const stationLaneLen = (s: Pick<RailStructure, "w" | "h">): number => Math.max(s.w, s.h);
+
+/** A lane's position and length — all the lane geometry below reads. */
+export type LaneSpot = Pick<RailLane, "view" | "tx" | "ty" | "len">;
+
+/** One lane's strip footprint [w, h]: its length along its heading's axis, one tile across. */
+function laneFootprint(l: LaneSpot): [number, number] {
+  const len = l.len ?? PLATFORM_LEN;
+  return l.view === "se" || l.view === "nw" ? [1, len] : [len, 1];
 }
 
 /** The warehouse art tier a lane count draws (1–3 tiers for 1–4 lanes). */
 export const stationWarehouseTier = (lanes: number): 1 | 2 | 3 =>
   (lanes <= 1 ? 1 : lanes === 2 ? 2 : 3);
 
-/** The strip tiles of one lane (its 1×3 / 3×1 platform slab). */
-export function laneSlabTiles(l: Pick<RailLane, "view" | "tx" | "ty">): [number, number][] {
-  const [w, h] = PLATFORM_FOOTPRINT[l.view];
+/** The strip tiles of one lane (its platform slab, one tile deep). */
+export function laneSlabTiles(l: LaneSpot): [number, number][] {
+  const [w, h] = laneFootprint(l);
   const out: [number, number][] = [];
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out.push([l.tx + x, l.ty + y]);
   return out;
 }
 
-/** The three stopping tiles of one lane — ordinary rail, laid with the lane. */
-export function laneTrackTiles(l: Pick<RailLane, "view" | "tx" | "ty">): [number, number][] {
+/** The stopping tiles of one lane (one per strip tile) — ordinary rail, laid with the lane. */
+export function laneTrackTiles(l: LaneSpot): [number, number][] {
   const out: [number, number][] = [];
-  const [w, h] = PLATFORM_FOOTPRINT[l.view];
+  const [w, h] = laneFootprint(l);
   if (l.view === "se" || l.view === "nw") {
     const x = l.view === "se" ? l.tx + w : l.tx - 1;
     for (let y = 0; y < h; y++) out.push([x, l.ty + y]);
@@ -566,7 +592,7 @@ export function laneTrackTiles(l: Pick<RailLane, "view" | "tx" | "ty">): [number
 }
 
 /** The tile a train stops at on one lane: the middle of its track. */
-export function laneStopTile(l: Pick<RailLane, "view" | "tx" | "ty">): [number, number] {
+export function laneStopTile(l: LaneSpot): [number, number] {
   const t = laneTrackTiles(l);
   return t[(t.length - 1) >> 1];
 }
@@ -595,18 +621,23 @@ export function laneOriginAt(s: RailStructure, side: 1 | -1): { tx: number; ty: 
     : { tx: base.tx, ty: base.ty + 2 * side };
 }
 
+/** The lane a station would grow on one side: where it starts, and the station's own length. */
+export function nextLaneAt(s: RailStructure, side: 1 | -1): LaneSpot {
+  return { view: s.view, ...laneOriginAt(s, side), len: stationLaneLen(s) };
+}
+
 /** A probe lane as a structure-shaped record, for the shared footprint rules. */
-function laneProbe(l: Pick<RailLane, "view" | "tx" | "ty">): RailStructure {
-  const [w, h] = PLATFORM_FOOTPRINT[l.view];
+function laneProbe(l: LaneSpot): RailStructure {
+  const [w, h] = laneFootprint(l);
   return { id: -1, kind: "platform", ownerId: 0, owner: "", tx: l.tx, ty: l.ty, w, h, view: l.view };
 }
 
 /**
  * RAIL-6 (#575): may this station grow a lane on this side? The same
  * vocabulary as every other placement refusal — the HUD, the click, the rival
- * and the host all read this one answer. The lane's strip AND its three
- * stopping tiles must be free, flat ground inside the map, clear of diagonal
- * track and overpasses, exactly as a placed platform's are.
+ * and the host all read this one answer. The lane's strip AND its stopping
+ * tiles must be free, flat ground inside the map, clear of diagonal track and
+ * overpasses, exactly as a placed platform's are.
  */
 export function laneRefusal(
   grid: Grid, state: RailState, ownerId: number, stationId: number, side: 1 | -1,
@@ -616,9 +647,9 @@ export function laneRefusal(
   if (s.ownerId !== ownerId) return "not-yours";
   const lanes = stationLanes(s);
   if (lanes.length >= MAX_LANES) return "max-lanes";
-  const origin = laneOriginAt(s, side);
-  const probe = laneProbe({ view: s.view, ...origin });
-  for (const [x, y] of [...laneSlabTiles(probe), ...laneTrackTiles(probe)]) {
+  const lane = nextLaneAt(s, side);
+  const probe = laneProbe(lane);
+  for (const [x, y] of [...laneSlabTiles(lane), ...laneTrackTiles(lane)]) {
     if (!inMapT(x, y)) return "off-map";
     if (!railTerrainOk(grid, x, y)) return "water";
     if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "occupied";
@@ -630,21 +661,21 @@ export function laneRefusal(
     // a lane may close over the player's own siding (the merge is `buildRail`'s).
     if (hasRail(state.rail, x, y) && state.rail.owner[tIdx(x, y)] !== ownerId) return "foreign-rail";
   }
-  if (laneTrackTiles(probe).some(([x, y]) => diagNeighbours(state.rail, x, y).length > 0)) return "axis-only";
+  if (laneTrackTiles(lane).some(([x, y]) => diagNeighbours(state.rail, x, y).length > 0)) return "axis-only";
   // Laying the lane's track must not hang an arm no train can turn through on
   // the network beside it — the same 45° rule `buildRail` commits under, asked
   // up front so the HUD and the click refuse with the reason BEFORE the pay.
-  for (const [x, y] of laneTrackTiles(probe)) {
+  for (const [x, y] of laneTrackTiles(lane)) {
     for (const [nx, ny] of railNeighbours(state, ownerId, x, y)) {
       if (!railJoinTurnOk(state, ownerId, x, y, nx, ny, grid)) return "too-sharp";
     }
   }
-  if (state.structures.some((o) => o !== s && overlaps(o, origin.tx, origin.ty, probe.w, probe.h))) return "overlap";
-  for (const [x, y] of laneTrackTiles(probe)) {
+  if (state.structures.some((o) => o !== s && overlaps(o, lane.tx, lane.ty, probe.w, probe.h))) return "overlap";
+  for (const [x, y] of laneTrackTiles(lane)) {
     if (state.structures.some((o) => overlaps(o, x, y, 1, 1))) return "track-blocked";
   }
   // E4 (#268): the strip and its track sit on one plane, like every footprint.
-  if (footprintFlatTiles(grid, [...laneSlabTiles(probe), ...laneTrackTiles(probe)])) return "not-flat";
+  if (footprintFlatTiles(grid, [...laneSlabTiles(lane), ...laneTrackTiles(lane)])) return "not-flat";
   return "ok";
 }
 
@@ -662,15 +693,17 @@ export function laneSideOf(s: RailStructure, tx: number, ty: number): 1 | -1 {
 /**
  * RAIL-8 (owner, 2026-09-29: "I would never have known you could add lanes"):
  * the INVITATION a station makes. Where its next lane would stand on one side,
- * the strip and the three stopping tiles it would take, and the SAME refusal
- * the click will run — so the transparent ghost, the dashed "+" and the click
- * can never disagree. Null once the station holds `MAX_LANES` (nothing to offer).
+ * the strip and the stopping tiles it would take, and the SAME refusal the
+ * click will run — so the transparent ghost, the dashed "+" and the click can
+ * never disagree. Null once the station holds `MAX_LANES` (nothing to offer).
  */
 export interface LaneInvite {
   stationId: number;
   side: 1 | -1;
   origin: { tx: number; ty: number };
-  /** The new lane's strip, and its three stopping tiles. */
+  /** The new lane's length in tiles: the station's own. */
+  len: number;
+  /** The new lane's strip, and its stopping tiles. */
   slab: [number, number][];
   track: [number, number][];
   stop: [number, number];
@@ -687,11 +720,10 @@ export function laneInviteFor(
   if (!s || s.kind !== "platform" || s.ownerId !== ownerId) return null;
   const lanes = stationLanes(s);
   if (lanes.length >= MAX_LANES) return null;
-  const origin = laneOriginAt(s, side);
-  const probe = { view: s.view, tx: origin.tx, ty: origin.ty };
+  const lane = nextLaneAt(s, side);
   return {
-    stationId, side, origin,
-    slab: laneSlabTiles(probe), track: laneTrackTiles(probe), stop: laneStopTile(probe),
+    stationId, side, origin: { tx: lane.tx, ty: lane.ty }, len: stationLaneLen(s),
+    slab: laneSlabTiles(lane), track: laneTrackTiles(lane), stop: laneStopTile(lane),
     why: laneRefusal(grid, state, ownerId, stationId, side),
     lanesAfter: lanes.length + 1,
   };
@@ -745,8 +777,7 @@ export function addStationLane(
   if (why !== "ok") return { ok: false, why };
   const s = structureById(state, stationId)!;
   const lanes = stationLanes(s);
-  const origin = laneOriginAt(s, side);
-  const lane: RailLane = { id: state.seq++, view: s.view, tx: origin.tx, ty: origin.ty, lineId: null };
+  const lane: RailLane = { id: state.seq++, ...nextLaneAt(s, side), lineId: null };
   lanes.push(lane);
   // Keep the lane list in map order along the row, so the draw pass (and the
   // panel) visit lanes back-to-front every frame — a stable order is what
@@ -2039,7 +2070,7 @@ export function platformRefusal(
   if (structures.some((s) => overlaps(s, tx, ty, w, h))) return "overlap";
   if (rail && platformTrackAt(tx, ty, view).some(([x, y]) => !!(rail.tile[tIdx(x, y)] & RAIL_OVERPASS))) return "overpass-stop";
   if (rail && platformTrackAt(tx, ty, view).some(([x, y]) => diagNeighbours(rail, x, y).length > 0)) return "axis-only";
-  // The track side must be free to lay the three stopping tiles on.
+  // The track side must be free to lay the stopping tiles on.
   for (const [x, y] of platformTrackAt(tx, ty, view)) {
     if (!railTerrainOk(grid, x, y)) return "track-blocked";
     if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "track-blocked";
@@ -2048,7 +2079,7 @@ export function platformRefusal(
     if (side === "depot" || side === "plant" || side === "platform" || side === "bridge"
       || side === "dam") return "track-blocked";
   }
-  // E4 (#268): a platform's 1×3 (or 3×1) needs level ground — the art is drawn
+  // E4 (#268): a platform's 1×4 (or 4×1) needs level ground — the art is drawn
   // on one plane and its lane sits at the footprint's own height.
   const off = footprintFlatTiles(grid, footprintTiles({ tx, ty, w, h }));
   if (off) return "not-flat";
@@ -2095,7 +2126,7 @@ export function placePlatform(
 }
 
 /**
- * Lay a new platform's three stopping tiles as ordinary rail, free (they are
+ * Lay a new platform's stopping tiles as ordinary rail, free (they are
  * part of the platform's price). Tiles a rule refuses (a road, say) are left
  * for the player to sort out.
  */
@@ -3337,7 +3368,7 @@ export function structureSprites(s: RailStructure, atlas?: RailSpriteSource): Gh
  * tiles before it are the code-painted concrete strip. The first lane's head
  * tile is the warehouse's own ground, so no slab is painted under it.
  */
-function laneSprites(l: Pick<RailLane, "view" | "tx" | "ty">, first: boolean): GhostDrawItem[] {
+function laneSprites(l: LaneSpot, first: boolean): GhostDrawItem[] {
   const out: GhostDrawItem[] = [];
   const slab = laneSlabTiles(l);
   for (let i = first ? 1 : 0; i < slab.length - 1; i++) {
@@ -3366,9 +3397,12 @@ export function depotGhostItems(tx: number, ty: number, view: RailView): GhostDr
   return structureSprites(virtualStructure("depot", tx, ty, view));
 }
 
-/** RAIL-7: the lane a station upgrade will add (slabs + cap; never the first lane). */
-export function laneGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
-  return laneSprites({ view, tx, ty }, false);
+/**
+ * RAIL-7: the lane a station upgrade will add (slabs + cap; never the first
+ * lane). `len` is the station's own length (`stationLaneLen`).
+ */
+export function laneGhostItems(tx: number, ty: number, view: RailView, len = PLATFORM_LEN): GhostDrawItem[] {
+  return laneSprites({ view, tx, ty, len }, false);
 }
 
 /**
@@ -3426,7 +3460,7 @@ export function railToWire(
       // station has the same lanes, the same assignments, the same warehouse
       // tier, from the same bytes.
       lanes: s.kind === "platform"
-        ? stationLanes(s).map((l) => ({ id: l.id, view: l.view, tx: l.tx, ty: l.ty, lineId: l.lineId }))
+        ? stationLanes(s).map((l) => ({ id: l.id, view: l.view, tx: l.tx, ty: l.ty, len: l.len, lineId: l.lineId }))
         : undefined,
     })),
     lines: state.lines.map((l) => ({ ...l })),
@@ -3544,6 +3578,9 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
             id: typeof l.id === "number" ? l.id : 0,
             view: asView(l.view),
             tx: l.tx, ty: l.ty,
+            // Absent from a save made before the four-long platform: the lane
+            // then reads as long as its station (`stationLanes` fills it in).
+            len: Number.isInteger(l.len) && (l.len as number) > 0 ? l.len : undefined,
             lineId: typeof l.lineId === "number" ? l.lineId : null,
           }))
         : undefined,

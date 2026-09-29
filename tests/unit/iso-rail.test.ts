@@ -87,10 +87,11 @@ function plantPlatform(state: RailState, grid: Grid, tx: number, ty: number, vie
  */
 function buildLine(state: RailState, grid: Grid, track: Track, ox: number, oy: number, ownerId = 1) {
   // Platforms sit one tile above the track row (view sw: their stopping track is
-  // at y+1), so the row itself is ordinary rail laid end to end.
+  // at y+1), so the row itself is ordinary rail laid end to end — under both
+  // four-long platforms (ox..ox+3 and ox+10..ox+13).
   const source = placePlatform(state, "you", ownerId, ox, oy - 1, "sw", { kind: "industry", id: 0, tiles: [] });
   const dest = placePlatform(state, "you", ownerId, ox + 10, oy - 1, "sw", { kind: "plant", id: 0, tiles: [] });
-  lay(grid, track, state, ownerId, row(oy, ox, ox + 12));
+  lay(grid, track, state, ownerId, row(oy, ox, ox + 13));
   // The depot spur joins the main line as a WYE (two 45° diagonals): a train
   // cannot take the 90° of a plain T junction.
   lay(grid, track, state, ownerId, [[ox + 5, oy], [ox + 6, oy + 1], [ox + 7, oy]]);
@@ -294,12 +295,12 @@ describe("RAIL-01 costs and scoring", () => {
 
 describe("RAIL-02 platforms and anchors", () => {
   it("rotates footprints in quarter turns", () => {
-    // Playtest (2026-09): one tile deep, three long, no track of its own.
-    expect(PLATFORM_FOOTPRINT.ne).toEqual([3, 1]);
-    expect(PLATFORM_FOOTPRINT.se).toEqual([1, 3]);
+    // Owner (2026-09-29): one tile deep, four long, no track of its own.
+    expect(PLATFORM_FOOTPRINT.ne).toEqual([4, 1]);
+    expect(PLATFORM_FOOTPRINT.se).toEqual([1, 4]);
     expect(rotateView("ne")).toBe("se");
     expect(rotateView("se", 3)).toBe("ne");
-    expect(footprintFor("platform", "nw")).toEqual([1, 3]);
+    expect(footprintFor("platform", "nw")).toEqual([1, 4]);
     expect(footprintFor("depot", "ne")).toEqual(DEPOT_FOOTPRINT);
     expect(RAIL_VIEWS).toHaveLength(4);
   });
@@ -416,7 +417,7 @@ describe("RAIL-04 one train per connected owner component", () => {
     const route = railPath(state, 1, [[13, 5]], new Set(platformTrack(a.source).map(([x, y]) => tIdx(x, y))));
     expect(route).not.toBeNull();
     expect(route?.[0]).toEqual([13, 5]);
-    expect(route?.[route.length - 1]).toEqual([9, 3]);
+    expect(route?.[route.length - 1]).toEqual([10, 3]);   // the four-long lane's near end
   });
 
   it("assigns a line only between an industry platform and a plant platform", () => {
@@ -472,10 +473,11 @@ describe("RAIL-04 one train per connected owner component", () => {
     expect(compA).not.toBe(compB);
     // #401: reach the merge with legal 45° bends, rather than failing the
     // turn rule first. Keep the merge tile and every assertion unchanged.
-    const connector: [number, number][] = [[20, 3], ...col(21, 4, 29), ...row(30, 22, 23)];
+    // The plant lane runs to x=20, so the connector steps off the line at x=21.
+    const connector: [number, number][] = [[21, 3], ...col(22, 4, 29), [23, 30]];
     const res = lay(grid, track, state, 1, connector);
     expect(res.why).toBe("component-conflict");
-    expect(res.built[res.built.length - 1]).toEqual([22, 30]);   // stopped one tile short
+    expect(res.built[res.built.length - 1]).toEqual([22, 29]);   // stopped one tile short
     expect(hasRail(state.rail, 23, 30)).toBe(false);            // the bridge was rolled back
     // …and the two networks really are still separate.
     expect(railComponents(state, 1).get(tIdx(20, 30))).not.toBe(
@@ -738,9 +740,9 @@ describe("the Railway panel's model", () => {
     // lane 0, one code-painted slab tile per strip tile but the last, and a
     // cap finishing every lane — in a fixed back-to-front order.
     expect(items.map((i) => i.sprite)).toEqual([
-      "station_wh_1_r", "station_lane_se", "station_cap_r",
+      "station_wh_1_r", "station_lane_se", "station_lane_se", "station_cap_r",
     ]);
-    expect(items.map((i) => [i.tx, i.ty])).toEqual([[7, 3], [7, 4], [7, 5]]);
+    expect(items.map((i) => [i.tx, i.ty])).toEqual([[7, 3], [7, 4], [7, 5], [7, 6]]);
     for (const i of items) {
       expect(i.ref).toMatchObject({ kind: "rail", structure: s.id, railKind: "platform" });
     }
@@ -845,8 +847,10 @@ describe("#179 line and train management", () => {
     const line = createLine(state, 1, source.id, dest.id).line!;
     expect(buyTrain(state, 1, depot.id, line.id).ok).toBe(true);
     // A second depot on the SAME network: a stub under the line, a shed below it.
-    expect(lay(grid, track, state, 1, [[10, 3], [11, 4], [12, 3]]).ok).toBe(true);   // a wye
-    const second = placeDepot(state, "you", 1, 11, 5, "ne");
+    // (east of the plant lane: a stopping lane is axis-only, so no wye on it)
+    expect(lay(grid, track, state, 1, row(3, 21, 23)).ok).toBe(true);
+    expect(lay(grid, track, state, 1, [[21, 3], [22, 4], [23, 3]]).ok).toBe(true);   // a wye
+    const second = placeDepot(state, "you", 1, 22, 5, "ne");
     const other = createLine(state, 1, source.id, dest.id).line!;
     const refused = buyTrain(state, 1, second.id, other.id);
     expect(refused.ok).toBe(false);

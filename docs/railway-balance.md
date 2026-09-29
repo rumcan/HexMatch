@@ -67,7 +67,7 @@ Without that, rail bridges would be illegal on nearly every river: on seed 1337,
 51 of 52 river-bank tiles sit one level above the water.
 
 **Footprints.** A Depot's 2×2 lot, a processing plant, the starting Factory, a
-railway platform's 1×3 and a dam's dry half all need a **level footprint**
+railway platform's 1×4 and a dam's dry half all need a **level footprint**
 (`not-flat`, "Needs flat ground"): the art is drawn on one diamond and the
 rules (catchment, lanes, footing) assume one plane.
 

@@ -55,13 +55,15 @@ describe("RAIL-7 ghost draws what will be placed", () => {
       // Placed structure items — what railStructureItems draws for a real station
       const state = createRailState();
       const s = placePlatform(state, "you", 1, tx, ty, view, { kind: "industry", id: 1, tiles: [] });
-      // stationLanes materialises lane 0, so railStructureItems will draw warehouse+slab+cap
+      // stationLanes materialises lane 0, so railStructureItems will draw
+      // warehouse + two slabs + cap (a four-long lane)
       const placed = railStructureItems(state, hasAllStationArt);
 
       // One source of truth: same sprite lookup
       expect(ghost[0].sprite).toBe(stationWhSprite(1, view));
       expect(ghost[1].sprite).toBe(laneSlabSprite(view));
-      expect(ghost[2].sprite).toBe(stationCapSprite(view));
+      expect(ghost[2].sprite).toBe(laneSlabSprite(view));
+      expect(ghost[3].sprite).toBe(stationCapSprite(view));
 
       // Ghost's sprite keys equal placed structure's sprite keys, same order, same tiles
       expect(ghost.map((g) => [g.sprite, g.tx, g.ty])).toEqual(
@@ -100,32 +102,34 @@ describe("RAIL-7 ghost draws what will be placed", () => {
       // Ghost uses same sprite lookup as placed lane
       expect(ghost[0].sprite).toBe(laneSlabSprite(view));
       expect(ghost[1].sprite).toBe(laneSlabSprite(view));
-      expect(ghost[2].sprite).toBe(stationCapSprite(view));
+      expect(ghost[2].sprite).toBe(laneSlabSprite(view));
+      expect(ghost[3].sprite).toBe(stationCapSprite(view));
 
       // Add the lane for real and check that the new lane's tiles are exactly the ghost's tiles
       const res = addStationLane(grid, track, state, 1, s.id, 1);
       expect(res.ok).toBe(true);
       const placedAfter = railStructureItems(state, hasAllStationArt);
 
-      // placedAfter contains warehouse tier 2 + lane0 (1 slab+cap) + lane1 (2 slabs+cap) = 6 items
-      // The new lane's 3 items should be the last 3 of placedAfter (lane1)
-      const newLanePlaced = placedAfter.slice(-3);
+      // placedAfter contains warehouse tier 2 + lane0 (2 slabs+cap) + lane1 (3 slabs+cap) = 8 items
+      // The new lane's 4 items should be the last 4 of placedAfter (lane1)
+      const newLanePlaced = placedAfter.slice(-4);
       expect(ghost.map((g) => [g.sprite, g.tx, g.ty])).toEqual(
         newLanePlaced.map((p) => [p.sprite, p.tx, p.ty]),
       );
     });
   }
 
-  it("platform ghost is warehouse + middle slab + cap, using same helpers as placed", () => {
+  it("platform ghost is warehouse + middle slabs + cap, using same helpers as placed", () => {
     // Extra explicit check that the helper itself is built from the shared tile helpers
     const view: RailView = "sw";
     const tx = 5, ty = 5;
     const ghost = platformGhostItems(tx, ty, view);
-    expect(ghost).toHaveLength(3);
+    expect(ghost).toHaveLength(4);
     expect(ghost[0]).toEqual({ sprite: stationWhSprite(1, view), tx, ty });
-    // middle slab is second tile of the 3-tile footprint
+    // middle slabs are the second and third tiles of the 4-tile footprint
     expect(ghost[1].tx).not.toBe(tx);
-    expect(ghost[2].sprite).toBe(stationCapSprite(view));
+    expect(ghost[2].tx).not.toBe(ghost[1].tx);
+    expect(ghost[3].sprite).toBe(stationCapSprite(view));
   });
 });
 
