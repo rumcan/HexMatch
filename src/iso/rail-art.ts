@@ -35,6 +35,8 @@
 // working, it is just not dressed yet.
 // ══════════════════════════════════════════════════════════════════════════
 import type { Atlas, AtlasImage } from "./atlas";
+import { CARGOES, type Cargo } from "./config";
+import { OCT_NAMES, WAGON_BASE_KIND, WAGON_OF_CARGO } from "./rail";
 import railwayManifest from "../../assets/railway/manifest.json";
 
 const railUrls = import.meta.glob<string>(
@@ -124,7 +126,85 @@ export async function loadRailwaySprites(atlas: Atlas, maxZ = atlas.detailCap): 
       console.warn(`[railway] ${name}: not installed`, err);
     }
   }));
+  // FLEET-3 (#597): the per-cargo wagon placeholders ride on the cars just installed.
+  makeWagonVariantSprites(atlas);
   return installed;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FLEET-3 (#597) — THE WAGON PLACEHOLDERS.
+//
+// Each cargo has its own wagon sprite name, `wagon_<cargo>_<heading>` (empty)
+// and `wagon_<cargo>_<heading>_loaded`, over the eight headings `OCT_NAMES`.
+// Until the lead supplies the Meshy art, both are painted here from the
+// shipped car body they are dressed on (`WAGON_BASE_KIND`): the body plus a
+// per-cargo colour band, and for the bulk cargoes a heap of the load on top.
+// `trainItems` probes the atlas, so real PNGs installed under those names later
+// win by simply existing, and a missing name falls back to the plain car.
+// ══════════════════════════════════════════════════════════════════════════
+/** Band colour across the body, and the load heap colour (null = a closed wagon shows none). */
+export const WAGON_LOOK: Record<Cargo, { band: string; load: string | null }> = {
+  grain: { band: "#d9a441", load: "#e8c85a" },
+  wood: { band: "#6b4a2b", load: "#8a5a34" },
+  ore: { band: "#4a4f57", load: "#2f3033" },
+  stone: { band: "#8d8f93", load: "#bdb7a8" },
+  oil: { band: "#c2452d", load: null },
+  gold: { band: "#c8a13a", load: null },
+};
+
+/** Every wagon sprite name the placeholders may install. */
+export const WAGON_SPRITE_NAMES: readonly string[] = CARGOES.flatMap((c) =>
+  OCT_NAMES.flatMap((o) => [`wagon_${c}_${o}`, ...(WAGON_LOOK[c].load ? [`wagon_${c}_${o}_loaded`] : [])]));
+
+/**
+ * Paint and install the wagon placeholders, at every zoom the base car has.
+ * Returns how many sprites were (re)written; 0 with no canvas (Node) or no cars.
+ */
+export function makeWagonVariantSprites(atlas: Atlas): number {
+  if (typeof document === "undefined") return 0;
+  let made = 0;
+  for (const cargo of CARGOES) {
+    const kind = WAGON_BASE_KIND[WAGON_OF_CARGO[cargo]];
+    const look = WAGON_LOOK[cargo];
+    for (const oct of OCT_NAMES) {
+      const baseName = `car-${kind}_${oct}`;
+      const bases = atlas.buildingImages.get(baseName);
+      const def = atlas.manifest.sprites[baseName];
+      if (!bases || !def) continue;
+      for (const loaded of look.load ? [false, true] : [false]) {
+        const name = `wagon_${cargo}_${oct}${loaded ? "_loaded" : ""}`;
+        const have = atlas.buildingImages.get(name);
+        if (have && bases.size === have.size) continue;       // already painted at every level
+        const out = new Map<number, AtlasImage>();
+        for (const [z, img] of bases) {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return made;                              // headless: keep the plain car
+          ctx.drawImage(img as unknown as CanvasImageSource, 0, 0);
+          const w = img.width, h = img.height;
+          // The colour band: only over the car's own pixels.
+          ctx.globalCompositeOperation = "source-atop";
+          ctx.fillStyle = look.band;
+          ctx.fillRect(0, h * 0.5, w, h * 0.17);
+          ctx.globalCompositeOperation = "source-over";
+          if (loaded && look.load) {
+            // A heap of the load sitting on the body, centred on the car.
+            ctx.fillStyle = look.load;
+            ctx.beginPath();
+            ctx.ellipse(w * 0.5, h * 0.42, w * 0.2, h * 0.13, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          out.set(z, canvas);
+        }
+        atlas.buildingImages.set(name, out);
+        atlas.manifest.sprites[name] = { ...def };
+        made++;
+      }
+    }
+  }
+  return made;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
