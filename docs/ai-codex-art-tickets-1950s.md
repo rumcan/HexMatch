@@ -73,7 +73,7 @@ Every asset is an RGBA 32-bit transparent PNG, authoring resolution **2×**:
 | **1×1** | **128 × 128 px** | `(64, 96)` | 64 px (bottom) | 96 px | Depots (`depot_*`), `town_center`, town houses (43) |
 | **1×2 / 2×1** | **192 × 192 px** | `(96, 144)` | 96 px (bottom) | 144 px | Non-square buildings (F1/F5) |
 | **2×2** | **256 × 256 px** | `(128, 192)` | 128 px (bottom) | 192 px | Town buildings on 2×2 blocks |
-| **1×3 / 3×1** | **256 × 256 px** | `(128, 192)` | 128 px (bottom) | 192 px | Non-square buildings (F1/F5); rail platforms use 1×3/3×1 too (own cutter) |
+| **1×3 / 3×1** | **256 × 256 px** | `(128, 192)` | 128 px (bottom) | 192 px | Non-square buildings (F1/F5); rail platforms are 1×4/4×1 (own cutter) |
 | **3×3** | **384 × 384 px** | `(192, 288)` | 192 px (bottom) | 288 px | `factory`, `ore_mine`, `quarry`, `oil_rig` |
 | **4×2 / 2×4** | **384 × 384 px** | `(192, 288)` | 192 px (bottom) | 288 px | Non-square buildings (F1/F5) |
 | **4×4** | **512 × 512 px** | `(256, 384)` | 256 px (bottom) | 384 px | `farm`, `forest`, `gold_mine` |

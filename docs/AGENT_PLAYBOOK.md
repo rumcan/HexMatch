@@ -199,7 +199,7 @@ Ticket #271. Branch: tools/271-footprint-templates.
 Do exactly the ticket (templates and make-building-pngs for 1×2, 2×1, 1×3,
 3×1, 4×2, 2×4; footprint declared, not guessed from canvas size). Tools and
 assets/buildings-src only — no game code.
-Note: rail platforms are already 1×3/3×1 with their own cutter
+Note: rail platforms are already 1×4/4×1 with their own cutter
 (tools/railway/cut_platform.py) — use it as a reference for anchoring on the
 south vertex; don't change it.
 Targeted tests: tests/unit/iso-building-pngs.test.ts, tests/unit/iso-building-footprint.test.ts.
@@ -238,7 +238,7 @@ tests/unit/iso-plants.test.ts, tests/unit/iso-factory.test.ts (+ new cases).
 Ticket #272. Branch: engine/272-non-square.
 Renderer exception: you may change depth.ts sorting, building-shadow.ts,
 camera.ts cull pad, atlas picking. Do the ticket with synthetic defs.
-Rail platforms (1×3/3×1, src/iso/rail.ts railStructureItems) are a live
+Rail platforms (1×4/4×1, src/iso/rail.ts railStructureItems) are a live
 example of long thin footprints next to moving trains — include them in the
 depth-sort tests.
 Targeted tests: tests/unit/iso-depth.test.ts, tests/unit/iso-building-footprint.test.ts,

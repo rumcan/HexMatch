@@ -367,7 +367,7 @@ import {
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
   // the preview, the guest intent and the rival.
-  laneRefusal, addStationLane, laneOriginAt, laneSlabTiles, laneTrackTiles, laneStopTile,
+  laneRefusal, addStationLane, nextLaneAt, laneSlabTiles, laneTrackTiles, laneStopTile,
   laneInviteAt, laneInviteFor, laneInviteTiles, laneSideOf, type LaneInvite,
   stationLanes, structureById, MAX_LANES,
   platformGhostItems, depotGhostItems, laneGhostItems,
@@ -12542,7 +12542,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     for (const [x, y] of laneInviteTiles(inv)) items.push({ sprite: band, tx: x, ty: y });
     items.push({ sprite: "node_mark", tx: inv.stop[0], ty: inv.stop[1] });
     const st = structureById(rail, inv.stationId);
-    const g = laneGhostItems(inv.origin.tx, inv.origin.ty, st?.view ?? railView);
+    const g = laneGhostItems(inv.origin.tx, inv.origin.ty, st?.view ?? railView, inv.len);
     const cost = seatCostOf(me, RAIL_COSTS.lane, "platform");
     const label = !ok ? (LANE_WHY_SHORT[inv.why] ?? "Can't add a lane here")
       : canPayBuild(me, RAIL_COSTS.lane, "platform") ? `Add lane · $${cost}` : `Add lane · need $${cost}`;
@@ -12578,8 +12578,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const side = laneSideFor(st, tx, ty);
         const why = laneRefusal(grid, rail, me.i + 1, st.id, side);
         const ok = why === "ok";
-        const origin = laneOriginAt(st, side);
-        const probe = { view: st.view, tx: origin.tx, ty: origin.ty };
+        const probe = nextLaneAt(st, side);
         for (const [x, y] of laneSlabTiles(probe)) {
           if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) items.push({ sprite: ok ? "highlight" : "highlight_bad", tx: x, ty: y });
         }
@@ -12591,7 +12590,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // RAIL-7 (#603): ghost draws exactly what will be placed — same sprites
         // as the lane that `addStationLane` will build, via the shared
         // `laneGhostItems` helper (one source of truth with `railStructureItems`).
-        const g = laneGhostItems(origin.tx, origin.ty, st.view);
+        const g = laneGhostItems(probe.tx, probe.ty, st.view, probe.len);
         ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
         invite = {
           slab: laneSlabTiles(probe), ok,

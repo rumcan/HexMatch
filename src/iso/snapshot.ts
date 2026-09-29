@@ -319,6 +319,8 @@ export interface RailLaneWire {
   view: string;
   tx: number;
   ty: number;
+  /** Tiles long; absent from an old save (the lane is then its station's length). */
+  len?: number;
   lineId: number | null;
 }
 export interface RailStructureWire {

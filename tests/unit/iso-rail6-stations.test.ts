@@ -14,10 +14,10 @@
 // onto each lane's western approach, and three industry stations merging into
 // the trunk. Every assertion is about a rule, not about a particular island.
 //
-//   industry C (30,16) ╲ diag run
-//   industry A (30,20) ──╲        trunk row y=22, x 33..38
+//   industry C (29,16) ╲ diag run
+//   industry A (29,20) ──╲        trunk row y=22, x 33..38
 //   plant P    (40,20)    (34,22)═══(38,22)╱(39,21)─ lane 0 track y=21
-//   industry B (30,24) ──╱(36,22)    ╲(39,22)─ lane 1 track y=23 (added)
+//   industry B (29,24) ──╱(36,22)    ╲(39,22)─ lane 1 track y=23 (added)
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect } from "vitest";
 import {
@@ -78,17 +78,19 @@ function stationWorld(): World {
   // approach, so a train rounds 45° into the lane track and stops on it.
   lay(row(22, 33, 38));
   lay([[38, 22], [39, 21], [40, 21]]);
-  // Industry A (30,20): track y=21, one bend down into the trunk.
-  const A = placePlatform(state, "you", 1, 30, 20, "sw", { kind: "industry", id: 10, tiles: [] });
+  // The industry stations are four long, placed so each lane's track ENDS at
+  // x=32, where its connector starts.
+  // Industry A (29,20): track y=21, one bend down into the trunk.
+  const A = placePlatform(state, "you", 1, 29, 20, "sw", { kind: "industry", id: 10, tiles: [] });
   layPlatformTrack(grid, track, state, A);
   lay([[32, 21], [33, 21], [34, 22], [35, 22]]);
-  // Industry B (30,24): track y=25, a diagonal run up into the trunk.
-  const B = placePlatform(state, "you", 1, 30, 24, "sw", { kind: "industry", id: 11, tiles: [] });
+  // Industry B (29,24): track y=25, a diagonal run up into the trunk.
+  const B = placePlatform(state, "you", 1, 29, 24, "sw", { kind: "industry", id: 11, tiles: [] });
   layPlatformTrack(grid, track, state, B);
   lay([[32, 25], [33, 25], [34, 24], [35, 23], [36, 22]]);
-  // Industry C (30,16): track y=17. A stopping lane is axis-only, so the
+  // Industry C (29,16): track y=17. A stopping lane is axis-only, so the
   // connector steps straight off it before the long diagonal run down.
-  const C = placePlatform(state, "you", 1, 30, 16, "sw", { kind: "industry", id: 12, tiles: [] });
+  const C = placePlatform(state, "you", 1, 29, 16, "sw", { kind: "industry", id: 12, tiles: [] });
   layPlatformTrack(grid, track, state, C);
   lay([[32, 17], [33, 17], [34, 18], [35, 19], [36, 20], [36, 21], [37, 22]]);
   return { ...w, A, B, C };
@@ -126,7 +128,7 @@ describe("RAIL-6 the station and its lanes", () => {
     expect(lanes0).toHaveLength(1);
     expect(lanes0[0]).toMatchObject({ view: "sw", tx: 40, ty: 20, lineId: null });
     // The lane's track is the platform track the epic always had.
-    expect(laneTrackTiles(lanes0[0])).toEqual([[40, 21], [41, 21], [42, 21]]);
+    expect(laneTrackTiles(lanes0[0])).toEqual([[40, 21], [41, 21], [42, 21], [43, 21]]);
     expect(laneStopTile(lanes0[0])).toEqual([41, 21]);
 
     // Three upgrades, each on the side the player picks — one lane at a time.
@@ -156,7 +158,7 @@ describe("RAIL-6 the station and its lanes", () => {
     const res = addStationLane(w.grid, w.track, w.state, 1, w.P.id, -1);
     expect(res.ok).toBe(true);
     expect([res.lane!.tx, res.lane!.ty]).toEqual([40, 18]);
-    expect(laneTrackTiles(res.lane!)).toEqual([[40, 19], [41, 19], [42, 19]]);
+    expect(laneTrackTiles(res.lane!)).toEqual([[40, 19], [41, 19], [42, 19], [43, 19]]);
     for (const [x, y] of laneTrackTiles(res.lane!)) expect(hasRail(w.state.rail, x, y)).toBe(true);
     // The lane list is map-ordered: the new lane sorts BEFORE lane 0.
     expect(stationLanes(w.P).map((l) => l.ty)).toEqual([18, 20]);
@@ -216,8 +218,9 @@ describe("RAIL-6 the station and its lanes", () => {
     // finishes every lane) — back to front, in map order.
     expect(railStructureItems(w.state).map((i) => [i.sprite, i.tx, i.ty])).toEqual([
       ["station_wh_2", 40, 20],
-      ["station_lane_sw", 41, 20], ["station_cap", 42, 20],
-      ["station_lane_sw", 40, 22], ["station_lane_sw", 41, 22], ["station_cap", 42, 22],
+      ["station_lane_sw", 41, 20], ["station_lane_sw", 42, 20], ["station_cap", 43, 20],
+      ["station_lane_sw", 40, 22], ["station_lane_sw", 41, 22], ["station_lane_sw", 42, 22],
+      ["station_cap", 43, 22],
     ]);
     // An atlas without the station art falls back to the legacy platform sprite.
     expect(railStructureItems(w.state, { has: () => false }).map((i) => [i.sprite, i.tx, i.ty]))
@@ -401,7 +404,7 @@ describe("RAIL-6 the wire carries the lanes (saves, MP, snapshots)", () => {
     const lanes = stationLanes(P2);
     expect(lanes).toHaveLength(1);
     expect(lanes[0]).toMatchObject({ tx: P2.tx, ty: P2.ty, view: P2.view, lineId: null });
-    expect(laneTrackTiles(lanes[0])).toEqual([[40, 21], [41, 21], [42, 21]]);
+    expect(laneTrackTiles(lanes[0])).toEqual([[40, 21], [41, 21], [42, 21], [43, 21]]);
     for (const t of fresh.trains) {
       expect(t.laneId ?? null).toBeNull();
       expect(t.holdStation ?? null).toBeNull();

@@ -218,7 +218,7 @@ describe("V1 single-sprite buildings are ONE object on their footprint", () => {
 // square multi-tile industries). This block exercises the SAME engine paths
 // with synthetic defs on w≠h footprints of length up to 4 — placement, depth
 // sort (shapes vs shapes vs squares vs a moving vehicle), and stage-2 picking
-// — plus the LIVE non-square example: rail platforms (1×3/3×1,
+// — plus the LIVE non-square example: rail platforms (1×4/4×1,
 // `railStructureItems`) beside moving trains (`carPlacements`).
 //
 // The ordering contract pinned here:
@@ -416,7 +416,7 @@ describe("F2 (#272) — a moving vehicle around every shape", () => {
   });
 });
 
-describe("F2 (#272) — live example: rail platforms (1×3/3×1) beside moving trains", () => {
+describe("F2 (#272) — live example: rail platforms (1×4/4×1) beside moving trains", () => {
   // The REAL railway defs (assets/railway/manifest.json): platforms anchored
   // on the south vertex of their footprint's last tile, cars on their ground
   // contact point — exactly what `railStructureItems` / `trainItems` emit.
@@ -530,7 +530,7 @@ describe("F2 (#272) — live example: rail platforms (1×3/3×1) beside moving t
     expect(items.map((i) => i.sprite.startsWith("car-")).every(Boolean)).toBe(true);
     expect([...OCT_NAMES]).toEqual(["e", "se", "s", "sw", "w", "nw", "n", "ne"]);
     expect([PLATFORM_FOOTPRINT.se, PLATFORM_FOOTPRINT.nw, PLATFORM_FOOTPRINT.sw, PLATFORM_FOOTPRINT.ne])
-      .toEqual([[1, 3], [1, 3], [3, 1], [3, 1]]);
+      .toEqual([[1, 4], [1, 4], [4, 1], [4, 1]]);
   });
 });
 
