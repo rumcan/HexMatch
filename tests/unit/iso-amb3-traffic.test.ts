@@ -132,10 +132,11 @@ describe("AMB-3 delivery clock", () => {
     const route: [number, number][] = [[10, 10], [11, 10], [12, 10]];
     const signals: SignalMap = { seed: 4, junctions: new Map([[tIdx(11, 10), 2]]) };
     const red = timeOf(4, 2, 0, "red");
-    const hold = holdTForLight(route, 0, 0.5, signals, red);
+    // the stop line moved back to t 0.4 (owner, 2026-09-29): probe from before it
+    const hold = holdTForLight(route, 0, 0.3, signals, red);
     expect(hold).not.toBeNull();
     const truck = {
-      depotId: 1, route, leg: 0, t: 0.4, reverse: false,
+      depotId: 1, route, leg: 0, t: 0.3, reverse: false,
       segMult: [4], rateMult: 1,
     };
     const before = { ...truck };
@@ -205,7 +206,7 @@ describe("AMB-3 lights", () => {
     const grid = townGrid([{ id: 2, tx: 11, ty: 10, houses: [], roads: tiles }]);
     const signals: SignalMap = { seed: 8, junctions: new Map([[tIdx(11, 10), 2]]) };
     const red = timeOf(8, 2, 0, "red");
-    const hold = holdTForLight([[10, 10], [11, 10], [12, 10]], 0, 0.5, signals, red)!;
+    const hold = holdTForLight([[10, 10], [11, 10], [12, 10]], 0, 0.3, signals, red)!;
     const state = createCarState();
     const car: Car = {
       name: "car 1", carIndex: 1, state: "driving",

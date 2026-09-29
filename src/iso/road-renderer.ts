@@ -55,6 +55,8 @@ import {
 import { FLAT_DRAPER, draperFor, elevationLiftPx, slopeShade, tileCorners, type Draper } from "./elevation";
 import type { Decal } from "./scenery";
 import { DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads, type Track } from "./track";
+// FLOW-1: stop lines, zebra crossings and street centre lines.
+import { flowMarkingsRev, paintFlowMarkings } from "./flow";
 
 // #440: the same `?diag` read as the simulation, evaluated once, not every
 // frame. The live World carries the resolved flag itself (`RoadWorld.
@@ -1139,6 +1141,8 @@ export function paintRoadTiles(
     }
   }
   ctx.setLineDash([]);
+  // FLOW-1: signal-junction markings + street centre lines, into this raster.
+  paintFlowMarkings(ctx, tiles, elev, widthOf);
 
   // One solid stroke per continuous Highway run, including its overpass
   // highway lanes. Junction mouths remain trimmed; the road decks stay axis-only.
@@ -1339,7 +1343,8 @@ export class RoadCache {
     cx: number, cy: number, zoom: number, world: RoadWorld, style: RoadStyle,
     makeSurface: (w: number, h: number) => Surface | null,
   ): CacheEntry | null {
-    const key = `${this.styleVersion}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${cx},${cy}`;
+    // FLOW-1: the markings ride the raster, so their revision rides the key.
+    const key = `${this.styleVersion}:${flowMarkingsRev()}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${cx},${cy}`;
     const hit = this.entries.get(key);
     if (hit) {
       this.hits++;

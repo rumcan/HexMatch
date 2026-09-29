@@ -25,6 +25,8 @@ import {
 import { ambientRoadGraph } from "./road-routing";
 import { TRUCK_SPEED, TRUCK_ROAD_MULT } from "./vehicles";
 import { uphillSpeed } from "./slopes";
+// FLOW-1: the traffic module owns the live lights, their art and the clock.
+import { flowLightAspect, flowTick, paintFlowOverlay } from "./flow";
 
 // ── art the lead ships ────────────────────────────────────────────────────
 /** 1950s–60s models. Two finned-sedan liveries, a pickup, a bus, a van. */
@@ -169,7 +171,10 @@ export const LIGHT_CYCLE_MS = 9000;
 export const LIGHT_GREEN_MS = 3600;
 export const LIGHT_AMBER_MS = 900;
 /** Approach distance at which a vehicle holds, in tiles. */
-export const LIGHT_HOLD_TILES = 0.32;
+// Owner (2026-09-29): "they drive too deep into intersections". The FLOW-1
+// stop line sits ~0.48 from the junction centre; the pose is the car's centre,
+// so hold half a car further back and the nose stops AT the line.
+export const LIGHT_HOLD_TILES = 0.6;
 
 export type LightAspect = "green" | "amber" | "red";
 export type RoadAxis = 0 | 1;
@@ -186,6 +191,10 @@ export function axisOf(dx: number, dy: number): RoadAxis {
  * the same map agree without a message.
  */
 export function lightAspect(seed: number, townId: number, axis: RoadAxis, timeMs: number): LightAspect {
+  // FLOW-1: demand-actuated lights while the traffic module is live. Null in
+  // "fixed" mode (or before the first tick) keeps the seeded cycle below.
+  const flow = flowLightAspect(townId, axis);
+  if (flow) return flow;
   const offset = ((seed ^ Math.imul(townId + 1, 0x9e3779b1)) >>> 0) % LIGHT_CYCLE_MS;
   let t = (((timeMs + offset) % LIGHT_CYCLE_MS) + LIGHT_CYCLE_MS) % LIGHT_CYCLE_MS;
   if (axis === 1) t = (t + LIGHT_CYCLE_MS / 2) % LIGHT_CYCLE_MS;
@@ -263,6 +272,17 @@ export function buildSignals(track: Track, grid: Grid, seed: number): SignalMap 
     if (townId === null) continue;
     junctions.set(i, townId);
   }
+  // Owner (2026-09-29): lights on every OTHER junction, not all of them —
+  // row-major per town, keep the 1st, 3rd, 5th… The rest stay plain
+  // give-way junctions (cars' own yield rule), so nothing waits at a light
+  // that is not drawn.
+  const seen = new Map<number, number>();
+  for (const i of [...junctions.keys()].sort((a, b) => a - b)) {
+    const t = junctions.get(i)!;
+    const n = seen.get(t) ?? 0;
+    seen.set(t, n + 1);
+    if (n % 2 === 1) junctions.delete(i);
+  }
   return { seed, junctions };
 }
 
@@ -287,7 +307,7 @@ export function approachOf(
   const k = Math.min(Math.max(pose.leg, 0), n - 2);
   const a = route[k], b = route[k + 1];
   const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-  const hold = Math.min(LIGHT_HOLD_TILES, segLen * 0.45);
+  const hold = Math.min(LIGHT_HOLD_TILES, segLen * 0.7);
   if (!pose.reverse) {
     return {
       tile: b,
@@ -788,6 +808,8 @@ export function tickAmbience(state: AmbienceState, dtMs: number, ctx: AmbienceTi
   if (dtMs <= 0) return;
   state.time += dtMs;
   syncSignals(state, ctx.track, ctx.grid);
+  // FLOW-1: the traffic clock rides the ambience clock (every client ticks it).
+  flowTick(dtMs, ctx.track, ctx.grid, state.signals, state.time);
   const show = ambienceVisible("peds", ctx.zoom, ctx.performance);
   state.pedsActive = show;
   if (!show) return;
@@ -896,15 +918,22 @@ export function paintAmbience(
   opts: { performance: boolean; view?: PaintView; atlasHasModels?: boolean },
 ): number {
   if (!ctx || typeof ctx.beginPath !== "function") return 0;
-  if (!DRAW_STAND_INS) return 0;
+  // FLOW-1: signal heads, incidents and the heat map are shipped art, drawn
+  // whether or not the placeholder stand-ins are on.
+  const flowDrawn = paintFlowOverlay(
+    ctx, (fx, fy) => tilePointScreen(cam, grid, fx, fy), cam.zoom, opts.view, opts.performance,
+  );
+  if (!DRAW_STAND_INS) return flowDrawn;
   const zoom = cam.zoom;
-  if (opts.performance) return 0;
+  if (opts.performance) return flowDrawn;
   const showCars = ambienceVisible("cars", zoom, false) && !opts.atlasHasModels;
   const showPeds = state.pedsActive && ambienceVisible("peds", zoom, false);
-  const showLights = ambienceVisible("lights", zoom, false) && state.signals.junctions.size > 0;
-  if (!showCars && !showPeds && !showLights) return 0;
+  // The flow overlay already drew real signal heads: no stand-in poles on top.
+  const showLights = ambienceVisible("lights", zoom, false) && state.signals.junctions.size > 0
+    && flowDrawn === 0;
+  if (!showCars && !showPeds && !showLights) return flowDrawn;
   const [cx, cy] = viewCentre(opts.view);
-  let drawn = 0;
+  let drawn = flowDrawn;
   const rank = (x: number, y: number) => (x - cx) * (x - cx) + (y - cy) * (y - cy);
 
   if (showLights && grid) {

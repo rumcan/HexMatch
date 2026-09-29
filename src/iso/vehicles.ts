@@ -48,6 +48,8 @@ import {
   overpassLiftFor, approachingJunction, followSpeed, segKey,
   type VehicleEntry,
 } from "./traffic";
+// FLOW-1: lights and congestion act on the lorry's REAL (economic) pose.
+import { flowTruckHook } from "./flow";
 
 /**
  * Tiles per millisecond on GRAVEL: one tile every 600 ms. Dirt is free to lay
@@ -298,6 +300,9 @@ export function tickTrucks(
         .filter((t) => t.route.length >= 2)
         .map((t) => ({ id: t.depotId, v: t } as VehicleEntry)))
     : null;
+  // FLOW-1: null unless the traffic module is live, and then this function is
+  // exactly what it was before.
+  const flow = flowTruckHook(state.trucks);
 
   const distAhead = (truck: Truck): number => {
     if (!hash) return Infinity;
@@ -358,7 +363,8 @@ export function tickTrucks(
       const climb = truck.segClimb?.[k] ?? 0;
       const pace = truck.segMult?.[k] ?? (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
       return TRUCK_SPEED * ownerM * rate * pace
-        * uphillSpeed(reverse ? -climb : climb);
+        * uphillSpeed(reverse ? -climb : climb)
+        * (flow ? flow.speed(truck, k) : 1);
     };
     let ms = dtMs;
     let movedDist = 0;
@@ -383,6 +389,19 @@ export function tickTrucks(
         } else {
           const cur = truck.route[k];
           if (truck.t > 0 && cur && blocked.has(tIdx(cur[0], cur[1]))) break;
+        }
+      }
+      // FLOW-1: a red light (or an amber with room to stop) holds the lorry at
+      // the stop line. The controller caps every red and `maxHoldMs` is a
+      // second safety valve, so a lorry can never be wedged for good.
+      const lineT = flow ? flow.stopT(truck, k) : null;
+      if (lineT !== null) {
+        const toLine = truck.reverse ? truck.t - lineT : lineT - truck.t;
+        if (toLine <= 1e-6) {
+          flow!.hold(truck, ms);
+          truck._lastSpeed = 0;
+          ms = 0;
+          break;
         }
       }
       // Junction yield: build a forward-facing VehiclePos view regardless of
@@ -420,6 +439,16 @@ export function tickTrucks(
       if (v <= 1e-9) {
         truck._lastSpeed = 0;
         break;
+      }
+      // FLOW-1: never drive through a binding stop line inside one step.
+      if (lineT !== null) {
+        const toLine = truck.reverse ? truck.t - lineT : lineT - truck.t;
+        if (ms * v >= toLine) {
+          movedDist += toLine * length;
+          ms -= toLine / v;
+          truck.t = lineT;
+          continue;
+        }
       }
       if (!truck.reverse) {
         const need = (1 - truck.t) / v;
