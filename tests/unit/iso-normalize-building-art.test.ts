@@ -260,8 +260,9 @@ describe("F5 the repo's own declarations and masters", () => {
 
   // The first set of non-square buildings (#273). Long side along grid y ⇒ the
   // LARGER h; the `_r` mirror of each ships too, declared the other way round.
+  // (The terrace_1x2 pair left on 2026-09-29: owner, "this building scale it
+  // off". Its replacement is the single-orientation terrace below.)
   const PAIRS: Array<[string, [number, number], [number, number]]> = [
-    ["terrace_1x2", [1, 2], [2, 1]],
     ["shops_1x3", [1, 3], [3, 1]],
     ["store_2x4", [2, 4], [4, 2]],
     ["factory_2x4", [2, 4], [4, 2]],
@@ -309,6 +310,23 @@ describe("F5 the repo's own declarations and masters", () => {
         expect(foot.footprint).toContain(fp[0]);
       }
     }
+  });
+
+  // 2026-09-29 (owner): the three-house terrace off town_townhouse_gardens_2,
+  // front yard sliced away, in two versions (back yard kept / no yards). One
+  // orientation only: a mirror would put the light on the wrong wall.
+  it("ships the 2×1 terraces, declared, compiled and on the 2×1 canvas", async () => {
+    const buildings = JSON.parse(readFileSync(join(ROOT, "assets", "buildings", "manifest.json"), "utf8"));
+    for (const n of ["terrace_2x1_yard", "terrace_2x1_plain"]) {
+      expect(declared[n]?.footprint, `${n} declared`).toEqual([2, 1]);
+      expect(buildings.sprites[n]?.footprint, `${n} compiled footprint`).toEqual([2, 1]);
+      for (const z of ["0.5x", "1x", "2x"]) {
+        expect(existsSync(join(ROOT, "assets", "buildings", `${n}@${z}.png`)), `${n}@${z}`).toBe(true);
+      }
+      const meta = await sharp(join(SRC_DIR, `${n}@2x.png`)).metadata();
+      expect([meta.width, meta.height], `${n} canvas`).toEqual([240, 288]);
+    }
+    expect(buildings.sprites.terrace_1x2, "the old terrace is gone").toBeUndefined();
   });
 
   it("declarationSnippet mirrors the loader's own normal form", () => {

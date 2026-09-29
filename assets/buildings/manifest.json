@@ -801,22 +801,6 @@
         384
       ]
     },
-    "terrace_1x2": {
-      "footprint": [
-        1,
-        2
-      ],
-      "anchor": [
-        40,
-        64
-      ],
-      "w": 80,
-      "h": 84,
-      "canvas": [
-        240,
-        288
-      ]
-    },
     "shops_1x3": {
       "footprint": [
         1,
@@ -884,22 +868,6 @@
         288
       ],
       "footRoom": 8
-    },
-    "terrace_1x2_r": {
-      "footprint": [
-        2,
-        1
-      ],
-      "anchor": [
-        40,
-        64
-      ],
-      "w": 80,
-      "h": 84,
-      "canvas": [
-        240,
-        288
-      ]
     },
     "shops_1x3_r": {
       "footprint": [
@@ -983,6 +951,38 @@
       "canvas": [
         128,
         128
+      ]
+    },
+    "terrace_2x1_yard": {
+      "footprint": [
+        2,
+        1
+      ],
+      "anchor": [
+        50,
+        42
+      ],
+      "w": 100,
+      "h": 66,
+      "canvas": [
+        240,
+        288
+      ]
+    },
+    "terrace_2x1_plain": {
+      "footprint": [
+        2,
+        1
+      ],
+      "anchor": [
+        50,
+        42
+      ],
+      "w": 72,
+      "h": 66,
+      "canvas": [
+        240,
+        288
       ]
     }
   }

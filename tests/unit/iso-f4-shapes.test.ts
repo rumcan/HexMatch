@@ -41,7 +41,7 @@ describe("F4 shapes option — option off keeps today's maps", () => {
         for (const b of townBuildings(t, footprintOf)) {
           expect(b.sprite.startsWith("shops_1x3")).toBe(false);
           expect(b.sprite.startsWith("store_2x4")).toBe(false);
-          expect(b.sprite.startsWith("terrace_1x2")).toBe(false);
+          expect(b.sprite.startsWith("terrace_")).toBe(false);
         }
       }
     }
@@ -101,7 +101,7 @@ describe("F4 shapes option — towns gain the long buildings", () => {
           const [fw, fh] = footprintOf(b.sprite);
           if (b.sprite.startsWith("shops_1x3")) shops++;
           if (b.sprite.startsWith("store_2x4")) stores++;
-          if (b.sprite.startsWith("terrace_1x2")) terraces++;
+          if (b.sprite.startsWith("terrace_")) terraces++;
           for (let dy = 0; dy < fh; dy++) {
             for (let dx = 0; dx < fw; dx++) {
               const i = idx(b.tx + dx, b.ty + dy);
