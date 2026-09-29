@@ -165,8 +165,13 @@ describe("D3 stored links, not inferred diagonal adjacency", () => {
     w.roadBits[index(10, 10)] |= ROAD_DS;
     w.roadBits[index(11, 11)] = 0;
     expect(roadTilesIn(w, 10, 10, 10, 10)[0].diagonal).toBeUndefined();
-    w.roadBits[index(11, 11)] = 16; w.roadTiers[index(11, 11)] = 2;
+    // an Overpass (tier 4) is the forbidden tier link: it is axis-only
+    w.roadBits[index(11, 11)] = 16; w.roadTiers[index(11, 11)] = 4;
     expect(roadTilesIn(w, 10, 10, 11, 11).every((t) => !t.diagonal)).toBe(true);
+    // owner (2026-09-29): a plain Highway (tier 2) joins any road, diagonals included
+    w.roadBits[index(11, 11)] = 16 | ROAD_DN; w.roadTiers[index(11, 11)] = 2;
+    expect(roadTilesIn(w, 10, 10, 11, 11).some((t) => t.diagonal)).toBe(true);
+    w.roadBits[index(11, 11)] = 16;
     w.roadBits[index(MAP_W - 1, 10)] = 16 | ROAD_DE;
     w.roadBits[index(0, 10)] = 16;
     expect(roadTilesIn(w, MAP_W - 1, 10, MAP_W - 1, 10)[0].diagonal).toBeUndefined();
