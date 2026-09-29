@@ -163,6 +163,8 @@ export interface DepotCardInfo {
    * The card prints it on its own line, beside the yield the clock pays.
    */
   damLine?: string | null;
+  /** TRAFFIC-INCOME: "Traffic delay −N% — build your own road…" when the depot's traffic factor is under 0.95. */
+  trafficLine?: string | null;
   /**
    * #462: cargo/min, $/min, the slowest segment and the lorry's trips/min —
    * the same line the hover ledger prints, so select and hover cannot disagree.
@@ -5583,6 +5585,7 @@ export function createOriginalUi(
         // gate the hover inspector's `damLine` prints, so the two cards agree.
         ...(o.statsLine ? [o.statsLine] : []),
         ...(o.damLine ? [o.damLine] : []),
+        ...(o.trafficLine ? [`<span style="color:#ec6c10;font-weight:600">${o.trafficLine}</span>`] : []),
         ...(lastLine ? [lastLine] : []),
       ],
       actions: [

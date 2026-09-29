@@ -245,40 +245,26 @@ export function planLevel(
   const hNow = (x: number, y: number): number =>
     planned.get(key(x, y)) ?? heightAt(grid, x, y);
 
-  // ── 3. edge ramps — one ring of one-level moves, never more ─────────────
-  const refuseAdjacent = (x: number, y: number, why: LevelRefusal) => {
-    const k = key(x, y);
-    if (refuseSet.has(k)) return;
-    refuseSet.add(k);
-    refused.push([x, y, why]);
-    planned.delete(k);
-  };
-  // A patch tile whose edge cannot be brought within one level refuses with
-  // the pair's own reason: a road–road pair says "road" ("That road would go
-  // too steep"), anything else takes the obstacle's word (water / structure /
-  // rail / bridge / cliff).
   const pairRefusal = (x: number, y: number, nx: number, ny: number): LevelRefusal =>
     trackAt(track, x, y) && trackAt(track, nx, ny) ? "road" : obstacleRefusal(grid, track, nx, ny);
-  const ramps = new Map<number, number>();   // key → wanted height
+
+  // ── 3. edge ramps — one ring of one-level moves, never more ─────────────
+  // LEVEL-FIX: a cliff or fixed ground beside the patch no longer refuses the
+  // patch tile (that cascaded: a refused tile reverted, so ITS neighbour saw
+  // a two-level gap and refused too, across the whole rectangle). Those
+  // tiles are FIXED ground; step 4 slopes the patch toward them instead.
+  const ramps = new Map<number, number>();   // key -> wanted height
   for (const [x, y] of accepted) {
     for (const [dx, dy] of N8) {
       const nx = x + dx, ny = y + dy;
       if (!inMap(grid, nx, ny)) continue;
       const nk = key(nx, ny);
-      if (planned.has(nk) || refuseSet.has(nk)) continue;   // patch or refused: fixed at H / untouched
+      if (planned.has(nk) || refuseSet.has(nk)) continue;
       const hn = heightAt(grid, nx, ny);
       const d = H - hn;
-      if (Math.abs(d) <= 1) continue;
-      const obs = obstacleRefusal(grid, track, nx, ny);
-      if (Math.abs(d) === 2 && obs === "cliff") {
-        // Free ground two out: pull it in one level — the one-level ramp.
-        ramps.set(nk, hn + Math.sign(d));
-        continue;
+      if (Math.abs(d) === 2 && obstacleRefusal(grid, track, nx, ny) === "cliff") {
+        ramps.set(nk, hn + Math.sign(d));   // free ground two out: the one-level ramp
       }
-      // Fixed ground (water/structure/rail/bridge) two out, or a cliff of
-      // three or more: the one-level ramp cannot bridge it.
-      refuseAdjacent(x, y, pairRefusal(x, y, nx, ny));
-      break;
     }
   }
   // A ramp move is kept only when its OWN neighbourhood absorbs it (every
@@ -303,21 +289,52 @@ export function planLevel(
     if (!dropped) break;
   }
 
-  // ── 4. final legality — every step involving a changed tile ≤ 1 ─────────
-  // Any pair still broken (a refused obstacle beside the patch, a dropped
-  // ramp) refuses the patch tiles beside it. The ROAD rule reads the same
-  // pairs with `roadStepRefusal`'s threshold: a tile under road whose road
-  // step would go illegal refuses with "road".
-  for (const [x, y] of accepted) {
-    if (refuseSet.has(key(x, y))) continue;
-    for (const [dx, dy] of N8) {
-      const nx = x + dx, ny = y + dy;
-      if (!inMap(grid, nx, ny)) continue;
-      if (Math.abs(hNow(x, y) - hNow(nx, ny)) <= 1) continue;
-      refuseAdjacent(x, y, pairRefusal(x, y, nx, ny));
-      break;
+  // ── 4. final legality — clamp H into every fixed tile's cone ────────────
+  // Fixed tiles: refused patch tiles, and everything outside the patch (with
+  // the ramps already applied). For a fixed tile f at height hf and Chebyshev
+  // distance d, a patch tile must satisfy hf - d <= h <= hf + d, so ground
+  // three levels lower beside the patch slopes one level per tile toward it.
+  // Only a tile whose bounds contradict (already-illegal fixed ground) refuses.
+  const isPatchTile = (k: number): boolean => patchKeys.has(k) && !refuseSet.has(k);
+  const patchKeys = new Set<number>(accepted.map(([x, y]) => key(x, y)));
+  const finalH = new Map<number, number>();
+  const R = MAX_LEVEL;   // farther than this a cone never binds
+  for (let guard = 0; guard < accepted.length + 2; guard++) {
+    let newly = false;
+    finalH.clear();
+    for (const [x, y] of accepted) {
+      const k = key(x, y);
+      if (refuseSet.has(k)) continue;
+      let lo = 0, hi = MAX_LEVEL;
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (!inMap(grid, nx, ny)) continue;
+          const nk = key(nx, ny);
+          if (isPatchTile(nk)) continue;   // a patch tile, not fixed
+          const d = Math.max(Math.abs(dx), Math.abs(dy));
+          const hf = patchKeys.has(nk) ? heightAt(grid, nx, ny) : (planned.get(nk) ?? heightAt(grid, nx, ny));
+          if (hf - d > lo) lo = hf - d;
+          if (hf + d < hi) hi = hf + d;
+        }
+      }
+      if (lo > hi) {
+        let why: LevelRefusal = "cliff";
+        for (const [dx, dy] of N8) {
+          const nx = x + dx, ny = y + dy;
+          if (inMap(grid, nx, ny) && !isPatchTile(key(nx, ny))) { why = pairRefusal(x, y, nx, ny); break; }
+        }
+        refuseSet.add(k);
+        refused.push([x, y, why]);
+        newly = true;
+        continue;
+      }
+      finalH.set(k, Math.min(hi, Math.max(lo, H)));
     }
+    if (!newly) break;
   }
+  for (const [x, y] of accepted) planned.delete(key(x, y));
+  for (const [k, h] of finalH) planned.set(k, h);
 
   // ── the changes and the bill ────────────────────────────────────────────
   const changes: LevelChange[] = [];

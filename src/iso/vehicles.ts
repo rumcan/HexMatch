@@ -51,6 +51,7 @@ import {
 } from "./traffic";
 // FLOW-1: lights and congestion act on the lorry's REAL (economic) pose.
 import { flowTruckHook } from "./flow";
+import { clearTrafficSamples, noteTrafficSample } from "./traffic-income";
 
 /**
  * Tiles per millisecond on GRAVEL: one tile every 600 ms. Dirt is free to lay
@@ -339,6 +340,8 @@ export function tickTrucks(
   // FLOW-1: null unless the traffic module is live, and then this function is
   // exactly what it was before.
   const flow = flowTruckHook(state.trucks);
+  // TRAFFIC-INCOME: no flow this tick = no delay data, factor back to 1.
+  if (!flow) clearTrafficSamples();
 
   const distAhead = (truck: Truck): number => {
     if (!hash) return Infinity;
@@ -404,6 +407,11 @@ export function tickTrucks(
     };
     let ms = dtMs;
     let movedDist = 0;
+    // TRAFFIC-INCOME: this tick's observed / free-flow speed ratio (the flow
+    // hook's congestion factor; 0 while held at a red light). Loading time
+    // at the depot is not traffic, so a standing lorry samples nothing.
+    let trafficSample: number | null = flow && !(truck.waitMs && truck.waitMs > 0)
+      ? flow.speed(truck, Math.min(truck.leg, max - 1)) : null;
     while (ms > 1e-9) {
       // Standing at the depot, loading: the clock runs, the lorry does not.
       if (truck.waitMs && truck.waitMs > 0) {
@@ -435,6 +443,7 @@ export function tickTrucks(
         const toLine = truck.reverse ? truck.t - lineT : lineT - truck.t;
         if (toLine <= 1e-6) {
           flow!.hold(truck, ms);
+          trafficSample = 0;
           truck._lastSpeed = 0;
           ms = 0;
           break;
@@ -512,6 +521,7 @@ export function tickTrucks(
         else { truck.leg = k - 1; truck.t = 1; truck._yieldMs = 0; }
       }
     }
+    if (trafficSample !== null) noteTrafficSample(truck.depotId, trafficSample, dtMs);
     // Track stuck time
     const usedMs = dtMs - ms;
     const effSpeed = movedDist / Math.max(usedMs, 0.001);

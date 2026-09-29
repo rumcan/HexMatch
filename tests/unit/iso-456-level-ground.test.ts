@@ -181,8 +181,9 @@ describe("#456 Level Ground — the plan", () => {
     ]);
     g.builtAt = (x, y) => (x === 2 && y === 2 ? "plant" : null);
     const plan = planLevel(g, rectTiles(0, 0, 4, 4));
-    expect(plan.refused.length).toBe(9);   // the plant + the 8 tiles beside it
-    expect(plan.refused.every(([, , r]) => r === "structure")).toBe(true);
+    // LEVEL-FIX: only the plant refuses; the ring beside it keeps its slope
+    // (stays at 1) instead of cascading into a whole-patch refusal.
+    expect(plan.refused).toEqual([[2, 2, "structure"]]);
     expect(plan.changes).toEqual([]);
     expect(plan.money).toBe(0);
   });
@@ -241,8 +242,10 @@ describe("#456 Level Ground — the refusals", () => {
     const t = createTrack();
     for (let x = 0; x <= 2; x++) buildTile(t, "road", x, 0, 1);
     const plan = planLevel(g, rectTiles(0, 0, 1, 0), { track: t });
-    expect(plan.refused).toEqual([[1, 0, "road"]]);
-    expect(plan.changes).toEqual([]);
+    // LEVEL-FIX: the tile no longer refuses; it clamps to the fixed road's cone
+    // (stays at 2), so the road step stays legal and nothing changes.
+    expect(plan.refused).toEqual([]);
+    expect(plan.changes).toEqual([[0, 0, 2]]);   // target 3 clamps to 2 beside the fixed low ground
     expect(LEVEL_REFUSAL_TEXT.road).toMatch(/steep/i);
     // The SAME drag levels fine when the road stays legal on its new slope:
     // a paved 3-2-1 with a 1-field beside it, all road steps ≤ 1 after.
@@ -270,11 +273,10 @@ describe("#456 Level Ground — the refusals", () => {
       "1100",
     ]);
     const plan = planLevel(g, rectTiles(0, 0, 3, 0), {}, 3);
-    expect(plan.refused.length).toBe(3);
-    expect(plan.refused.every(([, , r]) => r === "cliff")).toBe(true);
+    // LEVEL-FIX: no whole-patch refusal; the patch slopes toward the cliff.
+    expect(plan.refused.length).toBe(0);
     expect(LEVEL_REFUSAL_TEXT.cliff).toMatch(/cliff|drop/i);
     const applied = applyLevelPlan(g, plan);
-    expect(applied).toEqual([]);
     assertInvariant(g, applied);
   });
 
