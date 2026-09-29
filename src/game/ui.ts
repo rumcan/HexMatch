@@ -142,6 +142,8 @@ export interface FleetCardInfo {
   rows: { label: string; status: string }[];
   buy: { label: string; price: string; why: string | null; onClick: () => void };
   sell?: { label: string; refund: string; why: string | null; onClick: () => void } | null;
+  /** FLEET-5 (#599): the fleet's speed level (pips) and its Upgrade button. */
+  upgrade?: { level: number; max: number; label: string; detail: string; price: string; why: string | null; onClick: () => void } | null;
 }
 
 /** 2026-09: what the Depot card shows and the doors it offers. */
@@ -5460,9 +5462,23 @@ export function createOriginalUi(
       sell.onclick = () => f.sell!.onClick();
       acts.appendChild(sell);
     }
+    if (f.upgrade) {
+      const u = f.upgrade;
+      const pips = h("span", "fleet-pips", "●".repeat(u.level) + "○".repeat(Math.max(0, u.max - u.level)));
+      pips.title = `Truck level ${u.level} of ${u.max}`;
+      const up = h("button", "post-btn") as HTMLButtonElement;
+      up.innerHTML = `${u.label} <small>${u.detail} ${u.price}</small>`;
+      up.dataset.fleet = "upgrade";
+      up.disabled = u.why !== null;
+      if (u.why) up.title = u.why;
+      up.onclick = () => u.onClick();
+      acts.appendChild(up);
+      box.insertBefore(pips, box.children[1] ?? null);
+    }
     box.appendChild(acts);
     // The refusal is printed, not only a tooltip: a phone has no hover.
     if (f.buy.why) box.appendChild(h("div", "fleet-why", f.buy.why));
+    if (f.upgrade?.why && f.upgrade.price !== "-") box.appendChild(h("div", "fleet-why", f.upgrade.why));
     return box;
   }
   function showActionCard(o: ActionCardInfo): void {

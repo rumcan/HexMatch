@@ -74,6 +74,8 @@ export interface Harvester {
    * Absent = 1 - a save, snapshot or Depot from before the fleet card.
    */
   trucks?: number;
+  /** FLEET-5 (#599): the whole fleet's speed level (1..3). Absent = 1. */
+  truckLevel?: number;
   /**
    * Which EDGE of the 2×2 lot its entrance opens onto — the rotation it was
    * built in (`depot.ts`). Set when the Depot is placed; records written

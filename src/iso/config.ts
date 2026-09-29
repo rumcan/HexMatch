@@ -1033,6 +1033,11 @@ export const FLEET = {
   maxTrucks: 4,
   truckPriceMult: [1, 1.5, 2] as readonly number[],
   truckLoadMult: [1, 2, 3, 4] as readonly number[],
+  // FLEET-5 (#599): the whole fleet upgrades together, L1..L3. Speed is x of
+  // TRUCK_SPEED; `truckUpgradeMult[i]` prices the step to level i+2 (x base).
+  maxTruckLevel: 3,
+  truckSpeedMult: [1, 1.25, 1.5] as readonly number[],
+  truckUpgradeMult: [0.8, 1.3] as readonly number[],
 } as const;
 
 
@@ -1104,6 +1109,8 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   // RAIL-6 (#575): one more lane at a standing station — half a platform.
   stationLane: moneyValueOf(BUILD_COSTS.stationLane),
   truck: moneyValueOf(BUILD_COSTS.truck),
+  // FLEET-5 (#599): the base of a fleet upgrade (x FLEET.truckUpgradeMult per step).
+  truckUpgrade: moneyValueOf(BUILD_COSTS.truck),
   trainDepot: moneyValueOf(BUILD_COSTS.trainDepot),
   train: moneyValueOf(BUILD_COSTS.train),
   bridge: moneyValueOf(BUILD_COSTS.bridge),

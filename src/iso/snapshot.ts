@@ -156,6 +156,8 @@ export interface WireHarvester {
   lastStars?: number;
   /** FLEET-1 (#595): lorries on this Depot's route (1..4). Absent = 1. */
   trucks?: number;
+  /** FLEET-5 (#599): the fleet's speed level (1..3). Absent = 1. */
+  truckLevel?: number;
 }
 
 export interface WirePlayer {
@@ -553,6 +555,7 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
       ...(typeof h.lastStars === "number" ? { lastStars: h.lastStars } : {}),
       // FLEET-1 (#595): the lorry count, left off while it is the default 1.
       ...(typeof h.trucks === "number" && h.trucks !== 1 ? { trucks: h.trucks } : {}),
+      ...(typeof h.truckLevel === "number" && h.truckLevel !== 1 ? { truckLevel: h.truckLevel } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -667,6 +670,11 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
     if (h && h.trucks !== undefined
       && (typeof h.trucks !== "number" || !Number.isInteger(h.trucks) || h.trucks < 1 || h.trucks > FLEET.maxTrucks)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot truck count.");
+    }
+    // FLEET-5 (#599): the fleet level is 1..3, or absent (= 1).
+    if (h && h.truckLevel !== undefined
+      && (typeof h.truckLevel !== "number" || !Number.isInteger(h.truckLevel) || h.truckLevel < 1 || h.truckLevel > FLEET.maxTruckLevel)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot truck level.");
     }
     // MATCH-2 (#566): the 5★ scale — an old 0…3 rating is a legal 0…5 one.
     if (h && h.lastStars !== undefined

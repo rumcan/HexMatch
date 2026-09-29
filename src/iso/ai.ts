@@ -3393,3 +3393,30 @@ export function planRivalTruck(
   }
   return best ? best.id : null;
 }
+
+/** FLEET-5 (#599): a Depot the rival could speed up. */
+export interface TruckUpgradeCandidate {
+  id: number;
+  score: number;
+  /** The fleet level it runs now (1..3). */
+  level: number;
+  connected: boolean;
+}
+
+/**
+ * Which Depot's fleet the rival upgrades next: the BUSIEST connected one below
+ * the top level, when the purse covers the price plus a Depot's worth of
+ * reserve (so upgrades never starve the expansion). Null = nothing this turn.
+ */
+export function planRivalTruckUpgrade(
+  depots: readonly TruckUpgradeCandidate[], money: number,
+  priceFor: (level: number) => number, reserve: number, maxLevel = 3,
+): number | null {
+  let best: TruckUpgradeCandidate | null = null;
+  for (const d of depots) {
+    if (!d.connected || d.level >= maxLevel) continue;
+    if (money < priceFor(d.level) + reserve) continue;
+    if (!best || d.score > best.score || (d.score === best.score && d.id < best.id)) best = d;
+  }
+  return best ? best.id : null;
+}
