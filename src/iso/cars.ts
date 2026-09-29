@@ -39,6 +39,8 @@ import {
   buildHash, laneOffsetFor, overpassLiftFor, approachingJunction,
   followSpeed, segKey,
 } from "./traffic";
+// FLOW-1: cars feed the traffic field, slow in it, and obey its lights.
+import { flowCarFactor, flowObserveCars, flowSignals, flowTime } from "./flow";
 
 /** Default traffic volume — a dozen cars feels lived-in. */
 export const CAR_COUNT = 12;
@@ -712,6 +714,12 @@ export function tickCars(
   opts?: CarTickOpts,
 ): void {
   if (dtMs <= 0) return;
+  // FLOW-1: publish this frame's cars into the density field (no-op when off).
+  flowObserveCars(state.cars);
+  // FLOW-1: game.ts calls tickCars(cars, dt) without signals; borrow the live
+  // ones so cars stop at the same lights the lorries do.
+  const lightMap = opts?.signals ?? flowSignals();
+  const lightTime = opts?.signals ? (opts.timeMs ?? 0) : flowTime();
 
   // Backward compat: third arg used to be blocked set for trucks (old signature had blocked? no)
   // In current game.ts, tickCars(cars, dt) only. So trackOrBlocked may be Track or undefined.
@@ -929,15 +937,15 @@ export function tickCars(
             if (occupants >= 4) { car._lastSpeed = 0; break; }
           }
           // Tier pace: Dirt < Street < Road < Highway, relative to Road's pace.
-          const pace = carTierPace(trackOrBlocked, a, b);
+          const pace = carTierPace(trackOrBlocked, a, b) * flowCarFactor(a, b);
           const baseSpeed = CAR_SPEED * pace / segLen;
           const truckGap = opts?.yieldTo?.length ? gapToActors(car, opts.yieldTo) : Infinity;
           const aheadDist = Math.min(distAhead(car), truckGap);
           const effSpeed = followSpeed(baseSpeed, aheadDist);
           // AMB-3: a red or amber light ahead caps this step at the stop line.
           // A green (or no signal) leaves the step exactly as it was.
-          const holdT = opts?.signals
-            ? holdTForLight(car.route, car.leg, car.t, opts.signals, opts.timeMs ?? 0)
+          const holdT = lightMap
+            ? holdTForLight(car.route, car.leg, car.t, lightMap, lightTime)
             : null;
           if (holdT !== null && car.t >= holdT - 1e-4) {
             car.t = holdT;
