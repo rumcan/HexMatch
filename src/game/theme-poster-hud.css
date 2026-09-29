@@ -498,3 +498,167 @@
   .ui-root #iso-aside-right > .plant-card { background: var(--px-paper-bg) !important; }
   .ui-root #iso-aside-right .tab.active { background: var(--px-paper-bg); color: #171f20; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Owner (2026-09-29): the TUNING SESSION page, redone ("the redesign of
+   this screen by the AI is bad"). One card in the UIX language:
+     • a paper card with an ink frame and the orange top rule;
+     • ONE ink header bar: the session title left, the star bar right;
+     • the board in an ink well on the left;
+     • a top-aligned side column: Moves (the big number), Score, Yield,
+       the star curve, the perk keys, the combo bank;
+     • the action row: Abandon (ink outline) and Finish (orange).
+   Loaded last and scoped to the session window, so the Space Age frame
+   (a dark panel) and the old plate styles cannot leak in. The old loop's
+   Reset key and the between-sessions city key have no job here.
+   ═══════════════════════════════════════════════════════════════════ */
+.session-window .session-frame {
+  background: var(--px-paper-bg) !important;
+  border: 3px solid #11191d !important; border-top: 5px solid #ef7c17 !important;
+  border-radius: 0 !important;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .55) !important;
+}
+.session-window .session-frame > #iso-quarry {
+  grid-template-columns: minmax(0, 1fr) 208px;
+  grid-template-rows: auto auto auto auto auto auto auto auto auto minmax(0, 1fr) auto;
+  gap: 0; padding: 0 16px 16px;
+}
+.session-window .session-frame :is(.reset-btn, .tp-city) { display: none !important; }
+
+/* the header: one ink bar across the card */
+.session-window .session-frame .tp-title {
+  grid-column: 1; grid-row: 1; margin: 0 0 14px -16px; padding: 10px 16px;
+  min-height: 52px; background: #11191d; color: #fff5df;
+  font: 700 20px/1 var(--px-display); letter-spacing: .1em;
+}
+.session-window .session-frame .tp-meter {
+  grid-column: 2; grid-row: 1; margin: 0 -16px 14px 0; padding: 10px 16px 10px 0;
+  min-height: 52px; background: #11191d;
+  flex-direction: column; align-items: stretch; justify-content: center; gap: 4px;
+}
+.session-window .session-frame .tp-meter-track { min-width: 0; }
+.session-window .session-frame .tp-meter-bar { height: 8px; }
+.session-window .session-frame .tp-meter-label { text-align: right; font-size: 12px; color: #f3e3c2; }
+
+/* the board: an ink well */
+.session-window .session-frame .board-slot {
+  grid-column: 1; grid-row: 2 / 11; margin-right: 16px; padding: 8px;
+  background: #16242a; border: 3px solid #11191d;
+  box-shadow: inset 0 0 0 1px rgba(255, 244, 222, .08);
+}
+
+/* the side column: a top-aligned stack of paper cards */
+.session-window .session-frame :is(.tp-moves, .tp-score, .tp-yield, .tp-curve, .combo-bank, .tp-buy-moves, .tp-hint, .tp-shuffle) {
+  grid-column: 2; margin: 0 0 10px; align-self: start;
+}
+.session-window .session-frame .tp-moves { grid-row: 2; }
+.session-window .session-frame .tp-score { grid-row: 3; }
+.session-window .session-frame .tp-yield { grid-row: 4; }
+.session-window .session-frame .tp-curve { grid-row: 5; }
+.session-window .session-frame .tp-buy-moves { grid-row: 6; }
+.session-window .session-frame .tp-hint { grid-row: 7; }
+.session-window .session-frame .tp-shuffle { grid-row: 8; }
+.session-window .session-frame .combo-bank { grid-row: 9; justify-self: stretch; }
+
+.session-window .session-frame :is(.tp-moves, .tp-score, .tp-yield) {
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px;
+  min-height: 0; padding: 10px 14px;
+  background: #fbf5e8; border: 2px solid #11191d; border-radius: 0; box-shadow: 0 3px 0 rgba(17, 25, 29, .45);
+  color: #6c665b; font: 700 11px/1.1 var(--px-display); letter-spacing: .16em; text-transform: uppercase;
+}
+.session-window .session-frame :is(.tp-moves, .tp-score, .tp-yield) b {
+  color: #111b20; font: 700 30px/1 var(--px-display); letter-spacing: 0; font-variant-numeric: tabular-nums;
+}
+.session-window .session-frame .tp-yield b { color: #c2560a; }
+/* Moves: the one number the player watches (the label is drawn here) */
+.session-window .session-frame .tp-moves {
+  flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 4px;
+  border-left: 6px solid #ef7c17;
+}
+.session-window .session-frame .tp-moves::before { content: "Moves left"; flex-basis: 100%; }
+.session-window .session-frame .tp-moves b { font-size: 40px; }
+.session-window .session-frame .tp-moves small {
+  color: #6c665b; font: 700 13px/1 var(--px-display); letter-spacing: .08em; text-transform: none;
+}
+
+/* the star curve: a quiet list, the reached rows in orange */
+.session-window .session-frame .tp-curve {
+  padding: 10px 14px; gap: 4px;
+  background: #fbf5e8; border: 2px solid #11191d; border-radius: 0; box-shadow: 0 3px 0 rgba(17, 25, 29, .45);
+}
+.session-window .session-frame .tp-curve-label { font-size: 12px; color: #8a8171; }
+.session-window .session-frame .tp-curve-label.lit { color: #c2560a; }
+
+/* the perk keys and the combo bank ride the same card language */
+.session-window .session-frame :is(.tp-buy-moves, .tp-hint, .tp-shuffle) {
+  min-height: 38px; padding: 0 12px; justify-self: stretch;
+  background: #fbf5e8; border: 2px solid #11191d; border-radius: 0; color: #111b20; cursor: pointer;
+  font: 700 13px/1 var(--px-display); letter-spacing: .08em; text-transform: uppercase;
+}
+.session-window .session-frame :is(.tp-buy-moves, .tp-hint, .tp-shuffle):hover:not(:disabled) { background: #11191d; color: #f2e8d4; }
+.session-window .session-frame :is(.tp-buy-moves, .tp-hint, .tp-shuffle).hidden { display: none; }
+.session-window .session-frame .combo-bank {
+  display: flex; align-items: center; gap: 6px; padding: 8px 14px;
+  background: #fbf5e8; border: 2px solid #11191d; border-radius: 0; color: #3d474a;
+}
+
+/* the action row */
+.session-window .session-frame .tp-abandon {
+  grid-column: 1; grid-row: 11; justify-self: start; margin: 14px 0 0;
+  min-height: 46px; padding: 0 18px;
+  background: #fbf5e8; border: 2px solid #11191d; color: #111b20;
+}
+.session-window .session-frame .tp-abandon:hover:not(:disabled) { background: #11191d; color: #f2e8d4; }
+.session-window .session-frame .tp-finish {
+  grid-column: 2; grid-row: 11; justify-self: stretch; margin: 14px 0 0;
+  min-height: 46px; background: #ef7c17; border: 0; color: #fff8ec; font-size: 18px;
+}
+.session-window .session-frame .tp-finish:hover:not(:disabled) { background: #d1640e; }
+
+/* phones: the readouts fold under the board as a 3-up strip */
+@media (max-width: 760px) {
+  .session-window .session-frame > #iso-quarry {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+    padding: 0 8px 8px; column-gap: 6px;
+  }
+  .session-window .session-frame .tp-title { grid-column: 1 / -1; grid-row: 1; margin: 0 -8px 8px; min-height: 44px; font-size: 15px; }
+  .session-window .session-frame .tp-meter {
+    grid-column: 3; grid-row: 1; margin: 0 -8px 8px 0; min-height: 44px; padding: 6px 8px 6px 0;
+  }
+  .session-window .session-frame .board-slot { grid-column: 1 / -1; grid-row: 2; margin: 0 0 8px; padding: 4px; }
+  .session-window .session-frame .tp-moves { grid-column: 1; grid-row: 3; }
+  .session-window .session-frame .tp-score { grid-column: 2; grid-row: 3; }
+  .session-window .session-frame .tp-yield { grid-column: 3; grid-row: 3; }
+  .session-window .session-frame :is(.tp-moves, .tp-score, .tp-yield) { margin: 0 0 6px; padding: 6px 8px; }
+  .session-window .session-frame :is(.tp-moves, .tp-score, .tp-yield) b { font-size: 22px; }
+  .session-window .session-frame :is(.tp-curve, .combo-bank) { display: none; }
+  .session-window .session-frame :is(.tp-buy-moves, .tp-hint, .tp-shuffle) { grid-row: 4; margin: 0 0 6px; }
+  .session-window .session-frame .tp-buy-moves { grid-column: 1; }
+  .session-window .session-frame .tp-hint { grid-column: 2; }
+  .session-window .session-frame .tp-shuffle { grid-column: 3; }
+  .session-window .session-frame .tp-abandon { grid-column: 1; grid-row: 5; margin: 0; min-height: 42px; }
+  .session-window .session-frame .tp-finish { grid-column: 2 / -1; grid-row: 5; margin: 0; min-height: 42px; }
+}
+
+/* Owner (2026-09-29): the session RESULTS card was dark with grey text
+   ("text not readable"). It is the same paper card as the session page:
+   ink text on paper, the orange top rule, the orange verdict. */
+.session-window .sr-card {
+  background: var(--px-paper-bg) !important; color: #111b20 !important;
+  border: 3px solid #11191d !important; border-top: 5px solid #ef7c17 !important;
+  border-radius: 0 !important;
+  box-shadow: 0 4px 0 rgba(0, 0, 0, .3), 0 25px 80px rgba(0, 0, 0, .55) !important;
+}
+.session-window .sr-card :is(.sr-kicker, .sr-head, .sr-moves, .sr-note, .sr-summary) { text-shadow: none !important; }
+.session-window .sr-card .sr-kicker { color: #3d474a !important; }
+.session-window .sr-card .sr-head { color: #111b20 !important; }
+.session-window .sr-card .sr-moves { color: #3d474a !important; }
+.session-window .sr-card .sr-verdict { color: #b94c04 !important; }
+.session-window .sr-card .sr-star { color: #c9bea6; }
+.session-window .sr-card .sr-star.lit { color: #ef7c17; }
+.session-window .sr-card .sr-rows {
+  background: #fbf5e8 !important; border: 2px solid #11191d !important; border-radius: 0 !important;
+}
+.session-window .sr-card .sr-k { color: #3d474a !important; }
+.session-window .sr-card .sr-note { color: #3d474a !important; font-size: 13px; line-height: 1.35; }

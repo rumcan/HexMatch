@@ -32,7 +32,7 @@ import { buildTile, createTrack, type Track } from "../../src/iso/track";
 import { setRng, mulberry32 } from "../../src/game/config";
 import { RIVAL_SKILLS } from "../../src/iso/skill";
 import {
-  TUNING_ABANDON_YIELD, createTuningSession, recordTuningCleared, rivalTuningYield,
+  TUNING_ABANDON_YIELD, createTuningSession, recordTuningCleared, rivalTuningYield, rivalTuningScore, rivalYieldForShare,
   takeTuningMove, tuningMovesLeft, tuningOver, tuningSessionYield, tuningYieldFor,
 } from "../../src/iso/tuning";
 import { buildSnapshot, applySnapshot, type SnapshotSource } from "../../src/iso/snapshot";
@@ -259,26 +259,22 @@ describe("L4 the session, as a rule (tuning.ts)", () => {
     expect(s.score).toBe(8);
   });
 
-  it("maps score to yield monotonically, with no ceiling past the target (owner call, 2026-09)", () => {
+  // Owner (2026-09-29): the yield IS the star rating — ×1 untuned, +0.2 a
+  // star on a level-1 Depot, 5★ (2000) = the ×2 cap, never past it.
+  it("maps score to yield by the star, capped by the Depot", () => {
     expect(tuningYieldFor(0)).toBe(TUNING.minYield);
     expect(tuningYieldFor(-5)).toBe(TUNING.minYield);
     expect(tuningYieldFor(Number.NaN)).toBe(TUNING.minYield);
-    expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
-    // past the target it keeps paying at the same slope — the better you play,
-    // the higher it goes (the old ×2.5 ceiling is gone)
-    const slope = (TUNING.maxYield - TUNING.minYield) / TUNING.targetScore;
-    expect(tuningYieldFor(TUNING.targetScore * 2)).toBeCloseTo(TUNING.maxYield + slope * TUNING.targetScore, 2);
-    expect(tuningYieldFor(TUNING.targetScore * 2)).toBeGreaterThan(tuningYieldFor(TUNING.targetScore));
-    // only the sanity bound (corrupt values) stops it
-    expect(tuningYieldFor(1e9)).toBe(TUNING.yieldSanityMax);
+    expect(tuningYieldFor(1)).toBe(1.2);
+    expect(tuningYieldFor(500)).toBe(1.4);
+    expect(tuningYieldFor(2000)).toBe(2);
+    expect(tuningYieldFor(1e9)).toBe(2);
     let last = -Infinity;
-    for (let score = 0; score <= TUNING.targetScore * 3; score += 3) {
+    for (let score = 0; score <= 2500; score += 25) {
       const y = tuningYieldFor(score);
-      expect(y).toBeGreaterThan(last);
-      expect(y).toBeGreaterThanOrEqual(TUNING.minYield);
+      expect(y).toBeGreaterThanOrEqual(last);
       last = y;
     }
-    // and a session that clears something is worth more than an empty one
     expect(tuningYieldFor(30)).toBeGreaterThan(tuningYieldFor(0));
   });
 
@@ -455,8 +451,9 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     const depotId = h.tuning!.depotId;
 
     // A played session (the board's own clear hook is what scores a cascade).
-    h.board.onClear(TUNING.targetScore, 1);
-    expect(h.tuning!.yield).toBe(TUNING.maxYield);
+    // Owner (2026-09-29): a 5★ session (2000) sets the level-1 cap, ×2.
+    h.board.onClear(2000, 1);
+    expect(h.tuning!.yield).toBe(depotYieldCap(1));
 
     // The plate's Finish key, through the twin of that button.
     h.tuningFinish(false);
@@ -494,8 +491,8 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     expect(plain, "a connected Depot ticks at the baseline yield")
       .toBe(Math.floor(2 * perTick * TUNING.minYield));
 
-    // Level 1 caps the settled yield at ×2 (the raw session can exceed it).
-    h.board.onClear(TUNING.targetScore, 1);
+    // Level 1: a 5★ session settles at the ×2 cap.
+    h.board.onClear(2000, 1);
     h.tuningFinish(false);
     before = { ...h.purse };
     h.econTick(now += 10_000);
@@ -605,7 +602,8 @@ describe("L4 building a Depot opens its tuning session (newLoop)", () => {
     h.eco.harvesters.push({ id: 100, owner: "ai", ownerId: 2, tx: 30, ty: 30, level: 2 });
     h.rivalTuning();
     const hard = h.depotYields.find((d) => d.id === 100)!.yield;
-    expect(hard).toBe(Math.min(depotYieldCap(2), rivalTuningYield("hard", 0, DIFFICULTY_RULES.hard, 0)));
+    // Owner (2026-09-29): the rival's share runs ×1 → its Depot's own cap.
+    expect(hard).toBe(rivalYieldForShare(rivalTuningScore("hard", 0, DIFFICULTY_RULES.hard, 0) / TUNING.targetScore, depotYieldCap(2)));
     expect(hard!).toBeGreaterThan(easy!);
 
     // An existing level is never re-rolled (set once, never drops).

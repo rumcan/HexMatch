@@ -4968,7 +4968,9 @@ export function createOriginalUi(
         : "The Depot that was just placed";
     // Keep the live session for the abandon confirm gate above.
     liveTuning = t;
-    tpMoves.textContent = `${t.movesLeft}/${t.moves} moves`;
+    // Owner (2026-09-29): the moves read as a big number like Score and
+    // Yield; the text stays "N/M moves" (the label is the card's CSS).
+    tpMoves.innerHTML = `<b>${t.movesLeft}</b><small>/${t.moves} moves</small>`;
     tpScore.innerHTML = `Score <b>${t.score}</b>`;
     tpYield.innerHTML = town
       ? `Base rate <b>+${Math.round(t.yield * 100)}%</b>`

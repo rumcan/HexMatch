@@ -270,8 +270,9 @@ describe("L6 the rules, pure", () => {
     expect(tuningYieldFor(0)).toBe(TUNING.minYield);                        // shipped default
     expect(tuningYieldFor(0, rules("easy").minYield)).toBe(1.5);             // Easy: nothing cleared still lands well
     expect(tuningYieldFor(0, rules("hard").minYield)).toBe(TUNING.minYield);
-    expect(tuningYieldFor(TUNING.targetScore, rules("easy").minYield)).toBe(TUNING.maxYield);
-    expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
+    // Owner (2026-09-29): 5★ (2000) is the level-1 cap on every floor.
+    expect(tuningYieldFor(2000, rules("easy").minYield)).toBe(2);
+    expect(tuningYieldFor(2000)).toBe(2);
     // A weak session is worth MORE on Easy than the same session on Hard,
     // because the floor is raised and the range is squeezed from below.
     const weak = 12;

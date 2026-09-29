@@ -50,6 +50,7 @@
 import {
   CARGO, DEFAULT_DIFFICULTY, DEPOT_TIER_MAX, DIFFICULTY_RULES, OBSTACLE_RAMP, TUNING, TUNING_STARS,
   type Cargo, type DifficultyKey, type DifficultyRules, type ObstacleRules, DEPOT_LEVELS,
+  depotYieldCap,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
 import { sessionExtraMoves, type ManagerId } from "./managers";
@@ -95,11 +96,18 @@ export const difficultyRulesFor = (key: DifficultyKey | "trainee"): DifficultyRu
  * baseline. Omitted, it is the shipped table — which is what the L4 tests and
  * any caller without a live difficulty get.
  */
-export function tuningYieldFor(score: number, floor: number = TUNING.minYield): number {
+export function tuningYieldFor(
+  score: number, floor: number = TUNING.minYield, cap: number = depotYieldCap(1),
+): number {
+  // Owner (2026-09-29): the yield IS the star rating. Five equal steps from
+  // ×1.0 to the Depot's cap — a level-1 Depot (cap ×2): ★ ×1.2, ★★ ×1.4,
+  // ★★★ ×1.6, ★★★★ ×1.8, ★★★★★ ×2.0; an upgraded Depot stretches the same
+  // five stars to its higher cap. A raised difficulty floor (Easy) still holds.
   if (!Number.isFinite(score) || score <= 0) return clampYield(floor);
-  const t = score / TUNING.targetScore;
-  return clampYield(floor + (TUNING.maxYield - floor) * t);
+  const step = (cap - TUNING.minYield) / 5;
+  return clampYield(Math.min(cap, Math.max(floor, TUNING.minYield + step * tuningStarsFor(score))));
 }
+
 
 /** What ABANDONING a session pays, for this difficulty (L6: Easy's is raised). */
 export const abandonYieldFor = (rules: DifficultyRules): number => clampYield(rules.minYield);
@@ -121,7 +129,7 @@ export function settleTuningYield(
   opts: { abandon?: boolean; cap?: number } = {},
 ): number {
   const base = prev ?? rules.minYield;
-  let next = opts.abandon ? abandonYieldFor(rules) : tuningYieldFor(score, rules.minYield);
+  let next = opts.abandon ? abandonYieldFor(rules) : tuningYieldFor(score, rules.minYield, opts.cap);
   // 2026-09: the Depot's level caps what a session can set (L1 ×2 …).
   if (opts.cap !== undefined) next = Math.min(next, opts.cap);
   return roundYield(rules.yieldNeverDrops ? Math.max(base, next) : next);
@@ -485,8 +493,8 @@ export function recordTuningCleared(s: TuningSession, cleared: number): void {
  * difficulty's (L6) — the plate shows the number that will actually settle, so
  * an Easy session never advertises ×1.0 for a Depot about to be set to ×1.5.
  */
-export const tuningSessionYield = (s: TuningSession, floor: number = TUNING.minYield): number =>
-  tuningYieldFor(s.score, floor);
+export const tuningSessionYield = (s: TuningSession, floor: number = TUNING.minYield, cap?: number): number =>
+  tuningYieldFor(s.score, floor, cap);
 
 /** L9 (#224): the Gold this session pays if it is played out now. */
 export const tuningSessionGold = (s: TuningSession): number => tuningGoldFor(s.score);
@@ -572,7 +580,7 @@ export function depotSessionOutcome(
 ): TuningOutcome {
   const abandon = opts.abandon === true;
   const s = Number.isFinite(score) && score > 0 ? score : 0;
-  const raw = abandon ? abandonYieldFor(rules) : tuningYieldFor(s, rules.minYield);
+  const raw = abandon ? abandonYieldFor(rules) : tuningYieldFor(s, rules.minYield, opts.cap);
   const set = settleTuningYield(prev, s, rules, { abandon, cap: opts.cap });
   const earned = roundYield(opts.cap !== undefined ? Math.min(raw, opts.cap) : raw);
   const over = abandon || opts.cap === undefined ? 0 : overshootGold(s, rules, opts.cap);
@@ -645,10 +653,20 @@ export function rivalTuningScore(
   return t * TUNING.targetScore;
 }
 
+/**
+ * Owner (2026-09-29): the player's yield follows the stars (×1 → the cap in
+ * five steps); the rival plays no board, so its simulated session share runs
+ * the same ×1 → cap range smoothly — a better rival always tunes higher.
+ */
+export function rivalYieldForShare(share: number, cap: number = depotYieldCap(1)): number {
+  const t = Math.min(1, Math.max(0, Number.isFinite(share) ? share : 0));
+  return roundYield(clampYield(TUNING.minYield + (cap - TUNING.minYield) * t));
+}
+
 export function rivalTuningYield(
   key: SkillKey, noise = 0, rules?: DifficultyRules, tier = 0,
 ): number {
-  return tuningYieldFor(rivalTuningScore(key, noise, rules, tier));
+  return rivalYieldForShare(rivalTuningScore(key, noise, rules, tier) / TUNING.targetScore);
 }
 
 /**

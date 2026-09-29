@@ -14,18 +14,18 @@ describe("2026-09 Depot levels", () => {
     expect(DEPOT_LEVELS.max).toBe(3);
   });
 
-  it("a session settles at most at the Depot's cap", () => {
-    const huge = TUNING.targetScore * 4;
+  // Owner (2026-09-29): the yield IS the star rating, five equal steps from
+  // ×1 to the Depot's cap — 5★ reaches the cap exactly and nothing passes it.
+  it("a session settles at most at the Depot's cap: 5★ is the cap", () => {
+    const huge = 5000;
     expect(settleTuningYield(undefined, huge, normal, { cap: 2 })).toBe(2);
     expect(settleTuningYield(undefined, huge, normal, { cap: 4 })).toBe(4);
-    expect(settleTuningYield(undefined, 20, normal, { cap: 6 })).toBe(tuningYieldFor(20, normal.minYield));
+    expect(settleTuningYield(undefined, 500, normal, { cap: 2 })).toBe(1.4);
+    expect(settleTuningYield(undefined, 500, normal, { cap: 6 })).toBe(3);
   });
 
-  it("score past the cap pays Gold: 1 per 0.5× over", () => {
-    const at = (y: number) => ((y - normal.minYield) / (TUNING.maxYield - normal.minYield)) * TUNING.targetScore;
-    expect(overshootGold(at(2), normal, 2)).toBe(0);
-    expect(overshootGold(at(3), normal, 2)).toBe(2);
-    expect(overshootGold(at(1.5), normal, 2)).toBe(0);
+  it("no score passes the cap, so no overshoot Gold", () => {
+    for (const cap of DEPOT_LEVELS.caps) expect(overshootGold(99999, normal, cap)).toBe(0);
   });
 
   it("never lowers a Depot and never decays, on any difficulty", () => {

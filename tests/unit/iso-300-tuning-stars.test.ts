@@ -42,24 +42,23 @@ describe("#300 the star table (TUNING_STARS)", () => {
     const bars = tuningStarScores();
     expect(bars).toHaveLength(TUNING_STARS.length);
     TUNING_STARS.forEach((row, i) => {
-      expect(bars[i]).toBe(Math.max(1, Math.ceil(row.curve * TUNING.targetScore)));
+      expect(bars[i]).toBe(Math.max(1, Math.ceil(row.curve * TUNING.targetScore - 1e-9)));
     });
-    // The shipped table, spelled out (MATCH-2: set from the measured bot sweep).
-    expect(bars).toEqual([1, 450, 1188, 2160, 2460]);
+    // The shipped table, spelled out (owner, 2026-09-29: 5★ at 2000).
+    expect(bars).toEqual([1, 500, 1000, 1500, 2000]);
   });
 
-  it("rates a max-yield session one star now — the curve is unchanged, the bars moved (MATCH-2)", () => {
-    expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
-    expect(tuningStarsFor(TUNING.targetScore)).toBe(1);
+  it("pays the yield by the star: the top bar is the Depot's cap (owner, 2026-09-29)", () => {
     const top = tuningStarScores()[TUNING_STARS.length - 1];
     expect(tuningStarsFor(top)).toBe(5);
     expect(tuningStarsFor(top - 1)).toBe(4);
-    expect(tuningYieldFor(top)).toBeGreaterThan(TUNING.maxYield);
+    expect(tuningYieldFor(top)).toBe(depotYieldCap(undefined));
+    expect(tuningYieldFor(top - 1)).toBe(1.8);
   });
 
   it("rates the boundaries — 0 stars only when nothing was cleared", () => {
     const cases: [number, number][] = [
-      [0, 0], [1, 1], [449, 1], [450, 2], [1187, 2], [1188, 3], [2159, 3], [2160, 4], [2459, 4], [2460, 5], [5000, 5],
+      [0, 0], [1, 1], [499, 1], [500, 2], [999, 2], [1000, 3], [1499, 3], [1500, 4], [1999, 4], [2000, 5], [5000, 5],
     ];
     for (const [score, stars] of cases) expect(tuningStarsFor(score), `score ${score}`).toBe(stars);
     expect(tuningStarsFor(-5)).toBe(0);
@@ -75,19 +74,12 @@ describe("#300 the star table (TUNING_STARS)", () => {
     });
   });
 
-  it("asks the same score on every difficulty: a bar is a share of the climb, not a yield", () => {
+  it("asks the same score on every difficulty: a bar is a score, never a yield", () => {
     const bars = tuningStarScores();
     for (const [key, rules] of RULES) {
-      const floor = rules.minYield;
-      TUNING_STARS.forEach((row, i) => {
-        // How far up THIS row's climb (floor → maxYield) the bar's score sits.
-        // (a bar past the yield's sanity ceiling pays the ceiling — nothing to measure there)
-        if (tuningYieldFor(bars[i], floor) >= TUNING.yieldSanityMax) return;
-        const share = (tuningYieldFor(bars[i], floor) - floor) / (TUNING.maxYield - floor);
-        expect(share, `${key}: the ${row.stars}★ bar is at its point on the climb`).toBeGreaterThanOrEqual(row.curve - 0.01);
-      });
-      // …and the target score is still the max yield on this floor.
-      expect(tuningYieldFor(TUNING.targetScore, floor), key).toBe(TUNING.maxYield);
+      // the same bars rate every row; a raised floor only lifts the minimum
+      TUNING_STARS.forEach((row, i) => expect(tuningStarsFor(bars[i]), key).toBe(row.stars));
+      expect(tuningYieldFor(bars[bars.length - 1], rules.minYield), key).toBe(depotYieldCap(undefined));
     }
   });
 
@@ -106,7 +98,7 @@ describe("#300 the outcome the pop-up counts up (depotSessionOutcome)", () => {
     for (const [key, rules] of RULES) {
       for (const cap of caps) {
         for (const prev of prevs) {
-          for (let score = 0; score <= 240; score += 7) {
+          for (let score = 0; score <= 2400; score += 71) {
             const o = depotSessionOutcome(score, prev, rules, { cap });
             const tag = `${key} cap ${cap} prev ${prev} score ${score}`;
             expect(o.yield, tag).toBe(settleTuningYield(prev, score, rules, { cap }));
@@ -114,38 +106,37 @@ describe("#300 the outcome the pop-up counts up (depotSessionOutcome)", () => {
             expect(o.gold, tag).toBe(tuningGoldFor(score) + over);
             expect(o.overshootGold, tag).toBe(over);
             expect(o.stars, tag).toBe(tuningStarsFor(score));
-            expect(o.raw, tag).toBe(tuningYieldFor(score, rules.minYield));
+            expect(o.raw, tag).toBe(tuningYieldFor(score, rules.minYield, cap));
           }
         }
       }
     }
   });
 
-  it("caps a fresh level-1 Depot's max-yield session and pays the overshoot as Gold", () => {
+  it("a 5★ session sets a fresh level-1 Depot to its cap — never past it", () => {
     const cap = depotYieldCap(undefined);
     expect(cap).toBe(DEPOT_LEVELS.caps[0]);
-    const o = depotSessionOutcome(TUNING.targetScore, normal.minYield, normal, { cap });
-    expect(o.stars, "MATCH-2: a max-yield session is one star on the 5-scale").toBe(1);
-    expect(o.raw).toBe(TUNING.maxYield);
+    const o = depotSessionOutcome(2000, normal.minYield, normal, { cap });
+    expect(o.stars).toBe(5);
+    expect(o.raw).toBe(cap);
     expect(o.yield).toBe(cap);
-    expect(o.capped).toBe(true);
+    expect(o.capped).toBe(false);
     expect(o.kept).toBe(false);
     expect(o.from).toBe(normal.minYield);
-    expect(o.overshootGold).toBe(overshootGold(TUNING.targetScore, normal, cap));
-    expect(o.overshootGold).toBeGreaterThan(0);
-    expect(o.gold).toBe(TUNING.maxGold + o.overshootGold);
+    expect(o.overshootGold).toBe(0);
+    expect(o.gold).toBe(TUNING.maxGold);
   });
 
   it("says when the never-drops rule kept the old level — and when a row without it replaces it", () => {
-    const kept = depotSessionOutcome(10, 2.2, normal, { cap: 4 });
+    const kept = depotSessionOutcome(10, 2.5, normal, { cap: 4 });
     expect(normal.yieldNeverDrops).toBe(true);
-    expect(kept.yield).toBe(2.2);
+    expect(kept.yield).toBe(2.5);
     expect(kept.kept).toBe(true);
-    expect(kept.raw).toBeLessThan(2.2);
+    expect(kept.raw).toBeLessThan(2.5);
 
     const harsh: DifficultyRules = { ...DIFFICULTY_RULES.hard, yieldNeverDrops: false };
-    const dropped = depotSessionOutcome(10, 2.2, harsh, { cap: 4 });
-    expect(dropped.yield).toBe(tuningYieldFor(10, harsh.minYield));
+    const dropped = depotSessionOutcome(10, 2.5, harsh, { cap: 4 });
+    expect(dropped.yield).toBe(tuningYieldFor(10, harsh.minYield, 4));
     expect(dropped.yield).toBeLessThan(dropped.from);
     expect(dropped.kept).toBe(false);
   });

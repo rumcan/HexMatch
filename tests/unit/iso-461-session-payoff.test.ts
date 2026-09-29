@@ -120,10 +120,11 @@ async function boot(opts: { newLoop?: boolean } = {}) {
 }
 
 describe("#461 yields unchanged", () => {
-  it("tuningYieldFor still maps 0→min, target→max, monotonic, no ceiling past target", () => {
+  // Owner (2026-09-29): yield follows the stars, capped by the Depot.
+  it("tuningYieldFor maps 0→min, 5★→the cap, monotonic", () => {
     expect(tuningYieldFor(0)).toBe(TUNING.minYield);
-    expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
-    expect(tuningYieldFor(TUNING.targetScore * 2)).toBeGreaterThan(TUNING.maxYield);
+    expect(tuningYieldFor(2000)).toBe(DEPOT_LEVELS.caps[0]);
+    expect(tuningYieldFor(99999)).toBe(DEPOT_LEVELS.caps[0]);
     let last = -Infinity;
     for (let s = 0; s <= TUNING.targetScore * 2; s += 5) {
       const y = tuningYieldFor(s);
@@ -134,12 +135,12 @@ describe("#461 yields unchanged", () => {
 
   // MATCH-2 (#566) moved the bars onto the 5★ scale (the yields above did not move).
   it("star thresholds are the 5★ table", () => {
-    expect(tuningStarScores()).toEqual([1, 450, 1188, 2160, 2460]);
+    expect(tuningStarScores()).toEqual([1, 500, 1000, 1500, 2000]);
     expect(tuningStarsFor(0)).toBe(0);
     expect(tuningStarsFor(1)).toBe(1);
     expect(tuningStarsFor(TUNING.targetScore)).toBe(1);
-    expect(tuningStarsFor(450)).toBe(2);
-    expect(tuningStarsFor(2460)).toBe(5);
+    expect(tuningStarsFor(500)).toBe(2);
+    expect(tuningStarsFor(2000)).toBe(5);
   });
 
   it("rival tuning still deterministic per skill", () => {
@@ -149,14 +150,14 @@ describe("#461 yields unchanged", () => {
     }
   });
 
-  it("depotSessionOutcome still caps and pays overshoot Gold as before", () => {
+  it("depotSessionOutcome: 5★ reaches the cap exactly, never past it", () => {
     const normal = DIFFICULTY_RULES.normal;
     const cap = DEPOT_LEVELS.caps[0];
-    const o = depotSessionOutcome(TUNING.targetScore, normal.minYield, normal, { cap });
-    expect(o.raw).toBe(TUNING.maxYield);
+    const o = depotSessionOutcome(2000, normal.minYield, normal, { cap });
+    expect(o.raw).toBe(cap);
     expect(o.yield).toBe(cap);
-    expect(o.capped).toBe(true);
-    expect(o.gold).toBeGreaterThan(TUNING.maxGold);
+    expect(o.capped).toBe(false);
+    expect(o.gold).toBe(TUNING.maxGold);
   });
 });
 
