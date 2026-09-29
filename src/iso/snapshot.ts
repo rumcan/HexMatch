@@ -331,7 +331,7 @@ export interface RailLaneWire {
 }
 export interface RailStructureWire {
   id: number;
-  kind: "platform" | "depot";
+  kind: "platform" | "depot" | "loop";
   ownerId: number;
   owner: string;
   tx: number;
@@ -385,6 +385,8 @@ export interface TrainWire {
   wagonCargo?: string;
   /** FLEET-4 (#598): train level 1-3 (absent = 1). */
   level?: number;
+  /** FLEET-2 (#596): the block segments the train has reserved ahead (absent = none). */
+  resv?: string[];
 }
 /**
  * The whole railway. Structures, lines and trains are a handful of records and

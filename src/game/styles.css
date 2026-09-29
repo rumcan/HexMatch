@@ -776,6 +776,7 @@ html, body, #root {
    road's artwork. (An emblem is a follow-up art pass.) */
 .build-btn.bg-rail,
 .build-btn.bg-platform,
+.build-btn.bg-loop,
 .build-btn.bg-raildepot,
 .build-btn.bg-railway {
   --sigil: none;
