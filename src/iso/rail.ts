@@ -1748,7 +1748,19 @@ export function railPreview(
       const rPlanned = new Set(routed.map(([x, y]) => tIdx(x, y)));
       const rRun = slopeRunAtEnds(grid, state, ownerId, routed);
       const rSlope = railDragSlopeVerdict(grid, routed, undefined, rRun);
-      if (!rSlope.flags.size && !rSlope.blocks.size) {
+      // Owner (2026-09-29): "suddenly I can't build railway over a road". The
+      // slope search knows nothing about roads, so beside a road cut it drew
+      // long wandering detours that then failed on a crossing. A reroute is
+      // only taken when it is a real alternative: every tile legal (road
+      // crossings included) and not wildly longer than the drag itself.
+      // Otherwise the drawn line stands and says why it stopped.
+      const rLinks = plannedRailLinks(routed);
+      const rBridges = railBridgePlan(grid, track, state, ownerId, routed, rPlanned).deckTiles;
+      const sane = routed.length <= path.length * 2 + 4
+        && routed.every(([x, y]) => ((state.rail.tile[tIdx(x, y)] & RAIL_PRESENT) !== 0
+          && state.rail.owner[tIdx(x, y)] === ownerId)
+          || railTileRefusal(grid, track, state, ownerId, x, y, rPlanned, rBridges, rLinks) === "ok");
+      if (sane && !rSlope.flags.size && !rSlope.blocks.size) {
         path = routed; planned = rPlanned; run = rRun; slope = rSlope;
         bridgePlan = railBridgePlan(grid, track, state, ownerId, path, planned);
         bridgeTiles = bridgePlan.deckTiles;
