@@ -372,6 +372,8 @@ import {
   laneInviteAt, laneInviteFor, laneInviteTiles, laneSideOf, type LaneInvite,
   stationLanes, structureById, MAX_LANES,
   platformGhostItems, depotGhostItems, laneGhostItems,
+  // FLEET-2 (#596): the Passing Loop - the one refusal rule, the commit, the ghost.
+  loopRefusal, placeLoop, loopGhostItems, planRivalLoop, loopRunAt, loopStripAt, loopRun,
   RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
   type RailState, type RailView, type RailStructure,
 } from "./rail";
@@ -592,6 +594,9 @@ export type Tool =
   // `platform` and `raildepot` are one-click placements in the current
   // heading, and `railway` is the panel — lines, trains and their actions.
   | "rail" | "platform" | "raildepot" | "railway"
+  // FLEET-2 (#596): the Passing Loop - a one-click placement beside a straight
+  // run of the player's own rail (R turns it, as for a platform).
+  | "loop"
   // R3 (#270): the hydro dam — a one-click placement on a river tile, with
   // R rotating which bank the footprint leans onto.
   | "dam"
@@ -4902,7 +4907,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   /** One rail structure's kind, in the wording the player reads. */
-  const railKindName = (kind: RailStructure["kind"]) => (kind === "platform" ? "Platform" : "Train depot");
+  const railKindName = (kind: RailStructure["kind"]) => (kind === "platform" ? "Platform" : kind === "loop" ? "Passing Loop" : "Train depot");
 
   /**
    * RAIL-02 (#176): place a platform — the anchor rule, the one-per-anchor
@@ -4975,6 +4980,37 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!opts.tutorialSection || depot) guide?.emit({ kind: "build", what: "platform" });
     if (depot && newLoop && p === me && !isGuest()) openTuningSession(depot);
     return !!built;
+  }
+
+  /**
+   * FLEET-2 (#596): place a Passing Loop. The refusal is the rail module's one
+   * `loopRefusal` (the click, the ghost, a guest's intent and the rival all
+   * ask it); the price is its own `BUILD_COSTS.loop`, in the platform's class
+   * (Anne's Station Master cuts it). `tx, ty` is the RUN's first tile.
+   */
+  function placeRailLoop(tx: number, ty: number, p: PlayerState, view: RailView = railView): boolean {
+    const ownerId = p.i + 1;
+    const why = loopRefusal(grid, rail, ownerId, tx, ty, view);
+    if (why !== "ok") {
+      if (p.human) {
+        toast(RAIL_REFUSAL_TEXT[why], "bad");
+        flashAt(tx, ty, "Can't build here");
+      }
+      return false;
+    }
+    if (!canPayBuild(p, RAIL_COSTS.loop, "platform")) {
+      if (p.human) {
+        toast(`Not enough money — a Passing Loop costs $${seatCostOf(p, RAIL_COSTS.loop, "platform")}.`, "bad");
+        flashAt(tx, ty, `Loop costs $${seatCostOf(p, RAIL_COSTS.loop, "platform")}`);
+      }
+      return false;
+    }
+    if (!spendBuild(p, RAIL_COSTS.loop, "platform")) return false;
+    placeLoop(rail, p.id, ownerId, tx, ty, view);
+    if (p.human) sfx.play("build");
+    syncWorld();
+    if (p.human) toast("Passing Loop built — trains on this line can pass each other here.", "good");
+    return true;
   }
 
   /**
@@ -7824,8 +7860,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         if (p.human) flashAt(tx, ty, "Not yours to remove");
         return;
       }
-      const cost = rs.kind === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot;
+      const cost = rs.kind === "platform" ? RAIL_COSTS.platform : rs.kind === "loop" ? RAIL_COSTS.loop : RAIL_COSTS.depot;
       const gone = demolishStructure(rail, rs.id);
+      if (!gone && rs.kind === "loop") {
+        // FLEET-2 (#596): a train is on it, or the trains sharing the line still need it.
+        toast("Trains on this line still need the Passing Loop — sell a train or wait for it to clear.", "bad");
+        if (p.human) flashAt(tx, ty, "Trains need this loop");
+        return;
+      }
       if (!gone) {
         // Two refusals share this path: a train physically ON the structure,
         // and a depot that still has a train based at it (the epic's "never
@@ -7843,7 +7885,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // platform's ★ goes with it (`rescoreNow` below revokes it).
       // PERK-1 (#600): the salvage refunds in the class the build PAID — a
       // platform and a train depot are no longer "rail" to the perk table.
-      const refundCls: BuildClass = rs.kind === "platform" ? "platform" : "trainDepot";
+      const refundCls: BuildClass = rs.kind === "platform" || rs.kind === "loop" ? "platform" : "trainDepot";
       const refund = resaleValue(cost);
       if (Object.keys(refund).length) refundBuild(p, refund, 1, refundCls);   // ECON-1: money back (CAST-1: of what was paid)
 
@@ -7863,6 +7905,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (rail.rail.owner[tIdx(tx, ty)] !== p.i + 1) {
         toast("That rail isn't yours.", "bad");
         if (p.human) flashAt(tx, ty, "Not yours to remove");
+        return;
+      }
+      if (rail.structures.some((s) => s.kind === "loop" && loopRun(s).some(([x, y]) => x === tx && y === ty))) {
+        // FLEET-2 (#596): the loop stands on this run - take the loop down first.
+        toast("A Passing Loop stands beside this rail — demolish the loop first.", "bad");
+        if (p.human) flashAt(tx, ty, "Loop on this rail");
         return;
       }
       if (trainOccupies(rail, tx, ty)) {
@@ -10814,6 +10862,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return id !== null && railUpgrade(id, rival);
   }
 
+  /** FLEET-2 (#596): the rival runs 2+ trains on one line - it builds a Passing Loop for them. */
+  function rivalLoopStep(): boolean {
+    if (!newLoop) return false;
+    const pick = planRivalLoop(grid, rail, rival.i + 1);
+    if (!pick || !canPayBuild(rival, RAIL_COSTS.loop, "platform")) return false;
+    return placeRailLoop(pick.tx, pick.ty, rival, pick.view);
+  }
+
   function rivalDamStep(): boolean {
     if (!DAMS_ENABLED || !riversOn || !newLoop) return false;
     if (!canPayBuild(rival, DAM_COST)) return false;
@@ -11023,6 +11079,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rivalTruckStep()) acted = true;
     else if (rivalTruckUpgradeStep()) acted = true;
     if (rivalTrainStep()) acted = true;   // FLEET-4 (#598)
+    if (rivalLoopStep()) acted = true;    // FLEET-2 (#596)
 
     if (acted) {
       noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
@@ -12234,11 +12291,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             echoed.push(`Not enough money — a dam costs $${moneyCostOf(DAM_COST)}.`);
           else placeDam(tx, ty, p, side);
         }
-      } else if (!railAvailable && (what === "rail" || what === "platform" || what === "raildepot" || what === "railact")) {
+      } else if (!railAvailable && (what === "rail" || what === "platform" || what === "loop" || what === "raildepot" || what === "railact")) {
         // RAIL-05 (#182): with the flag down the railway does not exist on this
         // host, so a guest's rail request is refused whole — never half-built.
         echoed.push("Rail is not available in this mode.");
-      } else if (what === "rail" || what === "platform" || what === "raildepot") {
+      } else if (what === "rail" || what === "platform" || what === "loop" || what === "raildepot") {
         // #181: no phase gate here, on purpose — the other build intents
         // (track, depot, plant) do not have one either: the guest's own phase
         // governs what its UI offers, and the host's rules are the only
@@ -12268,9 +12325,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           if (tx !== null && ty !== null) {
             const why = what === "platform"
               ? platformRefusal(grid, rail.structures, railPlants(), p.i + 1, tx, ty, view, undefined, lockedIndustryIdsFor(eco, p.id), rail.rail)
+              : what === "loop" ? loopRefusal(grid, rail, p.i + 1, tx, ty, view)   // FLEET-2 (#596)
               : depotRefusal(grid, rail, p.i + 1, tx, ty, view);
             if (why !== "ok") echoed.push(RAIL_REFUSAL_TEXT[why]);
             else if (what === "platform") placeRailPlatform(tx, ty, p, view);
+            else if (what === "loop") placeRailLoop(tx, ty, p, view);
             else placeRailDepot(tx, ty, p, view);
           }
         }
@@ -12895,6 +12954,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           label: ok ? `Click to add · $${seatCostOf(me, RAIL_COSTS.lane, "platform")}` : (LANE_WHY_SHORT[why] ?? "Can't add a lane here"),
         };
       }
+    } else if (tool === "loop") {
+      // FLEET-2 (#596): the ghost is the run (tinted) and the side track that
+      // would be laid beside it, green when `loopRefusal` says ok, red else.
+      const ok = loopRefusal(grid, rail, me.i + 1, tx, ty, railView) === "ok";
+      for (const [x, y] of loopRunAt(tx, ty, railView)) {
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) items.push({ sprite: ok ? "highlight_soft" : "highlight_bad", tx: x, ty: y });
+      }
+      for (const [x, y] of loopStripAt(tx, ty, railView)) {
+        if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) items.push({ sprite: ok ? "highlight" : "highlight_bad", tx: x, ty: y });
+      }
+      const g = loopGhostItems(tx, ty, railView, atlasRef ?? undefined);
+      if (g.length) ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
     } else if (tool === "platform" || tool === "raildepot") {
       // RAIL-02 (#176): the same overlay contract as every other placement
       // tool — the footprint green or red, and the transparent building
@@ -13166,6 +13237,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return null;
     }
+    if (tool === "loop") {
+      // FLEET-2 (#596): the same refusal the click runs, in the assist's voice.
+      const why = loopRefusal(grid, rail, me.i + 1, tx, ty, railView);
+      if (why !== "ok") {
+        if (why === "loop-slope") {
+          return slopeAssistFor(grid, [...loopRunAt(tx, ty, railView), ...loopStripAt(tx, ty, railView)], { track });
+        }
+        return RAIL_ASSIST[why];
+      }
+      if (!canPayBuild(me, RAIL_COSTS.loop, "platform")) return MONEY_ASSIST(seatCostOf(me, RAIL_COSTS.loop, "platform"), me.money);
+      return null;
+    }
     if (tool === "platform" || tool === "raildepot") {
       const why = tool === "platform"
         ? platformRefusal(grid, rail.structures, railPlants(), me.i + 1, tx, ty, railView, undefined, lockedIndustryIdsFor(eco, me.id), rail.rail)
@@ -13382,6 +13465,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const assist = hoverAssist();
       if (assist) costInfo = hintLine(`<i>${assistText(assist)}</i>`);
       else costInfo = hintLine("ready to raise", `+${fmtVp(VICTORY.plant)}★ · ${moneyMarkup(PLANT_COST)}`);
+    } else if (tool === "loop") {
+      // FLEET-2 (#596): the reason + fix from the same refusal the click runs.
+      const assist = hoverAssist();
+      if (assist) costInfo = hintLine(`<i>${assistText(assist)}</i>`);
+      else {
+        const price = seatCostOf(me, RAIL_COSTS.loop, "platform");
+        costInfo = hintLine("Passing Loop · ready", `$${price.toLocaleString("en-US")}`);
+      }
     } else if (tool === "platform" || tool === "raildepot") {
       // BUILD-1 (#460): the railway structures had no cursor verdict of their
       // own — a refused tile was just red. The reason + fix come from the
@@ -14267,7 +14358,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    */
   let pendingPlacement: { tool: Tool; tx: number; ty: number } | null = null;
   const CONFIRM_TOOLS: ReadonlySet<Tool> = new Set<Tool>(
-    ["harvester", "plant", "platform", "raildepot", "interchange", "dam", "demolish"]);
+    ["harvester", "plant", "platform", "loop", "raildepot", "interchange", "dam", "demolish"]);
 
   /** D2: one preview seam for pointer motion and R (including tier/bridge costs). */
   const previewRoadGesture = (): DragPreview | null => drag ? previewDrag(
@@ -14573,6 +14664,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         net?.sendIntent("build", { do: t === "platform" ? "platform" : "raildepot", tx: p.tx, ty: p.ty, view: railView });
       } else if (t === "platform") placeRailPlatform(p.tx, p.ty, me);
       else placeRailDepot(p.tx, p.ty, me);
+    } else if (t === "loop") {
+      // FLEET-2 (#596): the Passing Loop - the same click shape as a platform;
+      // on a guest an intent the host validates with the same `loopRefusal`.
+      if (isGuest()) net?.sendIntent("build", { do: "loop", tx: p.tx, ty: p.ty, view: railView });
+      else placeRailLoop(p.tx, p.ty, me);
     } else if (t === "interchange") {
       if (isGuest()) net?.sendIntent("build", { do: "interchange", tx: p.tx, ty: p.ty });
       else placeInterchange(p.tx, p.ty);
@@ -17542,6 +17638,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return placeRailPlatform(tx, ty, p, v);
     },
     /**
+     * FLEET-2 (#596): the test twin of clicking with the Passing Loop tool.
+     * `tx, ty` is the first tile of the straight run the loop lies beside;
+     * `view` picks the axis and the side (as for a platform). A guest sends
+     * the same intent the click sends.
+     */
+    placeLoop: (tx: number, ty: number, view?: string, who: "you" | "ai" = "you") => {
+      const p = who === "ai" ? rival : me;
+      const v = view && (RAIL_VIEWS as readonly string[]).includes(view) ? view as RailView : railView;
+      if (who === "you" && isGuest()) {
+        return net?.sendIntent("build", { do: "loop", tx, ty, view: v }) ?? false;
+      }
+      return placeRailLoop(tx, ty, p, v);
+    },
+    /**
      * RAIL-6 (#575): the test twin of the station upgrade — the panel's
      * "Add lane" plus the side-picking click, in one call. A guest sends the
      * same intent the click sends.
@@ -17579,6 +17689,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       railUpgrade(trainId, who === "ai" ? rival : me),
     /** FLEET-4 (#598): run the rival's upgrade step once (test twin). */
     rivalTrainStep: () => rivalTrainStep(),
+    rivalLoopStep: () => rivalLoopStep(),   // FLEET-2 (#596)
     /** FLEET-1 (#595): the test twins of the Fleet card's Buy / Sell truck. */
     buyTruck: (depotId: number, who: "you" | "ai" = "you") =>
       fleetBuyTruck(depotId, who === "ai" ? rival : me),

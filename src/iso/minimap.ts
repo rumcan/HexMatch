@@ -549,6 +549,7 @@ export function minimapSceneOf(w: MinimapWorld): MinimapScene {
     sites.push({ kind: "depot", ...box(depotTiles(h.tx, h.ty)), owner: h.ownerId, closed: !!h.closed });
   }
   for (const s of w.rail.structures) {
+    if (s.kind === "loop") continue;   // FLEET-2 (#596): a loop is a side track, not a site
     sites.push({ kind: s.kind === "platform" ? "platform" : "raildepot", ...box(footprintTiles(s)), owner: s.ownerId });
   }
   return {

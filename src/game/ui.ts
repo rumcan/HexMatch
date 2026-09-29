@@ -49,7 +49,7 @@ import { PLANT_COST } from "../iso/plants";
 import { GEM_TO_CARGO } from "../iso/quarry";
 // RAIL-04 (#178): the buttons print the railway's real prices and its real
 // point value — the same table and the same constant the placement charges.
-import { RAIL_COSTS } from "../iso/rail";
+import { RAIL_COSTS, LOOP_INFO } from "../iso/rail";
 // R3 (#270): the Dam button prints the same price and bonus the placement
 // and the clock use — `BUILD_COSTS.dam` and `DAM_BONUS` from the dam's own
 // module, so the HUD cannot quote a number the rule does not make.
@@ -211,6 +211,8 @@ export type UiTool =
   // `railway` holds the panel: the lines, the trains and the buy/recall/sell
   // buttons.
   | "rail" | "platform" | "raildepot" | "railway"
+  // FLEET-2 (#596): the Passing Loop, beside a straight run of the player's rail.
+  | "loop"
   // R3 (#270): the hydro dam — a one-click placement on a river tile.
   | "dam"
   // #456: Level Ground — drag a rectangle (or tap one tile) to level it to
@@ -220,7 +222,7 @@ export type UiTool =
 /** RAIL-05 (#182): the tools the railway feature flag owns — the set the
  *  campaign boot hides when the flag is down. */
 export const RAIL_TOOL_KEYS: ReadonlySet<UiTool> = new Set<UiTool>([
-  "rail", "platform", "raildepot", "railway",
+  "rail", "platform", "loop", "raildepot", "railway",
 ]);
 
 /**
@@ -2663,7 +2665,7 @@ export function createOriginalUi(
   // and the chrome forks on `opts.newLoop` exactly like the rail strip does.
   const newLoopChrome = opts.newLoop === true;
   const roadRule = newLoopChrome ? "faster hauling · 0★" : `+${VICTORY.upgrade}★ paving dirt`;
-  const TOOLS: { key: UiTool; label: string; sub: string }[] = [
+  const TOOLS: { key: UiTool; label: string; sub: string; desc?: string }[] = [
     // The pointer goes first: it is the hand you hold between builds —
     // hover to read what a tile is, click to select it, right-click (or Q)
     // to return here from any tool.
@@ -2703,6 +2705,10 @@ export function createOriginalUi(
     // (`VICTORY.platform`, aliased in rail.ts as PLATFORM_VP).
     { key: "rail", label: "Rail", sub: `${perkMarkup(RAIL_COSTS.rail, "rail")} a tile · 0★` },
     { key: "platform", label: "Platform", sub: `${perkMarkup(RAIL_COSTS.platform, "rail")} · +${VICTORY.platform}★ · track beside it included · R turns` },
+    // FLEET-2 (#596): the Passing Loop, next to the Platform. Its description
+    // (the owner's words, `LOOP_INFO`) rides the button's tooltip and the tool
+    // card verbatim; the sub line is the price.
+    { key: "loop", label: "Passing Loop", sub: `${perkMarkup(RAIL_COSTS.loop, "rail")} · R turns`, desc: LOOP_INFO },
     // R3 (#270): the hydro dam. The price is read from the same row the
     // placement charges (`BUILD_COSTS.dam`) and the bonus from the same
     // constant the clock multiplies by (`DAM_BONUS`), so the button never
@@ -2729,7 +2735,8 @@ export function createOriginalUi(
   const showToolCard = (b: HTMLElement) => {
     const name = b.querySelector(".bb-mid b")?.innerHTML ?? "";
     const sub = b.querySelector(".bb-mid small")?.innerHTML ?? "";
-    toolCard.innerHTML = `<b>${name}</b>${sub ? `<small>${sub}</small>` : ""}`;
+    const desc = b.dataset.desc;
+    toolCard.innerHTML = `<b>${name}</b>${sub ? `<small>${sub}</small>` : ""}${desc ? `<small class="tool-desc">${desc}</small>` : ""}`;
     const r = b.getBoundingClientRect();
     toolCard.style.top = `${Math.round(r.top)}px`;
     // Beside the button itself - a tool inside a Road/Rail Ways drawer sits
@@ -2757,7 +2764,7 @@ export function createOriginalUi(
     { id: "roads", label: "Road Ways", icon: "road", sub: "Dirt road to highway, ramps and depots",
       keys: ["dirt", "street", "road", "highway", "interchange", "ramp", "harvester"] },
     { id: "rails", label: "Rail Ways", icon: "rail", sub: "Track and platforms",
-      keys: ["rail", "platform"] },
+      keys: ["rail", "platform", "loop"] },
   ];
   const groupOf = (key: string) => TOOL_GROUPS.find((g) => g.keys.includes(key)) ?? null;
   const groupEls = new Map<string, { wrap: HTMLElement; btn: HTMLButtonElement; fly: HTMLElement }>();
@@ -2794,6 +2801,7 @@ export function createOriginalUi(
     // bg-harvester / bg-demolish) — they all shared bg-rail before.
     const b = h("button", "build-btn bg-" + t.key);
     b.dataset.tool = t.key;
+    if (t.desc) { b.dataset.desc = t.desc; b.title = t.desc; }   // FLEET-2 (#596): the tooltip reads the owner's words
     b.innerHTML = `<span class="bb-ico">${toolIconSvg(t.key)}</span><div class="bb-mid"><b>${t.label}</b><small>${t.sub}</small></div>`;
     wireToolCard(b);
     b.onclick = () => {
@@ -5862,7 +5870,7 @@ export function createOriginalUi(
     // and pointerup would swallow the click.
     const railState = state.rail;
     const railPanelOn = railState !== undefined
-      && (state.tool === "rail" || state.tool === "platform"
+      && (state.tool === "rail" || state.tool === "platform" || state.tool === "loop"
         || state.tool === "raildepot" || state.tool === "railway");
     // The key carries the PANEL'S STATE as well as its rows: a fresh game has
     // no rows at all, so an empty-but-visible panel would key the same as a
@@ -5952,6 +5960,7 @@ export function createOriginalUi(
         : tool === "road" ? TRANSPORT.road.cost
         : tool === "dirt" ? {}
         : tool === "platform" ? RAIL_COSTS.platform
+        : tool === "loop" ? RAIL_COSTS.loop
         : tool === "raildepot" ? RAIL_COSTS.depot : {};
       // W9: the free setup allowance buys Dirt Roads only.
       // L2: under true dirt is free with or without the allowance.

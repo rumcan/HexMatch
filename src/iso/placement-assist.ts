@@ -169,6 +169,13 @@ export const RAIL_ASSIST: Readonly<Record<RailRefusal, AssistCopy>> = {
   // RAIL-6 (#575): the station upgrade's own refusals, in the assist's voice.
   "max-lanes": { reason: "Station full", fix: "four lanes is the most a station holds" },
   "too-sharp": { reason: "Turn too sharp", fix: "turns must be 45° or less" },
+  // FLEET-2 (#596): the Passing Loop's refusals.
+  "loop-no-rail": { reason: "No straight run", fix: "put it beside 4 straight tiles of your own rail" },
+  "loop-curve": { reason: "A curve", fix: "the run must be 4 straight rail tiles" },
+  "loop-slope": { reason: "Slope", fix: SLOPE_ASSIST.fix },
+  "loop-bridge": { reason: "Bridge", fix: "build it on plain ground, not a bridge or overpass" },
+  "loop-junction": { reason: "Junction", fix: "the run must have no side tracks" },
+  "loop-platform": { reason: "Next to a platform", fix: "leave a tile of space round a station" },
 };
 
 /** The depot refusal code's copy, choosing the rival's voice when told. */

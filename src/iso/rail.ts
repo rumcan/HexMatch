@@ -67,6 +67,10 @@ import {
 // geometric line breaks a slope rule.
 import { routeRailSlope } from "./rail-slope-route";
 import type { DrawItem } from "./depth";
+import {
+  buildBlockMap, canTake, interiorPlaces, placeKey, priorityOrder, stretchFor,
+  type BlockMap, type BlockPlace, type Hold,
+} from "./rail-blocks";
 import { base64ToBytes, bytesToBase64, type RailTileWire, type RailWire, type TrainWire } from "./snapshot";
 
 // ── bits ──────────────────────────────────────────────────────────────────
@@ -157,6 +161,8 @@ export const RAIL_COSTS: Readonly<{
   rail: Purse; platform: Purse; depot: Purse; train: Purse; bridge: Purse;
   /** RAIL-6 (#575): one more lane at a standing station. */
   lane: Purse;
+  /** FLEET-2 (#596): a Passing Loop. */
+  loop: Purse;
 }> = {
   rail: BUILD_COSTS.rail,
   platform: BUILD_COSTS.platform,
@@ -165,6 +171,7 @@ export const RAIL_COSTS: Readonly<{
   // R2 (#266): the deck, per water tile spanned. Three rail tiles' stone.
   bridge: BUILD_COSTS.railBridge,
   lane: BUILD_COSTS.stationLane,
+  loop: BUILD_COSTS.loop,
 };
 
 /** RAIL-01: exactly one Victory Point per platform, on construction. */
@@ -549,7 +556,8 @@ export function crossingOk(track: Track, tx: number, ty: number, railMask: numbe
 export { crossingMasksOk } from "./track";
 
 // ── structures ────────────────────────────────────────────────────────────
-export type RailKind = "platform" | "depot";
+/** FLEET-2 (#596): `loop` is the Passing Loop - a side track beside a straight run. */
+export type RailKind = "platform" | "depot" | "loop";
 
 /**
  * What a platform serves: a map industry, or one of the owner's own processing
@@ -640,7 +648,7 @@ export const createRailState = (): RailState => ({
 });
 
 export const footprintFor = (kind: RailKind, view: RailView): [number, number] =>
-  kind === "platform" ? PLATFORM_FOOTPRINT[view] : DEPOT_FOOTPRINT;
+  kind === "depot" ? DEPOT_FOOTPRINT : PLATFORM_FOOTPRINT[view];
 
 export const viewBit = (view: RailView): number => VIEW_BIT[view];
 
@@ -668,7 +676,7 @@ export const structuresOf = (state: RailState, ownerId: number, kind?: RailKind)
 export function laneTiles(s: RailStructure): [number, number][] {
   // A platform has no internal track any more: its train stops on ordinary
   // rail laid beside it (`platformTrack`).
-  if (s.kind === "platform") return [];
+  if (s.kind !== "depot") return [];     // FLEET-2: a loop's strip is drawn, not a lane
   const out: [number, number][] = [];
   const uAxis = s.view === "se" || s.view === "nw";
   if (uAxis) {
@@ -1209,6 +1217,22 @@ export function railDrawLayer(state: RailState): { tile: Uint8Array; owner: Uint
       tile[i] |= RAIL_PRESENT | laneMaskAt(s, x, y);
       owner[i] = s.ownerId;
     }
+    if (s.kind === "loop") {
+      // FLEET-2 (#596): the side track and its two switches, as plain vector
+      // track (the placeholder until `passing_loop_<view>` art lands): the
+      // strip runs along the axis and each end turns into the run's end tile.
+      const strip = footprintTiles(s), run = loopRun(s);
+      const alongY = s.view === "se" || s.view === "nw";
+      const prev = alongY ? NE : NW, next = alongY ? SW : SE;
+      const toRun = VIEW_BIT[s.view], toStrip = OPPOSITE[toRun];
+      strip.forEach(([x, y], k) => {
+        const i = tIdx(x, y);
+        tile[i] |= RAIL_PRESENT | (k > 0 ? prev : 0) | (k < strip.length - 1 ? next : 0)
+          | (k === 0 || k === strip.length - 1 ? toRun : 0);
+        owner[i] = s.ownerId;
+      });
+      for (const k of [0, run.length - 1]) tile[tIdx(run[k][0], run[k][1])] |= toStrip;
+    }
   }
   return { tile, owner, revision: state.rail.revision };
 }
@@ -1475,6 +1499,8 @@ export type RailRefusal =
   | "not-flat"
   /** RAIL-6 (#575): the station already carries four lanes — the maximum. */
   | "max-lanes"
+  /** FLEET-2 (#596): the Passing Loop's own refusals - each names the rule. */
+  | "loop-no-rail" | "loop-curve" | "loop-slope" | "loop-bridge" | "loop-junction" | "loop-platform"
   | "too-sharp";
 
 export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
@@ -1512,6 +1538,13 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   // cap so an upgrade that cannot happen says why.
   "max-lanes": "That station already has four lanes — the most a station holds.",
   "too-sharp": "Too sharp for rail: turns must be 45° or less",
+  // FLEET-2 (#596): the Passing Loop wants a straight run of 4 of the player's own tiles.
+  "loop-no-rail": "A Passing Loop goes beside a straight run of 4 of your own rail tiles.",
+  "loop-curve": "Not on a curve - a Passing Loop needs a straight run of 4 rail tiles.",
+  "loop-slope": "Not on a slope - the loop and its run must sit on level ground.",
+  "loop-bridge": "Not on a bridge or an overpass - build the loop on plain ground.",
+  "loop-junction": "Not on a junction - the run must have no side tracks.",
+  "loop-platform": "Not next to a platform - leave a tile of space round a station.",
 };
 
 // ── placement: rail tiles ─────────────────────────────────────────────────
@@ -1957,7 +1990,9 @@ function buildRailAttempt(
       const exit = depotExit(home);
       return (comp.get(tIdx(exit.tx, exit.ty)) ?? 0) === here;
     });
-    if (trainsHere.length > 1) {
+    // FLEET-2 (#596): two running lines may join once the network has a
+    // Passing Loop and every shared stretch can pass its trains.
+    if (trainsHere.length > 1 && (!hasPassingPlace(state, ownerId) || !linesCanShare(state, ownerId, grid, true))) {
       edit.rollback();
       return { ok: built.length > 0, why: "component-conflict", cost: railCostOf(charged, decks), built };
     }
@@ -2407,6 +2442,22 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
   // is based here too: destroying its home would strand it, so the player must
   // sell it (it is at home) or wait for it to return.
   if (s.kind === "depot" && trainBasedAt(state, s.id)) return null;
+  if (s.kind === "loop") {
+    // FLEET-2 (#596): a loop comes down when no train is on or holding it and
+    // the trains that share the line can still pass without it.
+    const key = placeKey("loop", s.id);
+    const runSet = new Set(loopRun(s).map(([x, y]) => tIdx(x, y)));
+    if (state.trains.some((t) => t.resv?.includes(key)
+      || carPlacements(state, t).some((c) => runSet.has(tIdx(Math.round(c.fx), Math.round(c.fy)))))) return null;
+    state.structures.splice(at, 1);
+    state.rail.revision++;
+    if (!linesCanShare(state, s.ownerId, undefined, true)) {
+      state.structures.splice(at, 0, s);
+      state.rail.revision++;
+      return null;
+    }
+    return s;
+  }
   const lane = laneTiles(s);
   if (lane.some(([x, y]) => trainOccupies(state, x, y))) return null;
   state.structures.splice(at, 1);
@@ -2426,6 +2477,345 @@ export function demolishStructure(state: RailState, id: number): RailStructure |
   }
   state.rail.revision++;
   return s;
+}
+
+// ── FLEET-2 (#596): the Passing Loop ──────────────────────────────────────
+//
+// Owner: "if two trains run [the] same line there has to be a switch-over
+// trains can use to pass each other. This is a fixed thing the user has to
+// click on, like building a platform."
+//
+// The structure is the SIDE TRACK: a 4x1 (or 1x4) strip of free ground beside
+// a straight run of 4 of the owner's own rail tiles (the run is
+// `platformTrack(loop)`, exactly as a platform's track is). The placement
+// names the RUN's first tile and the side the strip lies on, so the click is
+// "on the line". The two switches are the strip's ends joining the run's ends
+// (drawn in `railDrawLayer`; the graph itself stays the one main line, and
+// `rail-blocks.ts` treats the run as a place two trains may occupy).
+
+/** Tiles in a Passing Loop's run and side track. */
+export const LOOP_LEN = PLATFORM_LEN;
+/** FLEET-2: the most trains one line may run. */
+export const MAX_TRAINS_PER_LINE = 3;
+/** The tooltip and build-card text (the owner's words). */
+export const LOOP_INFO =
+  "Passing Loop — a short second track beside the line. Two trains on the same line wait here to pass each other. Needs a straight run of 4 rail tiles.";
+/** A train held at a boundary shows this in `blockedWhy`. */
+export const WAIT_TO_PASS = "Waiting to pass";
+
+/** The side track's origin for a loop whose RUN starts at (tx, ty): one tile back from the run's view side. */
+export function loopStripOrigin(tx: number, ty: number, view: RailView): [number, number] {
+  const d = DIR[VIEW_BIT[view]];
+  return [tx - d[0], ty - d[1]];
+}
+
+/** The run tiles a loop placed at (tx, ty) would sit beside, in axis order. */
+export function loopRunAt(tx: number, ty: number, view: RailView): [number, number][] {
+  const [w, h] = PLATFORM_FOOTPRINT[view];
+  return footprintTiles({ tx, ty, w, h });
+}
+
+/** The side-track tiles of a loop placed at run origin (tx, ty). */
+export function loopStripAt(tx: number, ty: number, view: RailView): [number, number][] {
+  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [sx, sy] = loopStripOrigin(tx, ty, view);
+  return footprintTiles({ tx: sx, ty: sy, w, h });
+}
+
+/** The run a placed loop sits beside (the ordinary rail its switches join). */
+export const loopRun = (s: RailStructure): [number, number][] => platformTrack(s);
+
+/** The run origin a stored loop was placed with (the inverse of `loopStripOrigin`). */
+export function loopRunOrigin(s: RailStructure): [number, number] {
+  const d = DIR[VIEW_BIT[s.view]];
+  return [s.tx + d[0], s.ty + d[1]];
+}
+
+/**
+ * The ONE Passing Loop rule: the click, the ghost, a guest's intent and the
+ * rival all ask this. Refusals, each with its reason: not on the map, no rail,
+ * someone else's rail, a bridge or overpass, a curve, a junction, a slope,
+ * next to a platform, and the side track's own ground (water, a building,
+ * another structure).
+ */
+export function loopRefusal(
+  grid: Grid, state: RailState, ownerId: number, tx: number, ty: number, view: RailView,
+): RailRefusal {
+  if (!RAIL_VIEWS.includes(view)) return "axis-only";
+  const run = loopRunAt(tx, ty, view);
+  const strip = loopStripAt(tx, ty, view);
+  if (![...run, ...strip].every(([x, y]) => inMapT(x, y))) return "off-map";
+  const rail = state.rail;
+  for (const [x, y] of run) {
+    const i = tIdx(x, y);
+    if (!(rail.tile[i] & RAIL_PRESENT)) return "loop-no-rail";
+    if (rail.owner[i] !== ownerId) return "foreign-rail";
+  }
+  for (const [x, y] of run) {
+    if ((rail.tile[tIdx(x, y)] & RAIL_OVERPASS) || !railTerrainOk(grid, x, y)
+      || grid.builtAt?.(x, y) === "bridge") return "loop-bridge";
+  }
+  const alongY = view === "se" || view === "nw";
+  const prevBit = alongY ? NE : NW, nextBit = alongY ? SW : SE;
+  for (let k = 0; k < run.length; k++) {
+    const [x, y] = run[k], v = rail.tile[tIdx(x, y)];
+    if ((v & RAIL_DIAG) || diagNeighbours(rail, x, y).length > 0) return "loop-curve";
+    const bits = v & RAIL_BITS;
+    const extra = bits & ~(prevBit | nextBit);
+    const needs = (k > 0 ? prevBit : 0) | (k < run.length - 1 ? nextBit : 0);
+    if ((bits & needs) !== needs) return extra ? "loop-curve" : "loop-no-rail";
+    if (extra) {
+      const outward = k === 0 ? prevBit : k === run.length - 1 ? nextBit : 0;
+      return outward && !(bits & outward) ? "loop-curve" : "loop-junction";
+    }
+  }
+  // Not next to a platform: a tile of space round every station.
+  const near = new Set<number>();
+  for (const s of state.structures) {
+    if (s.kind !== "platform") continue;
+    for (const [x, y] of [...stationTiles(s), ...platformTrack(s)]) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (inMapT(x + dx, y + dy)) near.add(tIdx(x + dx, y + dy));
+      }
+    }
+  }
+  if ([...run, ...strip].some(([x, y]) => near.has(tIdx(x, y)))) return "loop-platform";
+  if (footprintFlatTiles(grid, [...run, ...strip])) return "loop-slope";
+  // The side track's ground: free, dry, level, empty of rail and of structures.
+  for (const [x, y] of strip) {
+    if (!railTerrainOk(grid, x, y)) return "water";
+    if (grid.occupancy[tIdx(x, y)] >= 0 || grid.occupancy[tIdx(x, y)] === FIELD_OCC) return "occupied";
+    const b = grid.builtAt?.(x, y);
+    if (b === "depot" || b === "plant" || b === "platform" || b === "bridge" || b === "dam"
+      || b === "rail" || b === "rail-x" || b === "rail-y" || hasRail(rail, x, y)) return "occupied";
+  }
+  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [sx, sy] = loopStripOrigin(tx, ty, view);
+  if (state.structures.some((s) => overlaps(s, sx, sy, w, h) || overlaps(s, tx, ty, w, h))) return "overlap";
+  // Two loops never share a run.
+  const runSet = new Set(run.map(([x, y]) => tIdx(x, y)));
+  if (state.structures.some((s) => s.kind === "loop" && loopRun(s).some(([x, y]) => runSet.has(tIdx(x, y))))) return "overlap";
+  return "ok";
+}
+
+/** Commit a Passing Loop. The caller has run `loopRefusal` and taken the money. */
+export function placeLoop(
+  state: RailState, owner: string, ownerId: number, tx: number, ty: number, view: RailView,
+): RailStructure {
+  const [w, h] = PLATFORM_FOOTPRINT[view];
+  const [sx, sy] = loopStripOrigin(tx, ty, view);
+  const s: RailStructure = { id: state.seq++, kind: "loop", ownerId, owner, tx: sx, ty: sy, w, h, view, anchor: null };
+  state.structures.push(s);
+  state.rail.revision++;      // the blocks are re-cut and the trains re-plan
+  return s;
+}
+
+// ── FLEET-2: blocks, wired to the rail graph ──────────────────────────────
+const blockCache = new WeakMap<RailState, Map<number, { key: string; map: BlockMap }>>();
+
+/**
+ * The owner's rail cut into blocks and places (rail-blocks.ts). Cached on the
+ * rail revision and the structure list; `fresh` skips the cache for a caller
+ * that is mid-edit (the merge guard).
+ */
+export function blockMapFor(state: RailState, ownerId: number, fresh = false): BlockMap {
+  const key = `${state.rail.revision}|${state.structures.map((s) => `${s.id}${s.kind[0]}${s.kind === "platform" ? stationLanes(s).length : 0}`).join(",")}`;
+  let perOwner = blockCache.get(state);
+  if (!perOwner) { perOwner = new Map(); blockCache.set(state, perOwner); }
+  const hit = perOwner.get(ownerId);
+  if (!fresh && hit && hit.key === key) return hit.map;
+  const places: BlockPlace[] = [];
+  for (const s of state.structures) {
+    if (s.ownerId !== ownerId) continue;
+    if (s.kind === "loop") {
+      places.push({ key: placeKey("loop", s.id), kind: "loop", tiles: loopRun(s).map(([x, y]) => tIdx(x, y)), slots: 2, directional: true });
+    } else if (s.kind === "platform") {
+      const lanes = stationLanes(s);
+      const tiles = new Set<number>();
+      for (const l of lanes) for (const [x, y] of laneTrackTiles(l)) tiles.add(tIdx(x, y));
+      places.push({ key: placeKey("station", s.id), kind: "station", tiles: [...tiles], slots: Math.max(1, lanes.length), directional: false });
+    } else {
+      places.push({ key: placeKey("depot", s.id), kind: "depot", tiles: laneTiles(s).map(([x, y]) => tIdx(x, y)), slots: 4, directional: false });
+    }
+  }
+  const map = buildBlockMap(
+    ownerId, ownerRailTiles(state, ownerId),
+    (i) => railNeighbours(state, ownerId, i % MAP_W, (i / MAP_W) | 0, false).map(([x, y]) => tIdx(x, y)),
+    places,
+  );
+  if (!fresh) perOwner.set(ownerId, { key, map });
+  return map;
+}
+
+/** The tile route of a line from its source stop to its destination stop, or null. */
+export function lineRouteTiles(state: RailState, line: RailLine, grid?: Grid): [number, number][] | null {
+  const a = structureById(state, line.source), b = structureById(state, line.dest);
+  if (!a || !b) return null;
+  const [gx, gy] = stopTile(b);
+  return railPath(state, line.ownerId, [stopTile(a)], new Set([tIdx(gx, gy)]), -1, grid);
+}
+
+/** Passing places (loops, stations with 2+ lanes) a line's route runs THROUGH, not counting its own two stops. */
+export function passingPlacesOn(state: RailState, line: RailLine, grid?: Grid, fresh = false): number {
+  const route = lineRouteTiles(state, line, grid);
+  if (!route) return 0;
+  const bm = blockMapFor(state, line.ownerId, fresh);
+  return interiorPlaces(bm, route.map(([x, y]) => tIdx(x, y)), [placeKey("station", line.source), placeKey("station", line.dest)])
+    .filter((k) => { const p = bm.places.get(k)!; return p.kind === "loop" || (p.kind === "station" && p.slots >= 2); }).length;
+}
+
+/** How many of the owner's trains run on lines that share track with `line` (its own included). */
+export function trainsSharing(state: RailState, line: RailLine, grid?: Grid): number {
+  const mine = lineRouteTiles(state, line, grid);
+  if (!mine) return state.trains.filter((t) => t.lineId === line.id).length;
+  const set = new Set(mine.map(([x, y]) => tIdx(x, y)));
+  let n = 0;
+  for (const l of state.lines) {
+    if (l.ownerId !== line.ownerId) continue;
+    const count = state.trains.filter((t) => t.lineId === l.id).length;
+    if (!count) continue;
+    if (l === line) { n += count; continue; }
+    const r = lineRouteTiles(state, l, grid);
+    if (r && r.some(([x, y]) => set.has(tIdx(x, y)))) n += count;
+  }
+  return n;
+}
+
+/** Can every running line of the owner pass its own trains? (`extra` adds one more train to `line`.) */
+export function linesCanShare(
+  state: RailState, ownerId: number, grid?: Grid, fresh = false, extra?: RailLine,
+): boolean {
+  for (const l of state.lines) {
+    if (l.ownerId !== ownerId) continue;
+    const own = state.trains.filter((t) => t.lineId === l.id).length + (extra === l ? 1 : 0);
+    if (own > MAX_TRAINS_PER_LINE) return false;
+    if (!own) continue;
+    const sharing = trainsSharing(state, l, grid) + (extra === l ? 1 : 0);
+    if (sharing > 1 && passingPlacesOn(state, l, grid, fresh) < sharing - 1) return false;
+  }
+  return true;
+}
+
+/** Does the owner's network hold any place two trains can pass at? (loops, stations with 2+ lanes) */
+export function hasPassingPlace(state: RailState, ownerId: number): boolean {
+  return state.structures.some((s) => s.ownerId === ownerId
+    && (s.kind === "loop" || (s.kind === "platform" && stationLanes(s).length >= 2)));
+}
+
+/**
+ * FLEET-2 (#596): where the rival puts a Passing Loop - on the first line that
+ * runs more trains than it has places to pass, at the straight run nearest the
+ * middle of the route that `loopRefusal` accepts. Deterministic; null when
+ * nothing is needed or nothing fits.
+ */
+export function planRivalLoop(
+  grid: Grid, state: RailState, ownerId: number,
+): { tx: number; ty: number; view: RailView } | null {
+  for (const line of state.lines) {
+    if (line.ownerId !== ownerId) continue;
+    if (state.trains.filter((t) => t.lineId === line.id).length < 2) continue;
+    const sharing = trainsSharing(state, line, grid);
+    if (passingPlacesOn(state, line, grid) >= sharing - 1) continue;
+    const route = lineRouteTiles(state, line, grid);
+    if (!route) continue;
+    const mid = (route.length - 4) / 2;
+    const spots: { i: number; tx: number; ty: number; views: RailView[] }[] = [];
+    for (let i = 0; i + 3 < route.length; i++) {
+      const w = route.slice(i, i + 4);
+      if (w.every(([, y]) => y === w[0][1]) && w.every(([x], k) => Math.abs(x - w[0][0]) === k)) {
+        spots.push({ i, tx: Math.min(w[0][0], w[3][0]), ty: w[0][1], views: ["sw", "ne"] });
+      } else if (w.every(([x]) => x === w[0][0]) && w.every(([, y], k) => Math.abs(y - w[0][1]) === k)) {
+        spots.push({ i, tx: w[0][0], ty: Math.min(w[0][1], w[3][1]), views: ["se", "nw"] });
+      }
+    }
+    spots.sort((a, b) => Math.abs(a.i - mid) - Math.abs(b.i - mid) || a.i - b.i);
+    for (const s of spots) {
+      for (const view of s.views) if (loopRefusal(grid, state, ownerId, s.tx, s.ty, view) === "ok") return { tx: s.tx, ty: s.ty, view };
+    }
+  }
+  return null;
+}
+
+// ── FLEET-2: what a train holds, and where it must wait ───────────────────
+const stepSign = (a: readonly [number, number], b: readonly [number, number]): number =>
+  (b[0] - a[0]) + (b[1] - a[1]) >= 0 ? 1 : -1;
+
+/** Which way a train travels through place `seg`: +1 towards SE/SW, -1 the other way. */
+function dirIn(t: Train, bm: BlockMap, seg: string): number {
+  const r = t.route;
+  for (let i = 0; i < r.length; i++) {
+    if (bm.segOf.get(tIdx(r[i][0], r[i][1])) !== seg) continue;
+    if (i > 0) return stepSign(r[i - 1], r[i]);
+    if (r.length > 1) return stepSign(r[0], r[1]);
+    break;
+  }
+  const b = pointAt(r, t.dist).dirBit;
+  return b === SE || b === SW ? 1 : -1;
+}
+
+/** Every segment a train holds: its cars' tiles and what it has reserved ahead. */
+function heldSegs(state: RailState, bm: BlockMap, t: Train): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!t.route.length) return out;
+  const add = (seg: string | undefined): void => {
+    if (seg && !out.has(seg)) out.set(seg, bm.places.has(seg) ? dirIn(t, bm, seg) : 0);
+  };
+  for (const c of carPlacements(state, t)) add(bm.segOf.get(tIdx(Math.round(c.fx), Math.round(c.fy))));
+  for (const seg of t.resv ?? []) add(seg);
+  return out;
+}
+
+/** Drop reservations the head has left behind (the cars' tiles still hold what they cover). */
+function pruneResv(bm: BlockMap, t: Train, cum: number[]): void {
+  if (!t.resv?.length) return;
+  if (!t.route.length) { t.resv = undefined; return; }
+  let i0 = 0;
+  while (i0 < t.route.length - 1 && cum[i0 + 1] <= t.dist + 1e-9) i0++;
+  const ahead = new Set<string>();
+  for (let j = i0; j < t.route.length; j++) {
+    const seg = bm.segOf.get(tIdx(t.route[j][0], t.route[j][1]));
+    if (seg) ahead.add(seg);
+  }
+  const keep = t.resv.filter((seg) => ahead.has(seg));
+  t.resv = keep.length ? keep : undefined;
+}
+
+/**
+ * How far along its route may this train roll this tick? Infinity when no
+ * boundary within reach is closed to it; otherwise the distance of the last
+ * tile before the boundary it must wait at. Crossing a boundary RESERVES
+ * (all-or-nothing) - see rail-blocks.ts.
+ */
+function blockLimit(state: RailState, bm: BlockMap, t: Train, cum: number[], step: number): number {
+  const r = t.route;
+  if (r.length < 2) return Infinity;
+  const ridx = r.map(([x, y]) => tIdx(x, y));
+  const endPlace = t.status === "holding" && t.holdStation != null ? placeKey("station", t.holdStation) : null;
+  let mine: Map<string, number> | null = null;
+  for (let i = 1; i < r.length; i++) {
+    if (bm.segOf.get(ridx[i - 1]) === bm.segOf.get(ridx[i])) continue;
+    const stopAt = cum[i - 1];
+    if (stopAt < t.dist - 1e-9) continue;
+    if (stopAt > t.dist + step + 1e-9) return Infinity;
+    const wanted = stretchFor(bm, ridx, i, endPlace);
+    if (!wanted.length) continue;
+    mine ??= heldSegs(state, bm, t);
+    const need = wanted.filter((w) => !mine!.has(w));
+    if (need.length) {
+      const holds = new Map<string, Hold[]>();
+      for (const o of state.trains) {
+        if (o === t || o.ownerId !== t.ownerId) continue;
+        for (const [seg, dir] of heldSegs(state, bm, o)) {
+          const list = holds.get(seg);
+          if (list) list.push({ trainId: o.id, dir }); else holds.set(seg, [{ trainId: o.id, dir }]);
+        }
+      }
+      if (!canTake(bm, need, (seg) => dirIn(t, bm, seg), holds, t.id)) return stopAt;
+    }
+    t.resv = [...new Set([...(t.resv ?? []), ...wanted])];
+    for (const w of wanted) mine.set(w, 0);
+  }
+  return Infinity;
 }
 
 // ── lines and trains (RAIL-04 / #178) ─────────────────────────────────────
@@ -2504,6 +2894,11 @@ export interface Train {
    * new wagon type on the NEXT departure, never mid-run.
    */
   wagonCargo?: Cargo;
+  /**
+   * FLEET-2 (#596): the block segments this train has RESERVED ahead of its
+   * head (see rail-blocks.ts). Absent = none; an old save loads unchanged.
+   */
+  resv?: string[];
 }
 
 export interface LinePlan {
@@ -2877,7 +3272,14 @@ export function trainBuyRefusal(
     const d = depotOfTrain(state, t);
     return d ? depotComponent(c, d) === home : false;
   });
-  return busy ? BUSY_NETWORK_WHY : null;
+  // FLEET-2 (#596): a busy network takes another train when every stretch the
+  // trains share has a Passing Loop (or a 2-lane station) to pass at - and a
+  // line runs at most MAX_TRAINS_PER_LINE.
+  if (state.trains.filter((t) => t.lineId === line.id).length >= MAX_TRAINS_PER_LINE) {
+    return `A line runs at most ${MAX_TRAINS_PER_LINE} trains.`;
+  }
+  if (!busy) return null;
+  return linesCanShare(state, ownerId, grid, false, line) ? null : BUSY_NETWORK_WHY;
 }
 
 export function buyTrain(
@@ -3121,7 +3523,16 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
 ): void {
   if (dtMs <= 0) return;
   if (grid) refreshLineCargo(state, grid);
-  for (const train of state.trains) {
+  // FLEET-2 (#596): blocks matter only where an owner runs two or more trains;
+  // a lone train (every old save) never touches them. Trains ask for their
+  // blocks in a fixed order: the loaded train first, then the lower id.
+  const perOwner = new Map<number, number>();
+  for (const t of state.trains) perOwner.set(t.ownerId, (perOwner.get(t.ownerId) ?? 0) + 1);
+  const shared = [...perOwner.values()].some((n) => n > 1);
+  for (const train of shared ? priorityOrder(state.trains, trainLoaded) : state.trains) {
+    const bm = shared && (perOwner.get(train.ownerId) ?? 0) > 1 ? blockMapFor(state, train.ownerId) : null;
+    if (!bm && train.resv) train.resv = undefined;
+    if (bm) pruneResv(bm, train, polyline(train.route));
     // FLEET-3 (#597): a train that has no wagon type yet (a fresh buy, an old
     // save) takes its line's now; after that it changes only at a departure.
     if (!train.wagonCargo) stampWagons(state, train);
@@ -3193,6 +3604,23 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
         ? RAIL_SPEED * uphillFactor(grid, train.route[seg - 1], train.route[seg])
         : RAIL_SPEED) * ownerM * trainSpeedMult(train);   // FLEET-4 (#598)
       const step = speed * ms;
+      if (bm) {
+        // FLEET-2 (#596): a closed block ahead stops the train at the last tile
+        // before it - in a loop or a station lane if that is where it stands.
+        const lim = blockLimit(state, bm, train, cum, step);
+        if (lim < Infinity) {
+          train.blockedWhy = WAIT_TO_PASS;
+          const room = lim - train.dist;
+          if (room <= 1e-9) { ms = 0; break; }
+          if (step >= room - 1e-9) {
+            recordTrail(state, train, cum, train.dist, lim);
+            train.dist = lim;
+            train.dirBit = pointAt(train.route, lim, cum).dirBit;
+            ms = 0;
+            break;
+          }
+        } else if (train.blockedWhy === WAIT_TO_PASS) train.blockedWhy = undefined;
+      }
       if (step < remaining) {
         recordTrail(state, train, cum, train.dist, train.dist + step);
         train.dist += step;
@@ -3410,7 +3838,7 @@ export type RailPanelAction = "assign" | "recall" | "sell" | "buy" | "start" | "
 
 export interface RailPanelRow {
   id: number;
-  kind: RailKind | "train";
+  kind: Exclude<RailKind, "loop"> | "train";
   label: string;
   detail: string;
   /** What the panel offers for this row (the game supplies the callbacks). */
@@ -3520,6 +3948,8 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
 }
 
 export function trainStatusText(t: Train): string {
+  // FLEET-2 (#596): held at a loop or a station lane for the track ahead.
+  if (t.blockedWhy === WAIT_TO_PASS && t.status !== "blocked") return "waiting to pass — the track ahead is busy";
   switch (t.status) {
     case "stored": return "waiting at the depot";
     case "departing": return "departing — running to the source platform";
@@ -3536,6 +3966,8 @@ export function trainStatusText(t: Train): string {
 /** Art sprite names (see tools/make-railway-art.mjs for the authored files). */
 export const platformSprite = (view: RailView): string => `platform_${view}`;
 export const depotSprite = (view: RailView): string => `train-depot_${view}`;
+/** FLEET-2 (#596): the Passing Loop's side track; a missing file falls back to the vector track. */
+export const loopSprite = (view: RailView): string => `passing_loop_${view}`;
 /**
  * RAIL-6 (#575) — THE STATION ART (art drop #578). The warehouse ships in three
  * tiers (`assets/stations/station_wh_{1,2,3}@2x.png`, the tier following the
@@ -3601,6 +4033,11 @@ export function railStructureItems(state: RailState, atlas?: RailSpriteSource): 
  */
 export function structureSprites(s: RailStructure, atlas?: RailSpriteSource): GhostDrawItem[] {
   if (s.kind === "depot") return [{ sprite: depotSprite(s.view), tx: s.tx, ty: s.ty }];
+  if (s.kind === "loop") {
+    // FLEET-2 (#596): no art yet draws nothing here - `railDrawLayer` paints
+    // the side track and its two switches as ordinary vector track.
+    return atlas && !atlas.has(loopSprite(s.view)) ? [] : [{ sprite: loopSprite(s.view), tx: s.tx, ty: s.ty }];
+  }
   const lanes = stationLanes(s);
   const tier = stationWarehouseTier(lanes.length);
   if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {
@@ -3633,9 +4070,15 @@ export interface GhostDrawItem { sprite: string; tx: number; ty: number; }
 
 /** A structure the click would build, for its ghost (never added to the state). */
 const virtualStructure = (kind: RailKind, tx: number, ty: number, view: RailView): RailStructure => {
-  const [w, h] = kind === "platform" ? PLATFORM_FOOTPRINT[view] : DEPOT_FOOTPRINT;
+  const [w, h] = footprintFor(kind, view);
   return { id: -1, kind, ownerId: 0, owner: "", tx, ty, w, h, view };
 };
+
+/** FLEET-2 (#596): the loop's ghost sprites for a placement at run origin (tx, ty); empty when the art is missing. */
+export function loopGhostItems(tx: number, ty: number, view: RailView, atlas?: RailSpriteSource): GhostDrawItem[] {
+  const [sx, sy] = loopStripOrigin(tx, ty, view);
+  return structureSprites(virtualStructure("loop", sx, sy, view), atlas);
+}
 
 /** RAIL-7: what a new 1-lane station placement will build. */
 export function platformGhostItems(tx: number, ty: number, view: RailView, atlas?: RailSpriteSource): GhostDrawItem[] {
@@ -3767,7 +4210,7 @@ export function copyRailLayer(
 
 const asView = (v: unknown): RailView =>
   (RAIL_VIEWS as readonly string[]).includes(v as string) ? (v as RailView) : "se";
-const asKind = (k: unknown): RailKind => (k === "depot" ? "depot" : "platform");
+const asKind = (k: unknown): RailKind => (k === "depot" ? "depot" : k === "loop" ? "loop" : "platform");
 const asStatus = (s: unknown): TrainStatus =>
   TRAIN_STATUSES.includes(s as TrainStatus) ? (s as TrainStatus) : "stored";
 const asTarget = (t: unknown): Train["target"] =>
@@ -3875,6 +4318,8 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
       ...(typeof t.wagons === "number" && t.wagons > 1 ? { wagons: Math.floor(t.wagons) } : {}),
       ...(typeof t.level === "number" && t.level > 1 ? { level: Math.min(TRAIN_LEVELS.max, Math.floor(t.level)) } : {}),
       ...(CARGOES.includes(t.wagonCargo as Cargo) ? { wagonCargo: t.wagonCargo as Cargo } : {}),
+      // FLEET-2 (#596): the block reservations; an old host sends none.
+      ...(Array.isArray(t.resv) && t.resv.length ? { resv: t.resv.filter((r) => typeof r === "string") } : {}),
     });
   }
   return true;

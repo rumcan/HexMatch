@@ -975,7 +975,7 @@ export interface TransportDef {
  */
 export const BUILD_COSTS: Readonly<Record<
   "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train"
-  | "bridge" | "railBridge" | "dam" | "stationLane" | "truck",
+  | "bridge" | "railBridge" | "dam" | "stationLane" | "truck" | "loop",
   Partial<Record<Cargo, number>>
 >> = {
   // A Dirt Road is FREE: the gravel is the plumbing every game needs, and
@@ -1015,6 +1015,9 @@ export const BUILD_COSTS: Readonly<Record<
   // buys is the strip, the track and the switch. The Rail Baroness perk (the
   // `rail` build class) applies, exactly as it does to a platform.
   stationLane: { wood: 3, stone: 3, ore: 6, oil: 1 },
+  // FLEET-2 (#596): the Passing Loop - a side track and two switches beside a
+  // straight run, so two trains on one line can pass. About two platforms.
+  loop: { wood: 12, stone: 12, ore: 24, oil: 4 },
   // FLEET-1 (#595): one more lorry on a Depot's route (the base price; the 2nd,
   // 3rd and 4th truck pay `FLEET.truckPriceMult` of it). James's road perk applies.
   truck: { wood: 3, stone: 3, ore: 4 },
@@ -1108,6 +1111,8 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   platform: moneyValueOf(BUILD_COSTS.platform),
   // RAIL-6 (#575): one more lane at a standing station — half a platform.
   stationLane: moneyValueOf(BUILD_COSTS.stationLane),
+  // FLEET-2 (#596): the Passing Loop - about two platforms (Anne's rail perk applies).
+  loop: moneyValueOf(BUILD_COSTS.loop),
   truck: moneyValueOf(BUILD_COSTS.truck),
   // FLEET-5 (#599): the base of a fleet upgrade (x FLEET.truckUpgradeMult per step).
   truckUpgrade: moneyValueOf(BUILD_COSTS.truck),
