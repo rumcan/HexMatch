@@ -1290,12 +1290,15 @@ export function createOriginalUi(
   chips.appendChild(moneyChip);
   footer.appendChild(chips);
   root.appendChild(footer);
-  // UI Space Age (P4): on desktop the purse rides in the top bar (after the
-  // logo); a phone keeps its bottom bar. Re-homed on every viewport change.
+  // UI Space Age (P4): on desktop the purse rides in the top bar; a phone
+  // keeps its bottom bar. Re-homed on every viewport change.
+  // Owner (2026-09-29): the you/rival roster (portrait + score) and the
+  // resources trade places — the roster now follows the logo, the resource
+  // chips sit at the right end, just before the ★ badge / icon cluster.
   const placeChips = () => {
     const want = isPhoneViewport() ? footer : top;
     if (chips.parentElement === want) return;
-    if (want === top) top.insertBefore(chips, kingdoms); else footer.appendChild(chips);
+    if (want === top) top.insertBefore(chips, right); else footer.appendChild(chips);
   };
   placeChips();
   // Mobile pass (2026-09): publish how much of the screen's bottom the
