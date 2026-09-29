@@ -679,12 +679,17 @@ export const UNLOCKS: Record<ManagerId, UnlockRule> = {
   james: { label: "Hired from the start", met: () => true },
   anne: { label: "Hired from the start", met: () => true },
   rafael: { label: "Win 1 match to hire", met: (r) => r.wins >= 1 },
-  dolores: { label: "Win a match on Normal or Hard to hire", met: (r) => r.hardWins >= 1 },
-  kenji: { label: "Win 3 matches or any Scenario to hire", met: (r) => r.wins >= 3 || r.scenarioWins >= 1 },
+  dolores: { label: "Win another match on Normal or Hard to hire", met: (r) => r.hardWins >= 1 },
+  kenji: { label: "Win 3 matches or another Scenario to hire", met: (r) => r.wins >= 3 || r.scenarioWins >= 1 },
 };
 
-export const isUnlocked = (r: ManagerRecord, id: ManagerId): boolean =>
-  r.unlocked.includes(id) || UNLOCKS[id].met(r);
+/**
+ * Owner (2026-09-29): "1 manager unlock per scenario win — you don't unlock
+ * all of them after beating the 1st scenario". The hired list is the only
+ * truth (a rule being met is not a hire), and each win hires at most ONE —
+ * the next manager in order whose rule it meets (see `recordOutcome`).
+ */
+export const isUnlocked = (r: ManagerRecord, id: ManagerId): boolean => r.unlocked.includes(id);
 
 /** One finished match, as the unlock rules see it. */
 export interface MatchOutcome {
@@ -710,12 +715,11 @@ export function recordOutcome(r: ManagerRecord, m: MatchOutcome): { record: Mana
     scenarioWins: r.scenarioWins + (m.scenario ? 1 : 0),
     unlocked: [...r.unlocked],
   };
-  const hired: ManagerId[] = [];
-  for (const id of MANAGER_IDS) {
-    if (!isUnlocked(r, id) && UNLOCKS[id].met(next)) hired.push(id);
-    if (UNLOCKS[id].met(next) && !next.unlocked.includes(id)) next.unlocked.push(id);
-  }
-  return { record: next, hired };
+  // One hire per win: the first locked manager (in roster order) whose rule
+  // this record now meets. The others wait for the next win.
+  const hire = MANAGER_IDS.find((id) => !next.unlocked.includes(id) && UNLOCKS[id].met(next));
+  if (hire) next.unlocked.push(hire);
+  return { record: next, hired: hire ? [hire] : [] };
 }
 
 /** Parse a stored record; corruption reads as a fresh one (never a lock-out). */

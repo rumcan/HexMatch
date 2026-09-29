@@ -98,6 +98,8 @@ export default function App() {
   const [backToCampaign, setBackToCampaign] = useState(false);
   /** UI-3: the main menu's Ladder tab opens the mode screen on the full board. */
   const [toLadder, setToLadder] = useState(false);
+  /** Owner (2026-09-29): the header's Multiplayer tab opens its own screen. */
+  const [toMultiplayer, setToMultiplayer] = useState(false);
   /** PROG-1 (#475): the same, for a scenario ledger's door to its list. */
   const [backToScenarios, setBackToScenarios] = useState(false);
   /** PROG-1 (#475): the manager picked for this match — "Next contract"
@@ -319,10 +321,11 @@ export default function App() {
   if (choice) return <div ref={ref} className="game-root" />;
   if (atMenu) return (
     <MainMenu
-      onPlay={() => { setBackToCampaign(false); setBackToScenarios(false); setToLadder(false); setAtMenu(false); }}
+      onPlay={() => { setBackToCampaign(false); setBackToScenarios(false); setToLadder(false); setToMultiplayer(false); setAtMenu(false); }}
       onStarterIsland={playStarterIsland}
       onTutorialSection={playTutorialSection}
-      onLadder={() => { setBackToCampaign(false); setBackToScenarios(false); setToLadder(true); setAtMenu(false); }}
+      onLadder={() => { setBackToCampaign(false); setBackToScenarios(false); setToMultiplayer(false); setToLadder(true); setAtMenu(false); }}
+      onMultiplayer={() => { setBackToCampaign(false); setBackToScenarios(false); setToLadder(false); setToMultiplayer(true); setAtMenu(false); }}
       // CONTINUE-01 (#191): the front door's gold button jumps straight into
       // the freshest resumable solo save — sandbox slot or a contract — by
       // handing `begin` the same choice the mode screen would. The boot finds
@@ -343,7 +346,7 @@ export default function App() {
       onStart={begin}
       onTutorialSection={playTutorialSection}
       onBack={() => setAtMenu(true)}
-      initial={backToCampaign ? "story" : backToScenarios ? "scenarios" : toLadder ? "ladder" : "choose"}
+      initial={backToCampaign ? "story" : backToScenarios ? "scenarios" : toLadder ? "ladder" : toMultiplayer ? "multiplayer" : "choose"}
     />
   );
 }

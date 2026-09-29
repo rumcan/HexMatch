@@ -128,18 +128,26 @@ describe("CAST-1 unlocks (earned by play)", () => {
     expect(out.hired).toEqual(["kenji"]);
     expect(recordOutcome(out.record, { won: true, skill: "hard", multiplayer: false, scenario: false }).hired).toEqual([]);
   });
-  it("hires Kenji on any Scenario win; a loss and the tutorial count for nothing", () => {
+  // Owner (2026-09-29): one manager per win — scenario 1 hires Rafael, 2
+  // Dolores, 3 Kenji; never the whole roster off one result.
+  it("hires ONE manager per win, in order; a loss and the tutorial count for nothing", () => {
     expect(recordOutcome(FRESH_RECORD, { won: false, skill: "hard", multiplayer: false, scenario: true }).hired).toEqual([]);
     expect(recordOutcome(FRESH_RECORD, { won: true, skill: "trainee", multiplayer: false, scenario: false, tutorial: true }).hired).toEqual([]);
-    expect(recordOutcome(FRESH_RECORD, { won: true, skill: "easy", multiplayer: false, scenario: true }).hired)
-      .toEqual(["rafael", "kenji"]);
-    expect(recordOutcome(FRESH_RECORD, { won: true, skill: null, multiplayer: true, scenario: false }).hired)
-      .toEqual(["rafael", "dolores"]);
+    const scen = { won: true, skill: "normal", multiplayer: false, scenario: true } as const;
+    const a = recordOutcome(FRESH_RECORD, scen);
+    expect(a.hired).toEqual(["rafael"]);
+    const b = recordOutcome(a.record, scen);
+    expect(b.hired).toEqual(["dolores"]);
+    const c = recordOutcome(b.record, scen);
+    expect(c.hired).toEqual(["kenji"]);
+    expect(recordOutcome(c.record, scen).hired).toEqual([]);
+    // a met rule is not a hire: Dolores waits for the NEXT win
+    expect(isUnlocked(a.record, "dolores")).toBe(false);
   });
   it("persists in localStorage and survives corruption", () => {
     const s = mem();
-    expect(recordManagerMatch({ won: true, skill: "normal", multiplayer: false, scenario: false }, s)).toEqual(["rafael", "dolores"]);
-    expect(loadManagerRecord(s).unlocked).toEqual(["james", "anne", "rafael", "dolores"]);
+    expect(recordManagerMatch({ won: true, skill: "normal", multiplayer: false, scenario: false }, s)).toEqual(["rafael"]);
+    expect(loadManagerRecord(s).unlocked).toEqual(["james", "anne", "rafael"]);
     s.setItem("hexmatch:managers", "{nope");
     expect(loadManagerRecord(s).unlocked).toEqual(["james", "anne"]);
     expect(readRecord({ wins: -3, unlocked: ["kenji", "bogus"] }).unlocked).toEqual(["james", "anne", "kenji"]);

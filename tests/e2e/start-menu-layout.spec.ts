@@ -29,10 +29,9 @@ const ACTIONS = [
   // Story mode is hidden for now (src/story/flag.ts).
   ...(STORY_MODE_ENABLED ? ["Story Mode"] : []),
   "Play vs AI",
-  "Auto Matchmaking",
-  "Host a game",
-  "Join with a code",
-  "The ladder",
+  "Scenarios",
+  // Owner (2026-09-29): Multiplayer (Auto Matchmaking, Host, Join, the ladder)
+  // has its own screen behind the header's Multiplayer tab — the Play card is Solo.
   "Back to the menu",
 ];
 

@@ -48,6 +48,8 @@ export interface MainMenuProps {
   onContinue?: (chapterId: string | null) => void;
   /** UI-3: the header's Ladder tab and the panel's "Full board" — the full ladder screen. */
   onLadder?: () => void;
+  /** Owner (2026-09-29): the header's Multiplayer tab. */
+  onMultiplayer?: () => void;
   /** FTUE-1 (#464): the Tutorial menu's "Play the Starter Island" replay door. */
   onStarterIsland?: () => void;
   onTutorialSection?: (id: import("../iso/guide/types").GuideSectionId) => void;
@@ -61,7 +63,7 @@ export interface MainMenuProps {
 type LadderRow = { rank: number; username: string; rating: number; profileId?: string };
 type LadderView = { entries: LadderRow[]; mine: { rank: number; rating: number } | null; total?: number };
 
-export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland, onTutorialSection, onScenarios }: MainMenuProps) {
+export default function MainMenu({ onPlay, onContinue, onLadder, onMultiplayer, onStarterIsland, onTutorialSection, onScenarios }: MainMenuProps) {
   const [panel, setPanel] = useState<"ladder" | "managers">("ladder");
   const [ladder, setLadder] = useState<LadderView | null | "loading">("loading");
 
@@ -96,7 +98,7 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
 
   return (
     <MenuShell tab="home" ariaLabel="Hexmatch main menu" className="menu"
-      onHome={() => setPanel("ladder")} onPlay={onPlay} onLadder={toLadder} onStarterIsland={onStarterIsland} onTutorialSection={onTutorialSection}>
+      onHome={() => setPanel("ladder")} onPlay={onPlay} onLadder={toLadder} onMultiplayer={onMultiplayer} onStarterIsland={onStarterIsland} onTutorialSection={onTutorialSection}>
       <div className="menu-embers" aria-hidden="true" />
       <div className="px-card px-home">
         <div className="px-home-stage">

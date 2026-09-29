@@ -165,7 +165,18 @@ function button(label: string): HTMLButtonElement {
   return found;
 }
 
+/** Owner (2026-09-29): Multiplayer has its own screen (the header's Multiplayer
+ *  tab); the Play card is Solo only. These are its doors. */
+const MULTIPLAYER_DOORS = ["Auto Matchmaking", "Host a game", "Join with a code", "The ladder"];
+
 async function click(label: string): Promise<HTMLButtonElement> {
+  // Walk the player's route: from the Play screen, open the Multiplayer tab first.
+  const onScreen = [...container.querySelectorAll("button")]
+    .some((b) => (b.textContent ?? "").trim().startsWith(label));
+  if (!onScreen && MULTIPLAYER_DOORS.includes(label)) {
+    const tab = container.querySelector<HTMLButtonElement>('.px-tabs [data-tab="multiplayer"]');
+    if (tab && !tab.disabled) await act(async () => { tab.click(); });
+  }
   const el = button(label);
   await act(async () => { el.click(); });
   return el;
