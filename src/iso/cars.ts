@@ -41,7 +41,7 @@ import {
 } from "./traffic";
 
 /** Default traffic volume — a dozen cars feels lived-in. */
-export const CAR_COUNT = 12;
+export const CAR_COUNT = 24;
 /**
  * Tiles per millisecond: one tile every 600 ms.
  *

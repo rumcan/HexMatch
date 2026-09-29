@@ -1,3 +1,4 @@
+import { CAR_HARD_CAP } from "../../src/iso/ambience";
 // @vitest-environment jsdom
 //
 // TRAFFIC-01 — the ambient cars wired into the REAL game loop (not just the
@@ -113,7 +114,9 @@ describe("TRAFFIC-01 in the live game loop", () => {
     const h = await boot();
     expect(h.phase).toBe("setup-factory");
     const cars = h.traffic;
-    expect(cars.length).toBe(CAR_COUNT);
+    // Owner (2026-09-29): the island boots at its town budget, the floor at least.
+    expect(cars.length).toBeGreaterThanOrEqual(CAR_COUNT);
+    expect(cars.length).toBeLessThanOrEqual(CAR_HARD_CAP);
     expect(cars.map((c) => c.name)).toEqual(
       Array.from({ length: cars.length }, (_, i) => `car ${i + 1}`),
     );

@@ -74,13 +74,14 @@ export function carModelOf(index: number, seed = 0): CarModel {
 
 // ── caps and level of detail ──────────────────────────────────────────────
 /** Hard cap on cars the automatic budget will plan. The perf dial may still ask for more. */
-export const CAR_HARD_CAP = 36;
+// Owner (2026-09-29): "why so little cars" / "upgraded to city and there are no cars".
+export const CAR_HARD_CAP = 96;
 /** Hard cap on pedestrians simulated at once. */
 export const PED_HARD_CAP = 28;
 /** Cars + pedestrians. Lights are not actors — they are a phase function. */
 export const AMBIENT_ACTOR_CAP = CAR_HARD_CAP + PED_HARD_CAP;
 /** How many cars a screen will draw. The rest keep simulating off-screen, under the hard cap. */
-export const SCREEN_CAR_CAP = 14;
+export const SCREEN_CAR_CAP = 40;
 /** How many pedestrians a screen will draw. */
 export const SCREEN_PED_CAP = 16;
 /** How many light poles a screen will draw. */
@@ -122,8 +123,10 @@ export function townTrafficWeight(town: {
   level?: number;
 }): number {
   const size = Math.max(1, town.houses?.length ?? 0, town.roads?.length ?? 0);
-  const tierMul = town.level === undefined ? 1 : 0.7 + Math.max(0, town.level) * 0.35;
-  return (1 + Math.sqrt(size) / 6) * tierMul;
+  // Owner (2026-09-29): a city must look busy. ~3× the old volume, and each
+  // tier counts for more (a level-1 city: ×1.4, level 2: ×1.9).
+  const tierMul = town.level === undefined ? 1 : 0.9 + Math.max(0, town.level) * 0.5;
+  return (2 + Math.sqrt(size) / 1.6) * tierMul;
 }
 
 /**
