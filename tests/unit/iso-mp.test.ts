@@ -444,7 +444,9 @@ describe("MP-05 two real games, one room", () => {
     expect(guest.factories).toHaveLength(2);
     expect(guest.factories.find((f) => f.owner === "you"))
       .toMatchObject({ tx: guestSpot![0], ty: guestSpot![1] });
-    expect(guest.phase).toBe("setup-harvester");
+    // START-1 (#604): the Factory alone seats the guest — the match is in
+    // play; the Depot below is a build like any other, not a setup phase.
+    expect(guest.phase).toBe("play");
 
     // ── the guest's opening Depot, same story ─────────────────────────────
     const depotSpot = findDepotSpot(guest, guestSpot![0], guestSpot![1]);

@@ -2744,7 +2744,11 @@ describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
   it("depot: 2×2 lot solid, entrance soft, served resource nodes marked", async () => {
     const h = await boot();
     const spot = findFactorySpot(h.grid)!;
-    expect(h.placeFactory(spot[0], spot[1])).toBe(true);   // phase → setup-harvester
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    // START-1 (#604): a real match opens on the Plant alone — the Depot
+    // overlay reads the TOOL the player arms, no longer the setup phase.
+    expect(h.phase).toBe("play");
+    h.setTool("harvester");
     const c = findSouthCorridor(h.grid)!;
     const plan = h.placementPlan("depot", c.hx, c.hy - 1);
     expect(plan.valid).toBe(true);
@@ -2768,6 +2772,9 @@ describe("PP-03 footprint vs reach placement feedback (wired game)", () => {
     const h = await boot();
     const spot = findFactorySpot(h.grid)!;
     expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+    // START-1 (#604): the phase is `play` once the Plant stands — arm the
+    // Depot tool like a player would, so the hover answers in Depot terms.
+    h.setTool("harvester");
     const ind = h.grid.industries[0];
     const plan = h.placementPlan("depot", ind.tx, ind.ty);
     expect(plan.valid).toBe(false);

@@ -1075,6 +1075,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // map features, whatever the ambient options say.
   const starterSaved = (bootSave as { skillKey?: string } | null)?.skillKey === "trainee";
   const starterIsland = opts.starterIsland === true || opts.firstRun === true || starterSaved;
+  /**
+   * Owner (2026-09-28): only a lesson (a tutorial section or the Starter
+   * Island) walks the player through placing a Depot before play starts. A
+   * real match opens on the Plant alone — the Depots are the player's call.
+   */
+  const setupNeedsDepot = !!opts.tutorialSection || starterIsland;
   const seed = opts.tutorialSection ? STARTER_ISLAND_SEED + GUIDE_SECTION_IDS.indexOf(opts.tutorialSection)
     : starterIsland
     ? STARTER_ISLAND_SEED
@@ -4054,6 +4060,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     const needOffers = CONTRACT_OFFER_MAX_NEW - contractOffersList.length;
     if (needOffers <= 0) return;
+    // START-1 (#604): a real match is in `play` before the first Depot stands.
+    // Town contracts are delivery work — with zero Depots there is nothing to
+    // carry it, so the panel holds its offers until the FIRST Depot stands
+    // and the objective line alone says "build your first Depot". Contracts
+    // already dealt (offers on the table, an active delivery) keep running —
+    // a seat that LOST its last Depot mid-match keeps its deadlines.
+    if (view.depotCount === 0) return;
     if (!(first || moved || hadExpiry)) {
       // Also refill if we have less than max and no active change? For now only on first/moved/expiry
       // But spec says offers refresh when one completes or expires — hadExpiry covers expiry,
@@ -4740,6 +4753,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  /** The opening Plant stands: a lesson goes on to its setup Depot, a match starts. */
+  function afterOpeningFactory(): void {
+    if (setupNeedsDepot) { phase = "setup-harvester"; return; }
+    phase = "play";
+    lastHarvest = performance.now();
+    lastAi = performance.now();
+  }
+
   function placeFactory(tx: number, ty: number): boolean {
     if (!placeFactoryFor(me, tx, ty, factoryView)) return false;
     if (!isSolo() && !aiOpponent) {
@@ -4747,7 +4768,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // through an intent, on its own click.
       // #186: an AI-filled seat is seated below, exactly as in solo — there is
       // nobody on the other end of the wire to click for it.
-      phase = "setup-harvester";
+      afterOpeningFactory();
       syncWorld();
       // Owner (2026-09): the objective line says the next step — no toast repeats it.
       publishNet(performance.now(), true);
@@ -4781,7 +4802,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         rot,
       });
     }
-    phase = "setup-harvester";
+    afterOpeningFactory();
     syncWorld();
     // TUT-03 (#422): the guide's "raise your factory" step ends here — the
     // player DID it, which is the only thing that ever advances a step.
@@ -11506,7 +11527,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function refreshGuestPhase() {
     if (!isGuest() || phase === "won") return;
     if (!factoryOf(me.id)) phase = "setup-factory";
-    else if (!eco.harvesters.some((h) => h.owner === me.id)) phase = "setup-harvester";
+    else if (setupNeedsDepot && !eco.harvesters.some((h) => h.owner === me.id)) phase = "setup-harvester";
     else if (phase !== "play") {
       phase = "play";
       lastHarvest = performance.now();
@@ -15141,6 +15162,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rescore(eco, score, railPlatforms(), loopScoring());
     for (const p of players) starFed.set(p.id, Math.floor(vpFor(score, p.id)));
     phase = d.phase as typeof phase;
+    // START-1 (#604): an old save parked in the forced-Depot step of a REAL
+    // match resumes in play — the opening Depot is a choice now. A lesson's
+    // save keeps its coached step.
+    if (phase === "setup-harvester" && !setupNeedsDepot) phase = "play";
     winner = d.winnerId
       ? (players.find((p) => p.id === d.winnerId) ?? null)
       : null;

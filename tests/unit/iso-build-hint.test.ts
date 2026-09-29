@@ -138,9 +138,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function boot() {
+async function boot(opts: Record<string, unknown> = {}) {
   const { startIsoGame } = await import("../../src/iso/game");
-  dispose = startIsoGame(root);
+  dispose = startIsoGame(root, opts);
   await settle();
   return hook();
 }
@@ -464,10 +464,10 @@ describe("#187 the setup phases hide Cancel instead of showing a dead ✕", () =
     expect(h.tool).toBe("harvester");
   });
 
-  it("while the opening Depot is owed", async () => {
-    const h = await boot();
-    const spot = findFactorySpot(h.grid)!;
-    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
+  it("while the opening Depot is owed (a lesson)", async () => {
+    // START-1 (#604): only a lesson still owes the opening Depot — a real
+    // match has no `setup-harvester` phase any more.
+    const h = await boot({ tutorialSection: "depots" });
     await settle();
     expect(h.phase).toBe("setup-harvester");
     // The hint stands on the phase alone — no tool needs to be armed for it.
@@ -476,13 +476,12 @@ describe("#187 the setup phases hide Cancel instead of showing a dead ✕", () =
     expect(cancelBtn()).toBeNull();
   });
 
-  it("refuses the Processing Plant while the opening Depot is owed", async () => {
-    const h = await boot();
-    const spot = findFactorySpot(h.grid)!;
-    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
-    h.setTool("harvester");
+  it("refuses the Processing Plant while the opening Depot is owed (a lesson)", async () => {
+    const h = await boot({ tutorialSection: "depots" });
     await settle();
     expect(h.phase).toBe("setup-harvester");
+    h.setTool("harvester");
+    await settle();
     // Every click in this phase places the Depot, so the plant must not arm.
     buildBtn("plant").click();
     await settle();
@@ -491,23 +490,18 @@ describe("#187 the setup phases hide Cancel instead of showing a dead ✕", () =
     expect(buildBtn("harvester").classList.contains("locked")).toBe(false);
   });
 
-  it("and grows its ✕ back the moment the debt is paid", async () => {
+  it("and a real match owes no Depot — the ✕ stands from the Plant on", async () => {
+    // START-1 (#604): the opening Factory starts the match outright, so the
+    // first Depot is the player's CHOICE — its cancel ✕ is there from the
+    // moment the tool is armed, not grown back after a debt is paid.
     const h = await boot();
     const spot = findFactorySpot(h.grid)!;
-    expect(h.placeFactory(spot[0], spot[1])).toBe(true);   // → setup-harvester
-    // The opening Depot is paid by a real click on the map — that click is
-    // what advances the phase, not the placement call alone.
-    const c = findSouthCorridor(h.grid)!;
-    // the click lands on the 2×2 lot's origin (top) tile
-    const [dx, dy] = h.tileScreenAt(c.hx, c.hy - 1);
-    expect(h.pickAt(dx, dy)?.tx, "the site is on screen").toBe(c.hx);
-    pointer("pointerdown", dx, dy);
-    pointer("pointerup", dx, dy);
+    expect(h.placeFactory(spot[0], spot[1])).toBe(true);
     await settle();
-    expect(h.phase, "the debt is paid").toBe("play");
+    expect(h.phase, "no forced Depot step").toBe("play");
     h.setTool("harvester");
     await settle();
-    expect(cancelBtn(), "placing is a choice again").toBeTruthy();
+    expect(cancelBtn(), "placing is a choice from the Plant on").toBeTruthy();
     cancelBtn()!.click();
     await settle();
     expect(h.tool).toBe("select");

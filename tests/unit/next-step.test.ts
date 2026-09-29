@@ -76,6 +76,29 @@ describe("GOAL-1 nextStep priority list", () => {
     expect(r.tool).toBe("harvester");
   });
 
+  it("2c. START-1 (#604): a real match with zero Depots says 'build your first Depot'", () => {
+    // BASE is `play` with the free opening allowance alive — the state every
+    // match is in the moment the opening Factory stands.
+    const r = nextStep({ ...BASE, harvesters: [] });
+    expect(r.key).toBe("place-depot");
+    expect(r.text).toMatch(/Build your first Depot/);
+    expect(r.tool).toBe("harvester");
+  });
+
+  it("2d. a seat that LOST every Depot gets the plain claim line, not 'first'", () => {
+    const r = nextStep({ ...BASE, freeDepots: 0, harvesters: [] });
+    expect(r.key).toBe("place-depot");
+    expect(r.text).not.toMatch(/your first Depot/);
+    expect(r.text).toContain("Depot");
+  });
+
+  it("2e. a lesson's setup-harvester keeps its coached first-Depot line", () => {
+    const r = nextStep({ ...BASE, phase: "setup-harvester", harvesters: [] });
+    expect(r.key).toBe("place-depot");
+    expect(r.text).toMatch(/Place your first Depot/);
+    expect(r.tool).toBe("harvester");
+  });
+
   it("3. Disconnected Depot → connect with a road", () => {
     const d = depot(1, "p1", 28, 28);
     const r = nextStep({

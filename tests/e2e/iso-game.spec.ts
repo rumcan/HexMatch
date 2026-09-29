@@ -391,7 +391,8 @@ test.describe("iso game boots on the default route", () => {
     await expect.poll(() => opaqueNear(page, 2, c.fx + 2, c.fy + 2), { timeout: 5000 }).toBeGreaterThan(10);
     await expect.poll(() => strongGlowNear(page, 2, c.fx + 3, c.fy + 3), { timeout: 5000 }).toBe(0);
     await page.mouse.click(factory.x, factory.y);
-    await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+    // START-1 (#604): the Factory click starts the match — the Depot is a choice, not a setup phase.
+    await page.waitForFunction(() => (window as any).__iso.phase === "play");
     // The Factory now covers part of the corridor, and a covered tile is not
     // clickable — our own building, not a picking bug. Ask the game's own pick
     // which tiles those are: the atlas's stage-2 alpha decides it, and seed 79
@@ -426,15 +427,17 @@ test.describe("iso game boots on the default route", () => {
         : "none",
     });
     expect((await page.evaluate(() => (window as any).__iso.factories.length))).toBeGreaterThanOrEqual(1);
-    // U2: placing the Factory moves setup on to the Depot. There is no hint
-    // banner any more (the tour teaches it), so the phase is the cue; the
-    // footprint itself is asserted in the pixel sample above.
-    await expect.poll(() => page.evaluate(() => (window as any).__iso.phase)).toBe("setup-harvester");
+    // U2 + START-1 (#604): placing the Factory starts the match outright —
+    // the Depot is the player's first free build now, not a setup debt. There
+    // is no hint banner any more (the tour teaches it), so the phase is the
+    // cue; the footprint itself is asserted in the pixel sample above.
+    await expect.poll(() => page.evaluate(() => (window as any).__iso.phase)).toBe("play");
     await expect(page.locator("#iso-banner")).toBeHidden();
 
-    // ── setup round 2 of 2: click the harvester spot beside the industry ─
+    // ── the first Depot is a free build: arm the Depot tool, click the spot ─
     // U2: the harvester is a 1×1 building, so its placement glow is the solid
     // tile highlight (the 4×4 catchment around it is the fainter soft tint).
+    await page.locator('[data-tool="harvester"]').click();
     await page.mouse.move(harvester.x, harvester.y);
     await expect.poll(() => opaqueNear(page, 2, c.hx, c.hy), { timeout: 5000 }).toBeGreaterThan(10);
     await page.mouse.click(harvester.x, harvester.y);
@@ -657,7 +660,8 @@ test.describe("TK-001 mouse panning is middle-button only", () => {
     // ── a left CLICK (no drag) still places — the acceptance boundary ────
     const clickHere = await clickPointFor(page, spot!.tx, spot!.ty);
     await page.mouse.click(clickHere.x, clickHere.y);
-    await page.waitForFunction(() => (window as any).__iso.phase === "setup-harvester");
+    // START-1 (#604): the match opens on the Plant alone — straight to play.
+    await page.waitForFunction(() => (window as any).__iso.phase === "play");
     expect(await page.evaluate(() => (window as any).__iso.factories.length)).toBeGreaterThanOrEqual(1);
   });
 });

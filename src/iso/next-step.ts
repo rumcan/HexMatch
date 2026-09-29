@@ -203,9 +203,18 @@ export function nextStep(state: NextStepInput): NextStep {
           })[0],
         )
       : null;
+    // START-1 (#604): in a real match the first Depot is a normal objective
+    // now, not a blocking setup phase — say "build your first Depot" while
+    // the free opening allowance lives (a seat that LOST every Depot gets
+    // the plain claim line). A lesson's coached step keeps its own voice.
+    const text = state.phase === "setup-harvester"
+      ? "Place your first Depot inside an industry's catchment — the road comes next."
+      : state.freeDepots > 0
+        ? "Build your first Depot — claim an industry inside its catchment."
+        : "Claim an industry: build a Depot inside its catchment.";
     return {
       key: "place-depot",
-      text: "Claim an industry: build a Depot inside its catchment.",
+      text,
       target,
       tool: "harvester",
     };
