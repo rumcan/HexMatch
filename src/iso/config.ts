@@ -1382,7 +1382,7 @@ export const TOWN_HOUSE_VARIANTS = [ "town_office_1460",
  * picking from exactly today's list.
  */
 export const TOWN_SHAPE_VARIANTS = [
-  "terrace_1x2", "terrace_1x2_r",
+  "terrace_2x1_yard", "terrace_2x1_plain",
   "shops_1x3", "shops_1x3_r",
   "store_2x4", "store_2x4_r",
 ] as const;
