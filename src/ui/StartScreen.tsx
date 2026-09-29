@@ -1,6 +1,6 @@
 // CAST-1 (docs/CAST.md): the five managers, who is hired, and the Rival.
 import {
-  MANAGER_BY_ID, MANAGER_IDS, RIVAL, fullName, loadManagerRecord, saveManagerPick, savedManager, unlockLabel,
+  MANAGER_BY_ID, managerThumb, MANAGER_IDS, RIVAL, fullName, loadManagerRecord, saveManagerPick, savedManager, unlockLabel,
   type ManagerId,
 } from "../story/managers";
 import { isUnlocked } from "../iso/managers";
@@ -72,6 +72,7 @@ import {
   winPresetOf,
   type AiSkillKey,
   type MatchSettings,
+  perksEnabled,
 } from "../net/match-settings";
 import { type Portrait } from "../iso/config";
 // CONTINUE-01 (#191): the menus name the saves they can resume, and starting
@@ -269,6 +270,8 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   const [portrait, setPortrait] = useState<Portrait>(() => savedManager());
   /** CAST-1: the manager on the stage — may be a locked one, previewed. */
   const [viewing, setViewing] = useState<ManagerId>(() => savedManager());
+  /** MP-MGR: the lobby's inline "Change" manager list is open. */
+  const [pickingManager, setPickingManager] = useState(false);
   /** UI-3: the roster card's PROFILE / RIVALS tabs. CAST-2 (#558) dropped the
    *  HISTORY tab — the perk and quirk now own the profile's main space. */
   const [profileTab, setProfileTab] = useState<"profile" | "rivals">("profile");
@@ -842,6 +845,11 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         winTarget: patch.winTarget ?? prev.winTarget,
         startPurse: patch.startPurse ? { ...patch.startPurse } : { ...prev.startPurse },
       };
+      // MP-MGR: keep the map record (as before, it rode in via applySettings
+      // only) and the perks flag; only an explicit `false` is written.
+      if (prev.map) next.map = prev.map;
+      const perks = patch.perks ?? prev.perks;
+      if (perks === false) next.perks = false;
       saveMatchSettings(next);
       net?.publishSettings(next);
       return next;
@@ -1654,6 +1662,21 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         <p className="ms-purse">{START_PURSE_KEYS.map((key) => `${shown.startPurse[key]} ${key}`).join(" · ")} for every seat</p>
       </fieldset>
 
+      {/* MP-MGR: manager perks on / off — the host's rule, read-only for a guest. */}
+      <fieldset className="ms-group" disabled={locked || !hosting}>
+        <legend>Manager perks</legend>
+        <div className="ms-presets" role="group" aria-label="Manager perks">
+          {([["On", true], ["Off", false]] as const).map(([label, on]) => (
+            <button type="button" key={label} data-sfx="tab"
+              className={`ms-preset${perksEnabled(shown) === on ? " on" : ""}`}
+              aria-pressed={perksEnabled(shown) === on}
+              onClick={() => hosting && patchSettings({ perks: on })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
       <p className="ms-summary">{describeMatchSettings(shown)}</p>
       {locked ? (
         <p className="ms-note">Ranked matches play the standard rules — a customised game never feeds the ladder.</p>
@@ -1668,7 +1691,19 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   return shell(null, hosting ? "Hexmatch host a game" : "Hexmatch room", "lobby-screen", <div className="start-panel lobby px-dialog-card px-lobby">
     <p className="start-kicker">{hosting ? "HOST GAME" : "MATCH READY"}{rankedRoom ? " · RANKED" : ""}</p><h1>{hosting ? "Invite a rival" : "Room found"}</h1>
     <div className="room-code"><b>{room?.roomCode ?? "——"}</b><button aria-label="Copy room code" onClick={() => room && void navigator.clipboard?.writeText(room.roomCode)}>Copy</button></div>
-    <div className="seat-list">{roster.map((player) => <div className="seat filled" key={player.id}><span className="seat-name">{player.username}</span><RankChip model={chipBySeat(player)} /><span className="seat-status">Connected</span></div>)}<div className="seat"><span>{aiSeats.length > 0 && humanSeats < 2 ? "AI opponent" : "Open seat"}</span><span className="seat-status">{canStart ? "Ready" : "Waiting"}</span></div></div>
+    <div className="seat-list">{roster.map((player) => {
+      // MP-MGR: the seat row names the manager the player picked on the Play
+      // card. Only OUR pick is known to the lobby; the far seat's manager
+      // shows in the match itself (the host echoes it on the seat record).
+      const mine = !!room && player.id === room.playerId;
+      return <div className="seat filled" key={player.id}>
+        <span className="seat-name">{player.username}</span>
+        <RankChip model={chipBySeat(player)} />
+        {mine ? <span className="seat-manager"><img src={managerThumb(portrait)} alt="" width={20} height={20} /> {fullName(portrait)} <button type="button" className="seat-change" data-sfx="tab" onClick={() => setPickingManager((v) => !v)}>Change</button></span> : null}
+        <span className="seat-status">Connected</span>
+        {mine && pickingManager ? <span className="seat-picker" role="group" aria-label="Choose your manager">{MANAGER_IDS.filter((id) => isUnlocked(managerRecord, id)).map((id) => <button type="button" key={id} data-sfx="tab" className={`ms-preset${portrait === id ? " on" : ""}`} aria-pressed={portrait === id} onClick={() => { setPortrait(id); saveManagerPick(id); setPickingManager(false); }}>{fullName(id)}</button>)}</span> : null}
+      </div>;
+    })}<div className="seat"><span>{aiSeats.length > 0 && humanSeats < 2 ? "AI opponent" : "Open seat"}</span><span className="seat-status">{canStart ? "Ready" : "Waiting"}</span></div></div>
     {settingsPanel}
     <p className="lobby-note">{connecting
       ? "Connecting to the room…"

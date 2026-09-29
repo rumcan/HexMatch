@@ -188,6 +188,15 @@ export interface MatchSettings {
    *  the HOST decides: the record is the room's, and a guest reads the same
    *  one it was handed rather than its own URL. */
   map?: MapOptions;
+  /** MP-MGR (owner, 2026-09-29): do the managers' perks apply? Absent = ON
+   *  (old clients and old rooms), so only `false` is ever written. The
+   *  managers stay visible either way; only their perks stop. */
+  perks?: boolean;
+}
+
+/** MP-MGR: do manager perks apply under these rules? Absent = yes. */
+export function perksEnabled(settings: MatchSettings | null | undefined): boolean {
+  return settings?.perks !== false;
 }
 
 /** The rules a host who touches nothing plays by — today's game, verbatim. */
@@ -302,7 +311,9 @@ export function normalizeMatchSettings(raw: unknown): MatchSettings | null {
   //    or malformed means the defaults (read at boot, see map-options.ts) ──
   const map = o.map === undefined ? null : readMapOptions(o.map);
 
-  return map ? { aiSeats, winTarget, startPurse, map } : { aiSeats, winTarget, startPurse };
+  // MP-MGR: only an explicit `false` is kept; anything else reads ON.
+  const perks = o.perks === false ? { perks: false as const } : {};
+  return map ? { aiSeats, winTarget, startPurse, map, ...perks } : { aiSeats, winTarget, startPurse, ...perks };
 }
 
 /**
@@ -330,6 +341,7 @@ function repairMatchSettings(raw: unknown): MatchSettings {
   const out = defaultMatchSettings();
   if (!raw || typeof raw !== "object") return out;
   const o = raw as Record<string, unknown>;
+  if (o.perks === false) out.perks = false;
   if (Array.isArray(o.aiSeats)) {
     out.aiSeats = o.aiSeats.filter(isSkillKey).slice(0, MAX_AI_SEATS);
   }
@@ -350,7 +362,8 @@ export function matchSettingsEqual(a: MatchSettings, b: MatchSettings): boolean 
     a.aiSeats.length === b.aiSeats.length &&
     a.aiSeats.every((seat, i) => seat === b.aiSeats[i]) &&
     START_PURSE_KEYS.every((key) => a.startPurse[key] === b.startPurse[key]) &&
-    mapOptionsEqual(a.map, b.map)
+    mapOptionsEqual(a.map, b.map) &&
+    perksEnabled(a) === perksEnabled(b)
   );
 }
 
@@ -375,6 +388,7 @@ export function describeMatchSettings(settings: MatchSettings): string {
     ? PURSE_PRESETS.find((p) => p.key === preset)?.label ?? "Standard"
     : `${settings.startPurse.wood} wood · ${settings.startPurse.stone} stone · ${settings.startPurse.ore} ore`;
   parts.push(`${purse} resources`);
+  if (!perksEnabled(settings)) parts.push("No manager perks");
   if (settings.aiSeats.length > 0) {
     parts.push(settings.aiSeats
       .map((seat) => `AI ${seat.charAt(0).toUpperCase()}${seat.slice(1)}`)
