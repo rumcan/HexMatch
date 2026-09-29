@@ -1113,6 +1113,8 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   truckUpgrade: moneyValueOf(BUILD_COSTS.truck),
   trainDepot: moneyValueOf(BUILD_COSTS.trainDepot),
   train: moneyValueOf(BUILD_COSTS.train),
+  // FLEET-4 (#598): the base of a train upgrade (L2 x1.0, L3 x1.6 of it; Anne's rail perk applies).
+  trainUpgrade: moneyValueOf(BUILD_COSTS.train),
   bridge: moneyValueOf(BUILD_COSTS.bridge),
   railBridge: moneyValueOf(BUILD_COSTS.railBridge),
   // Dams are off (DAMS_ENABLED === false) but the row stays consistent so the

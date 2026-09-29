@@ -233,7 +233,7 @@ export interface UiRailRow {
   kind: "platform" | "depot" | "train";
   label: string;
   detail: string;
-  actions: ("assign" | "recall" | "sell" | "buy" | "start" | "lane")[];
+  actions: ("assign" | "recall" | "sell" | "buy" | "start" | "lane" | "upgrade")[];
   /** `assign`: the partner platform. `buy`: the line the train is bought for. */
   partnerId?: number;
   /** What the action costs, in the game's own cargo wording. */
@@ -245,6 +245,9 @@ export interface UiRailRow {
    */
   buyLines?: { id: number; name: string; why: string | null }[];
   buyPrice?: string;
+  /** FLEET-4 (#598): a train row's level (1-3, drawn as pips) and its Upgrade button. */
+  level?: number;
+  upgrade?: { label: string; why: string | null };
 }
 
 /** CAST-1: the seat's Black Market prices and the Fixer's counter. */
@@ -673,7 +676,7 @@ export interface UiHooks {
    * the line the train is bought for, and `start` sends a parked train off. The game owns the
    * rules and the prices; this chrome only reports the click.
    */
-  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start" | "lane", partnerId?: number) => void;
+  onRailAction: (id: number, action: "assign" | "recall" | "sell" | "buy" | "start" | "lane" | "upgrade", partnerId?: number) => void;
   /**
    * NAMES: the top-bar "Names" button reports a toggle. The game owns the
    * state and the localStorage record; the chrome only repaints its pressed
@@ -5866,7 +5869,7 @@ export function createOriginalUi(
     // hidden one and the toggle below would never fire the first time a rail
     // tool is picked up.
     const railKey = railPanelOn
-      ? "on|" + railState!.rows.map((r) => `${r.id}:${r.kind}:${r.label}:${r.detail}:${r.actions.join(",")}:${r.hint ?? ""}:${(r.buyLines ?? []).map((b) => `${b.id}${b.why ?? ""}`).join(",")}:${r.buyPrice ?? ""}`).join("|")
+      ? "on|" + railState!.rows.map((r) => `${r.id}:${r.kind}:${r.label}:${r.detail}:${r.actions.join(",")}:${r.hint ?? ""}:${(r.buyLines ?? []).map((b) => `${b.id}${b.why ?? ""}`).join(",")}:${r.buyPrice ?? ""}:${r.level ?? ""}:${r.upgrade?.label ?? ""}:${r.upgrade?.why ?? ""}`).join("|")
       : "off|";
     if (railKey !== lastRailKey) {
       lastRailKey = railKey;
@@ -5881,6 +5884,22 @@ export function createOriginalUi(
         for (const row of railState!.rows) {
           const line = h("div", "rail-row");
           line.innerHTML = `<b>${row.label}</b><small>${row.detail}${row.hint ? ` · ${row.hint}` : ""}</small>`;
+          // FLEET-4 (#598): the train's level as pips, and its Upgrade button
+          // (the next speed, wagons and price; disabled with the reason).
+          if (row.kind === "train" && row.level) {
+            const pips = h("span", "rail-pips", "●".repeat(row.level) + "○".repeat(3 - row.level));
+            pips.title = `Level ${row.level} of 3`;
+            line.querySelector("b")?.appendChild(pips);
+          }
+          if (row.kind === "train" && row.upgrade) {
+            const up = h("button", "rail-act", row.upgrade.label) as HTMLButtonElement;
+            up.dataset.railAction = `${row.id}:upgrade`;
+            up.dataset.sfx = "click";
+            up.disabled = !!row.upgrade.why;
+            up.title = row.upgrade.why ?? "";
+            up.onclick = () => hooks.onRailAction(row.id, "upgrade");
+            line.appendChild(up);
+          }
           // FLEET-1 (#595): a Train Depot's Fleet block - pick a line, Buy train
           // with its price, and the refusal as the disabled button's reason.
           if (row.kind === "depot" && row.buyLines?.length) {

@@ -383,6 +383,8 @@ export interface TrainWire {
   /** FLEET-3 (#597): wagon count (absent = 1) and the cargo the wagons carry. */
   wagons?: number;
   wagonCargo?: string;
+  /** FLEET-4 (#598): train level 1-3 (absent = 1). */
+  level?: number;
 }
 /**
  * The whole railway. Structures, lines and trains are a handful of records and

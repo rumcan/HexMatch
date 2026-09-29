@@ -40,7 +40,7 @@
 //   between the road graph and the rail graph at a crossing.
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W } from "../game/config";
-import { BUILD_COSTS, CARGOES, INDUSTRY_BY_KEY, SLOPES, VICTORY, type Cargo } from "./config";
+import { BUILD_COSTS, BUILD_COSTS_MONEY, CARGOES, INDUSTRY_BY_KEY, SLOPES, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
   OVERPASS_COST, OVERPASS_X, OVERPASS_Y, roadTierAt, roadRailDeckAxis, addCost, mergedPresent, octPath, crossingMasksOk, roadConnectionMask, roadDiagLinked,
@@ -51,6 +51,7 @@ import {
   bridgeCostFor, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
 import { TRUCK_SPEED } from "./vehicles";
+import { perkPrice, type ManagerId } from "./managers";
 // E4 (#268): the slope rules — the local step, the drag's ramp/diagonal shape,
 // the flat-footprint rule for platforms and depots, and the uphill speed factor.
 // #429 adds the drag VERDICT (stop-tiles apart from red-mark tiles, run counted
@@ -235,6 +236,79 @@ export const WAGON_NAME: Record<WagonType, [string, string]> = {
   "tank-car": ["tank car", "tank cars"],
   "armoured-boxcar": ["armoured boxcar", "armoured boxcars"],
 };
+// ── FLEET-4 (#598): train levels ──────────────────────────────────────────
+export const TRAIN_LEVELS = {
+  max: 3,
+  /** Speed multiplier of RAIL_SPEED per level (index = level - 1). */
+  speed: [1, 1.25, 1.5],
+  /** Wagons per level. */
+  wagons: [1, 2, 3],
+  /** Price of reaching that level, as a multiple of `BUILD_COSTS_MONEY.trainUpgrade`. */
+  priceMult: [0, 1.0, 1.6],
+} as const;
+/** A train's level: absent (every old save) is 1. */
+export const trainLevel = (t: { level?: number }): number =>
+  Math.min(TRAIN_LEVELS.max, Math.max(1, Math.floor(Number.isFinite(t.level) ? (t.level as number) : 1)));
+export const trainSpeedMult = (t: { level?: number }): number => TRAIN_LEVELS.speed[trainLevel(t) - 1];
+/** Base $ (before Anne's perk) of taking a train from `level` to `level + 1`; 0 at the top. */
+export const trainUpgradeBase = (level: number): number =>
+  level >= TRAIN_LEVELS.max ? 0
+    : Math.round(BUILD_COSTS_MONEY.trainUpgrade * TRAIN_LEVELS.priceMult[Math.max(1, level)]);
+/** What this seat pays for the next level of a train at `level` (Anne's rail perk). */
+export const trainUpgradePrice = (level: number, manager: ManagerId | null | undefined): number =>
+  perkPrice(trainUpgradeBase(level), manager, "rail");
+/**
+ * FLEET-4 (#598): the ONE refusal ladder for a train upgrade - the button, the
+ * guest intent and the rival all read it. `why` is null when it can go ahead.
+ */
+export function trainUpgradeCheck(
+  t: (Pick<Train, "ownerId" | "level"> & { id?: number }) | undefined,
+  ownerId: number, money: number, manager: ManagerId | null | undefined,
+): { ok: boolean; why: string | null; price: number } {
+  if (!t || t.ownerId !== ownerId) return { ok: false, why: "That is not your train.", price: 0 };
+  const lv = trainLevel(t);
+  if (lv >= TRAIN_LEVELS.max) return { ok: false, why: "Fully upgraded.", price: 0 };
+  const price = trainUpgradePrice(lv, manager);
+  if (money < price) return { ok: false, why: `Not enough money - the upgrade costs $${price}.`, price };
+  return { ok: true, why: null, price };
+}
+/**
+ * FLEET-4 (#598): the rival's pick - its main (lowest-level, then oldest) train
+ * that can still go up, when the upgrade leaves `reserve` in the purse.
+ * Returns the train id, or null.
+ */
+export function planRivalTrainUpgrade(
+  trains: readonly Pick<Train, "id" | "ownerId" | "level">[],
+  ownerId: number, money: number, manager: ManagerId | null | undefined, reserve: number,
+): number | null {
+  const mine = trains.filter((t) => t.ownerId === ownerId && trainLevel(t) < TRAIN_LEVELS.max)
+    .sort((a, b) => trainLevel(a) - trainLevel(b) || a.id - b.id);
+  const pick = mine[0];
+  if (!pick) return null;
+  const check = trainUpgradeCheck(pick, ownerId, money - reserve, manager);
+  return check.ok ? pick.id : null;
+}
+/**
+ * FLEET-4 (#598): what a platform's train multiplies its cargo per trip by -
+ * the wagons of the train on the line that starts at this platform (1 = none / L1).
+ */
+export function trainLoadFactorOf(
+  state: { lines: readonly { id: number; source: number }[]; trains: readonly Pick<Train, "lineId" | "wagons" | "level">[] },
+  platformId: number | undefined,
+): number {
+  const line = state.lines.find((l) => l.source === platformId);
+  const ts = line ? state.trains.filter((t) => t.lineId === line.id) : [];
+  // Lead (2026-09-29): speed pays as well as wagons, the same as FLEET-5's
+  // trucks: a faster train makes more trips a minute.
+  return ts.length ? Math.max(...ts.map((t) => wagonCount(t) * trainSpeedMult(t))) : 1;
+}
+/** Set a train's level and the wagons that go with it (applied at once). */
+export function setTrainLevel(t: { level?: number; wagons?: number }, level: number): void {
+  const l = Math.min(TRAIN_LEVELS.max, Math.max(1, Math.floor(level)));
+  t.level = l;
+  t.wagons = TRAIN_LEVELS.wagons[l - 1];
+}
+
 /** How many wagons a train pulls: an absent count (every old save) is one. */
 export const wagonCount = (t: { wagons?: number }): number =>
   Math.max(1, Math.floor(Number.isFinite(t.wagons) ? (t.wagons as number) : 1));
@@ -2422,6 +2496,8 @@ export interface Train {
   holdStation?: number | null;
   /** FLEET-3 (#597): how many wagons it pulls. Absent = 1 (FLEET-4 raises it). */
   wagons?: number;
+  /** FLEET-4 (#598): level 1-3 (absent = 1): speed and wagons. Applied at once on upgrade. */
+  level?: number;
   /**
    * FLEET-3 (#597): the cargo its wagons were built for, taken from the line
    * at each departure from the source — so a line whose cargo changes gets the
@@ -3115,7 +3191,7 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
       const ownerM = ownerMult ? ownerMult(train.ownerId) : 1;
       const speed = (grid && seg > 0
         ? RAIL_SPEED * uphillFactor(grid, train.route[seg - 1], train.route[seg])
-        : RAIL_SPEED) * ownerM;
+        : RAIL_SPEED) * ownerM * trainSpeedMult(train);   // FLEET-4 (#598)
       const step = speed * ms;
       if (step < remaining) {
         recordTrail(state, train, cum, train.dist, train.dist + step);
@@ -3344,6 +3420,8 @@ export interface RailPanelRow {
    * For a depot offering `buy`: the line the train would be bought for.
    */
   partnerId?: number;
+  /** FLEET-4 (#598): a train row's level 1-3, for the pips. */
+  level?: number;
 }
 
 /**
@@ -3429,6 +3507,7 @@ export function railPanelRows(state: RailState, ownerId: number): RailPanelRow[]
       label: line?.name ?? "Train",
       // FLEET-3 (#597): the panel names the wagons — "Loco + 1 tank car".
       detail: `${consistLabel(t)} · ${trainStatusText(t)}`,
+      level: trainLevel(t),
       // A blocked train stopped on its depot exit is home (see `trainAtHome`)
       // and offers its 50% sale rather than a recall that can never route.
       // #179: a train parked in its shed on a line can be started as well as sold.
@@ -3794,6 +3873,7 @@ export function applyRailWire(state: RailState, wire: RailWire | null | undefine
       holdStation: typeof t.holdStation === "number" ? t.holdStation : null,
       // FLEET-3 (#597): optional on the wire; an old host sends neither.
       ...(typeof t.wagons === "number" && t.wagons > 1 ? { wagons: Math.floor(t.wagons) } : {}),
+      ...(typeof t.level === "number" && t.level > 1 ? { level: Math.min(TRAIN_LEVELS.max, Math.floor(t.level)) } : {}),
       ...(CARGOES.includes(t.wagonCargo as Cargo) ? { wagonCargo: t.wagonCargo as Cargo } : {}),
     });
   }

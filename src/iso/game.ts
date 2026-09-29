@@ -364,7 +364,7 @@ import {
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
-  rotateView, trainOccupies, trainBasedAt, railPanelRows, trainBuyRefusal, railComponents, resaleValue, demolishStructure, PLATFORM_VP,
+  rotateView, trainOccupies, trainLevel, planRivalTrainUpgrade, trainUpgradeCheck, setTrainLevel, trainLoadFactorOf, TRAIN_LEVELS, trainUpgradePrice, trainBasedAt, railPanelRows, trainBuyRefusal, railComponents, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
   // the preview, the guest intent and the rival.
@@ -2192,6 +2192,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       } else if (action === "recall") railRecall(id);
       else if (action === "buy") { if (partnerId !== undefined) railBuy(id, partnerId); }
       else if (action === "start") railStart(id);
+      else if (action === "upgrade") railUpgrade(id);   // FLEET-4 (#598)
       // RAIL-6 (#575): "Add lane" arms the upgrade; the next map click picks
       // the side. The panel row's hint prints the price the click will charge.
       else if (action === "lane") {
@@ -5699,6 +5700,28 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return true;
   }
 
+  /**
+   * FLEET-4 (#598): upgrade one of the seat's trains a level - faster and one
+   * more wagon (L2 x1.25 / 2 wagons, L3 x1.5 / 3). Applied AT ONCE, even while
+   * the train is running: the consist just grows behind it. Same refusal ladder
+   * (`trainUpgradeCheck`) as the button, the guest intent and the rival.
+   */
+  function railUpgrade(trainId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "upgrade", id: trainId }); return true; }
+    const train = rail.trains.find((t) => t.id === trainId);
+    const check = trainUpgradeCheck(train, p.i + 1, p.money, p.manager);
+    if (!check.ok || !train) {
+      if (p.human) toast(check.why ?? "That train cannot be upgraded.", "bad");
+      return false;
+    }
+    p.money -= check.price;
+    setTrainLevel(train, trainLevel(train) + 1);
+    if (p.human) { sfx.play("build"); toast(`Train upgraded to level ${trainLevel(train)}.`, "good"); }
+    syncWorld();
+    rescoreNow();
+    return true;
+  }
+
   // ══════════════════════════════════════════════════════════════════════
   // FLEET-1 (#595) — buy and sell trucks. `Harvester.trucks` is the count
   // (absent = 1); `planTrucks` turns it into lorries on the next replan and
@@ -5912,7 +5935,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * times what the Depot's lorry count carries. One expression, so "more
    * trucks = more loads per minute" is real income, never just extra sprites.
    */
-  const haulFactor = (h: Harvester): number => transportFactor(h) * fleetLoadFactor(h);
+  // FLEET-4 (#598): a platform depot hauls by train - its train's wagons carry more per trip.
+  const trainLoadFactor = (h: Harvester): number => {
+    if (!isRailDepot(h)) return 1;
+    return trainLoadFactorOf(rail, h.platformId);
+  };
+  const haulFactor = (h: Harvester): number => transportFactor(h) * fleetLoadFactor(h) * trainLoadFactor(h);
   function cargoPerMinForDepot(depot: Harvester, yieldLevel: number): number {
     try {
       const now = performance.now();
@@ -7048,7 +7076,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * search per line are never paid per paint on the plain map.
    */
   let railFleetComp: { rev: number; comp: Map<number, number> } | null = null;
-  function fleetTrainOptions(r: { id: number; kind: string }): { buyLines?: { id: number; name: string; why: string | null }[]; buyPrice?: string } {
+  function fleetTrainOptions(r: { id: number; kind: string }): { buyLines?: { id: number; name: string; why: string | null }[]; buyPrice?: string; upgrade?: { label: string; why: string | null } } {
+    // FLEET-4 (#598): a train row's Upgrade button - the next speed, wagons and price, or why not.
+    if (r.kind === "train") {
+      const t = rail.trains.find((x) => x.id === r.id);
+      if (!t) return {};
+      const lv = trainLevel(t);
+      if (lv >= TRAIN_LEVELS.max) return { upgrade: { label: "Fully upgraded", why: "Fully upgraded." } };
+      const check = trainUpgradeCheck(t, me.i + 1, me.money, me.manager);
+      const next = lv + 1;
+      return { upgrade: {
+        label: `Upgrade $${trainUpgradePrice(lv, me.manager)} - x${TRAIN_LEVELS.speed[next - 1]} speed, ${TRAIN_LEVELS.wagons[next - 1]} wagons`,
+        why: check.why,
+      } };
+    }
     if (r.kind !== "depot") return {};
     if (tool !== "rail" && tool !== "platform" && tool !== "raildepot" && tool !== "railway") return {};
     const mine = rail.lines.filter((l) => l.ownerId === me.i + 1);
@@ -10766,6 +10807,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return pick !== null && fleetUpgradeTrucks(pick, rival);
   }
 
+  /** FLEET-4 (#598): the rival upgrades its main train when a Depot's worth is left over. */
+  function rivalTrainStep(): boolean {
+    if (!newLoop) return false;
+    const id = planRivalTrainUpgrade(rail.trains, rival.i + 1, rival.money, rival.manager, BUILD_COSTS_MONEY.depot);
+    return id !== null && railUpgrade(id, rival);
+  }
+
   function rivalDamStep(): boolean {
     if (!DAMS_ENABLED || !riversOn || !newLoop) return false;
     if (!canPayBuild(rival, DAM_COST)) return false;
@@ -10974,6 +11022,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // ── 8. fleet (FLEET-1, #595) — a 2nd lorry on the busiest Depot ────────
     if (rivalTruckStep()) acted = true;
     else if (rivalTruckUpgradeStep()) acted = true;
+    if (rivalTrainStep()) acted = true;   // FLEET-4 (#598)
 
     if (acted) {
       noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
@@ -12249,6 +12298,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         else if (payload.what === "sell" && id !== null) railSell(id, p);
         else if (payload.what === "buy" && depot !== null && lineId !== null) railBuy(depot, lineId, p);
         else if (payload.what === "start" && id !== null) railStart(id, p);
+        else if (payload.what === "upgrade" && id !== null) railUpgrade(id, p);   // FLEET-4 (#598)
         else if (payload.what === "rename" && id !== null && typeof payload.name === "string") railRename(id, payload.name, p);
       } else if (what === "truck") {
         // FLEET-1 (#595): a guest's Buy / Sell truck. The host runs the same
@@ -17524,6 +17574,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** #179: the test twins of the panel's Buy train / Start buttons, and a rename. */
     railBuy: (depotId: number, lineId: number, who: "you" | "ai" = "you") =>
       railBuy(depotId, lineId, who === "ai" ? rival : me),
+    /** FLEET-4 (#598): the test twin of the train row's Upgrade button. */
+    upgradeTrain: (trainId: number, who: "you" | "ai" = "you") =>
+      railUpgrade(trainId, who === "ai" ? rival : me),
+    /** FLEET-4 (#598): run the rival's upgrade step once (test twin). */
+    rivalTrainStep: () => rivalTrainStep(),
     /** FLEET-1 (#595): the test twins of the Fleet card's Buy / Sell truck. */
     buyTruck: (depotId: number, who: "you" | "ai" = "you") =>
       fleetBuyTruck(depotId, who === "ai" ? rival : me),
