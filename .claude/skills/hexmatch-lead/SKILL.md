@@ -15,8 +15,11 @@ Argument: an issue or epic number (e.g. `594`).
 - Order the tickets. Tickets whose file sets overlap (almost everything touches `game.ts`) run **one after another**, each off the freshly merged main. Only truly disjoint work runs in parallel. Two agents both editing `game.ts` means a merge conflict.
 - Show the owner the plan (the order, what runs in parallel, any open design questions) in a few lines. Ask only about real game-design forks. Decide everything else yourself.
 
-## 2. Brief and spawn
-Spawn with `Agent({ subagent_type: "hexmatch-coder", isolation: "worktree", description, prompt })`. The agent runs in the background, and you get a notification when it finishes. The brief (prompt) holds:
+## 2. Brief, and reuse before you spawn
+**Tokens: reuse coders, don't spawn fresh ones.** A new coder pays to learn the repo all over again. Keep a small standing crew, at most 2 at a time, each owning an area (e.g. a *road/truck* coder and a *rail/train* coder). Give each next ticket to whichever coder already knows those files, via `SendMessage` (its context is cached, so reuse is cheap). Spawn a new one only when no existing coder fits or one's context has become huge. Track the crew in the session: name, area, worktree path, current ticket.
+
+To spawn, use `Agent({ subagent_type: "hexmatch-coder", isolation: "worktree", description, prompt })`. If that type isn't loaded (the session started outside HexMatch), use `general-purpose` + `model: "sonnet"` and have it read the rules file first. The agent runs in the background, and you get a notification when it finishes. The brief (prompt) holds:
+- **the spec itself, pasted in and trimmed to what this agent needs.** The coder never reads issues, because the issue bodies carry long arena prompts;
 - the ticket number, and the scope for THIS agent, sliced down if the ticket is big;
 - the files and functions to start from, and the existing helpers to reuse;
 - the acceptance points, written so they can be checked;
@@ -33,7 +36,7 @@ Spawn with `Agent({ subagent_type: "hexmatch-coder", isolation: "worktree", desc
 ## 4. Ship
 - In the worktree: create the branch `fleet/<n>-<slug>` (or `<area>/<n>-<slug>`), commit with the ticket ID in the title, push, and run `gh pr create` with "Closes #<n>" and the test evidence.
 - Once CI is green (or the only failures are known and already on main), squash-merge with `--delete-branch`, then `git pull --ff-only` in `C:\Work Admin\PERSONAL\Repos\HexMatch`.
-- Remove the agent's worktree once it's merged.
+- **Recycle the worktree; don't remove it.** Once the PR is merged, run `git -C <worktree> fetch -q && git -C <worktree> checkout -q -B <next-branch> origin/main` so the same coder starts its next ticket on fresh main. Remove worktrees only at the end of the epic, or when you retire a coder.
 - Move to the next ticket. At the end of the epic, run the broad sweep (`npm test`, the e2e desktop project) and fix what broke.
 
 ## Rules carried over
