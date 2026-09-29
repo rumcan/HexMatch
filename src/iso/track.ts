@@ -1589,11 +1589,11 @@ export function roadDragRefusalText(why: string | null | undefined): string {
   const text: Record<string, string> = {
     "overpass-stack": "An overpass already occupies this crossing; move the new deck to another tile.",
     "overpass-ground": "Overpasses need flat, dry approaches on both sides; no slopes or bridge decks.",
-    "diagonal-highway": "A diagonal road cannot cross a Highway — cross straight at right angles or join through a Ramp.",
+    "diagonal-highway": "A diagonal road cannot meet an Overpass — it only carries its Highway and the road over it, straight.",
     "road-tier": "An Overpass carries its Highway straight through; nothing joins it from the side.",
     "corner-cut": "A diagonal cannot cut between two blocked corners.",
     "diagonal-crossing": "Two diagonal roads cannot cross in an X.",
-    "too-steep": "Too steep — Highways need level ground; roads climb at most one level.",
+    "too-steep": "Too steep — a road (Highway included) climbs at most one level per tile.",
     "water": "No road here — bridges need a straight crossing with land at both ends.",
     "bridge-junction": "A bridge stays straight — nothing can join its side.",
     "rail": "Cross rail straight at right angles, not diagonally.",
@@ -1651,7 +1651,7 @@ function previewDiagonalDrag(
     if (roadTier === "road") return hasTrack(t, "road", x, y) ? stored : ROAD_TIER.road;
     if (roadTier === "ramp") return stored === 0 || stored === 1 ? ROAD_TIER.ramp : stored;
     if (hasTrack(t, "road", x, y) && RANK_OF_STORED[stored] >= TIER_RANK[roadTier]) return stored;
-    return roadTier === "highway" && sideBranch(t, path, x, y) ? ROAD_TIER.ramp : ROAD_TIER[roadTier];
+    return ROAD_TIER[roadTier];
   };
   for (let i = 0; i < path.length; i++) {
     const [x, y] = path[i], index = tIdx(x, y);
@@ -1669,11 +1669,10 @@ function previewDiagonalDrag(
         projected.tier![index] = tier | ((t.tier?.[index] ?? 0) & (ROAD_RAIL_DECK_X | ROAD_RAIL_DECK_Y));
       } else if (!hasTrack(projected, "road", x, y)) projected.dirt[index] |= PRESENT;
     }
-    // Plain road cannot enter/cross a highway diagonally (including a bend
-    // departing it diagonally). A Ramp/Highway gesture may JOIN diagonally;
-    // Overpass endpoint rules are still enforced by D1 on the projected tier.
+    // Owner (2026-09-29): any road joins a Highway, diagonals included. Only an
+    // OVERPASS is axis-only (it carries its highway and the road over it, straight).
     const high = linkClass(t, x, y);
-    let why: string | null = (high === "H" || high === "OX" || high === "OY")
+    let why: string | null = (high === "OX" || high === "OY")
       && (kind === "dirt" || roadTier === "road" || roadTier === "street")
       && (diagonalIn || diagonalOut || roadDiagNeighbours(t, x, y).length > 0)
       ? "diagonal-highway" : null;
@@ -1684,9 +1683,6 @@ function previewDiagonalDrag(
     why ??= buildRefusal(grid, kind, x, y, growing, passAxis(path, i), projected, from);
     // A valid bridge plan alone permits water. Never mask another refusal.
     if (why === "water" && deck) why = null;
-    if (!why && kind === "road" && roadTier === "highway" && from
-      && !deck && !bridgePlan.runs.has(i - 1)
-      && tileHeight(grid, x, y) !== tileHeight(grid, ...from)) why = "too-steep";
     if (why) {
       result.why = why; result.truncated = true; result.blocked.push([x, y]); break;
     }
@@ -1763,6 +1759,18 @@ export function commitDrag(
   t: Track, kind: TrackKind, preview: DragPreview, owner = 0, roadTier: RoadTierKey = "road",
 ): CommitResult {
   const chunks = new Set<number>();
+  // ROADS-3 (#394) + owner (2026-09-29): which tiles of this drag cross a
+  // Highway at right angles is decided from the track BEFORE the drag lays
+  // anything. Any road now joins a Highway on contact, so the approach tile
+  // laid one step earlier would otherwise turn the Highway into a junction
+  // and this test would stop seeing a clean straight run.
+  const overpassAt = new Set<number>();
+  if (!(t.diagonalRoads && preview.roadPlan) && kind === "road" && (roadTier === "road" || roadTier === "street")) {
+    for (let k = 0; k < preview.tiles.length; k++) {
+      const [x, y] = preview.tiles[k];
+      if (overpassCrossing(t, x, y, passAxis(preview.tiles, k))) overpassAt.add(k);
+    }
+  }
   for (const [x, y] of preview.tiles) {
     // W2: the builder's track-owner id is stamped on every tile laid — a
     // drag built by player 1 is player 1's network, full stop.
@@ -1801,7 +1809,7 @@ export function commitDrag(
     for (let k = 0; k < preview.tiles.length; k++) {
       const [x, y] = preview.tiles[k];
       const ax = passAxis(preview.tiles, k);
-      if (!overpassCrossing(t, x, y, ax)) continue;
+      if (!overpassAt.has(k)) continue;
       setRoadTier(t, x, y, ax === "x" ? OVERPASS_Y : OVERPASS_X);
       chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
     }
@@ -1819,13 +1827,8 @@ export function commitDrag(
         continue;
       }
       if (RANK_OF_STORED[stored] >= TIER_RANK[roadTier]) continue;
-      // ROADS-3 (#394): a Highway laid THROUGH a junction keeps the side road
-      // attached — that tile becomes a Ramp (Highway meets roads only there).
-      if (roadTier === "highway" && sideBranch(t, preview.tiles, x, y)) {
-        setRoadTier(t, x, y, ROAD_TIER.ramp);
-        chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
-        continue;
-      }
+      // (A Highway laid through a junction keeps its side road attached as a
+      // plain Highway tile now — no Ramp needed; owner, 2026-09-29.)
       setRoadTier(t, x, y, want);
       chunks.add(((y / CHUNK) | 0) * chunksX + ((x / CHUNK) | 0));
     }

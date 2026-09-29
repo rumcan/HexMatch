@@ -171,7 +171,7 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
     {
       id: "logistics",
       title: "Logistics",
-      blurb: "Tiers, 45° bends, ramps, overpasses, bridges and slopes",
+      blurb: "Tiers, 45° bends, overpasses, bridges and slopes",
       steps: [
         {
           id: "tiers",
@@ -185,11 +185,11 @@ export function buildGuideSections(ctx: GuideContext): GuideSection[] {
         },
         {
           id: "highway",
-          title: "Highways, ramps, overpasses",
-          caption: "Choose Highway. It meets your roads through a Ramp, and a Road dragged across it becomes an overpass.",
+          title: "Highways and overpasses",
+          caption: "Choose Highway. It is just a faster road: any road joins it, and a Road dragged straight across it becomes an overpass.",
           hint: "Traffic jumps straight over an overpass — the road underneath keeps running.",
           voice: "g-logistics-highway",
-          target: { kind: "ui", selector: '[data-tool="highway"], [data-tool="ramp"], [data-group="roads"]' },
+          target: { kind: "ui", selector: '[data-tool="highway"], [data-group="roads"]' },
           complete: { kind: "tool", tool: "highway" },
           next: true,
           assist: { kind: "sheet", view: "build" },

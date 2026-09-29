@@ -1,5 +1,7 @@
-// ROADS-3 (#394): highways connect only through ramps; roads cross over them
-// on overpasses (straight through, no turning); highway bridges span wider.
+// ROADS-3 (#394): roads cross over highways on overpasses (straight through,
+// no turning); highway bridges span wider. Owner (2026-09-29): ANY road joins a
+// highway directly - a Highway is just a faster road tier, Ramps are retired
+// for now and are no longer the only way on.
 import { describe, expect, it } from "vitest";
 import {
   createTrack, buildTile, commitDrag, previewDrag, roadTierAt, setRoadTier, hasTrack,
@@ -26,17 +28,31 @@ function highway(t: ReturnType<typeof createTrack>) {
 const bits = (t: ReturnType<typeof createTrack>, x: number, y: number) => t.road[tIdx(x, y)] & 0b1111;
 
 describe("ROADS-3 highway access", () => {
-  it("a Road beside a Highway does not join it", () => {
+  it("a Road beside a Highway joins it - no Ramp needed", () => {
     const t = createTrack();
     highway(t);
     buildTile(t, "road", 15, 21, 1);                  // just below the highway
     buildTile(t, "road", 15, 22, 1);
-    expect(bits(t, 15, 21) & 1).toBe(0);              // no NE link up to the highway
+    expect(bits(t, 15, 21) & 1).toBe(1);              // the NE link up to the highway
     const c = buildComponents(t, 1);
-    expect(c.comp[tIdx(15, 21)]).not.toBe(c.comp[tIdx(15, 20)]);
+    expect(c.comp[tIdx(15, 22)]).toBe(c.comp[tIdx(15, 20)]);
+    // and a Street does too
+    buildTile(t, "road", 18, 21, 1); setRoadTier(t, 18, 21, ROAD_TIER.street);
+    expect(buildComponents(t, 1).comp[tIdx(18, 21)]).toBe(c.comp[tIdx(18, 20)]);
   });
 
-  it("a Ramp joins them", () => {
+  it("a Highway laid through a junction stays Highway with the side road attached", () => {
+    const g = flat(), t = createTrack();
+    for (let x = 10; x <= 30; x++) buildTile(t, "road", x, 20, 1);
+    buildTile(t, "road", 20, 21, 1); buildTile(t, "road", 20, 22, 1);   // a side road
+    const pv = previewDrag(g, t, "road", rich, 10, 20, 30, 20, true, undefined, 0, undefined, true, {}, "highway");
+    commitDrag(t, "road", pv, 1, "highway");
+    expect(roadTierAt(t, 20, 20)).toBe(ROAD_TIER.highway);   // not forced to a Ramp
+    const c = buildComponents(t, 1);
+    expect(c.comp[tIdx(20, 22)]).toBe(c.comp[tIdx(12, 20)]);
+  });
+
+  it("a Ramp still joins them", () => {
     const t = createTrack();
     highway(t);
     buildTile(t, "road", 15, 21, 1);

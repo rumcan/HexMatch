@@ -22,7 +22,7 @@
   { "id": "g-depots-one-each", "speaker": "narrator", "text": "One Depot per industry, and the first to connect keeps it.", "trigger": "guide:depots:one-each" },
   { "id": "g-depots-results", "speaker": "narrator", "text": "Finish keeps the score you have. The results card shows what the Depot now ticks.", "trigger": "guide:depots:results" },
   { "id": "g-logistics-tiers", "speaker": "narrator", "text": "Dirt Road is free. Street, Road and Highway haul faster and cost money.", "trigger": "guide:logistics:tiers" },
-  { "id": "g-logistics-highway", "speaker": "narrator", "text": "A Highway joins your roads through a Ramp. A Road across it becomes an overpass.", "trigger": "guide:logistics:highway" },
+  { "id": "g-logistics-highway", "speaker": "narrator", "text": "A Highway is just a faster road. Any road joins it, and a Road straight across it becomes an overpass.", "trigger": "guide:logistics:highway" },
   { "id": "g-logistics-slopes", "speaker": "narrator", "text": "Bridges cross the water and slopes climb the hills. Nothing builds through a steep face.", "trigger": "guide:logistics:slopes" },
   { "id": "g-rail-train", "speaker": "narrator", "text": "One train runs a network, and it hauls on its own once both platforms stand.", "trigger": "guide:rail:train" },
   { "id": "g-upgrades-retune", "speaker": "narrator", "text": "The Plant card holds Retune. Another session raises a Depot's yield.", "trigger": "guide:upgrades:retune" },

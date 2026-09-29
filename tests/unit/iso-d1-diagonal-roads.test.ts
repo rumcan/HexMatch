@@ -175,11 +175,12 @@ describe("D1 graph and tiers", () => {
     expect(buildRoadDiagonal(g, t, 10, 10, 11, 11, 1)).toBeNull();
   });
 
-  it.each([0, 1, 2, 3, 4, 5] as RoadTier[])("applies highway access diagonally to tier %i; overpasses stay axis-only", (tier) => {
+  it.each([0, 1, 2, 3, 4, 5] as RoadTier[])("a highway diagonal links to tier %i; overpasses stay axis-only", (tier) => {
+    // Owner (2026-09-29): any road joins a Highway; only an Overpass (4/5) refuses.
     const g = flat(), t = createTrack(true);
     buildTile(t, "road", 10, 10, 1); buildTile(t, "road", 11, 11, 1);
     setRoadTier(t, 10, 10, ROAD_TIER.highway); setRoadTier(t, 11, 11, tier);
-    const allowed = tier === ROAD_TIER.highway || tier === ROAD_TIER.ramp;
+    const allowed = tier < OVERPASS_X;
     expect(buildRoadDiagonal(g, t, 10, 10, 11, 11, 1) !== null).toBe(allowed);
     expect(route(t, [11, 11], [10, 10]) !== null).toBe(allowed);
   });
@@ -188,10 +189,11 @@ describe("D1 graph and tiers", () => {
     const g = flat(), t = createTrack(true);
     pair(t); buildRoadDiagonal(g, t, 10, 10, 11, 11, 1);
     buildTile(t, "road", 11, 11, 1); setRoadTier(t, 11, 11, ROAD_TIER.highway);
-    expect(route(t, [10, 10], [11, 11])).toBeNull();
-    expect(buildComponents(t, 1).comp[tIdx(10, 10)]).not.toBe(buildComponents(t, 1).comp[tIdx(11, 11)]);
+    // upgrading a tile to Highway keeps its diagonal link (any road joins it)
+    expect(route(t, [10, 10], [11, 11])).not.toBeNull();
     buildTile(t, "road", 10, 10, 1); setRoadTier(t, 10, 10, ROAD_TIER.ramp);
     expect(route(t, [10, 10], [11, 11])).not.toBeNull();
+    // ...but an Overpass is axis-only and severs it
     for (const tier of [OVERPASS_X, OVERPASS_Y] as const) {
       setRoadTier(t, 11, 11, tier);
       expect(roadDiagLinked(t, 10, 10, 11, 11)).toBe(false);
@@ -218,13 +220,15 @@ describe("D1 graph and tiers", () => {
     expect(buildRoadDiagonal(g, t, 14, 19, 15, 20, 1)).toBeNull();
   });
 
-  it("keeps highways flat on diagonal steps too", () => {
+  it("a Highway diagonal climbs like any road: one level yes, two levels no", () => {
     const g = flat(), t = createTrack(true);
     for (const [x, y] of [[10, 10], [11, 11]]) {
       buildTile(t, "road", x, y, 1); setRoadTier(t, x, y, ROAD_TIER.highway);
     }
     g.height = new Uint8Array(MAP_W * MAP_H);
     g.height[tIdx(11, 11)] = 1;
+    expect(roadDiagonalRefusal(g, t, 10, 10, 11, 11)).toBeNull();   // owner, 2026-09-29
+    g.height[tIdx(11, 11)] = 2;
     expect(roadDiagonalRefusal(g, t, 10, 10, 11, 11)).toBe("too-steep");
     expect(buildRoadDiagonal(g, t, 10, 10, 11, 11, 1)).toBeNull();
   });
