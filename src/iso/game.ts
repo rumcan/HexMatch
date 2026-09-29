@@ -481,6 +481,7 @@ import { CHAT_MAX_LEN, CHAT_PRESETS } from "../net/chat";
 // `IsoGameOptions` (a test harness, a playtest link) is normalised exactly like
 // a block that crossed the wire.
 import {
+  perksEnabled,
   DEFAULT_MATCH_SETTINGS,
   describeMatchSettings,
   normalizeMatchSettings,
@@ -1289,11 +1290,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * a manager's perk or quirk touches a build price (docs/CAST.md). `other`
    * (and a seat with no manager) is exactly `moneyCostOf`.
    */
+  /**
+   * MP-MGR (owner, 2026-09-29): the manager whose PERKS a seat plays with.
+   * The host may switch perks off for the room (`settings.perks === false`);
+   * then every seat resolves to none while `p.manager` (the portrait, the
+   * identity) stays. Every perk reader goes through this one seam.
+   */
+  const perksOn = perksEnabled(settings);
+  const perkManagerOf = (p: PlayerState): ManagerId | null => (perksOn ? p.manager : null);
   const seatCostOf = (p: PlayerState, cost: Purse, cls: BuildClass = "other"): number =>
-    perkPrice(moneyCostOf(cost), p.manager, cls);
+    perkPrice(moneyCostOf(cost), perkManagerOf(p), cls);
   /** CAST-1: the balance a drag preview should test (see `effectiveBalance`). */
   const previewBalance = (p: PlayerState, cls: BuildClass): number =>
-    effectiveBalance(p.money, p.manager, cls);
+    effectiveBalance(p.money, perkManagerOf(p), cls);
   /** Can this seat pay for a build that used to cost `cost` in resources? */
   const canPayBuild = (p: PlayerState, cost: Purse, cls: BuildClass = "other"): boolean =>
     p.money >= seatCostOf(p, cost, cls);
@@ -2035,7 +2044,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // stream) happen before the quarry body, exactly as with the default
   // `new Board()` the quarry used to build, so the deterministic boot order
   // is untouched. Null seats build the shipped board.
-  new Board({ shortcut: perksOf(me.manager).shortcut }));
+  new Board({ shortcut: perksOf(perkManagerOf(me)).shortcut }));
 
   // AI-03: the RIVAL's Processing Plant board — a real quarry of its own,
   // played by a clock-driven autoplayer (`skill().moveMs`, below). It pays the
@@ -4644,7 +4653,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           + (b.holds > 0 ? `, ${b.holds} contested site${b.holds === 1 ? "" : "s"} held` : "")
         : `${b.paved} paved tile${b.paved === 1 ? "" : "s"}, ${b.plants} plant${b.plants === 1 ? "" : "s"}`;
       toast(`${p.name} wins — ${fmtVp(vpFor(score, p.id))}★ (${how})`,
-        p.human ? "good" : "bad");
+        p === me ? "good" : "bad");
       presentEnding(decisive);
       break;
     }
@@ -4672,10 +4681,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         starFed.set(p.id, stars);
         // SFX-01: a Victory Point is the only thing worth ringing for. The
         // rival's stars stay silent — the feed line is enough for those.
-        if (p.human) sfx.play("star");
-        ui.feed(`${p.human ? "You" : p.name} reach ${stars}★ of ${winTarget()}★`, p.name);
+        if (p === me) sfx.play("star");
+        ui.feed(`${p === me ? "You" : p.name} reach ${stars}★ of ${winTarget()}★`, p.name);
         // VO-1: the rival pulling ahead is already a feed line. One taunt, rate-limited.
-        if (!p.human && stars > Math.floor(vpFor(score, me.id))) voiceCue("rival:ahead");
+        if (p !== me && stars > Math.floor(vpFor(score, me.id))) voiceCue("rival:ahead");
       } else if (stars < last) starFed.set(p.id, stars);
     }
     trucksDirty = true;   // RV-01: the network changed — replan the lorries
@@ -4720,7 +4729,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function placeFactoryFor(p: PlayerState, tx: number, ty: number, rot = 0): boolean {
     const blocked = townBlockedFor(p, tx, ty);
     if (blocked) {
-      if (p.human) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
+      if (p === me) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
       return false;
     }
     const plan = planFactoryPlacement(grid, tx, ty, { requireTown: true, track, rot });
@@ -4728,7 +4737,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(plan.code === "not-near-town"
         ? "The Factory must be placed next to a town — its footprint must share an edge with a town tile."
         : `Can't build there — ${plan.why ?? "not buildable"}.`, "bad");
-      if (p.human) flashAt(tx, ty, plan.code === "not-near-town" ? "Factory must touch a town" : "Can't build here");
+      if (p === me) flashAt(tx, ty, plan.code === "not-near-town" ? "Factory must touch a town" : "Can't build here");
       return false;
     }
     // MP: the opening Factory may go beside ANY town — the two seats are rivals
@@ -4753,8 +4762,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     }
     if (eco.factories.some((f) => f.ownerId === p.i + 1)) {
-      toast(`${p.human ? "You already have" : "That seat already has"} a starting Factory.`, "bad");
-      if (p.human) flashAt(tx, ty, "You already have a Factory");
+      toast(`${p === me ? "You already have" : "That seat already has"} a starting Factory.`, "bad");
+      if (p === me) flashAt(tx, ty, "You already have a Factory");
       return false;
     }
     // W2: the factory carries its builder's track-owner id (player index + 1).
@@ -4769,7 +4778,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // SFX-01: a heavy crate set down and latched. The rival's own factory
     // appears in the same instant as the player's, so only the human's click
     // gets the sound — one thunk per gesture, whoever else moved.
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     return true;
   }
 
@@ -4932,7 +4941,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       lockedIndustryIdsFor(eco, p.id), rail.rail,
     );
     if (why !== "ok") {
-      if (p.human) {
+      if (p === me) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
         flashAt(tx, ty, why === "anchor-taken" ? "You already have one here"
           : why === "industry-taken" ? "Already claimed" : "Can't build here");
@@ -4942,7 +4951,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // PERK-1 (#600): the platform is its OWN class — Anne's Station Master
     // cuts it; James's rail quirk no longer taxes the platform he distrusts.
     if (!canPayBuild(p, RAIL_COSTS.platform, "platform")) {
-      if (p.human) {
+      if (p === me) {
         toast(`Not enough money — a platform costs $${seatCostOf(p, RAIL_COSTS.platform, "platform")}.`, "bad");
         flashAt(tx, ty, `Platform costs $${seatCostOf(p, RAIL_COSTS.platform, "platform")}`);
       }
@@ -4952,7 +4961,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // A platform at an industry IS a Depot — one tuning session at a time.
     if (anchor?.kind === "industry" && newLoop && tuning && p === me) {
       toast("Finish the tuning session first — one Depot is tuned at a time.", "bad");
-      if (p.human) flashAt(tx, ty, "Finish the tuning session first");
+      if (p === me) flashAt(tx, ty, "Finish the tuning session first");
       return false;
     }
     if (!spendBuild(p, RAIL_COSTS.platform, "platform")) return false;
@@ -4970,10 +4979,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       kind: "platform", structureId: built.id, depotRecordId: depot?.id,
       money: seatCostOf(p, RAIL_COSTS.platform, "platform"), freeDepotsSpent: false, railBytes,
     }, p);
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
     rescoreNow();       // RAIL-02: the platform's ★ rides the same rescore
-    if (p.human) {
+    if (p === me) {
       toast(depot
         ? "Platform built at the industry — tune its yield, then run rail to your plant's platform."
         : "Plant platform built — run rail to it from an industry platform.", "good");
@@ -4993,14 +5002,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const ownerId = p.i + 1;
     const why = loopRefusal(grid, rail, ownerId, tx, ty, view);
     if (why !== "ok") {
-      if (p.human) {
+      if (p === me) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
         flashAt(tx, ty, "Can't build here");
       }
       return false;
     }
     if (!canPayBuild(p, RAIL_COSTS.loop, "platform")) {
-      if (p.human) {
+      if (p === me) {
         toast(`Not enough money — a Passing Loop costs $${seatCostOf(p, RAIL_COSTS.loop, "platform")}.`, "bad");
         flashAt(tx, ty, `Loop costs $${seatCostOf(p, RAIL_COSTS.loop, "platform")}`);
       }
@@ -5008,9 +5017,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     if (!spendBuild(p, RAIL_COSTS.loop, "platform")) return false;
     placeLoop(rail, p.id, ownerId, tx, ty, view);
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
-    if (p.human) toast("Passing Loop built — trains on this line can pass each other here.", "good");
+    if (p === me) toast("Passing Loop built — trains on this line can pass each other here.", "good");
     return true;
   }
 
@@ -5110,7 +5119,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const ownerId = p.i + 1;
     const why = laneRefusal(grid, rail, ownerId, stationId, side);
     if (why !== "ok") {
-      if (p.human) {
+      if (p === me) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
         const s = structureById(rail, stationId);
         if (s) flashAt(s.tx, s.ty, RAIL_REFUSAL_TEXT[why]);
@@ -5120,7 +5129,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // PERK-1 (#600): the station lane prices with the platform (Station
     // Master covers "platforms and station lanes").
     if (!canPayBuild(p, RAIL_COSTS.lane, "platform")) {
-      if (p.human) {
+      if (p === me) {
         toast(`Not enough money — a lane costs $${seatCostOf(p, RAIL_COSTS.lane, "platform")}.`, "bad");
         const s = structureById(rail, stationId);
         if (s) flashAt(s.tx, s.ty, `A lane costs $${seatCostOf(p, RAIL_COSTS.lane, "platform")}`);
@@ -5134,7 +5143,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     syncWorld();
-    if (p.human) {
+    if (p === me) {
       sfx.play("build");
       const s = structureById(rail, stationId);
       const n = s ? stationLanes(s).length : 0;
@@ -5154,7 +5163,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const ownerId = p.i + 1;
     const why = depotRefusal(grid, rail, ownerId, tx, ty, view);
     if (why !== "ok") {
-      if (p.human) {
+      if (p === me) {
         toast(RAIL_REFUSAL_TEXT[why], "bad");
         flashAt(tx, ty, why === "no-network" || why === "exit-blocked" ? "The exit needs your rail" : "Can't build here");
       }
@@ -5162,7 +5171,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     // PERK-1 (#600): the Train Depot is Anne's Shed Deal class, not track.
     if (!canPayBuild(p, RAIL_COSTS.depot, "trainDepot")) {
-      if (p.human) {
+      if (p === me) {
         toast(`Not enough money — a train depot costs $${seatCostOf(p, RAIL_COSTS.depot, "trainDepot")}.`, "bad");
         flashAt(tx, ty, `Train depot costs $${seatCostOf(p, RAIL_COSTS.depot, "trainDepot")}`);
       }
@@ -5179,10 +5188,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       kind: "raildepot", structureId: built.id,
       money: seatCostOf(p, RAIL_COSTS.depot, "trainDepot"), freeDepotsSpent: false, railBytes,
     }, p);
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
     rescoreNow();
-    if (p.human) toast("Train depot built. Buy a train from the Railway panel when a line is ready.", "good");
+    if (p === me) toast("Train depot built. Buy a train from the Railway panel when a line is ready.", "good");
     return !!built;
   }
 
@@ -5253,7 +5262,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const ownerId = p.i + 1;
     const river = damRiverAt(grid, wx, wy);
     if ("why" in river) {
-      if (p.human) {
+      if (p === me) {
         toast(DAM_REFUSAL_TEXT[river.why], "bad");
         flashAt(wx, wy, "No dam here");
       }
@@ -5264,7 +5273,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const side = damSideAtSite(wx, wy, held);
     const why = damRefusal(grid, eco.dams, ownerId, wx, wy, side);
     if (why !== "ok") {
-      if (p.human) {
+      if (p === me) {
         toast(DAM_REFUSAL_TEXT[why], "bad");
         flashAt(wx, wy, why === "site-taken" ? "A dam already stands here"
           : why === "crossed" ? "A bridge crosses here" : "Can't build here");
@@ -5272,7 +5281,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!canPayBuild(p, DAM_COST)) {
-      if (p.human) {
+      if (p === me) {
         toast(`Not enough money — a dam costs $${moneyCostOf(DAM_COST)}.`, "bad");
         flashAt(wx, wy, "Not enough money");
       }
@@ -5282,10 +5291,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const dam: Dam = { id: nextDamId++, owner: p.id, ownerId, wx, wy, axis: river.axis, side };
     eco.dams.push(dam);
     noteWorldBuild();      // BUILD-1 (#460): a build closes the undo window
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
     rescoreNow();
-    if (p.human) {
+    if (p === me) {
       toast(`Hydro dam built — +${Math.round(DAM_BONUS * 100)}% output for Depots and the city within ${DAM_RANGE} tiles.`, "good");
     }
     return true;
@@ -5305,7 +5314,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!d) return false;
     if (d.owner !== p.id) {
       toast("That dam isn't yours.", "bad");
-      if (p.human) flashAt(tx, ty, "Not yours to remove");
+      if (p === me) flashAt(tx, ty, "Not yours to remove");
       return false;
     }
     const gone = eco.dams.findIndex((x) => x.id === d.id);
@@ -5314,7 +5323,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const refund = resaleValue(DAM_COST);
     // ECON-1 (#421): a demolish refunds MONEY — the build was paid in money.
     if (Object.keys(refund).length) refundBuild(p, refund);
-    if (p.human) sfx.play("demolish");
+    if (p === me) sfx.play("demolish");
     noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
     syncWorld();
     rescoreNow();
@@ -5324,12 +5333,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function placeInterchange(tx: number, ty: number, p: PlayerState = me): boolean {
     const plan = buildInterchange(grid, track, p.i + 1, tx, ty, p.purse, previewBalance(p, "road"));
-    if (plan.why) { if (p.human) toast(plan.why, "bad"); return false; }
+    if (plan.why) { if (p === me) toast(plan.why, "bad"); return false; }
     chargeBuild(p, plan.cost, "road"); // same synchronous all-or-nothing affordability check
     for (const [x, y] of plan.tiles) renderer?.invalidateTile(x, y);
     noteWorldBuild();      // BUILD-1 (#460): a build closes the undo window
     syncWorld(); rescoreNow();
-    if (p.human) { sfx.play("build"); toast("Diamond interchange built.", "good"); }
+    if (p === me) { sfx.play("build"); toast("Diamond interchange built.", "good"); }
     return true;
   }
 
@@ -5345,7 +5354,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // closes the undo window.
     if (res.built.length) noteWorldBuild();
     if (!Object.keys(res.cost).length && !res.built.length) {
-      if (p.human) toast(res.why === "ok" ? "Can't build rail there." : RAIL_REFUSAL_TEXT[res.why as never], "bad");
+      if (p === me) toast(res.why === "ok" ? "Can't build rail there." : RAIL_REFUSAL_TEXT[res.why as never], "bad");
       return;
     }
     if (Object.keys(res.cost).length && !spendBuild(p, res.cost, "rail")) {
@@ -5353,17 +5362,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // guard is what keeps the invariant true regardless.
       toast("Not enough money.", "bad");
     }
-    if (p.human && res.built.length) sfx.play("place", { step: res.built.length });
+    if (p === me && res.built.length) sfx.play("place", { step: res.built.length });
     for (const [bx, by] of res.built) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const x = bx + dx, y = by + dy;
         if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H) renderer?.invalidateTile(x, y);
       }
     }
-    if (res.why !== "ok" && p.human) toast(RAIL_REFUSAL_TEXT[res.why], "info");
+    if (res.why !== "ok" && p === me) toast(RAIL_REFUSAL_TEXT[res.why], "info");
     syncWorld();
     rescoreNow();
-    if (p.human && res.built.length) {
+    if (p === me && res.built.length) {
       const end = res.built[res.built.length - 1];
       flashAt(end[0], end[1], "Rail laid", "good");
       guide?.emit({ kind: "build", what: "rail" });
@@ -5632,7 +5641,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "assign", source: sourceId, dest: destId }); return true; }
     const plan = assignLine(rail, p.i + 1, sourceId, destId, undefined, grid);
     if (!plan.ok) {
-      if (p.human) toast(plan.why ?? "That line cannot run.", "bad");
+      if (p === me) toast(plan.why ?? "That line cannot run.", "bad");
       return false;
     }
     if (!canPayBuild(p, RAIL_COSTS.train, "rail")) {
@@ -5640,14 +5649,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // leaving a line with no locomotive on it.
       if (plan.line) rail.lines.splice(rail.lines.indexOf(plan.line), 1);
       if (plan.train) rail.trains.splice(rail.trains.indexOf(plan.train), 1);
-      if (p.human) toast(`Not enough money — a train costs $${seatCostOf(p, RAIL_COSTS.train, "rail")}.`, "bad");
+      if (p === me) toast(`Not enough money — a train costs $${seatCostOf(p, RAIL_COSTS.train, "rail")}.`, "bad");
       return false;
     }
     spendBuild(p, RAIL_COSTS.train, "rail");
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
     rescoreNow();
-    if (p.human) {
+    if (p === me) {
       toast(`${plan.line?.name ?? "Line"} assigned — the train is leaving the depot.`, "good");
       notePlayerTrain();
     }
@@ -5662,22 +5671,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function railBuy(depotId: number, lineId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "buy", depot: depotId, line: lineId }); return true; }
     if (!rail.lines.some((l) => l.id === lineId && l.ownerId === p.i + 1)) {
-      if (p.human) toast("Assign a line first — a train needs somewhere to run.", "bad");
+      if (p === me) toast("Assign a line first — a train needs somewhere to run.", "bad");
       return false;
     }
     if (!canPayBuild(p, RAIL_COSTS.train, "rail")) {
-      if (p.human) toast(`Not enough money — a train costs $${seatCostOf(p, RAIL_COSTS.train, "rail")}.`, "bad");
+      if (p === me) toast(`Not enough money — a train costs $${seatCostOf(p, RAIL_COSTS.train, "rail")}.`, "bad");
       return false;
     }
     const bought = buyTrain(rail, p.i + 1, depotId, lineId, grid);
     if (!bought.ok) {
-      if (p.human) toast(bought.why ?? "That train cannot be bought.", "bad");
+      if (p === me) toast(bought.why ?? "That train cannot be bought.", "bad");
       return false;
     }
     spendBuild(p, RAIL_COSTS.train, "rail");
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
-    if (p.human) {
+    if (p === me) {
       toast("Train bought — it is waiting in the depot. Press Start to send it off.", "good");
       notePlayerTrain();
     }
@@ -5690,7 +5699,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
     if (!train) return false;
     const ok = startLine(rail, p.i + 1, train.lineId, grid);
-    if (p.human) {
+    if (p === me) {
       toast(ok ? "Train started — it is leaving the depot." : (train.blockedWhy ?? "That train cannot start."), ok ? "good" : "bad");
     }
     syncWorld();
@@ -5711,7 +5720,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const train = rail.trains.find((t) => t.id === trainId && t.ownerId === p.i + 1);
     if (!train) return false;
     const ok = recallTrain(rail, train, grid);
-    if (p.human && ok) toast("Train recalled to its depot.", "info");
+    if (p === me && ok) toast("Train recalled to its depot.", "info");
     syncWorld();
     return ok;
   }
@@ -5726,14 +5735,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!train) return false;
     const sale = sellTrain(rail, train);
     if (!sale.ok) {
-      if (p.human) toast(sale.why ?? "That train cannot be sold.", "bad");
+      if (p === me) toast(sale.why ?? "That train cannot be sold.", "bad");
       return false;
     }
     refundBuild(p, sale.refund, 1, "rail");   // ECON-1 (#421): a train sells for money
-    if (p.human) sfx.play("demolish");
+    if (p === me) sfx.play("demolish");
     syncWorld();
     rescoreNow();
-    if (p.human) toast(`Train sold — ${railCostLabel(sale.refund)} salvaged.`, "info");
+    if (p === me) toast(`Train sold — ${railCostLabel(sale.refund)} salvaged.`, "info");
     return true;
   }
 
@@ -5746,14 +5755,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function railUpgrade(trainId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "railact", what: "upgrade", id: trainId }); return true; }
     const train = rail.trains.find((t) => t.id === trainId);
-    const check = trainUpgradeCheck(train, p.i + 1, p.money, p.manager);
+    const check = trainUpgradeCheck(train, p.i + 1, p.money, perkManagerOf(p));
     if (!check.ok || !train) {
-      if (p.human) toast(check.why ?? "That train cannot be upgraded.", "bad");
+      if (p === me) toast(check.why ?? "That train cannot be upgraded.", "bad");
       return false;
     }
     p.money -= check.price;
     setTrainLevel(train, trainLevel(train) + 1);
-    if (p.human) { sfx.play("build"); toast(`Train upgraded to level ${trainLevel(train)}.`, "good"); }
+    if (p === me) { sfx.play("build"); toast(`Train upgraded to level ${trainLevel(train)}.`, "good"); }
     syncWorld();
     rescoreNow();
     return true;
@@ -5769,21 +5778,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function truckBuyWhy(depotId: number, p: PlayerState = me) {
     const h = eco.harvesters.find((x) => x.id === depotId);
     const connected = !!h && h.platformId === undefined && roadRouteForHarvester(eco, h) !== null;
-    return truckBuyCheck(h, p.i + 1, connected, p.money, p.manager);
+    return truckBuyCheck(h, p.i + 1, connected, p.money, perkManagerOf(p));
   }
 
   function fleetBuyTruck(depotId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "truck", act: "buy", depot: depotId }); return true; }
     const check = truckBuyWhy(depotId, p);
     if (!check.ok) {
-      if (p.human) toast(check.why ?? "That truck cannot be bought.", "bad");
+      if (p === me) toast(check.why ?? "That truck cannot be bought.", "bad");
       return false;
     }
     const h = eco.harvesters.find((x) => x.id === depotId)!;
     p.money -= check.price;
     h.trucks = truckCountOf(h) + 1;
     trucksDirty = true;                 // replan: the new lorry joins the route
-    if (p.human) {
+    if (p === me) {
       sfx.play("build");
       toast(`Truck bought — this Depot now runs ${h.trucks} trucks.`, "good");
     }
@@ -5794,14 +5803,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function truckUpgradeWhy(depotId: number, p: PlayerState = me) {
     const h = eco.harvesters.find((x) => x.id === depotId);
     const connected = !!h && h.platformId === undefined && roadRouteForHarvester(eco, h) !== null;
-    return truckUpgradeCheck(h, p.i + 1, connected, p.money, p.manager);
+    return truckUpgradeCheck(h, p.i + 1, connected, p.money, perkManagerOf(p));
   }
 
   function fleetUpgradeTrucks(depotId: number, p: PlayerState = me): boolean {
     if (isGuest()) { net?.sendIntent("build", { do: "truck", act: "upgrade", depot: depotId }); return true; }
     const check = truckUpgradeWhy(depotId, p);
     if (!check.ok) {
-      if (p.human) toast(check.why ?? "That upgrade cannot be bought.", "bad");
+      if (p === me) toast(check.why ?? "That upgrade cannot be bought.", "bad");
       return false;
     }
     const h = eco.harvesters.find((x) => x.id === depotId)!;
@@ -5809,7 +5818,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     h.truckLevel = truckLevelOf(h) + 1;
     trucksDirty = true;                 // replan restamps every lorry's pace
     refreshTruckRates();
-    if (p.human) {
+    if (p === me) {
       sfx.play("build");
       toast(`Trucks upgraded - level ${h.truckLevel}, x${truckSpeedMultAt(h.truckLevel)} speed.`, "good");
     }
@@ -5821,14 +5830,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const h = eco.harvesters.find((x) => x.id === depotId);
     const why = truckSellRefusal(h, p.i + 1);
     if (why || !h) {
-      if (p.human) toast(why ?? "That truck cannot be sold.", "bad");
+      if (p === me) toast(why ?? "That truck cannot be sold.", "bad");
       return false;
     }
-    const refund = truckSellRefund(truckCountOf(h), p.manager);
+    const refund = truckSellRefund(truckCountOf(h), perkManagerOf(p));
     p.money += refund;
     h.trucks = truckCountOf(h) - 1;
     trucksDirty = true;
-    if (p.human) {
+    if (p === me) {
       sfx.play("demolish");
       toast(`Truck sold — $${refund} back.`, "info");
     }
@@ -6027,12 +6036,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     quarry.board.resetNeutral();
     quarry.board.setBias(CARGO_TO_GEM[cargo], TUNING.cargoBias);
     // PERK-1 (#600): Stamina starts the session with a bigger budget.
-    tuning = createTuningSession(depot.id, cargo, sessionMovesFor(me.manager));
+    tuning = createTuningSession(depot.id, cargo, sessionMovesFor(perkManagerOf(me)));
     // PERK-1: the session's perk uses — the buy and the reshuffle each reset
     // with the session, whatever the seat's manager carries.
-    const offer = buyMovesOffer(me.manager);
+    const offer = buyMovesOffer(perkManagerOf(me));
     sessionBuysLeft = offer ? offer.uses : 0;
-    sessionShufflesLeft = perksOf(me.manager).secondSight ? 1 : 0;
+    sessionShufflesLeft = perksOf(perkManagerOf(me)).secondSight ? 1 : 0;
     resetFinale();
     applySessionSabotageMoves();
     // The obstacles go on AFTER the fresh fill and BEFORE the plate opens:
@@ -6044,7 +6053,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // with a disco ball. Placed after the obstacles (the act walks around
     // them), on the same board the player will play; the spiral is pure and
     // deterministic, so the session's seed stays the seed.
-    if (perksOf(me.manager).startingSpecial === "disco") {
+    if (perksOf(perkManagerOf(me)).startingSpecial === "disco") {
       const cell = openingActCell(quarry.board.grid);
       const g = cell ? quarry.board.grid[cell.r]?.[cell.c] : undefined;
       if (g) {
@@ -6097,7 +6106,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * with the session's other spend.
    */
   function sessionBuyMoves(): boolean {
-    const offer = buyMovesOffer(me.manager);
+    const offer = buyMovesOffer(perkManagerOf(me));
     if (!tuning || !offer || sessionBuysLeft <= 0) return false;
     const gold = me.purse.gold ?? 0;
     if (gold < offer.gold) {
@@ -6120,7 +6129,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * the glow is always one move old at most.
    */
   function sessionHint(): boolean {
-    if (!tuning || !perksOf(me.manager).secondSight) return false;
+    if (!tuning || !perksOf(perkManagerOf(me)).secondSight) return false;
     const mv = quarry.board.bestMove();
     if (!mv) {
       toast("No move to point at — the board needs a reshuffle.", "info");
@@ -6136,7 +6145,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * Refused mid-cascade, like every other board input.
    */
   function sessionShuffle(): boolean {
-    if (!tuning || !perksOf(me.manager).secondSight || sessionShufflesLeft <= 0) return false;
+    if (!tuning || !perksOf(perkManagerOf(me)).secondSight || sessionShufflesLeft <= 0) return false;
     if (quarry.board.busy) return false;
     sessionShufflesLeft--;
     toast("The board reshuffles — one free cut per session.", "good");
@@ -6554,7 +6563,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // CAST-1: Kenji's perk — the session SCORES 10% more for his seat, so the
     // stars, the yield and the Gold all settle from one boosted number (the
     // results card shows it). Every other seat scores exactly as played.
-    const score = tuningScore(s.score, me.manager);
+    const score = tuningScore(s.score, perkManagerOf(me));
     const base: SessionSettlement = {
       id: ++settleSeq, kind: s.kind, abandon, played, reason, score,
       stars: abandon ? 0 : tuningStarsFor(score), coins: 0,
@@ -7121,10 +7130,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!t) return {};
       const lv = trainLevel(t);
       if (lv >= TRAIN_LEVELS.max) return { upgrade: { label: "Fully upgraded", why: "Fully upgraded." } };
-      const check = trainUpgradeCheck(t, me.i + 1, me.money, me.manager);
+      const check = trainUpgradeCheck(t, me.i + 1, me.money, perkManagerOf(me));
       const next = lv + 1;
       return { upgrade: {
-        label: `Upgrade $${trainUpgradePrice(lv, me.manager)} - x${TRAIN_LEVELS.speed[next - 1]} speed, ${TRAIN_LEVELS.wagons[next - 1]} wagons`,
+        label: `Upgrade $${trainUpgradePrice(lv, perkManagerOf(me))} - x${TRAIN_LEVELS.speed[next - 1]} speed, ${TRAIN_LEVELS.wagons[next - 1]} wagons`,
         why: check.why,
       } };
     }
@@ -7281,13 +7290,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       },
       buy: {
         label: "Buy truck",
-        price: `$${count >= FLEET.maxTrucks ? truckBuyPrice(count - 1, me.manager) : check.price}`,
+        price: `$${count >= FLEET.maxTrucks ? truckBuyPrice(count - 1, perkManagerOf(me)) : check.price}`,
         why: check.ok ? null : (check.why ?? "Cannot buy a truck."),
         onClick: () => { fleetBuyTruck(d.id, me); rerun(); },
       },
       sell: {
         label: "Sell truck",
-        refund: count > 1 ? `$${truckSellRefund(count, me.manager)} back` : "-",
+        refund: count > 1 ? `$${truckSellRefund(count, perkManagerOf(me))} back` : "-",
         why: sellWhy,
         onClick: () => { fleetSellTruck(d.id, me); rerun(); },
       },
@@ -7478,7 +7487,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         "not-flat": "A depot needs flat ground — its 2×2 lot must sit on one level.",
       };
       toast(message[plan.code ?? ""] ?? "Can't build there.", "bad");
-      if (p.human) flashAt(tx, ty, plan.why ? `Depot: ${plan.why}` : "Can't build here");
+      if (p === me) flashAt(tx, ty, plan.why ? `Depot: ${plan.why}` : "Can't build here");
       return false;
     }
     const h: Harvester = {
@@ -7492,7 +7501,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // session can always be closed in one click, so this is never a dead end.
     if (newLoop && tuning) {
       toast("Finish the tuning session first — one Depot is tuned at a time.", "bad");
-      if (p.human) flashAt(tx, ty, "Finish the tuning session first");
+      if (p === me) flashAt(tx, ty, "Finish the tuning session first");
       return false;
     }
     // PP-05: priced only now that the site is legal, and spent only when the
@@ -7517,7 +7526,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         `A ${price.type.name} needs rung ${need} of the depot tree — ${rungLabel(p.depotTier)}. Tune a Depot to open it.`,
         "bad",
       );
-      if (p.human) flashAt(tx, ty, `${price.type.name}: rung ${need} locked`);
+      if (p === me) flashAt(tx, ty, `${price.type.name}: rung ${need} locked`);
       return false;
     }
     // PERK-1 (#600): the Yard Deal — the Depot bill prices in its own class.
@@ -7530,12 +7539,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // BUILD-1 (#460): one currency story — the refusal quotes the $ the
       // build charges and how much is short, never a resource mix.
       toast(`Not enough money — a ${label} costs $${priceUsd}, ${moneyFix(priceUsd, p.money)}.`, "bad");
-      if (p.human) flashAt(tx, ty, `Not enough money — ${moneyFix(priceUsd, p.money)}`);
+      if (p === me) flashAt(tx, ty, `Not enough money — ${moneyFix(priceUsd, p.money)}`);
       return false;
     }
     if (!spendBuild(p, price.cost, "depot")) return false; // guard; the checks above hold
     p.freeDepots = price.freeLeft;
-    const firstDepot = p.human && !eco.harvesters.some((x) => x.owner === p.id);
+    const firstDepot = p === me && !eco.harvesters.some((x) => x.owner === p.id);
     // L4 (#218): under the new loop every Depot is BORN at the default yield
     // and is then tuned. A level is never absent, so a mid-session reload or a
     // depot the player never got round to tuning still ticks (and still
@@ -7553,10 +7562,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       kind: "harvester", harvesterId: h.id,
       money: priceUsd, freeDepotsSpent: price.free,   // PERK-1: refund what the perk price charged
     }, p);
-    if (p.human) sfx.play("build");      // SFX-01
+    if (p === me) sfx.play("build");      // SFX-01
     // VO-1: the opening depot is the player's line; a later claim is the rival's.
     if (firstDepot) voiceCue("player:first-depot");
-    else if (p.human && served.length && phase !== "setup-harvester") voiceCue("rival:industry-lost");
+    else if (p === me && served.length && phase !== "setup-harvester") voiceCue("rival:industry-lost");
     syncWorld();
     rescoreNow();
     // Gold Mine warning: the moment the PLAYER stands a Depot beside a Gold
@@ -7566,7 +7575,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the speech to cover his own skin, and the pool rotates so a second gold
     // depot hears a different version. Solo only: in a hosted game seat 1 is a
     // person, not Torvin.
-    if (p.human && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
+    if (p === me && isSolo() && served.some((ind) => ind.type === "gold_mine")) {
       // STORY-01: the same fine print, in the guide's voice, inside a contract.
       if (storyOn) playAdvisor("gold");
       else playRivalryScene(nextGoldMineScene());
@@ -7592,12 +7601,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function placePlant(tx: number, ty: number, p: PlayerState, rot = 0): boolean {
     const blocked = townBlockedFor(p, tx, ty);
     if (blocked) {
-      if (p.human) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
+      if (p === me) { toast(blocked, "bad"); flashAt(tx, ty, "Rival's town"); }
       return false;
     }
     const why = plantRefusal(grid, track, eco, tx, ty, rot);
     if (why !== null) {
-      if (p.human) {
+      if (p === me) {
         toast(PLANT_REFUSAL_TEXT[why], "bad");
         // The toast says the rule; the flash — one short line at the refused
         // spot — says where the thing the player aimed at actually goes.
@@ -7606,7 +7615,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return false;
     }
     if (!canPayBuild(p, PLANT_COST)) {
-      if (p.human) {
+      if (p === me) {
         toast(`Not enough money — a processing plant costs $${moneyCostOf(PLANT_COST)}.`, "bad");
         flashAt(tx, ty, `Plant costs ${plantCostLabel()}`);
       }
@@ -7626,10 +7635,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }, p);
     // SFX-01: the crate, then — because a plant is a Victory Point — the
     // star bell from `rescoreNow` a few lines below. Thunk, then chime.
-    if (p.human) sfx.play("build");
+    if (p === me) sfx.play("build");
     syncWorld();
     rescoreNow();
-    if (p.human) {
+    if (p === me) {
       const n = plantsOf(eco, p.id).length;
       toast(`Processing plant #${n} raised beside the town. Connect depots to it — they all feed the same board.`, "good");
     }
@@ -7673,8 +7682,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // The 1-second flash at the tile the gesture started from — the eye is
     // already there, and the price it was charged is what it wants to see.
     const [sx, sy] = plan.changes[0];
-    if (p.human) flashAt(sx, sy, `Levelled · $${plan.money}`, "good");
-    if (p.human) sfx.play("pave", { step: Math.min(6, plan.levels) });
+    if (p === me) flashAt(sx, sy, `Levelled · $${plan.money}`, "good");
+    if (p === me) sfx.play("pave", { step: Math.min(6, plan.levels) });
     rescoreNow();
     if (isMp() && !isGuest()) publishNet(performance.now(), true);
     return true;
@@ -7786,7 +7795,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // The first human track on the map retires the "connect your depot to
     // your Factory" guidance banner — the guidance is done, and a banner
     // over the map after the first road reads as a popup blocking the game.
-    if (p.human && res.built.length && !firstTrackBuilt) {
+    if (p === me && res.built.length && !firstTrackBuilt) {
       firstTrackBuilt = true;
       // …and mark the spot with the one line that says what just happened,
       // at the tile the drag ENDED on (the new end of the network).
@@ -7797,7 +7806,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // gravel dressed and rolled for a paved Road. The tile count rides along as
     // `step`, so a six-tile line gets two extra pats behind the first instead
     // of six identical knocks (and the cue's own 40 ms gap does the rest).
-    if (p.human && res.built.length) {
+    if (p === me && res.built.length) {
       sfx.play(kind === "road" ? "pave" : "place", { step: res.built.length });
     }
     // W1: the commit spends EXACTLY what the preview charged. The free
@@ -7821,7 +7830,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     rescoreNow();
     // TUT-03 (#422): the guide's "join Depot to Factory" step ends on the
     // drag, not on the button — the player laid the road themselves.
-    if (p.human && res.built.length) {
+    if (p === me && res.built.length) {
       // Both tiers are a ROAD to the guide: the lesson is "join the Depot to
       // the Factory", whichever tile the player reached for.
       const connected = !opts.tutorialSection || eco.harvesters.some((h) =>
@@ -7848,7 +7857,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (dd) {
       if (dd.owner !== p.id) {
         toast("That dam isn't yours.", "bad");
-        if (p.human) flashAt(tx, ty, "Not yours to remove");
+        if (p === me) flashAt(tx, ty, "Not yours to remove");
         return;
       }
       demolishDam(tx, ty, p);
@@ -7863,7 +7872,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rs) {
       if (rs.ownerId !== p.i + 1) {
         toast("That railway isn't yours.", "bad");
-        if (p.human) flashAt(tx, ty, "Not yours to remove");
+        if (p === me) flashAt(tx, ty, "Not yours to remove");
         return;
       }
       const cost = rs.kind === "platform" ? RAIL_COSTS.platform : rs.kind === "loop" ? RAIL_COSTS.loop : RAIL_COSTS.depot;
@@ -7871,7 +7880,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!gone && rs.kind === "loop") {
         // FLEET-2 (#596): a train is on it, or the trains sharing the line still need it.
         toast("Trains on this line still need the Passing Loop — sell a train or wait for it to clear.", "bad");
-        if (p.human) flashAt(tx, ty, "Trains need this loop");
+        if (p === me) flashAt(tx, ty, "Trains need this loop");
         return;
       }
       if (!gone) {
@@ -7884,7 +7893,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           based ? "A train is based here — sell it first." : "A train is standing there — send it home first.",
           "bad",
         );
-        if (p.human) flashAt(tx, ty, based ? "Train is based here" : "A train is on it");
+        if (p === me) flashAt(tx, ty, based ? "Train is based here" : "A train is on it");
         return;
       }
       // #142: demolition returns floor(50%) of the build price, and the
@@ -7896,7 +7905,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (Object.keys(refund).length) refundBuild(p, refund, 1, refundCls);   // ECON-1: money back (CAST-1: of what was paid)
 
       dropPlatformDepot(rs.id);
-      if (p.human) sfx.play("demolish");
+      if (p === me) sfx.play("demolish");
       // demolishStructure has already dropped any line that lost a platform —
       // and a depot can no longer come down under its train (that refusal is
       // the `based` branch above), so no train is ever deleted by demolition.
@@ -7910,24 +7919,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (hasRail(rail.rail, tx, ty)) {
       if (rail.rail.owner[tIdx(tx, ty)] !== p.i + 1) {
         toast("That rail isn't yours.", "bad");
-        if (p.human) flashAt(tx, ty, "Not yours to remove");
+        if (p === me) flashAt(tx, ty, "Not yours to remove");
         return;
       }
       if (rail.structures.some((s) => s.kind === "loop" && loopRun(s).some(([x, y]) => x === tx && y === ty))) {
         // FLEET-2 (#596): the loop stands on this run - take the loop down first.
         toast("A Passing Loop stands beside this rail — demolish the loop first.", "bad");
-        if (p.human) flashAt(tx, ty, "Loop on this rail");
+        if (p === me) flashAt(tx, ty, "Loop on this rail");
         return;
       }
       if (trainOccupies(rail, tx, ty)) {
         toast("A train is standing there — move the line first.", "bad");
-        if (p.human) flashAt(tx, ty, "A train is on it");
+        if (p === me) flashAt(tx, ty, "A train is on it");
         return;
       }
       demolishRail(rail, tx, ty);
       // A rail tile is 1 Stone, so floor(50%) is nothing — said out loud so
       // the refund line is never a mystery.
-      if (p.human) sfx.play("demolish", { gain: 0.6 });
+      if (p === me) sfx.play("demolish", { gain: 0.6 });
       noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld();
       rescoreNow();
@@ -7950,7 +7959,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (tuning?.depotId === removed.id) {
         closeTuningSession(false, "The tuned Depot was removed — tuning session closed.");
       }
-      if (p.human) sfx.play("demolish");   // SFX-01
+      if (p === me) sfx.play("demolish");   // SFX-01
       noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld(); rescoreNow();
       toast("Depot removed.", "info");
@@ -7963,11 +7972,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (pi >= 0) {
       if (plantsOf(eco, p.id).length <= 1) {
         toast("You can't demolish your only processing plant.", "bad");
-        if (p.human) flashAt(tx, ty, "Your last plant stays");
+        if (p === me) flashAt(tx, ty, "Your last plant stays");
         return;
       }
       eco.factories.splice(pi, 1);
-      if (p.human) sfx.play("demolish");   // SFX-01
+      if (p === me) sfx.play("demolish");   // SFX-01
       noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld(); rescoreNow();
       toast("Processing plant demolished.", "info");
@@ -7979,7 +7988,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (field) {
       clearedFields.add(field.id);
       stampFields();
-      if (p.human) sfx.play("demolish");
+      if (p === me) sfx.play("demolish");
       noteWorldBuild();      // BUILD-1 (#460): a demolish closes undo windows
       syncWorld(); rescoreNow();
       toast(field.sprite === "trees" ? "Trees felled — the ground is clear." : "Wheat field cleared.", "info");
@@ -8007,7 +8016,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           : "Nothing to demolish there.",
         "bad",
       );
-      if (p.human) flashAt(tx, ty, publicRoad ? "Public road — can't tear up" : "Nothing to demolish");
+      if (p === me) flashAt(tx, ty, publicRoad ? "Public road — can't tear up" : "Nothing to demolish");
       return;
     }
     // Demolition refunds. A paved Road pays nothing back: its price is
@@ -8017,7 +8026,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // not mint resources. Tearing it up is free re-routing.
     // SFX-01: timber coming apart — a little further away for a single tile
     // of track than for a whole building.
-    if (p.human) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
+    if (p === me) sfx.play("demolish", removedKind === "dirt" ? undefined : { gain: 0.8 });
     if (removedKind === "dirt") toast("Dirt Road cleared.", "info");
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = tx + dx, y = ty + dy;
@@ -8217,19 +8226,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // ── CAST-1: the managers at the Black Market (docs/CAST.md) ──────────────
   /** The Gold a sabotage card costs THIS seat (Dolores pays 10% more). */
   const blackGoldFor = (p: PlayerState, key: string): number =>
-    sabotageGold(SABOTAGE[key]?.gold ?? 0, p.manager);
+    sabotageGold(SABOTAGE[key]?.gold ?? 0, perkManagerOf(p));
   /** Security Forces for THIS seat: free for Dolores, +50% for Rafael. */
   const securityCostFor = (p: PlayerState): Purse =>
-    securityCost(SECURITY_ISO_COST as Partial<Record<Cargo, number>>, p.manager) as Purse;
+    securityCost(SECURITY_ISO_COST as Partial<Record<Cargo, number>>, perkManagerOf(p)) as Purse;
   /** Rafael's free cards left right now, on the match's play clock. */
-  const fixerLeftFor = (p: PlayerState): number => fixerLeft(p.fixer, p.manager, marketMs);
+  const fixerLeftFor = (p: PlayerState): number => fixerLeft(p.fixer, perkManagerOf(p), marketMs);
   /**
    * Pay for a sabotage card: one of Rafael's free cards when he has one, else
    * the seat's Gold. Returns an undo (the "nothing to hit" refund) or null
    * when the seat cannot pay — the toast has already said why.
    */
   const payBlackCard = (p: PlayerState, key: string): (() => void) | null => {
-    const free = spendFixer(p.fixer, p.manager, marketMs);
+    const free = spendFixer(p.fixer, perkManagerOf(p), marketMs);
     if (free) {
       const before = p.fixer;
       p.fixer = free;
@@ -8570,7 +8579,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (rankRuntime && !isGuest()) {
       rankRuntime.claimWin(wireIdOf(other), wireIdOf(p), (performance.now() - rankBootAt) / 1000);
     }
-    toast(`${p.name} has nothing left to sell — ${other.name} wins.`, other.human ? "good" : "bad");
+    toast(`${p.name} has nothing left to sell — ${other.name} wins.`, other === me ? "good" : "bad");
     presentEnding(null);
   }
 
@@ -8649,7 +8658,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ...battleOnboarding(),
       // PERK-1 (#600): the player's battle perks, seat 0; the AI rival's
       // seat carries no manager, so its seat is the shipped battle exactly.
-      perks: [battlePerksOf(me.manager), null],
+      perks: [battlePerksOf(perkManagerOf(me)), null],
       stake: stakeText,
       consequence: battleConsequence(stake),
       // B4 (#249): the rival fights its live skill's line — watchable.
@@ -9305,7 +9314,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // PERK-1 (#600): the perks pair follows duelContenders' seat order —
     // seat 0 is the host's seat here, seat 1 the guest's.
     const d = createDuel(seed, nextDuelRules ?? BATTLE_RULES, [players[0], players[1]], now,
-      undefined, [battlePerksOf(me.manager), battlePerksOf(rival.manager)]);
+      undefined, [battlePerksOf(perkManagerOf(me)), battlePerksOf(perkManagerOf(rival))]);
     nextDuelRules = null;
     duel = d;
     duelSettled = false;
@@ -9561,7 +9570,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // (duelContenders' seat order, from the guest's view).
     const g = isGuest();
     const d = duelFromWire(e, [players[0], players[1]], undefined,
-      [battlePerksOf(g ? rival.manager : me.manager), battlePerksOf(g ? me.manager : rival.manager)]);
+      [battlePerksOf(g ? perkManagerOf(rival) : perkManagerOf(me)), battlePerksOf(g ? perkManagerOf(me) : perkManagerOf(rival))]);
     const screen = openBattleScreen({
       ...battleOnboarding(),
       battle: d.battle,
@@ -9638,21 +9647,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (now < securityOf(defender.id)) {
         state.readyAt = marketMs + SESSION_SABOTAGE_COOLDOWN_MS;
         toast(`Security Forces turned ${SABOTAGE[key].name} away.`, "info");
-      } else if (returnToSenderOf(defender.manager) && !defender.sentBack) {
+      } else if (returnToSenderOf(perkManagerOf(defender)) && !defender.sentBack) {
         // PERK-1 (#600): Return to Sender — the match's first card played on
         // her is handed back to its sender (the flag rides the defender's
         // seat, and a card turned away by Security never spends it). The
         // sender's own next session chills instead; Heavy Hands still rides
         // the card — its bonus is the sender's to keep.
         defender.sentBack = true;
-        armSessionSabotage(state, state, key, marketMs, sabotageTilesBonus(actor.manager));
+        armSessionSabotage(state, state, key, marketMs, sabotageTilesBonus(perkManagerOf(actor)));
         toast(
           `${escText(defender.name)} sent the ${SABOTAGE[key].name} back to ${escText(actor.name)} — ${escText(actor.name)}'s next tuning session is chilled instead.`,
           defender === me ? "good" : "bad",
         );
       } else {
         // PERK-1: Heavy Hands — the sender's frost lands one tile extra.
-        armSessionSabotage(state, defender.blackMarket ??= readBlackMarket(), key, marketMs, sabotageTilesBonus(actor.manager));
+        armSessionSabotage(state, defender.blackMarket ??= readBlackMarket(), key, marketMs, sabotageTilesBonus(perkManagerOf(actor)));
         toast(`${SABOTAGE[key].name} set against ${escText(defender.name)} — affects newly opened Depot and city tuning sessions.`, defender === me ? "bad" : "good");
       }
       if (isMp()) publishNet(now, true);
@@ -9679,7 +9688,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // on her auto-routes to the SENDER'S busiest industry instead (and a
       // card turned away by Security, like the session cards, never spends
       // the bounce).
-      const bounced = returnToSenderOf(defender.manager) && !defender.sentBack;
+      const bounced = returnToSenderOf(perkManagerOf(defender)) && !defender.sentBack;
       if (bounced) defender.sentBack = true;
       const target = pickBlockadeTarget(eco, bounced ? actor.id : defender.id, now);
       if (!target) {
@@ -9738,7 +9747,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // own costliest public road (the same auto-target the rival's raid
       // uses), and never needs a click.
       const defender = otherSeat(actor);
-      if (returnToSenderOf(defender.manager) && !defender.sentBack) {
+      if (returnToSenderOf(perkManagerOf(defender)) && !defender.sentBack) {
         defender.sentBack = true;
         const tile = pickProtestTarget(actor.id, now);
         if (tile) {
@@ -10498,7 +10507,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // PERK-1 (#600): Return to Sender — the match's first card played on
     // Dolores bounces onto the RIVAL'S OWN route (the hire is paid either
     // way, and a card turned away by Security above never spent the bounce).
-    if (returnToSenderOf(me.manager) && !me.sentBack) {
+    if (returnToSenderOf(perkManagerOf(me)) && !me.sentBack) {
       me.sentBack = true;
       const own = pickProtestTarget(rival.id, now);
       if (own) {
@@ -10694,7 +10703,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // Dolores bounces onto the RIVAL'S OWN busiest industry (the hire above
     // is already spent, and a card Security turned away never spent the
     // bounce).
-    if (returnToSenderOf(me.manager) && !me.sentBack) {
+    if (returnToSenderOf(perkManagerOf(me)) && !me.sentBack) {
       me.sentBack = true;
       const own = pickBlockadeTarget(eco, rival.id, now);
       if (own) {
@@ -10836,7 +10845,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         connected: res.serviced && roadRouteForHarvester(eco, h) !== null,
       };
     });
-    const pick = planRivalTruck(cands, rival.money, (n) => truckBuyPrice(n, rival.manager), BUILD_COSTS_MONEY.depot);
+    const pick = planRivalTruck(cands, rival.money, (n) => truckBuyPrice(n, perkManagerOf(rival)), BUILD_COSTS_MONEY.depot);
     return pick !== null && fleetBuyTruck(pick, rival);
   }
 
@@ -10857,14 +10866,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         connected: res.serviced && roadRouteForHarvester(eco, h) !== null,
       };
     });
-    const pick = planRivalTruckUpgrade(cands, rival.money, (l) => truckUpgradePrice(l, rival.manager), BUILD_COSTS_MONEY.depot);
+    const pick = planRivalTruckUpgrade(cands, rival.money, (l) => truckUpgradePrice(l, perkManagerOf(rival)), BUILD_COSTS_MONEY.depot);
     return pick !== null && fleetUpgradeTrucks(pick, rival);
   }
 
   /** FLEET-4 (#598): the rival upgrades its main train when a Depot's worth is left over. */
   function rivalTrainStep(): boolean {
     if (!newLoop) return false;
-    const id = planRivalTrainUpgrade(rail.trains, rival.i + 1, rival.money, rival.manager, BUILD_COSTS_MONEY.depot);
+    const id = planRivalTrainUpgrade(rail.trains, rival.i + 1, rival.money, perkManagerOf(rival), BUILD_COSTS_MONEY.depot);
     return id !== null && railUpgrade(id, rival);
   }
 
@@ -12473,7 +12482,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // on the host's Dolores is returned to the guest at the door: the
           // crowd auto-places on the GUEST'S OWN costliest public road.
           const defender = otherSeat(p);
-          if (returnToSenderOf(defender.manager) && !defender.sentBack) {
+          if (returnToSenderOf(perkManagerOf(defender)) && !defender.sentBack) {
             defender.sentBack = true;
             const tile = pickProtestTarget(p.id, placeNow);
             if (tile) {
@@ -12601,6 +12610,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             : (entry.slot === 0 ? players[1] : players[0]);
           if (entry.username) local.name = entry.username;
         }
+        // MP-MGR: a seated human guest is a HUMAN seat (it was left `false`,
+        // which made the host ignore the guest's manager intent). An
+        // AI-filled room (`aiOpponent`) keeps `false` and the machine.
+        if (!aiOpponent && info.roster.length >= 2) players[1].human = true;
         if (info.role !== roleHint) {
           toast(info.role === "host"
             ? "You are hosting this match."
@@ -13333,7 +13346,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // AI-04: the line is the difficulty's, so the tooltip's "of X★" and
       // "Y★ to win" agree with the win check that uses the same reader.
       const line = winTarget();
-      const key = `${netVersion}:${total}:${line}:${p.name}:${p.human}`;
+      const key = `${netVersion}:${total}:${line}:${p.name}:${(p === me)}`;
       const hit = vpTipCache.get(p.id);
       if (hit && hit.key === key) return hit.tip;
       const b = victoryBreakdown(eco, p.id, railPlatforms(), loopScoring());
@@ -13353,7 +13366,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           `Processing plants: ${b.plants + 1} (opening plant is free; ${b.plants} × 1★ = ${fmtVp(b.plantVp)}★)`,
         ];
       const tip = [
-        `${p.name}${p.human ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
+        `${p.name}${p === me ? " (you)" : ""} — ${fmtVp(total)}★ of ${line}★`,
         ...rows,
         `${fmtVp(Math.max(0, line - total))}★ to win`,
       ].join("\n");
@@ -13885,7 +13898,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
     ui.paint({
       players: players.map((p) => ({
-        id: p.id, name: p.name, colour: p.colour, vp: vpFor(score, p.id), human: p.human,
+        id: p.id, name: p.name, colour: p.colour, vp: vpFor(score, p.id), human: p === me,
         vpTip: vpTooltip(p),
         // CAST-1: each seat's face — the manager, or Cornelius Graves.
         face: seatFace(p),
@@ -14007,8 +14020,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         redTapeSeconds: Math.ceil(Math.max(0, (me.blackMarket?.redTapeUntil ?? 0) - marketMs) / 1000),
         gold: Object.fromEntries(Object.keys(SABOTAGE).map((k) => [k, blackGoldFor(me, k)])),
         security: securityCostFor(me),
-        fixer: perksOf(me.manager).freeBlack > 0
-          ? { left: fixerLeftFor(me), max: perksOf(me.manager).freeBlack, refillMs: fixerRefillIn(marketMs) }
+        fixer: perksOf(perkManagerOf(me)).freeBlack > 0
+          ? { left: fixerLeftFor(me), max: perksOf(perkManagerOf(me)).freeBlack, refillMs: fixerRefillIn(marketMs) }
           : undefined,
       },
       // NAMES: the top-bar Names button paints its pressed state from this.
@@ -14044,10 +14057,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               // PERK-1 (#600): the seat's session keys, as the plate prints
               // them — undefined (the key absent) when the seat carries no
               // such perk, so a null manager opens the shipped plate exactly.
-              ...(buyMovesOffer(me.manager) && sessionBuysLeft > 0
-                ? { buyGold: buyMovesOffer(me.manager)!.gold, buysLeft: sessionBuysLeft }
+              ...(buyMovesOffer(perkManagerOf(me)) && sessionBuysLeft > 0
+                ? { buyGold: buyMovesOffer(perkManagerOf(me))!.gold, buysLeft: sessionBuysLeft }
                 : {}),
-              ...(perksOf(me.manager).secondSight
+              ...(perksOf(perkManagerOf(me)).secondSight
                 ? { hintOk: true, shufflesLeft: sessionShufflesLeft }
                 : {}),
             }
@@ -16180,11 +16193,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ownerId === me.i + 1 ? me : ownerId === rival.i + 1 ? rival : null;
   const truckSpeedForOwner = (ownerId: number): number => {
     const p = seatForOwner(ownerId);
-    return p ? truckSpeedOf(p.manager) : 1;
+    return p ? truckSpeedOf(perkManagerOf(p)) : 1;
   };
   const trainSpeedForOwner = (ownerId: number): number => {
     const p = seatForOwner(ownerId);
-    return p ? trainSpeedOf(p.manager) : 1;
+    return p ? trainSpeedOf(perkManagerOf(p)) : 1;
   };
 
   /** Plan the depot lorries, or the empty list when the debug gate is off. */
@@ -17163,7 +17176,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     get players() {
       return players.map((p) => ({
-        i: p.i, id: p.id, name: p.name, human: p.human,
+        i: p.i, id: p.id, name: p.name, human: p.human, feedsLocal: p === me, manager: p.manager, perkManager: perkManagerOf(p),
         purse: { ...p.purse }, vp: vpFor(score, p.id),
         // L5/L16: the seat's place in the tree and the city ladder, and the
         // storage cap that ladder implies — the numbers the wire and the save
@@ -17287,9 +17300,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
          * and Second Sight's reshuffles. Absent when the seat carries no
          * such perk (null manager opens the shipped plate exactly).
          */
-        buyGold: buyMovesOffer(me.manager)?.gold,
+        buyGold: buyMovesOffer(perkManagerOf(me))?.gold,
         buysLeft: sessionBuysLeft,
-        hintOk: perksOf(me.manager).secondSight,
+        hintOk: perksOf(perkManagerOf(me)).secondSight,
         shufflesLeft: sessionShufflesLeft,
       };
     },

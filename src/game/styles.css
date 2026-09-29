@@ -6691,3 +6691,15 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .sabotage-dismiss-btn {
   padding: 5px 8px; font-size: 11px;
 }
+
+/* MP-MGR: the manager on a lobby seat row, with its Change link and inline list */
+.seat { flex-wrap: wrap; }
+.seat-manager { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin: 0 8px; }
+.seat-manager img { width: 20px; height: 20px; object-fit: cover; border-radius: 50%; }
+.seat-change {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 700; color: #e8710a; text-decoration: underline;
+}
+.seat-change:hover { color: #c25c00; }
+.seat-picker { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 13px; }
+.seat-picker .ms-preset { font-size: 13px; }
