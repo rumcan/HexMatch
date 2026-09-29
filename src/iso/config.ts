@@ -246,11 +246,13 @@ export interface TuningStarRow {
  * on the same table.
  */
 export const TUNING_STARS: readonly TuningStarRow[] = [
+  // Owner (2026-09-29): 5★ at 2000 — even bars at 500, 1000, 1500 and 2000
+  // points (curve × targetScore = the score).
   { stars: 1, curve: 0, label: "Tuned" },
-  { stars: 2, curve: 7.5, label: "Well tuned" },
-  { stars: 3, curve: 19.8, label: "Precision" },
-  { stars: 4, curve: 36, label: "Overdrive" },
-  { stars: 5, curve: 41, label: "Legendary" },
+  { stars: 2, curve: 500 / 60, label: "Well tuned" },
+  { stars: 3, curve: 1000 / 60, label: "Precision" },
+  { stars: 4, curve: 1500 / 60, label: "Overdrive" },
+  { stars: 5, curve: 2000 / 60, label: "Legendary" },
 ];
 
 // ── L6 (#220): difficulty = decay, not whether match-3 exists ─────────────

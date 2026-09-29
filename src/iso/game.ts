@@ -297,7 +297,7 @@ import {
   rivalTuningScore, settleTuningYield,
   sessionMovesFor, sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
-   tuningStarLabel, tuningStarScores, tuningStarsFor, tuningYieldFor, tuningGoldFor,
+   tuningStarLabel, tuningStarScores, tuningStarsFor, tuningGoldFor, rivalYieldForShare,
   TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningOutcome, type TuningSession, type TuningStars,
 } from "./tuning";
 import {
@@ -7067,7 +7067,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (h.owner !== rival.id || h.yield !== undefined) continue;
       const tier = depotTier(h, comp);
       const score = sabotagedScore(rivalTuningScore(key, 0, rules, tier), rival.blackMarket, marketMs);
-      h.yield = Math.min(depotYieldCap(h.level), tuningYieldFor(score));
+      h.yield = rivalYieldForShare(score / TUNING.targetScore, depotYieldCap(h.level));
       tuned.add(h.id);
       // L14 (#229): the tier the session settled on, stamped exactly as a
       // played session stamps it (`settleSession` above). Without it the L6
@@ -13559,7 +13559,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               // percentage).
               yield: tuning.kind === "town"
                 ? townBonusFor(TOWN_UPGRADES[Math.min(me.townLevel, TOWN_UPGRADES.length - 1)]?.bonus ?? 0, tuning.score)
-                : tuningSessionYield(tuning, difficultyRules().minYield),
+                : tuningSessionYield(tuning, difficultyRules().minYield, depotYieldCap(eco.harvesters.find((hh) => hh.id === tuning!.depotId)?.level)),
               abandonYield: tuning.kind === "town"
                 ? TUNING_ABANDON_YIELD
                 : abandonYieldFor(difficultyRules()),
@@ -16758,7 +16758,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         score: tuning.score,
         yield: town
           ? townBonusFor(TOWN_UPGRADES[Math.min(me.townLevel, TOWN_UPGRADES.length - 1)]?.bonus ?? 0, tuning.score)
-          : tuningSessionYield(tuning, rules.minYield),
+          : tuningSessionYield(tuning, rules.minYield, depotYieldCap(eco.harvesters.find((hh) => hh.id === tuning!.depotId)?.level)),
         yieldFloor: rules.minYield,
         abandonYield: town ? TUNING_ABANDON_YIELD : abandonYieldFor(rules),
         /**

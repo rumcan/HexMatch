@@ -16,10 +16,11 @@ import {
 } from "../../src/match3";
 
 describe("MATCH-2 — the 5★ scale", () => {
-  it("has five rising rows, read off the yield curve", () => {
+  // Owner (2026-09-29): "2000 should be 5 stars" — even bars every 250.
+  it("has five rising rows, 5★ at 2000", () => {
     expect(TUNING_STARS.map((r) => r.stars)).toEqual([1, 2, 3, 4, 5]);
     for (let i = 1; i < TUNING_STARS.length; i++) expect(TUNING_STARS[i].curve).toBeGreaterThan(TUNING_STARS[i - 1].curve);
-    expect(tuningStarScores()).toEqual([1, 450, 1188, 2160, 2460]);
+    expect(tuningStarScores()).toEqual([1, 500, 1000, 1500, 2000]);
   });
 
   it("rates a score by the highest bar it reaches", () => {
@@ -27,35 +28,34 @@ describe("MATCH-2 — the 5★ scale", () => {
     expect(tuningStarsFor(-3)).toBe(0);
     expect(tuningStarsFor(NaN)).toBe(0);
     expect(tuningStarsFor(1)).toBe(1);
-    expect(tuningStarsFor(449)).toBe(1);
-    expect(tuningStarsFor(450)).toBe(2);
-    expect(tuningStarsFor(1187)).toBe(2);
-    expect(tuningStarsFor(1188)).toBe(3);
-    expect(tuningStarsFor(2159)).toBe(3);
-    expect(tuningStarsFor(2160)).toBe(4);
-    expect(tuningStarsFor(2459)).toBe(4);
-    expect(tuningStarsFor(2460)).toBe(5);
+    expect(tuningStarsFor(499)).toBe(1);
+    expect(tuningStarsFor(500)).toBe(2);
+    expect(tuningStarsFor(999)).toBe(2);
+    expect(tuningStarsFor(1000)).toBe(3);
+    expect(tuningStarsFor(1499)).toBe(3);
+    expect(tuningStarsFor(1500)).toBe(4);
+    expect(tuningStarsFor(1999)).toBe(4);
+    expect(tuningStarsFor(2000)).toBe(5);
     expect(tuningStarsFor(9999)).toBe(5);
   });
 
-  it("is harder than #300's table: the old ★★★ (score 60) is ★ now, ★★ needs 450", () => {
-    expect(tuningStarsFor(60)).toBe(1);
-    expect(tuningStarsFor(30)).toBe(1);
-  });
-
-  it("leaves the yield curve itself untouched (BAL-1's numbers)", () => {
+  // Owner (2026-09-29): the yield IS the star rating — +0.2 a star on a
+  // level-1 Depot (cap ×2): 2★ ×1.4, 5★ ×2.0; a higher cap stretches the steps.
+  it("pays the yield by the star, up to the Depot's cap", () => {
     expect(tuningYieldFor(0)).toBe(1);
-    expect(tuningYieldFor(30)).toBe(1.75);
-    expect(tuningYieldFor(TUNING.targetScore)).toBe(TUNING.maxYield);
-    expect(tuningYieldFor(120)).toBe(4);
-    // the game's curve (src/iso/tuning.ts): the climb runs floor → maxYield at
-    // the target, so a raised floor makes it shallower (Easy's ×1.5 floor)
-    expect(tuningYieldFor(30, 1.5)).toBe(2);
-    // the tiers are points on that same line
+    expect(tuningYieldFor(1)).toBe(1.2);
+    expect(tuningYieldFor(500)).toBe(1.4);
+    expect(tuningYieldFor(1000)).toBe(1.6);
+    expect(tuningYieldFor(1500)).toBe(1.8);
+    expect(tuningYieldFor(2000)).toBe(2);
+    expect(tuningYieldFor(5000)).toBe(2);
+    expect(tuningYieldFor(2000, 1, 4)).toBe(4);
+    expect(tuningYieldFor(500, 1, 4)).toBe(2.2);
+    // a raised floor (Easy ×1.5) is still the minimum
+    expect(tuningYieldFor(1, 1.5)).toBe(1.5);
     const tiers = starTierYields(1);
-    expect(tiers.map((t) => t.score)).toEqual([1, 450, 1188, 2160, 2460]);
-    for (const t of tiers) expect(t.yield).toBe(tuningYieldFor(t.score, 1));
-    expect(starTierYields(1.5)[1].yield).toBe(9);
+    expect(tiers.map((t) => t.score)).toEqual([1, 500, 1000, 1500, 2000]);
+    expect(tiers.map((t) => t.yield)).toEqual([1.2, 1.4, 1.6, 1.8, 2]);
   });
 
   it("names every tier and counts the distance to the next", () => {
@@ -63,8 +63,8 @@ describe("MATCH-2 — the 5★ scale", () => {
     expect(tuningStarLabel(5)).toBe("Legendary");
     expect(tuningStarLabel(0)).toBe("");
     expect(scoreToNextStar(0)).toBe(1);
-    expect(scoreToNextStar(40)).toBe(410);
-    expect(scoreToNextStar(2460)).toBe(0);
+    expect(scoreToNextStar(40)).toBe(460);
+    expect(scoreToNextStar(2000)).toBe(0);
   });
 
   it("prints the depot card's glyphs on the 5-scale", () => {

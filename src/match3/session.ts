@@ -102,11 +102,11 @@ export function recordTuningReward(s: TuningSession, kind: RewardKind): void {
 }
 
 export const tuningSessionStars = (s: TuningSession): TuningStars => tuningStarsFor(s.score);
-export const tuningSessionYield = (s: TuningSession, floor: number = TUNING.minYield): number => tuningYieldFor(s.score, floor);
+export const tuningSessionYield = (s: TuningSession, floor: number = TUNING.minYield, cap?: number): number => tuningYieldFor(s.score, floor, cap);
 
 export function settleTuningYield(prev: number | undefined, score: number, rules: DifficultyRules, opts: { abandon?: boolean; cap?: number } = {}): number {
   const base = prev ?? rules.minYield;
-  let next = opts.abandon ? clampYield(rules.minYield) : tuningYieldFor(score, rules.minYield);
+  let next = opts.abandon ? clampYield(rules.minYield) : tuningYieldFor(score, rules.minYield, opts.cap);
   if (opts.cap !== undefined) next = Math.min(next, opts.cap);
   return roundYield(rules.yieldNeverDrops ? Math.max(base, next) : next);
 }
@@ -127,7 +127,7 @@ export interface TuningOutcome {
 export function depotSessionOutcome(score: number, prev: number | undefined, rules: DifficultyRules, opts: { cap?: number; abandon?: boolean } = {}): TuningOutcome {
   const abandon = opts.abandon === true;
   const s = Number.isFinite(score) && score > 0 ? score : 0;
-  const raw = abandon ? clampYield(rules.minYield) : tuningYieldFor(s, rules.minYield);
+  const raw = abandon ? clampYield(rules.minYield) : tuningYieldFor(s, rules.minYield, opts.cap);
   const set = settleTuningYield(prev, s, rules, { abandon, cap: opts.cap });
   const earned = roundYield(opts.cap !== undefined ? Math.min(raw, opts.cap) : raw);
   return {
