@@ -72,6 +72,10 @@ import {
   type RealtimeRoomSummary,
   type ServerPlayer,
 } from "../../src/net/transport";
+import { MP_PIN, tryMultiplayerPin } from "../../src/ui/mp-gate";
+// The Multiplayer tab hides behind a PIN (owner, 2026-09-29): these tests
+// exercise the multiplayer flows themselves, so the device is unlocked.
+beforeEach(() => { tryMultiplayerPin(MP_PIN); });
 
 // ── a fake client room ────────────────────────────────────────────────────
 

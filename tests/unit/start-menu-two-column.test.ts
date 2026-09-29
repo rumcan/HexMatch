@@ -37,6 +37,10 @@ vi.mock("../../src/net/transport", async (importOriginal) => {
 });
 
 import StartScreen from "../../src/ui/StartScreen";
+import { MP_PIN, tryMultiplayerPin } from "../../src/ui/mp-gate";
+// The Multiplayer tab hides behind a PIN (owner, 2026-09-29): these tests
+// exercise the multiplayer flows themselves, so the device is unlocked.
+beforeEach(() => { tryMultiplayerPin(MP_PIN); });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const stylesCss = () =>
