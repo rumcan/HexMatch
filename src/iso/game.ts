@@ -10263,16 +10263,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         for (let k = 0; k < route.length && ok; k++) {
           const [x, y] = route[k];
           if (!hasTrack(track, "road", x, y)) { ok = false; break; }
-          if (k > 0 && heightAt(grid, x, y) !== heightAt(grid, route[k - 1][0], route[k - 1][1])) { ok = false; break; }
           const c = tierTileCost(track, tiers[k] === ROAD_TIER.ramp ? "ramp" : "highway", x, y);
           if (Object.keys(c).length) { anyLow = true; cost = addCost(cost, c); }
         }
         if (!ok || !anyLow) continue;
         if (!canPayBuild(rival, addCost(cost, cost))) continue;
         if (!spendBuild(rival, cost)) continue;
-        // ROADS-3 (#394): a Highway meets roads only through Ramps, so every
-        // route tile where one of the rival's other roads branches off becomes
-        // a RAMP (it links to the highway either side AND to the branch).
+        // Any road joins a Highway directly now (owner, 2026-09-29), so branch
+        // tiles stay Highway; stored Ramps and Overpasses are preserved.
         for (const [k, [x, y]] of route.entries()) {
           const tier = tiers[k];
           if (!Object.keys(tierTileCost(track, tier === ROAD_TIER.ramp ? "ramp" : "highway", x, y)).length) continue;
