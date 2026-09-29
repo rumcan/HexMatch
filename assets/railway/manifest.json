@@ -25,11 +25,11 @@
       "name": "platform_ne",
       "kind": "platform",
       "view": "ne",
-      "w": 146,
-      "h": 102,
+      "w": 160,
+      "h": 104,
       "anchor": [
-        113,
-        99
+        128,
+        100
       ],
       "footprint": [
         4,
@@ -37,11 +37,11 @@
       ],
       "moving": false,
       "box2x": [
-        292,
-        204
+        320,
+        208
       ],
       "alpha": {
-        "coverage": 0.2996,
+        "coverage": 0.2834,
         "corners": [
           0,
           0,
@@ -49,17 +49,17 @@
           0
         ]
       },
-      "note": "platform ne; owner art (source/train-src/platform.png, mirrored), squared to 2:1 by tools/railway/cut_platform.py."
+      "note": "platform ne; owner art (source/platform_1x4@2x.png, mirrored), squared to 2:1 by tools/railway/cut_platform.py."
     },
     "platform_se": {
       "name": "platform_se",
       "kind": "platform",
       "view": "se",
-      "w": 146,
-      "h": 94,
+      "w": 160,
+      "h": 102,
       "anchor": [
-        17,
-        91
+        30,
+        100
       ],
       "footprint": [
         1,
@@ -67,11 +67,11 @@
       ],
       "moving": false,
       "box2x": [
-        292,
-        188
+        320,
+        204
       ],
       "alpha": {
-        "coverage": 0.3251,
+        "coverage": 0.289,
         "corners": [
           0,
           0,
@@ -79,17 +79,17 @@
           0
         ]
       },
-      "note": "platform se; owner art (source/train-src/platform.png), squared to 2:1 by tools/railway/cut_platform.py."
+      "note": "platform se; owner art (source/platform_1x4@2x.png), squared to 2:1 by tools/railway/cut_platform.py."
     },
     "platform_sw": {
       "name": "platform_sw",
       "kind": "platform",
       "view": "sw",
-      "w": 146,
-      "h": 94,
+      "w": 160,
+      "h": 102,
       "anchor": [
-        128,
-        91
+        129,
+        100
       ],
       "footprint": [
         4,
@@ -97,11 +97,11 @@
       ],
       "moving": false,
       "box2x": [
-        292,
-        188
+        320,
+        204
       ],
       "alpha": {
-        "coverage": 0.3251,
+        "coverage": 0.289,
         "corners": [
           0,
           0,
@@ -109,17 +109,17 @@
           0
         ]
       },
-      "note": "platform sw; owner art (source/train-src/platform.png, mirrored), squared to 2:1 by tools/railway/cut_platform.py."
+      "note": "platform sw; owner art (source/platform_1x4@2x.png, mirrored), squared to 2:1 by tools/railway/cut_platform.py."
     },
     "platform_nw": {
       "name": "platform_nw",
       "kind": "platform",
       "view": "nw",
-      "w": 146,
-      "h": 102,
+      "w": 160,
+      "h": 104,
       "anchor": [
         32,
-        99
+        100
       ],
       "footprint": [
         1,
@@ -127,11 +127,11 @@
       ],
       "moving": false,
       "box2x": [
-        292,
-        204
+        320,
+        208
       ],
       "alpha": {
-        "coverage": 0.2996,
+        "coverage": 0.2834,
         "corners": [
           0,
           0,
@@ -139,7 +139,7 @@
           0
         ]
       },
-      "note": "platform nw; owner art (source/train-src/platform.png), squared to 2:1 by tools/railway/cut_platform.py."
+      "note": "platform nw; owner art (source/platform_1x4@2x.png), squared to 2:1 by tools/railway/cut_platform.py."
     },
     "train-depot_ne": {
       "name": "train-depot_ne",
