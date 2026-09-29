@@ -4039,11 +4039,12 @@ export function structureSprites(s: RailStructure, atlas?: RailSpriteSource): Gh
     return atlas && !atlas.has(loopSprite(s.view)) ? [] : [{ sprite: loopSprite(s.view), tx: s.tx, ty: s.ty }];
   }
   const lanes = stationLanes(s);
-  // Owner art (2026-09-29): a one-lane station is the owner's four-tile
-  // platform drawing (goods shed, water crane, signal, lamps) — one sprite.
-  // A station grown to 2-3 lanes keeps the RAIL-6 warehouse + lane slabs.
-  if (lanes.length === 1 && (!atlas || atlas.has(platformSprite(s.view)))) {
-    return [{ sprite: platformSprite(s.view), tx: s.tx, ty: s.ty }];
+  // Owner art (2026-09-29): every four-tile lane is the owner's platform
+  // drawing (goods shed, water crane, signal, lamps), one sprite per lane at
+  // the lane's own origin — "as soon as I added a second lane the graphics
+  // changed to the old graphics". Old three-tile lanes keep the RAIL-6 slabs.
+  if (lanes.every((l) => l.len === 4) && (!atlas || lanes.every((l) => atlas.has(platformSprite(l.view))))) {
+    return lanes.map((l) => ({ sprite: platformSprite(l.view), tx: l.tx, ty: l.ty }));
   }
   const tier = stationWarehouseTier(lanes.length);
   if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {

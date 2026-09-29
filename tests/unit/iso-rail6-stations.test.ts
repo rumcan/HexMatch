@@ -216,11 +216,11 @@ describe("RAIL-6 the station and its lanes", () => {
     // Warehouse on the head tile of lane 0, then per lane: the concrete slabs
     // (the first lane's head tile is the warehouse's own ground, and the cap
     // finishes every lane) — back to front, in map order.
+    // Owner art (2026-09-29): four-tile lanes each draw the owner's platform
+    // drawing at the lane's own origin (the warehouse/slab set is for old
+    // three-tile lanes).
     expect(railStructureItems(w.state).map((i) => [i.sprite, i.tx, i.ty])).toEqual([
-      ["station_wh_2", 40, 20],
-      ["station_lane_sw", 41, 20], ["station_lane_sw", 42, 20], ["station_cap", 43, 20],
-      ["station_lane_sw", 40, 22], ["station_lane_sw", 41, 22], ["station_lane_sw", 42, 22],
-      ["station_cap", 43, 22],
+      ["platform_sw", 40, 20], ["platform_sw", 40, 22],
     ]);
     // An atlas without the station art falls back to the legacy platform sprite.
     expect(railStructureItems(w.state, { has: () => false }).map((i) => [i.sprite, i.tx, i.ty]))
