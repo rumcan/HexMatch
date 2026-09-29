@@ -20,15 +20,18 @@ import json, os
 from PIL import Image, ImageOps
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "railway")
-SRC = os.path.join(ROOT, "source", "train-src", "platform.png")
+# 2026-09-29: the owner's four-tile drawing (goods shed, water crane, signal).
+# The first drawing was source/train-src/platform.png.
+SRC = os.path.join(ROOT, "source", "platform_1x4@2x.png")
 HW, HH = 32, 16          # half a tile at 1x
 Z = 2                    # master resolution
 LEN = 4                  # tiles along the platform (src/iso/rail.ts PLATFORM_LEN)
 
 # Base (ground-level plinth) corners measured on the source drawing.
-FRONT_NEAR = (250.0, 850.0)   # brick-face side, stairs end
-BACK_NEAR = (55.0, 745.0)     # far side, stairs end
-FRONT_FAR = (1700.0, 320.0)   # brick-face side, far end
+# (first drawing: FRONT_NEAR (250, 850), BACK_NEAR (55, 745), FRONT_FAR (1700, 320))
+FRONT_NEAR = (288.0, 1021.0)  # brick-face side, shed end (the bottom vertex)
+BACK_NEAR = (19.0, 835.0)     # far side, shed end (the shed pad's back corner)
+FRONT_FAR = (1420.0, 478.0)   # brick-face side, far end (the lamp end)
 
 # Solve y' = C*x + D*y so both base edges get the game's 0.5 slope.
 lx, ly = FRONT_FAR[0] - FRONT_NEAR[0], FRONT_FAR[1] - FRONT_NEAR[1]   # long edge
@@ -104,7 +107,7 @@ for view in ("se", "nw", "sw", "ne"):
     d["anchor"] = [ax2 // 2, ay2 // 2]
     d["box2x"] = [w2, h2]
     d["footprint"] = [1, LEN] if view in ("se", "nw") else [LEN, 1]
-    d["note"] = (f"platform {view}; owner art (source/train-src/platform.png"
+    d["note"] = (f"platform {view}; owner art (source/platform_1x4@2x.png"
                  f"{', mirrored' if mirror else ''}), squared to 2:1 by tools/railway/cut_platform.py.")
     al = canvas.split()[3]
     d["alpha"] = {"coverage": round(sum(1 for p in (al.get_flattened_data() if hasattr(al, "get_flattened_data") else al.getdata()) if p > 16) / (w2 * h2), 4),
