@@ -125,7 +125,7 @@ import {
   type LevelPlan,
 } from "./level-ground";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
-import { IsoRenderer, composeRouteOverlay, paintClaimFlags, type ClaimFlagView, type World, type RouteOverlayPath } from "./renderer";
+import { IsoRenderer, composeRouteOverlay, paintClaimFlags, paintLaneInvite, type ClaimFlagView, type LaneInviteView, type World, type RouteOverlayPath } from "./renderer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
 import { BRIDGE_REFUSAL_TEXT } from "./bridges";
@@ -368,6 +368,7 @@ import {
   // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
   // the preview, the guest intent and the rival.
   laneRefusal, addStationLane, laneOriginAt, laneSlabTiles, laneTrackTiles, laneStopTile,
+  laneInviteAt, laneInviteFor, laneInviteTiles, laneSideOf, type LaneInvite,
   stationLanes, structureById, MAX_LANES,
   platformGhostItems, depotGhostItems, laneGhostItems,
   RAIL_OVERPASS, railToWire, applyRailWire, clearRail, railLayerPatch, copyRailLayer,
@@ -5003,10 +5004,51 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let laneToolStation: number | null = null;
 
   /** Which side of a station a click tile names: the side it falls on. */
-  const laneSideFor = (s: RailStructure, tx: number, ty: number): 1 | -1 => {
-    const l0 = stationLanes(s)[0];
-    const along = (x: number, y: number): number => (s.view === "se" || s.view === "nw" ? x : y);
-    return along(tx, ty) >= along(l0.tx, l0.ty) ? 1 : -1;
+  const laneSideFor = (s: RailStructure, tx: number, ty: number): 1 | -1 => laneSideOf(s, tx, ty);
+
+  /**
+   * RAIL-8 (owner, 2026-09-29): "I would never have known you could add lanes".
+   * A station now INVITES the upgrade: hover one of yours with the pointer in
+   * your hand and the lane it could grow shows as a transparent ghost with a
+   * dashed "+" circle on it; clicking the circle (or the ghost ground) builds
+   * it — the same `addStationLaneAt` the panel's orange button arms. Clicking
+   * the station itself pins the invitation (a phone has no hover), and the
+   * next click elsewhere lets it go.
+   */
+  let pinnedLaneStation: number | null = null;
+  /** The badge the overlay painter draws this frame (set by `overlayFrame`). */
+  let laneInviteView: LaneInviteView | null = null;
+  /** Why a lane would be refused, in a few words for the badge's caption. */
+  const LANE_WHY_SHORT: Partial<Record<string, string>> = {
+    "off-map": "Map edge", water: "Water in the way", occupied: "No room here",
+    "foreign-rail": "Rival rail in the way", "track-blocked": "Something in the way",
+    overlap: "No room here", "not-flat": "Ground is not flat", "too-sharp": "Track would bend too sharply",
+    "axis-only": "Diagonal track in the way", "overpass-stop": "An overpass is in the way",
+    "max-lanes": "Station is full",
+  };
+  /** The picked building's station id, when the pointer is over a platform. */
+  const stationIdOfRef = (ref: unknown): number | undefined => {
+    const r = ref as { kind?: string; railKind?: string; structure?: number } | null | undefined;
+    return r && r.kind === "rail" && r.railKind === "platform" && typeof r.structure === "number" ? r.structure : undefined;
+  };
+  /**
+   * The invitation for a tile — Select in hand, a play-phase seat, no lesson.
+   * `pinnedFallback` (the overlay's question) also answers with the pinned
+   * station's invitation when the pointer is not on one; the CLICK asks
+   * without it, so a pinned station never swallows the clicks that follow.
+   */
+  const laneInviteUnder = (tx: number, ty: number, pinnedFallback = true, pickRef?: unknown): LaneInvite | null => {
+    if (phase !== "play" || opts.tutorialSection || tool !== "select" || tuning || pendingProtest) return null;
+    const ref = stationIdOfRef(pickRef !== undefined ? pickRef
+      : hover && hover.tx === tx && hover.ty === ty ? hover.ref : undefined);
+    const under = laneInviteAt(grid, rail, me.i + 1, tx, ty, ref);
+    if (under) return under;
+    if (!pinnedFallback || pinnedLaneStation === null) return null;
+    // a pinned station keeps offering its next lane on the first side that can take it
+    const a = laneInviteFor(grid, rail, me.i + 1, pinnedLaneStation, 1);
+    const b = laneInviteFor(grid, rail, me.i + 1, pinnedLaneStation, -1);
+    if (!a && !b) { pinnedLaneStation = null; return null; }
+    return a && (a.why === "ok" || !b || b.why !== "ok") ? a : b;
   };
 
   /**
@@ -12332,7 +12374,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * hover would raise (`null` for the tools that place no building — a road
    * drag, an armed protest). The renderer paints both from this one answer.
    */
-  type OverlayFrame = { items: OverlayItem[]; ghost: GhostSpec | null };
+  type OverlayFrame = { items: OverlayItem[]; ghost: GhostSpec | null; invite?: LaneInviteView | null };
   /** AI-03c: the plant tool's preview AND its test twin must answer the same
    *  legality the CLICK enforces. `planFactoryPlacement` knows terrain and
    *  towns but NOT the built world, so it flashed green over footprints a
@@ -12487,9 +12529,33 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * same verdict. They come out of the one plan so the two can never
    * disagree — a green grid under a red building would be worse than either.
    */
+  /**
+   * RAIL-8: fold a station's invitation into a frame — the new lane's tiles
+   * banded, its stop marked, the transparent lane standing where it would
+   * stand (green when a click would build it, red when it would be refused),
+   * and the dashed "+" badge's caption. The SAME `laneRefusal` the click runs.
+   */
+  const withLaneInvite = (frame: OverlayFrame, inv: LaneInvite): OverlayFrame => {
+    const ok = inv.why === "ok";
+    const items = [...frame.items];
+    const band = ok ? "highlight_soft" : "highlight_bad";
+    for (const [x, y] of laneInviteTiles(inv)) items.push({ sprite: band, tx: x, ty: y });
+    items.push({ sprite: "node_mark", tx: inv.stop[0], ty: inv.stop[1] });
+    const st = structureById(rail, inv.stationId);
+    const g = laneGhostItems(inv.origin.tx, inv.origin.ty, st?.view ?? railView);
+    const cost = seatCostOf(me, RAIL_COSTS.lane, "platform");
+    const label = !ok ? (LANE_WHY_SHORT[inv.why] ?? "Can't add a lane here")
+      : canPayBuild(me, RAIL_COSTS.lane, "platform") ? `Add lane · $${cost}` : `Add lane · need $${cost}`;
+    return {
+      items,
+      ghost: { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g },
+      invite: { slab: inv.slab, ok, label },
+    };
+  };
   const overlayPlanAt = (tx: number, ty: number): OverlayFrame => {
     const items: OverlayItem[] = [];
     let ghost: GhostSpec | null = null;
+    let invite: LaneInviteView | undefined;
     const factoryGhostSprite = (rot: number) => factorySpriteFor(shapesOn, rot);
     if (phase === "setup-factory") {
       // PP-02: the preview enforces the same town-adjacency rule as the click.
@@ -12527,6 +12593,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // `laneGhostItems` helper (one source of truth with `railStructureItems`).
         const g = laneGhostItems(origin.tx, origin.ty, st.view);
         ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
+        invite = {
+          slab: laneSlabTiles(probe), ok,
+          label: ok ? `Click to add · $${seatCostOf(me, RAIL_COSTS.lane, "platform")}` : (LANE_WHY_SHORT[why] ?? "Can't add a lane here"),
+        };
       }
     } else if (tool === "platform" || tool === "raildepot") {
       // RAIL-02 (#176): the same overlay contract as every other placement
@@ -12615,6 +12685,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       items.push({ sprite: ok ? "highlight" : "highlight_bad", tx, ty });
     } else {
       items.push({ sprite: "highlight", tx, ty });
+      // RAIL-8: a station of mine under the pointer (or one just clicked) offers its next lane
+      const inv = laneInviteUnder(tx, ty);
+      if (inv) return withLaneInvite({ items, ghost }, inv);
     }
     // RV-03: hovering an existing depot shows the road the truck takes. The
     // depot is found by tile, so the hover route and the truck agree even when
@@ -12622,13 +12695,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // and find no depot, so they never double up).
     const dep = eco.harvesters.find((h) => depotContains(h.tx, h.ty, tx, ty));
     if (dep) items.push(...routeOverlayFor(dep));
-    return { items, ghost };
+    return { items, ghost, invite };
   };
   /** The tile items alone — the shape `__iso.overlayItemsFor` has always had. */
   const overlayItemsAt = (tx: number, ty: number): OverlayItem[] =>
     overlayPlanAt(tx, ty).items;
-  /** Everything the overlay layer draws this frame. */
+  /** Everything the overlay layer draws this frame (and, on the side, the lane badge). */
   const overlayFrame = (): OverlayFrame => {
+    const frame = computeOverlayFrame();
+    laneInviteView = frame.invite ?? null;
+    return frame;
+  };
+  const computeOverlayFrame = (): OverlayFrame => {
     if (preview) {
       const items: OverlayItem[] = preview.tiles.map(([x, y]) => ({ sprite: "highlight", tx: x, ty: y }));
       // #298: the tiles the drag ran into and refused — painted red, not built.
@@ -12675,7 +12753,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (ok) items.push({ sprite: "node_mark", tx: hover.tx, ty: hover.ty });
       return { items, ghost: null };
     }
-    if (!hover) return { items: legalSpotItems(), ghost: null };
+    if (!hover) {
+      // RAIL-8: a station clicked on a phone keeps its invitation up with no pointer over it
+      const pinned = pinnedLaneStation !== null ? laneInviteUnder(-1, -1) : null;
+      const base: OverlayFrame = { items: legalSpotItems(), ghost: null };
+      return pinned ? withLaneInvite(base, pinned) : base;
+    }
     // Every placement tool — the opening Factory, a Depot, and (since the
     // overlay was unified) the mid-game plant — paints from its placement
     // plan, so all three get the same footprint/reach/node read AND the same
@@ -12688,7 +12771,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // — the painter keeps the hovered tile green/red, never washed.
     const legal = legalSpotItems();
     return legal.length
-      ? { items: [...legal, ...frame.items], ghost: frame.ghost }
+      ? { items: [...legal, ...frame.items], ghost: frame.ghost, invite: frame.invite }
       : frame;
   };
 
@@ -13998,6 +14081,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   function cancelPlacement(): boolean {
     const armed = tool !== "select";
     tool = "select";
+    pinnedLaneStation = null;      // RAIL-8: Esc / right-click lets a station's invitation go too
     if (dropDrag() || armed) paintOverlayNow();
     return armed;
   }
@@ -14011,6 +14095,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // Playtest (2026-09): picking any tool (Select included) ends a city pick
     // and its upgrade cursor.
     if (cityPick) setCityPick(false);
+    pinnedLaneStation = null;      // RAIL-8: a new tool in the hand drops a pinned station invitation
     // RAIL-05 (#182): the flag down means the tool does not exist. Refuse the
     // arm and keep whatever is already in the hand — a hotkey that would
     // summon a refused build is just a confusing one.
@@ -14208,6 +14293,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (isGuest()) net?.sendIntent("demolish", { do: "demolish", tx: p.tx, ty: p.ty });
       else doDemolish(p.tx, p.ty);
     } else if (t === "select") {
+      // RAIL-8: a click on the invitation (the ghost lane's ground / the "+")
+      // builds the lane; a click on one of my stations pins the invitation up
+      // (a phone has no hover); any other Select click lets it go.
+      const under = laneInviteUnder(p.tx, p.ty, false, p.ref ?? null);
+      const shown = under ?? laneInviteUnder(p.tx, p.ty, true, p.ref ?? null);
+      if (shown && laneInviteTiles(shown).some(([x, y]) => x === p.tx && y === p.ty)) {
+        pinnedLaneStation = shown.stationId;
+        if (isGuest()) net?.sendIntent("build", { do: "lane", stationId: shown.stationId, side: shown.side });
+        else addStationLaneAt(shown.stationId, shown.side, me);
+        paintOverlayNow();
+        return;
+      }
+      if (under) {
+        pinnedLaneStation = under.stationId;
+        paintOverlayNow();
+        return;
+      }
+      pinnedLaneStation = null;
       // L17 (#245): the town's middle building (church, then bank) is
       // the click target for the city upgrade — the map door beside the
       // HUD key. Any other tool keeps its own behaviour above.
@@ -15965,6 +16068,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // RIVAL-3 (#467): claim flags + the Contested pulse ride on top of the
       // protest crowd — a claim is an announcement, it stands above.
       paintClaimFlags(ctx, c, grid, claimFlagViews(), t);
+      // RAIL-8: the station's dashed "+" invitation, on top of its ghost lane
+      if (laneInviteView) paintLaneInvite(ctx, c, grid, laneInviteView, t);
     };
     // AMB-2 (#391): the birds go through the renderer's shared
     // ABOVE-STRUCTURES hook — over the buildings, under the placement

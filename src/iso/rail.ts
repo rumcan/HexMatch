@@ -649,6 +649,90 @@ export function laneRefusal(
 }
 
 /**
+ * Which side of a station a tile names: the side it falls on, along the axis
+ * the station's lanes stack across. The click, the hover invite and the armed
+ * "Add lane" tool all read this one rule.
+ */
+export function laneSideOf(s: RailStructure, tx: number, ty: number): 1 | -1 {
+  const l0 = stationLanes(s)[0];
+  const along = (x: number, y: number): number => (s.view === "se" || s.view === "nw" ? x : y);
+  return along(tx, ty) >= along(l0.tx, l0.ty) ? 1 : -1;
+}
+
+/**
+ * RAIL-8 (owner, 2026-09-29: "I would never have known you could add lanes"):
+ * the INVITATION a station makes. Where its next lane would stand on one side,
+ * the strip and the three stopping tiles it would take, and the SAME refusal
+ * the click will run — so the transparent ghost, the dashed "+" and the click
+ * can never disagree. Null once the station holds `MAX_LANES` (nothing to offer).
+ */
+export interface LaneInvite {
+  stationId: number;
+  side: 1 | -1;
+  origin: { tx: number; ty: number };
+  /** The new lane's strip, and its three stopping tiles. */
+  slab: [number, number][];
+  track: [number, number][];
+  stop: [number, number];
+  /** "ok" when a click would build it; otherwise why it would be refused. */
+  why: RailRefusal;
+  /** The lane count the station would hold afterwards. */
+  lanesAfter: number;
+}
+
+export function laneInviteFor(
+  grid: Grid, state: RailState, ownerId: number, stationId: number, side: 1 | -1,
+): LaneInvite | null {
+  const s = structureById(state, stationId);
+  if (!s || s.kind !== "platform" || s.ownerId !== ownerId) return null;
+  const lanes = stationLanes(s);
+  if (lanes.length >= MAX_LANES) return null;
+  const origin = laneOriginAt(s, side);
+  const probe = { view: s.view, tx: origin.tx, ty: origin.ty };
+  return {
+    stationId, side, origin,
+    slab: laneSlabTiles(probe), track: laneTrackTiles(probe), stop: laneStopTile(probe),
+    why: laneRefusal(grid, state, ownerId, stationId, side),
+    lanesAfter: lanes.length + 1,
+  };
+}
+
+/** The tiles a click on the invitation lands on: the new lane's strip and track. */
+export const laneInviteTiles = (inv: LaneInvite): [number, number][] => [...inv.slab, ...inv.track];
+
+/**
+ * The invitation for the tile under the pointer: a tile ON one of the owner's
+ * stations (any lane's strip or track), or on the ground the next lane would
+ * take. On the station itself the side follows the pointer, and falls back to
+ * the other side when the pointer's own side is refused and the far one is
+ * free — an invitation should show what CAN be done. `stationId` (the picked
+ * building, when the caller knows it) counts as "on the station" even for a
+ * warehouse tile the strips do not cover.
+ */
+export function laneInviteAt(
+  grid: Grid, state: RailState, ownerId: number, tx: number, ty: number, stationId?: number,
+): LaneInvite | null {
+  for (const s of structuresOf(state, ownerId, "platform")) {
+    if (stationLanes(s).length >= MAX_LANES) continue;
+    const at = (tiles: readonly [number, number][]) => tiles.some(([x, y]) => x === tx && y === ty);
+    let inv: LaneInvite | null = null;
+    // the ground a new lane would take names its own side
+    for (const side of [1, -1] as const) {
+      const cand = laneInviteFor(grid, state, ownerId, s.id, side);
+      if (cand && at(laneInviteTiles(cand))) { inv = cand; break; }
+    }
+    if (!inv && (at(stationTiles(s)) || stationId === s.id)) {
+      const near = laneSideOf(s, tx, ty);
+      const a = laneInviteFor(grid, state, ownerId, s.id, near);
+      const b = laneInviteFor(grid, state, ownerId, s.id, near === 1 ? -1 : 1);
+      inv = a && (a.why === "ok" || !b || b.why !== "ok") ? a : b;
+    }
+    if (inv) return inv;
+  }
+  return null;
+}
+
+/**
  * RAIL-6 (#575): grow a station by one lane on one side. The lane's three
  * stopping tiles are laid with it (they are inside the lane's price, exactly
  * as a placed platform's are), and the rail revision moves so every planned

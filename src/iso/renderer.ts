@@ -718,6 +718,88 @@ export function paintClaimFlags(
   }
 }
 
+/**
+ * RAIL-8 (owner, 2026-09-29): the station's invitation to grow. The new lane's
+ * transparent ghost is the placement overlay's job; THIS is the affordance on
+ * top of it — a dashed orange circle with a plus inside it, and one short line
+ * under it saying what a click costs (or why it would be refused, in red, with
+ * a cross). Vector-drawn like the claim flags: no art, the HUD's palette.
+ */
+export interface LaneInviteView {
+  /** The new lane's strip tiles; the badge sits on the middle one. */
+  slab: readonly [number, number][];
+  /** A click would build it. */
+  ok: boolean;
+  /** "Add lane · $81", or the refusal / shortfall. */
+  label: string;
+}
+
+export function paintLaneInvite(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  grid: Grid | null,
+  v: LaneInviteView,
+  nowMs: number,
+): void {
+  if (!v.slab.length) return;
+  const z = cam.zoom;
+  const mid = v.slab[(v.slab.length - 1) >> 1];
+  const [bx, by0] = tileCentre(cam, grid, mid[0], mid[1]);
+  const by = by0 - 3 * z;
+  if (bx < -80 || by < -80 || bx > cam.vw + 80 || by > cam.vh + 60) return;
+  // wall-time pulse, so the badge breathes even with the sim clock frozen
+  const pulse = 0.5 + 0.5 * Math.sin(nowMs / 380);
+  const r = (15 + 1.6 * pulse) * z;
+  const tone = v.ok ? "#ef7c17" : "#d8503a";
+  ctx.save();
+  // the disc: ink, see-through, so the ghost lane still reads underneath
+  ctx.beginPath();
+  ctx.arc(bx, by, r, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(12, 22, 27, 0.66)";
+  ctx.fill();
+  // the dashed ring, slowly turning
+  ctx.beginPath();
+  ctx.arc(bx, by, r, 0, Math.PI * 2);
+  ctx.setLineDash([5 * z, 4 * z]);
+  ctx.lineDashOffset = -nowMs / 90 * z;
+  ctx.lineWidth = Math.max(1.5, 2.2 * z);
+  ctx.strokeStyle = tone;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // the plus (or, refused, a cross)
+  const a = 7.5 * z;
+  ctx.lineWidth = Math.max(2, 3 * z);
+  ctx.lineCap = "round";
+  ctx.strokeStyle = v.ok ? "#fff5e3" : "#f0b3a8";
+  ctx.beginPath();
+  if (v.ok) {
+    ctx.moveTo(bx - a, by); ctx.lineTo(bx + a, by);
+    ctx.moveTo(bx, by - a); ctx.lineTo(bx, by + a);
+  } else {
+    const c = a * 0.72;
+    ctx.moveTo(bx - c, by - c); ctx.lineTo(bx + c, by + c);
+    ctx.moveTo(bx + c, by - c); ctx.lineTo(bx - c, by + c);
+  }
+  ctx.stroke();
+  // the caption
+  if (v.label) {
+    const px = Math.max(10, Math.round(12 * z));
+    ctx.font = `700 ${px}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const w = ctx.measureText(v.label).width + 14 * z;
+    const h = px + 8;
+    const ly = by + r + 6 * z + h / 2;
+    ctx.fillStyle = "rgba(12, 22, 27, 0.88)";
+    ctx.fillRect(bx - w / 2, ly - h / 2, w, h);
+    ctx.fillStyle = tone;
+    ctx.fillRect(bx - w / 2, ly - h / 2, w, Math.max(2, 2 * z));
+    ctx.fillStyle = "#f6ead2";
+    ctx.fillText(v.label, bx, ly + 1);
+  }
+  ctx.restore();
+}
+
 export class IsoRenderer {
   readonly atlas: Atlas;
   cam: Camera;
