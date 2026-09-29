@@ -1052,7 +1052,7 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   // UI-3: every state stands in the MenuShell frame. The header's Home, Play
   // and Ladder tabs only work from the neutral screens; a lobby, a search or
   // a rejoin offer keeps its own Leave / Cancel so no room is left dangling.
-  const free = state === "choose" || state === "story" || state === "ladder" || state === "multiplayer" || state === "join" || state === "error";
+  const free = state === "choose" || state === "story" || state === "scenarios" || state === "ladder" || state === "multiplayer" || state === "join" || state === "error";
   const shell = (tab: ShellTab | null, aria: string, cls: string, content: ReactNode) => (
     <MenuShell tab={tab} ariaLabel={aria} className={cls}
       onTutorialSection={onTutorialSection}
@@ -1319,9 +1319,11 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   if (state === "scenarios") {
     const pin = pinnedScenario();
     const openCount = effectiveUnlocked(scenProgress, progress);
-    return (
-      <main className="start-screen campaign" aria-label="Hexmatch scenarios">
-        <div className="start-panel story">
+    // Owner (2026-09-29): "this screen needs the new layout design" — the
+    // scenarios list stands in the same MenuShell frame and paper card as the
+    // Play, Multiplayer and Ladder screens (it was a bare dark panel).
+    return shell("play", "Hexmatch scenarios", "campaign scenarios", (
+        <div className="start-panel story px-dialog-card scen-panel">
           <p className="start-kicker">BEYOND THE ISLAND · SCENARIOS</p>
           <h1>Four maps, each its own race</h1>
           <p className="start-subtitle">Four tuned maps beyond the default island. Win the open one — or any campaign contract — to unlock the next. Each keeps its own best time and best margin.</p>
@@ -1393,8 +1395,7 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
             {onBack ? <button data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
           </div>
         </div>
-      </main>
-    );
+    ));
   }
 
   if (state === "multiplayer") {
