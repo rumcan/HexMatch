@@ -5489,7 +5489,8 @@ export function createOriginalUi(
     box.appendChild(acts);
     // The refusal is printed, not only a tooltip: a phone has no hover.
     if (f.buy.why) box.appendChild(h("div", "fleet-why", f.buy.why));
-    if (f.upgrade?.why && f.upgrade.price !== "-") box.appendChild(h("div", "fleet-why", f.upgrade.why));
+    // Owner playtest (2026-09-29): one reason once, when Buy and Upgrade are refused for the same one.
+    if (f.upgrade?.why && f.upgrade.price !== "-" && f.upgrade.why !== f.buy.why) box.appendChild(h("div", "fleet-why", f.upgrade.why));
     return box;
   }
   function showActionCard(o: ActionCardInfo): void {
