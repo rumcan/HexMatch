@@ -27,6 +27,7 @@ import { TRUCK_SPEED, TRUCK_ROAD_MULT } from "./vehicles";
 import { uphillSpeed } from "./slopes";
 // FLOW-1: the traffic module owns the live lights, their art and the clock.
 import { flowLightAspect, flowTick, paintFlowOverlay } from "./flow";
+import { truckKey } from "./fleet";
 
 // ── art the lead ships ────────────────────────────────────────────────────
 /** 1950s–60s models. Two finned-sedan liveries, a pickup, a bus, a van. */
@@ -390,6 +391,8 @@ export interface GhostPose {
 
 export interface GhostTruck {
   depotId: number;
+  /** FLEET-1 (#595): which of the Depot's lorries (absent = 0). */
+  slot?: number;
   route: readonly (readonly [number, number])[];
   leg: number;
   t: number;
@@ -826,9 +829,10 @@ export function tickAmbience(state: AmbienceState, dtMs: number, ctx: AmbienceTi
 export function tickTruckGhosts(state: AmbienceState, trucks: readonly GhostTruck[], dtMs: number): void {
   const seen = new Set<number>();
   for (const tr of trucks) {
-    seen.add(tr.depotId);
-    const prev = state.ghosts.get(tr.depotId) ?? null;
-    state.ghosts.set(tr.depotId, stepGhost(prev, tr, state.signals, state.time, dtMs));
+    const key = truckKey(tr);
+    seen.add(key);
+    const prev = state.ghosts.get(key) ?? null;
+    state.ghosts.set(key, stepGhost(prev, tr, state.signals, state.time, dtMs));
   }
   for (const id of [...state.ghosts.keys()]) {
     if (!seen.has(id)) state.ghosts.delete(id);

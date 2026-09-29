@@ -187,7 +187,7 @@ import {
   chooseRivalFactorySpot, deepPlanCandidates, planBankTrades, planGoalPurchase, goalOutOfReach,
   planUpgrades, executePaves,
   paveCandidates, rivalPace, scoreCargoWant, treeGoal, treeWants, type RivalPace,
-  planRailMove, executeRailMove,
+  planRailMove, executeRailMove, planRivalTruck,
   planCandidates, executeCandidate, ClaimLedger, claimContested,
   type ClaimSite, type RivalClaim, type PlayerIntent, type PlanOptions,
 } from "./ai";
@@ -212,7 +212,7 @@ import {
   INDUSTRY_BY_KEY, TRANSPORT, TOWN_UPGRADES, TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, townTierLabel,
   BASE_RATE, VICTORY, VP_TARGET, UPGRADE_COST, TUNING,
-  BASE_PRICE, START_MONEY, moneyValueOf, LEVEL_GROUND_COST,
+  BASE_PRICE, BUILD_COSTS_MONEY, FLEET, START_MONEY, moneyValueOf, LEVEL_GROUND_COST,
   type Cargo, type Portrait,
 } from "./config";
 // CAST-1 (docs/CAST.md): the managers' perks — one multiplier per price seam.
@@ -340,9 +340,10 @@ import { createRivalPlant } from "./rival-plant";
 import type { GuideAnchor } from "./guide/types";
 import { createFloatLayer, type FloatLayer } from "./floats";
 import {
-  createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester, lorryTripsPerMin,
+  createTruckState, planTrucks, tickTrucks, truckItems, roadRouteForHarvester, lorryTripsPerMin, DEPOT_LOAD_MS,
   type Truck,
 } from "./vehicles";
+import { truckCountOf, truckKey, fleetLoadFactor, truckBuyCheck, truckSellRefusal, truckSellRefund, truckBuyPrice } from "./fleet";
 import {
   CAR_COUNT, createCarState, planCars, tickCars, carItems,
 } from "./cars";
@@ -363,7 +364,7 @@ import {
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
-  rotateView, trainOccupies, trainBasedAt, railPanelRows, resaleValue, demolishStructure, PLATFORM_VP,
+  rotateView, trainOccupies, trainBasedAt, railPanelRows, trainBuyRefusal, railComponents, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
   // the preview, the guest intent and the rival.
@@ -445,7 +446,7 @@ import {
   type ScenarioGoalInput, type ScenarioObjective,
 } from "../story/scenario-goals";
 import { showScene, type SceneHandle } from "../story/stage";
-import type { UiRivalryBeat, UiTuningResult } from "../game/ui";
+import type { UiRivalryBeat, UiTuningResult, FleetCardInfo } from "../game/ui";
 import {
   OIL_DRILLING_SCENE, createBanterDirector, createClaimDirector, createComebackDirector,
   createGoldMineDirector, createRivalDirector,
@@ -5596,15 +5597,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(plan.why ?? "That line cannot run.", "bad");
       return false;
     }
-    if (!canPayBuild(p, RAIL_COSTS.train)) {
+    if (!canPayBuild(p, RAIL_COSTS.train, "rail")) {
       // The train is bought with the line: undo the assignment rather than
       // leaving a line with no locomotive on it.
       if (plan.line) rail.lines.splice(rail.lines.indexOf(plan.line), 1);
       if (plan.train) rail.trains.splice(rail.trains.indexOf(plan.train), 1);
-      if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
+      if (p.human) toast(`Not enough money — a train costs $${seatCostOf(p, RAIL_COSTS.train, "rail")}.`, "bad");
       return false;
     }
-    spendBuild(p, RAIL_COSTS.train);
+    spendBuild(p, RAIL_COSTS.train, "rail");
     if (p.human) sfx.play("build");
     syncWorld();
     rescoreNow();
@@ -5626,8 +5627,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast("Assign a line first — a train needs somewhere to run.", "bad");
       return false;
     }
-    if (!canPayBuild(p, RAIL_COSTS.train)) {
-      if (p.human) toast(`Not enough money — a train costs $${moneyCostOf(RAIL_COSTS.train)}.`, "bad");
+    if (!canPayBuild(p, RAIL_COSTS.train, "rail")) {
+      if (p.human) toast(`Not enough money — a train costs $${seatCostOf(p, RAIL_COSTS.train, "rail")}.`, "bad");
       return false;
     }
     const bought = buyTrain(rail, p.i + 1, depotId, lineId, grid);
@@ -5635,7 +5636,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(bought.why ?? "That train cannot be bought.", "bad");
       return false;
     }
-    spendBuild(p, RAIL_COSTS.train);
+    spendBuild(p, RAIL_COSTS.train, "rail");
     if (p.human) sfx.play("build");
     syncWorld();
     if (p.human) {
@@ -5690,11 +5691,61 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) toast(sale.why ?? "That train cannot be sold.", "bad");
       return false;
     }
-    refundBuild(p, sale.refund);   // ECON-1 (#421): a train sells for money
+    refundBuild(p, sale.refund, 1, "rail");   // ECON-1 (#421): a train sells for money
     if (p.human) sfx.play("demolish");
     syncWorld();
     rescoreNow();
     if (p.human) toast(`Train sold — ${railCostLabel(sale.refund)} salvaged.`, "info");
+    return true;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // FLEET-1 (#595) — buy and sell trucks. `Harvester.trucks` is the count
+  // (absent = 1); `planTrucks` turns it into lorries on the next replan and
+  // `haulFactor` turns it into income. The refusal ladder is `truckBuyCheck`
+  // (fleet.ts) — the same call the Fleet card, the guest intent and the rival
+  // read, so a disabled button always says why the click would be refused.
+  // ══════════════════════════════════════════════════════════════════════
+  function truckBuyWhy(depotId: number, p: PlayerState = me) {
+    const h = eco.harvesters.find((x) => x.id === depotId);
+    const connected = !!h && h.platformId === undefined && roadRouteForHarvester(eco, h) !== null;
+    return truckBuyCheck(h, p.i + 1, connected, p.money, p.manager);
+  }
+
+  function fleetBuyTruck(depotId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "truck", act: "buy", depot: depotId }); return true; }
+    const check = truckBuyWhy(depotId, p);
+    if (!check.ok) {
+      if (p.human) toast(check.why ?? "That truck cannot be bought.", "bad");
+      return false;
+    }
+    const h = eco.harvesters.find((x) => x.id === depotId)!;
+    p.money -= check.price;
+    h.trucks = truckCountOf(h) + 1;
+    trucksDirty = true;                 // replan: the new lorry joins the route
+    if (p.human) {
+      sfx.play("build");
+      toast(`Truck bought — this Depot now runs ${h.trucks} trucks.`, "good");
+    }
+    return true;
+  }
+
+  function fleetSellTruck(depotId: number, p: PlayerState = me): boolean {
+    if (isGuest()) { net?.sendIntent("build", { do: "truck", act: "sell", depot: depotId }); return true; }
+    const h = eco.harvesters.find((x) => x.id === depotId);
+    const why = truckSellRefusal(h, p.i + 1);
+    if (why || !h) {
+      if (p.human) toast(why ?? "That truck cannot be sold.", "bad");
+      return false;
+    }
+    const refund = truckSellRefund(truckCountOf(h), p.manager);
+    p.money += refund;
+    h.trucks = truckCountOf(h) - 1;
+    trucksDirty = true;
+    if (p.human) {
+      sfx.play("demolish");
+      toast(`Truck sold — $${refund} back.`, "info");
+    }
     return true;
   }
 
@@ -5829,6 +5880,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * BM-2 adds live sabotage at session opening. Obstacles already dealt stay
    * breakable until that session ends; expiry only stops new affected sessions.
    */
+  /**
+   * FLEET-1 (#595): the transport seam the income clock, the ledger, the chip
+   * rates and the readouts all multiply by - the (constant) transport tier
+   * times what the Depot's lorry count carries. One expression, so "more
+   * trucks = more loads per minute" is real income, never just extra sprites.
+   */
+  const haulFactor = (h: Harvester): number => transportFactor(h) * fleetLoadFactor(h);
   function cargoPerMinForDepot(depot: Harvester, yieldLevel: number): number {
     try {
       const now = performance.now();
@@ -5848,7 +5906,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const seat = players.find((p) => p.id === depot.owner) ?? me;
       const damF = damFactorsFor(seat, depot, res.connection?.factory);
       const cityB = cityBonusFor(seat.id, res.connection?.factory) || (seat.townBonus ?? 0);
-      const factor = BASE_RATE * yieldLevel * d.factor * transportFactor(depot) * (1 + (damF.dam ?? 0)) * (1 + Math.max(0, cityB + (damF.damCity ?? 0)));
+      const factor = BASE_RATE * yieldLevel * d.factor * haulFactor(depot) * (1 + (damF.dam ?? 0)) * (1 + Math.max(0, cityB + (damF.damCity ?? 0)));
       const perTick = amount * factor;
       const perSec = perTick * (1000 / HARVEST_MS);
       return perSec * 60;
@@ -6925,7 +6983,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return clockFactorOf({
       yieldLevel: depotYield(h),
       distanceFactor: distanceFactorForPath(depotPathLength(state, h)),
-      transportFactor: transportFactor(h),
+      transportFactor: haulFactor(h),
       dam: damF.dam,
       city: hasCities(seat)
         ? cityBonusFor(seat.id, factory) + damF.damCity
@@ -6957,11 +7015,41 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     return text.html;
   }
 
+  /**
+   * FLEET-1 (#595): a Train Depot row's line picker - every line of mine with
+   * the reason a train cannot be bought for it (`trainBuyRefusal`, then the
+   * purse). Only while a rail tool has the panel open, so a flood and a path
+   * search per line are never paid per paint on the plain map.
+   */
+  let railFleetComp: { rev: number; comp: Map<number, number> } | null = null;
+  function fleetTrainOptions(r: { id: number; kind: string }): { buyLines?: { id: number; name: string; why: string | null }[]; buyPrice?: string } {
+    if (r.kind !== "depot") return {};
+    if (tool !== "rail" && tool !== "platform" && tool !== "raildepot" && tool !== "railway") return {};
+    const mine = rail.lines.filter((l) => l.ownerId === me.i + 1);
+    if (!mine.length) return {};
+    const price = seatCostOf(me, RAIL_COSTS.train, "rail");
+    const sig = rail.trains.length * 100003 + rail.structures.length * 131 + rail.lines.length + rail.rail.revision * 7;
+    if (!railFleetComp || railFleetComp.rev !== sig) {
+      railFleetComp = { rev: sig, comp: railComponents(rail, me.i + 1) };
+    }
+    return {
+      buyPrice: `$${price}`,
+      buyLines: mine.map((l) => ({
+        id: l.id,
+        name: l.name,
+        why: trainBuyRefusal(rail, me.i + 1, r.id, l.id, grid, railFleetComp!.comp)
+          ?? (me.money < price ? `Not enough money - a train costs $${price}.` : null),
+      })),
+    };
+  }
+
   function tripsForDepot(h: Harvester): number {
-    const live = trucks.trucks.find((t) => t.depotId === h.id);
     // PERK-1 (#600): the card's trips/min rides the same Lead Foot the tick
     // integrates, so the number on the card is the lorry you're watching.
-    return live ? lorryTripsPerMin(live, truckSpeedForOwner) : 0;
+    // FLEET-1 (#595): every lorry on the route adds its own trips.
+    let sum = 0;
+    for (const live of trucks.trucks) if (live.depotId === h.id) sum += lorryTripsPerMin(live, truckSpeedForOwner);
+    return sum;
   }
 
   function armedUpgradeTier(): "street" | "road" | "highway" | null {
@@ -7048,6 +7136,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   }
 
   /** 2026-09: the Depot card a click on one of my Depots opens. */
+  /**
+   * FLEET-1 (#595): the Fleet block of a Depot card - one row per lorry with
+   * its live status, Buy truck at the price this seat pays (James's road perk
+   * included) and Sell truck at its one-time 50% refund. A refused button is
+   * disabled and says why (`truckBuyCheck`, the same ladder the host runs).
+   */
+  function fleetCardFor(d: Harvester): FleetCardInfo | undefined {
+    if (isRailDepot(d)) return undefined;             // a platform's freight goes by train
+    const count = truckCountOf(d);
+    const live = trucks.trucks.filter((t) => t.depotId === d.id)
+      .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0));
+    const rows: { label: string; status: string }[] = [];
+    for (let i = 0; i < count; i++) {
+      const t = live.find((x) => (x.slot ?? 0) === i);
+      rows.push({
+        label: `Truck ${i + 1}`,
+        status: !t ? (roadRouteForHarvester(eco, d) ? "joining the route" : "parked - no road route")
+          : (t.waitMs ?? 0) > 0 ? "loading at the depot"
+            : t.reverse ? "heading home" : "hauling to the plant",
+      });
+    }
+    const check = truckBuyWhy(d.id, me);
+    const sellWhy = truckSellRefusal(d, me.i + 1);
+    const rerun = () => depotCardFor(d);
+    return {
+      heading: `Fleet - ${count} of ${FLEET.maxTrucks} trucks`,
+      rows,
+      buy: {
+        label: "Buy truck",
+        price: `$${count >= FLEET.maxTrucks ? truckBuyPrice(count - 1, me.manager) : check.price}`,
+        why: check.ok ? null : (check.why ?? "Cannot buy a truck."),
+        onClick: () => { fleetBuyTruck(d.id, me); rerun(); },
+      },
+      sell: {
+        label: "Sell truck",
+        refund: count > 1 ? `$${truckSellRefund(count, me.manager)} back` : "-",
+        why: sellWhy,
+        onClick: () => { fleetSellTruck(d.id, me); rerun(); },
+      },
+    };
+  }
   function depotCardFor(d: Harvester): void {
     selectedDepotId = d.id;
     const lvl = d.level ?? 1;
@@ -7069,6 +7198,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       statsLine: routeLedgerHtml(d, performance.now()),
       damLine: damC.dam > 0 ? `dam: ×${1 + damC.dam} — hydro dam nearby` : null,
       lastStars: d.lastStars,
+      fleet: fleetCardFor(d),
       onUpgrade: () => upgradeDepot(d.id),
       onRetune: () => retuneNow(d.id),
     });
@@ -9735,7 +9865,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           const factor = clockFactorOf({
             yieldLevel: depotYield(depot),
             distanceFactor: distanceInfoFor(depot.id).factor,
-            transportFactor: transportFactor(depot),
+            transportFactor: haulFactor(depot),
             dam: damF.dam,
             city: hasCities(seat)
               ? cityBonusFor(seat.id, result.connection?.factory) + damF.damCity
@@ -10552,6 +10682,32 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * by (sources reached, then row-major position). No-op with the rivers
    * option off: no river, no site, ever. Returns whether a dam was built.
    */
+  /**
+   * FLEET-1 (#595): the rival buys a 2nd lorry for its busiest Depot when it
+   * can afford it with a Depot's worth left over. Infrastructure, not a star:
+   * no session, and at most one purchase per turn. Same `fleetBuyTruck` (and so
+   * the same refusal ladder and price) the player's button runs.
+   */
+  function rivalTruckStep(): boolean {
+    if (!newLoop) return false;
+    const owner = rival.i + 1;
+    const comp = componentsFor(owner);
+    const locks = industryLocks(eco);
+    const now = performance.now();
+    const cands = eco.harvesters.filter((h) => h.ownerId === owner && !isRailDepot(h) && !h.closed).map((h) => {
+      const res = harvesterYield(eco, comp, locks, h, now);
+      const amount = Object.values(res.yields).reduce((a, b) => a + (b as number), 0);
+      return {
+        id: h.id,
+        score: amount * depotYield(h) * distanceInfoFor(h.id).factor,
+        trucks: truckCountOf(h),
+        connected: res.serviced && roadRouteForHarvester(eco, h) !== null,
+      };
+    });
+    const pick = planRivalTruck(cands, rival.money, (n) => truckBuyPrice(n, rival.manager), BUILD_COSTS_MONEY.depot);
+    return pick !== null && fleetBuyTruck(pick, rival);
+  }
+
   function rivalDamStep(): boolean {
     if (!DAMS_ENABLED || !riversOn || !newLoop) return false;
     if (!canPayBuild(rival, DAM_COST)) return false;
@@ -10756,6 +10912,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // Infrastructure, not a ★: it takes no session (the pave step's rule) and
     // runs on every turn, so it stands the moment the mix can pay for it.
     if (rivalDamStep()) acted = true;
+
+    // ── 8. fleet (FLEET-1, #595) — a 2nd lorry on the busiest Depot ────────
+    if (rivalTruckStep()) acted = true;
 
     if (acted) {
       noteWorldBuild();      // BUILD-1 (#460): the rival's builds close windows
@@ -11368,7 +11527,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // L15 (#230): boards and crossPrompt are gone — the board is tuning-only
     // and blessings are retired, so no board state or cross prompt rides the wire.
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
-    const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
+    const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries, ...(t.slot ? { slot: t.slot } : {}) }));
     const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     const nowSnap = performance.now();
     return buildSnapshot({
@@ -11413,7 +11572,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     lastPublishAt = now;
     mpMatchLive = true;
     const protestsWire = [...protests.values()].map((p) => ({ x: p.tx, y: p.ty, until: p.until, owner: p.owner }));
-    const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries }));
+    const trucksWire = trucks.trucks.map((t) => ({ ownerId: t.ownerId, depotId: t.depotId, factory: [...t.factory] as [number, number], route: t.route.map((r) => [...r] as [number, number]), segFast: t.segFast ? [...t.segFast] : [], leg: t.leg, t: t.t, reverse: t.reverse, deliveries: t.deliveries, ...(t.slot ? { slot: t.slot } : {}) }));
     const carsWire = cars.cars.map((c) => ({ name: c.name, carIndex: (c as any).carIndex ?? 1, originTownId: (c as any).originTownId ?? null, destTownId: (c as any).destTownId ?? null, origin: (c as any).origin ? [...(c as any).origin] as [number, number] : null, dest: (c as any).dest ? [...(c as any).dest] as [number, number] : null, route: c.route.map((r) => [...r] as [number, number]), leg: c.leg, t: c.t, state: (c as any).state ?? "driving", waitMs: (c as any).waitMs ?? 0, fadeMs: (c as any).fadeMs ?? 0, fade: (c as any).fade ?? 1, arriveMs: (c as any).arriveMs ?? 0, lastTripKey: (c as any).lastTripKey ?? null }));
     net.publishTrack(track, dirtyTiles, {
       t: now,
@@ -12032,6 +12191,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         else if (payload.what === "buy" && depot !== null && lineId !== null) railBuy(depot, lineId, p);
         else if (payload.what === "start" && id !== null) railStart(id, p);
         else if (payload.what === "rename" && id !== null && typeof payload.name === "string") railRename(id, payload.name, p);
+      } else if (what === "truck") {
+        // FLEET-1 (#595): a guest's Buy / Sell truck. The host runs the same
+        // refusal ladder and charges the guest's seat; a refusal echoes (a
+        // guest seat toasts no one on the host).
+        const depot = int(payload.depot);
+        if (depot !== null && (payload.act === "buy" || payload.act === "sell")) {
+          if (payload.act === "buy") {
+            const check = truckBuyWhy(depot, p);
+            if (!check.ok) echoed.push(check.why ?? "That truck cannot be bought.");
+            else fleetBuyTruck(depot, p);
+          } else {
+            const why = truckSellRefusal(eco.harvesters.find((x) => x.id === depot), p.i + 1);
+            if (why) echoed.push(why); else fleetSellTruck(depot, p);
+          }
+        }
       } else if (what === "swap") {
         const r1 = int(payload.r1), c1 = int(payload.c1);
         const r2 = int(payload.r2), c2 = int(payload.c2);
@@ -13222,7 +13396,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               // free dirt road is the same tier as no road at all, and paving
               // is what "this Depot got upgraded" means.
               transportLabel: depotTransportTier(eco, comp, h) === 0 ? "dirt" : "paved",
-              transportFactor: transportFactor(h),
+              transportFactor: haulFactor(h),
               distanceTiles: d.tiles,
               distanceFactor: d.factor,
               distanceBand: band,
@@ -13486,7 +13660,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               amount,
               yieldLevel: depotYield(h),
               distanceFactor: d.factor,
-              transportFactor: transportFactor(h),
+              transportFactor: haulFactor(h),
               townBonus: Math.max(0, me.townBonus) + damR.damCity,
               damBonus: damR.dam,
             });
@@ -13708,6 +13882,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rail: {
         rows: railPanelRows(rail, me.i + 1).map((r) => ({
           ...r,
+          ...fleetTrainOptions(r),
           // RAIL-6 (#575): the upgrade preview in the HUD — the row prints
           // what the next lane costs this seat (perk included), and while the
           // tool is armed, what the click will do.
@@ -14888,8 +15063,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (phase !== "play") return;
     const mine = ownerIdOf(eco, "you");
     for (const truck of trucks.trucks) {
-      const seen = seenDeliveries.get(truck.depotId) ?? 0;
-      seenDeliveries.set(truck.depotId, truck.deliveries);
+      const seen = seenDeliveries.get(truckKey(truck)) ?? 0;
+      seenDeliveries.set(truckKey(truck), truck.deliveries);
       if (truck.deliveries <= seen) continue;
       const due = Math.min(truck.deliveries - seen, MAX_CATCHUP);
       // No horn on deliveries: SFX-1 honked every lorry-load (every few
@@ -15738,10 +15913,19 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    *  are the plan's own; removed ones vanish — the ghost-truck erase a few
    *  lines below deals with their sprites. */
   function planTrucksTrucksMerge(prev: Truck[], next: Truck[]): Truck[] {
-    const byDepot = new Map(prev.map((x) => [x.depotId, x]));
+    // FLEET-1 (#595): a lorry's identity is depot + slot (`truckKey`).
+    const byKey = new Map(prev.map((x) => [truckKey(x), x]));
+    const depotsKnown = new Set(prev.map((x) => x.depotId));
     return next.map((t2) => {
-      const old = byDepot.get(t2.depotId);
-      if (!old) return t2;
+      const old = byKey.get(truckKey(t2));
+      if (!old) {
+        // A lorry just bought for a depot that already runs: it pulls out of
+        // the yard after a load, not onto the middle of the road.
+        if ((t2.slot ?? 0) > 0 && depotsKnown.has(t2.depotId)) {
+          t2.leg = 0; t2.t = 0; t2.reverse = false; t2.waitMs = DEPOT_LOAD_MS;
+        }
+        return t2;
+      }
       t2.deliveries = old.deliveries;
       if (JSON.stringify(t2.route) === JSON.stringify(old.route)
           && JSON.stringify(t2.segFast) === JSON.stringify(old.segFast)) {
@@ -15830,7 +16014,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
     return {
       trucks: trucks.trucks.map((t) => {
-        const g = streetLife.ghosts.get(t.depotId);
+        const g = streetLife.ghosts.get(truckKey(t));
         return g ? { ...t, leg: g.leg, t: g.t, reverse: g.reverse } : t;
       }),
     };
@@ -15857,7 +16041,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!isGuest()) {
       tickCars(cars, dtMs, track, grid, seed, {
         yieldTo: trucks.trucks.map((t) => ({
-          id: t.depotId, route: t.route, leg: t.leg, t: t.t, reverse: t.reverse,
+          id: truckKey(t), route: t.route, leg: t.leg, t: t.t, reverse: t.reverse,
         })),
         signals: streetLife.signals,
         timeMs: streetLife.time,
@@ -17277,6 +17461,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     /** #179: the test twins of the panel's Buy train / Start buttons, and a rename. */
     railBuy: (depotId: number, lineId: number, who: "you" | "ai" = "you") =>
       railBuy(depotId, lineId, who === "ai" ? rival : me),
+    /** FLEET-1 (#595): the test twins of the Fleet card's Buy / Sell truck. */
+    buyTruck: (depotId: number, who: "you" | "ai" = "you") =>
+      fleetBuyTruck(depotId, who === "ai" ? rival : me),
+    sellTruck: (depotId: number, who: "you" | "ai" = "you") =>
+      fleetSellTruck(depotId, who === "ai" ? rival : me),
     railStart: (trainId: number, who: "you" | "ai" = "you") =>
       railStart(trainId, who === "ai" ? rival : me),
     railRename: (lineId: number, name: string, who: "you" | "ai" = "you") =>

@@ -70,6 +70,11 @@ export interface Harvester {
   /** 2026-09: the Depot's LEVEL (1–3), which caps its yield. Absent = 1. */
   level?: number;
   /**
+   * FLEET-1 (#595): how many lorries run this Depot's route (1..`FLEET.maxTrucks`).
+   * Absent = 1 - a save, snapshot or Depot from before the fleet card.
+   */
+  trucks?: number;
+  /**
    * Which EDGE of the 2×2 lot its entrance opens onto — the rotation it was
    * built in (`depot.ts`). Set when the Depot is placed; records written
    * before facings existed derive one from the map (`depotFacingOf`).

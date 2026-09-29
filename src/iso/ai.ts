@@ -3358,3 +3358,38 @@ export class ClaimLedger {
     this.items = [];
   }
 }
+
+// ── FLEET-1 (#595): the rival's second lorry ──────────────────────────────
+/** The most lorries the rival puts on one Depot: the cap is 4, but the rival buys the 2nd only. */
+export const RIVAL_TRUCK_CAP = 2;
+
+/** One rival Depot as the truck planner sees it. */
+export interface TruckCandidate {
+  id: number;
+  /** How busy it is: cargo per minute the clock pays it (bigger = busier). */
+  score: number;
+  /** Lorries it already runs. */
+  trucks: number;
+  /** A road route to a Factory exists (a rail platform / unconnected Depot has none). */
+  connected: boolean;
+}
+
+/**
+ * Which Depot should get the rival's next lorry: the BUSIEST one that is road
+ * connected and under the rival's truck cap, when the money covers the price
+ * AND leaves a Depot's worth of build money behind, so trucks never starve
+ * the expansion. Null = buy nothing this turn. Pure: the game feeds it the
+ * price (`truckBuyPrice`) and the purse, the tests feed it literals.
+ */
+export function planRivalTruck(
+  depots: readonly TruckCandidate[], money: number,
+  priceFor: (trucks: number) => number, reserve: number,
+): number | null {
+  let best: TruckCandidate | null = null;
+  for (const d of depots) {
+    if (!d.connected || d.trucks >= RIVAL_TRUCK_CAP) continue;
+    if (money < priceFor(d.trucks) + reserve) continue;
+    if (!best || d.score > best.score || (d.score === best.score && d.id < best.id)) best = d;
+  }
+  return best ? best.id : null;
+}

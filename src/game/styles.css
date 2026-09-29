@@ -5921,6 +5921,19 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 .depot-card-acts .post-btn small { display: block; opacity: .8; font-size: 10.5px; }
 .depot-card-count { font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: .04em; margin: 2px 0 8px; }
 .depot-card-acts button:disabled { opacity: .45; cursor: not-allowed; }
+/* FLEET-1 (#595): the Fleet block of a Depot card - flat paper rows, no gradients. */
+.fleet-card { margin: 8px 0 10px; padding: 8px 0 0; border-top: 1.5px solid #b9a987; }
+.fleet-head { font: 700 11px var(--px-display, inherit); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 4px; }
+.fleet-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; padding: 2px 0; }
+.fleet-row span { opacity: .75; }
+.fleet-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.fleet-acts .post-btn small, .fleet-acts .mini small { display: block; opacity: .8; font-size: 10.5px; }
+.fleet-acts button:disabled { opacity: .45; cursor: not-allowed; }
+.fleet-why { margin-top: 5px; font-size: 11.5px; font-style: italic; color: #6c665b; }
+.rail-fleet { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.rail-line-pick { font: inherit; font-size: 11px; padding: 2px 4px; border-radius: 0; max-width: 46%; }
+.rail-act:disabled { opacity: .45; cursor: not-allowed; }
+.rail-fleet .rail-why { flex: 1 1 100%; font-style: italic; }
 
 /* Owner call (2026-09): the in-game banter (the rival wire — the rival's lines
    and your replies) is HIDDEN for now: it was covering the tuning plate and

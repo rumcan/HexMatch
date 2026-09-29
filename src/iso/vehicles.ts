@@ -38,6 +38,7 @@ import {
   type Harvester,
 } from "./economy";
 import { depotRate, distanceFactor } from "./loop";
+import { truckCountOf, truckKey } from "./fleet";
 import { gradeOf, uphillSpeed } from "./slopes";
 import { TIER_THROUGHPUT, TRANSPORT } from "./config";
 import {
@@ -77,6 +78,12 @@ export interface Truck {
   ownerId: number;
   /** The Depot this lorry belongs to — it never switches to another one. */
   depotId: number;
+  /**
+   * FLEET-1 (#595): which of the Depot's lorries this is (0 = the one it comes
+   * with). Absent = 0, so a pre-fleet wire record or a hand-built test truck is
+   * the Depot's only lorry. `truckKey` (fleet.ts) is the unique id.
+   */
+  slot?: number;
   /**
    * A1: the Factory tile at the far end of the route — where the load is
    * delivered. Kept on the truck so a delivery knows where to show its "+N"
@@ -242,21 +249,48 @@ export function planTrucks(eco: EconomyState): Truck[] {
     // E4 (#268): the grade of every segment, off the DRAWN surface (slopes.ts).
     const segClimb = plan.route.slice(0, -1).map(
       (a, k) => gradeOf(eco.grid, a, plan.route[k + 1]));
-    out.push({
-      ownerId: h.ownerId,
-      depotId: h.id,
-      factory: [plan.factory.tx, plan.factory.ty],
-      route: plan.route,
-      segFast,
-      segMult,
-      segClimb,
-      depot: [h.tx, h.ty],
-      rateMult: depotRate(h, distanceFactor(eco, h)),
-      leg: 0, t: 0, reverse: false, waitMs: 0, deliveries: 0,
-      _yieldMs: 0, _stuckMs: 0, _lastSpeed: 0,
-    });
+    // FLEET-1 (#595): one lorry per `Harvester.trucks`, spread evenly around
+    // the ping-pong loop so a fresh plan does not stack them on the depot.
+    const count = truckCountOf(h);
+    const rateMult = depotRate(h, distanceFactor(eco, h));
+    for (let slot = 0; slot < count; slot++) {
+      const pose = truckPhase(plan.route.length - 1, slot / count);
+      out.push({
+        ownerId: h.ownerId,
+        depotId: h.id,
+        ...(slot > 0 ? { slot } : {}),
+        factory: [plan.factory.tx, plan.factory.ty],
+        route: plan.route.map((r) => [r[0], r[1]] as [number, number]),
+        segFast,
+        segMult,
+        segClimb,
+        depot: [h.tx, h.ty],
+        rateMult,
+        leg: pose.leg, t: pose.t, reverse: pose.reverse, waitMs: 0, deliveries: 0,
+        _yieldMs: 0, _stuckMs: 0, _lastSpeed: 0,
+      });
+    }
   }
   return out;
+}
+
+/**
+ * FLEET-1 (#595): where on the depot -> factory -> depot loop a lorry sits at
+ * `phase` (0..1) of the round trip, in segment units. Phase 0 is the depot
+ * (leg 0, t 0, forward), so lorry 0 starts exactly as it always did.
+ */
+export function truckPhase(
+  segments: number, phase: number,
+): { leg: number; t: number; reverse: boolean } {
+  if (segments < 1 || phase <= 0) return { leg: 0, t: 0, reverse: false };
+  const pos = phase * 2 * segments;
+  if (pos <= segments) {
+    const leg = Math.min(Math.floor(pos), segments - 1);
+    return { leg, t: pos - leg, reverse: false };
+  }
+  const back = 2 * segments - pos;
+  const leg = Math.min(Math.floor(back), segments - 1);
+  return { leg, t: back - leg, reverse: true };
 }
 
 // ── the clock ─────────────────────────────────────────────────────────────
@@ -298,7 +332,7 @@ export function tickTrucks(
   const hash = useTraffic
     ? buildHash(state.trucks
         .filter((t) => t.route.length >= 2)
-        .map((t) => ({ id: t.depotId, v: t } as VehicleEntry)))
+        .map((t) => ({ id: truckKey(t), v: t } as VehicleEntry)))
     : null;
   // FLOW-1: null unless the traffic module is live, and then this function is
   // exactly what it was before.
@@ -323,7 +357,7 @@ export function tickTrucks(
     const myHeadingCanonical = truck.reverse ? !myCanonicalFwd : myCanonicalFwd;
     let best = Infinity;
     for (const mate of hash.segmentMates(sk)) {
-      if (mate.id === truck.depotId) continue;
+      if (mate.id === truckKey(truck)) continue;
       const other = mate.v as Truck;
       const omax = other.route.length - 1;
       const ok = Math.min(other.leg, omax - 1);
@@ -417,7 +451,7 @@ export function tickTrucks(
           const jk = `j:${tIdx(headingAhead[0], headingAhead[1])}`;
           let occupants = 0;
           for (const mate of hash!.junctionMates(jk)) {
-            if (mate.id === truck.depotId) continue;
+            if (mate.id === truckKey(truck)) continue;
             occupants++;
           }
           if (occupants > 0 && (truck._yieldMs ?? 0) < YIELD_WAIT_MS) {

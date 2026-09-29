@@ -132,6 +132,18 @@ const portraitFor = (p: UiPlayer, index: number): string =>
  * and Q does the same from the keyboard.
  */
 /** The right rail's tabs. */
+/**
+ * FLEET-1 (#595): the Fleet card a Depot's action card carries - the vehicles
+ * with their status, a Buy button with its price and a Sell button with its
+ * refund. A refused button is `disabled` and prints its reason (`why`).
+ */
+export interface FleetCardInfo {
+  heading: string;
+  rows: { label: string; status: string }[];
+  buy: { label: string; price: string; why: string | null; onClick: () => void };
+  sell?: { label: string; refund: string; why: string | null; onClick: () => void } | null;
+}
+
 /** 2026-09: what the Depot card shows and the doors it offers. */
 export interface DepotCardInfo {
   title: string;
@@ -156,6 +168,8 @@ export interface DepotCardInfo {
   statsLine?: string | null;
   /** #461 TUNE-1: last star rating for retune display. */
   lastStars?: number;
+  /** FLEET-1 (#595): the trucks on this Depot's route. Absent = no card. */
+  fleet?: FleetCardInfo;
   onUpgrade: () => boolean;
   onRetune: () => boolean;
 }
@@ -177,6 +191,8 @@ export interface ActionCardAction {
 export interface ActionCardInfo {
   title: string;
   lines: string[];
+  /** FLEET-1 (#595): the Fleet section, between the lines and the buttons. */
+  fleet?: FleetCardInfo;
   actions: ActionCardAction[];
   /** Absolute `performance.now()` deadline — paints mm:ss until then. */
   until?: number;
@@ -220,6 +236,13 @@ export interface UiRailRow {
   partnerId?: number;
   /** What the action costs, in the game's own cargo wording. */
   hint?: string;
+  /**
+   * FLEET-1 (#595): on a Train Depot row, every line of the seat with the
+   * reason a train cannot be bought for it right now (null = it can), and the
+   * price the Buy button prints. Absent = the panel is closed / no lines.
+   */
+  buyLines?: { id: number; name: string; why: string | null }[];
+  buyPrice?: string;
 }
 
 /** CAST-1: the seat's Black Market prices and the Fixer's counter. */
@@ -5410,6 +5433,38 @@ export function createOriginalUi(
     plantDepotSelected = false;
     paintPlantContext();
   }
+  /** FLEET-1 (#595): the Fleet block of a Depot card - paper rows, orange Buy, and the refusal in plain words. */
+  function fleetSection(f: FleetCardInfo): HTMLElement {
+    const box = h("div", "fleet-card");
+    box.appendChild(h("div", "fleet-head", f.heading));
+    for (const r of f.rows) {
+      const row = h("div", "fleet-row");
+      row.appendChild(h("b", "", r.label));
+      row.appendChild(h("span", "", r.status));
+      box.appendChild(row);
+    }
+    const acts = h("div", "fleet-acts");
+    const buy = h("button", "post-btn") as HTMLButtonElement;
+    buy.innerHTML = `${f.buy.label} <small>${f.buy.price}</small>`;
+    buy.dataset.fleet = "buy";
+    buy.disabled = f.buy.why !== null;
+    if (f.buy.why) buy.title = f.buy.why;
+    buy.onclick = () => f.buy.onClick();
+    acts.appendChild(buy);
+    if (f.sell) {
+      const sell = h("button", "mini") as HTMLButtonElement;
+      sell.innerHTML = `${f.sell.label} <small>${f.sell.refund}</small>`;
+      sell.dataset.fleet = "sell";
+      sell.disabled = f.sell.why !== null;
+      if (f.sell.why) sell.title = f.sell.why;
+      sell.onclick = () => f.sell!.onClick();
+      acts.appendChild(sell);
+    }
+    box.appendChild(acts);
+    // The refusal is printed, not only a tooltip: a phone has no hover.
+    if (f.buy.why) box.appendChild(h("div", "fleet-why", f.buy.why));
+    return box;
+  }
   function showActionCard(o: ActionCardInfo): void {
     closeActionCard();
     const card = h("div", "panel depot-card");
@@ -5420,6 +5475,7 @@ export function createOriginalUi(
     for (const line of o.lines) {
       card.appendChild(h("div", "depot-card-row", line));
     }
+    if (o.fleet) card.appendChild(fleetSection(o.fleet));
     let countEl: HTMLElement | null = null;
     if (o.until != null) {
       countEl = h("div", "depot-card-count");
@@ -5492,6 +5548,7 @@ export function createOriginalUi(
       : null;
     showActionCard({
       title: o.title,
+      ...(o.fleet ? { fleet: o.fleet } : {}),
       lines: [
         `Yield <b>×${o.yieldNow}</b> of cap <b>×${o.cap}</b>${full ? " — full; score past it pays Gold" : ""}`,
         // R3 (#270): the dam's bonus, when it reaches this Depot — the same
@@ -5793,7 +5850,7 @@ export function createOriginalUi(
     // hidden one and the toggle below would never fire the first time a rail
     // tool is picked up.
     const railKey = railPanelOn
-      ? "on|" + railState!.rows.map((r) => `${r.id}:${r.kind}:${r.label}:${r.detail}:${r.actions.join(",")}:${r.hint ?? ""}`).join("|")
+      ? "on|" + railState!.rows.map((r) => `${r.id}:${r.kind}:${r.label}:${r.detail}:${r.actions.join(",")}:${r.hint ?? ""}:${(r.buyLines ?? []).map((b) => `${b.id}${b.why ?? ""}`).join(",")}:${r.buyPrice ?? ""}`).join("|")
       : "off|";
     if (railKey !== lastRailKey) {
       lastRailKey = railKey;
@@ -5808,7 +5865,36 @@ export function createOriginalUi(
         for (const row of railState!.rows) {
           const line = h("div", "rail-row");
           line.innerHTML = `<b>${row.label}</b><small>${row.detail}${row.hint ? ` · ${row.hint}` : ""}</small>`;
+          // FLEET-1 (#595): a Train Depot's Fleet block - pick a line, Buy train
+          // with its price, and the refusal as the disabled button's reason.
+          if (row.kind === "depot" && row.buyLines?.length) {
+            const fleet = h("div", "rail-fleet");
+            const pick = h("select", "rail-line-pick") as HTMLSelectElement;
+            pick.dataset.railPick = String(row.id);
+            for (const l of row.buyLines) {
+              const o = h("option", "", l.name) as HTMLOptionElement;
+              o.value = String(l.id);
+              pick.appendChild(o);
+            }
+            const buy = h("button", "rail-act", `Buy train ${row.buyPrice ?? ""}`) as HTMLButtonElement;
+            buy.dataset.railAction = `${row.id}:buy`;
+            buy.dataset.sfx = "click";
+            const why = h("small", "rail-why");
+            const sync = () => {
+              const line = row.buyLines!.find((l) => String(l.id) === pick.value);
+              buy.disabled = !!line?.why;
+              buy.title = line?.why ?? "";
+              why.textContent = line?.why ?? "";
+            };
+            pick.onchange = sync;
+            sync();
+            buy.onclick = () => hooks.onRailAction(row.id, "buy", Number(pick.value));
+            fleet.append(pick, buy, why);
+            line.appendChild(fleet);
+          }
           for (const action of row.actions) {
+            // FLEET-1: the picker above owns Buy on a depot row that has one.
+            if (action === "buy" && row.kind === "depot" && row.buyLines?.length) continue;
             const b = h("button", "rail-act", action === "assign" ? "Assign line" : action === "buy" ? "Buy train"
               : action === "start" ? "Start" : action === "recall" ? "Recall"
                 // RAIL-6 (#575): the station upgrade — the click arms the lane

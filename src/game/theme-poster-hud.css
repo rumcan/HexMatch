@@ -459,6 +459,8 @@
 }
 .ui-root .br-dock .depot-card > .panel-title::before { content: none; display: none; }
 .ui-root .br-dock .depot-card :is(.depot-card-row, .depot-card-count) { color: #182126; }
+.ui-root .br-dock .depot-card :is(.fleet-head, .fleet-row) { color: #182126; }
+.ui-root .br-dock .depot-card .fleet-head { color: #d1640e; }
 .ui-root .br-dock .depot-card :is(.depot-card-row, .depot-card-count) b { color: #bd570c; }
 .ui-root .br-dock .depot-card :is(.post-btn, .mini) {
   border-radius: 0; border: 1.5px solid #1e2527; background: #fbf5e8; color: #182126;
