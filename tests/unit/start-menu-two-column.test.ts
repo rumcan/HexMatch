@@ -121,20 +121,17 @@ describe("#184 two-column mode menu", () => {
     expect(container.querySelector(".px-history")).toBeNull();
   });
 
-  it("lists every primary action on the right; the rank picker waits for the search", async () => {
+  it("lists the Solo actions on the right; Multiplayer has its own screen (header tab)", async () => {
     await renderModes();
     const labels = buttonLabels(container.querySelector(".start-actions")!);
     // Story mode is hidden for now (src/story/flag.ts) — its door comes and goes with the flag.
     expect(labels.some((l) => l.startsWith("Story Mode"))).toBe(STORY_MODE_ENABLED);
-    for (const action of [
-      "Play vs AI",
-      "Host a game",
-      "Join with a code",
-      "Auto Matchmaking",
-      "The ladder",
-      "Back to the menu",
-    ]) {
+    for (const action of ["Play vs AI", "Scenarios", "Back to the menu"]) {
       expect(labels.some((l) => l.startsWith(action)), `missing action: ${action}`).toBe(true);
+    }
+    // Owner (2026-09-29): the multiplayer doors moved to the Multiplayer tab.
+    for (const gone of ["Host a game", "Join with a code", "Auto Matchmaking", "The ladder"]) {
+      expect(labels.some((l) => l.startsWith(gone)), `${gone} should not be on the Play card`).toBe(false);
     }
     // The Any/Similar rank picker moved to the Auto Matchmaking waiting
     // screen, so the mode list stays one decision per button.
@@ -142,10 +139,20 @@ describe("#184 two-column mode menu", () => {
     expect(labels.some((l) => /^(Any|Similar) rank/.test(l))).toBe(false);
     // Nobody is told a hosted game is experimental any more.
     expect(labels.some((l) => l.includes("Experimental"))).toBe(false);
-    // Solo and multiplayer are labelled groups, in that order.
+    // The Play card is the Solo group alone.
     const groupLabels = [...container.querySelectorAll(".start-actions .start-actions-label")]
       .map((el) => el.textContent);
-    expect(groupLabels).toEqual(["Solo", "Multiplayer"]);
+    expect(groupLabels).toEqual(["Solo"]);
+    // …and the header's Multiplayer tab opens the screen that holds the rest.
+    const tab = container.querySelector<HTMLButtonElement>('.px-tabs [data-tab="multiplayer"]');
+    expect(tab, "a Multiplayer tab beside the Ladder").toBeTruthy();
+    const tabs = [...container.querySelectorAll(".px-tabs button")].map((b) => b.textContent);
+    expect(tabs.indexOf("Multiplayer")).toBe(tabs.indexOf("Ladder") + 1);
+    await act(async () => { tab!.click(); });
+    const mp = buttonLabels(container.querySelector(".mp-actions")!);
+    for (const action of ["Auto Matchmaking", "Host a game", "Join with a code", "The ladder"]) {
+      expect(mp.some((l) => l.startsWith(action)), `Multiplayer screen missing: ${action}`).toBe(true);
+    }
   });
 
   it("puts each mode's detail on its own line under the label", async () => {
