@@ -975,7 +975,7 @@ export interface TransportDef {
  */
 export const BUILD_COSTS: Readonly<Record<
   "dirt" | "road" | "upgrade" | "depot" | "plant" | "rail" | "platform" | "trainDepot" | "train"
-  | "bridge" | "railBridge" | "dam" | "stationLane",
+  | "bridge" | "railBridge" | "dam" | "stationLane" | "truck",
   Partial<Record<Cargo, number>>
 >> = {
   // A Dirt Road is FREE: the gravel is the plumbing every game needs, and
@@ -1015,7 +1015,25 @@ export const BUILD_COSTS: Readonly<Record<
   // buys is the strip, the track and the switch. The Rail Baroness perk (the
   // `rail` build class) applies, exactly as it does to a platform.
   stationLane: { wood: 3, stone: 3, ore: 6, oil: 1 },
+  // FLEET-1 (#595): one more lorry on a Depot's route (the base price; the 2nd,
+  // 3rd and 4th truck pay `FLEET.truckPriceMult` of it). James's road perk applies.
+  truck: { wood: 3, stone: 3, ore: 4 },
 };
+
+/**
+ * FLEET-1 (#595): the fleet rules, one table. A Depot starts with one lorry;
+ * `maxTrucks` is the cap. `truckPriceMult[i]` prices the (i+2)th truck (base
+ * x 1, 1.5, 2). `truckLoadMult[n-1]` is what n lorries multiply the Depot's
+ * income clock by - "more trucks = more loads per minute" made real in the
+ * economy (a lorry-load is 1/n of the depot's output per trip, so n lorries
+ * carry n times the loads; the new-loop clock pays by rate, not by arrival, so
+ * it reads this instead). Linear by default; tune the table, not the code.
+ */
+export const FLEET = {
+  maxTrucks: 4,
+  truckPriceMult: [1, 1.5, 2] as readonly number[],
+  truckLoadMult: [1, 2, 3, 4] as readonly number[],
+} as const;
 
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1085,6 +1103,7 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   platform: moneyValueOf(BUILD_COSTS.platform),
   // RAIL-6 (#575): one more lane at a standing station — half a platform.
   stationLane: moneyValueOf(BUILD_COSTS.stationLane),
+  truck: moneyValueOf(BUILD_COSTS.truck),
   trainDepot: moneyValueOf(BUILD_COSTS.trainDepot),
   train: moneyValueOf(BUILD_COSTS.train),
   bridge: moneyValueOf(BUILD_COSTS.bridge),

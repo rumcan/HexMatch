@@ -2752,6 +2752,9 @@ export function createLine(
   return { ok: true, line };
 }
 
+/** FLEET-1 (#595): what the one-train-per-network refusal says until FLEET-2's Passing Loop lands. */
+export const BUSY_NETWORK_WHY = "Build a Passing Loop so two trains can share this track.";
+
 /** #179: rename one of the owner's lines. An empty name is refused. */
 export function renameLine(state: RailState, ownerId: number, lineId: number, name: string): boolean {
   const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
@@ -2774,24 +2777,40 @@ export function renameLine(state: RailState, ownerId: number, lineId: number, na
  * The PRICE is the caller's to check and charge, so a guest can ask and the
  * host debits its authoritative purse; a refusal here costs nothing.
  */
-export function buyTrain(
+/**
+ * FLEET-1 (#595): why a train CANNOT be bought right now (null = it can). The
+ * one refusal ladder `buyTrain` runs and the Fleet card's disabled Buy button
+ * prints, so the button can never promise a purchase the rules refuse. Reads
+ * only; `comp` lets a caller checking several lines share one flood.
+ */
+export function trainBuyRefusal(
   state: RailState, ownerId: number, depotId: number, lineId: number, grid?: Grid,
-): { ok: boolean; train?: Train; why?: string } {
+  comp?: Map<number, number>,
+): string | null {
   const depot = state.structures.find((s) => s.id === depotId && s.kind === "depot" && s.ownerId === ownerId);
   const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId);
-  if (!depot || !line) return { ok: false, why: RAIL_REFUSAL_TEXT.missing };
+  if (!depot || !line) return RAIL_REFUSAL_TEXT.missing;
   if (!depotReachesPlatform(state, ownerId, depot, line.source, grid)) {
-    return { ok: false, why: "No depot of yours can reach that platform." };
+    return "No depot of yours can reach that platform.";
   }
-  const comp = railComponents(state, ownerId);
-  const home = depotComponent(comp, depot);
-  if (!home) return { ok: false, why: "The depot is not connected to the platform." };
+  const c = comp ?? railComponents(state, ownerId);
+  const home = depotComponent(c, depot);
+  if (!home) return "The depot is not connected to the platform.";
   const busy = state.trains.some((t) => {
     if (t.ownerId !== ownerId) return false;
     const d = depotOfTrain(state, t);
-    return d ? depotComponent(comp, d) === home : false;
+    return d ? depotComponent(c, d) === home : false;
   });
-  if (busy) return { ok: false, why: "One train per connected network — this line is already running one." };
+  return busy ? BUSY_NETWORK_WHY : null;
+}
+
+export function buyTrain(
+  state: RailState, ownerId: number, depotId: number, lineId: number, grid?: Grid,
+): { ok: boolean; train?: Train; why?: string } {
+  const refusal = trainBuyRefusal(state, ownerId, depotId, lineId, grid);
+  if (refusal) return { ok: false, why: refusal };
+  const depot = state.structures.find((s) => s.id === depotId && s.kind === "depot" && s.ownerId === ownerId)!;
+  const line = state.lines.find((l) => l.id === lineId && l.ownerId === ownerId)!;
   const exit = depotExit(depot);
   const train: Train = {
     id: state.seq++,

@@ -454,7 +454,7 @@ describe("RAIL-04 one train per connected owner component", () => {
     // Same component: refused.
     const second = assignLine(state, 1, a.source.id, a.dest.id);
     expect(second.ok).toBe(false);
-    expect(second.why).toMatch(/One train per connected network/);
+    expect(second.why).toMatch(/Passing Loop/);
     // A second, DISCONNECTED component may carry its own train.
     const elsewhere = assignLine(state, 1, b.source.id, b.dest.id);
     expect(elsewhere.ok).toBe(true);
@@ -854,7 +854,7 @@ describe("#179 line and train management", () => {
     const other = createLine(state, 1, source.id, dest.id).line!;
     const refused = buyTrain(state, 1, second.id, other.id);
     expect(refused.ok).toBe(false);
-    expect(refused.why).toMatch(/One train per connected network/);
+    expect(refused.why).toMatch(/Passing Loop/);
     expect(state.trains).toHaveLength(1);
     // A second, DISCONNECTED network may run its own.
     const far = buildLine(state, grid, track, 17, 30);
@@ -872,7 +872,7 @@ describe("#179 line and train management", () => {
     expect(plan.train?.status).toBe("departing");
     const again = assignLine(state, 1, source.id, dest.id);
     expect(again.ok).toBe(false);
-    expect(again.why).toMatch(/One train per connected network/);
+    expect(again.why).toMatch(/Passing Loop/);
     expect(state.lines).toHaveLength(1);
     expect(state.trains).toHaveLength(1);
     expect(state.seq).toBe(seq + 2);          // the refused attempt spent no ids

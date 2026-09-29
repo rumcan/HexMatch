@@ -22,7 +22,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../game/config";
 import { generateMap } from "./grid";
-import type { Cargo } from "./config";
+import { FLEET, type Cargo } from "./config";
 import { createTrack, type Track } from "./track";
 import type { Harvester, Factory } from "./economy";
 import { DEPOT_FACINGS, type DepotFacing } from "./depot";
@@ -154,6 +154,8 @@ export interface WireHarvester {
   closed?: boolean;
   /** #461 TUNE-1: the star rating of the Depot's last session (0–3). */
   lastStars?: number;
+  /** FLEET-1 (#595): lorries on this Depot's route (1..4). Absent = 1. */
+  trucks?: number;
 }
 
 export interface WirePlayer {
@@ -270,6 +272,8 @@ export interface BattleWire {
 export interface TruckWire {
   ownerId: number;
   depotId: number;
+  /** FLEET-1 (#595): which of the Depot's lorries (absent = 0, the first). */
+  slot?: number;
   factory: [number, number];
   route: [number, number][];
   segFast: boolean[];
@@ -547,6 +551,8 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
       ...(typeof h.platformId === "number" ? { platformId: h.platformId, railIndustryId: h.railIndustryId } : {}),
       // #461 TUNE-1: star rating of last session, optional for backwards compat.
       ...(typeof h.lastStars === "number" ? { lastStars: h.lastStars } : {}),
+      // FLEET-1 (#595): the lorry count, left off while it is the default 1.
+      ...(typeof h.trucks === "number" && h.trucks !== 1 ? { trucks: h.trucks } : {}),
     })),
     factories: src.factories.map((f) => ({ ...f })),
     players: src.players.map((p) => ({ ...p, res: { ...p.res } })),
@@ -656,6 +662,11 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
     if (h && h.tuneTier !== undefined
       && (typeof h.tuneTier !== "number" || !Number.isInteger(h.tuneTier) || h.tuneTier < 0)) {
       return new SnapshotError("malformed", "Snapshot carries a malformed depot tune tier.");
+    }
+    // FLEET-1 (#595): a lorry count is a small whole number, or absent (= 1).
+    if (h && h.trucks !== undefined
+      && (typeof h.trucks !== "number" || !Number.isInteger(h.trucks) || h.trucks < 1 || h.trucks > FLEET.maxTrucks)) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed depot truck count.");
     }
     // MATCH-2 (#566): the 5★ scale — an old 0…3 rating is a legal 0…5 one.
     if (h && h.lastStars !== undefined
