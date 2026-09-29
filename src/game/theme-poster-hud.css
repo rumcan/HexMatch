@@ -417,3 +417,84 @@
 #iso-ending .ending-map-label { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 13px; }
 #iso-ending .ending-the-end { text-align: center; }
 #iso-ending .ending-fireworks, #iso-ending .ending-ashes { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   UIX-6 (#601) — the paper texture on EVERY gameplay beige surface.
+   One recipe: --px-paper-bg (theme-poster.css :root) — the stippled paper
+   the main-menu cards paint. Flat beige hexes below become the var; the
+   menu's .px-paper-tex class is the named home of the recipe.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* the objective chip — "Connect to your Factory with a road." */
+.ui-root .objective {
+  background: var(--px-paper-bg);
+  border: 1.5px solid #11191d; border-left: 4px solid #ef7c17;
+  color: #172126;
+}
+.ui-root .objective:hover, .ui-root .objective:focus-visible { border-left-color: #0a8b93; }
+
+/* the bottom-right dock: the Plant card and the action cards (the Depot,
+   Platform and Train panels, the battle and industry cards ride the same
+   .depot-card surface). Ink frame + orange rule, like the UIX paper cards. */
+.ui-root .br-dock .plant-card { background: var(--px-paper-bg) !important; }
+.ui-root .br-dock .depot-card {
+  background: var(--px-paper-bg) !important; color: #182126 !important;
+  border: 2px solid #11191d !important; border-top: 4px solid #ef7c17 !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .35) !important;
+}
+/* the action card's tokens read ink-on-paper, not bone-on-iron */
+.ui-root .br-dock .depot-card {
+  --txt: #172126; --txt-dim: #3d474a; --txt-mute: #6c665b;
+  --line: #b9a987; --line-hi: #8e7f66;
+  --brass: #e46b0e; --brass-hi: #b94c04; --brass-lo: #b9a987; --patina: #0a8b93;
+  --sa-bone: #172126; --sa-bone-dim: #3d474a; --sa-bone-mute: #6c665b;
+  --sa-panel: #e7dbc2; --sa-panel-2: #ddcfb2; --sa-line: #c7b795; --sa-line-hi: #8e7f66; --sa-ink: #fbf5e8;
+  --c-bone: 23 33 38; --c-ink: 251 245 232;
+}
+.ui-root .br-dock .depot-card > .panel-title {
+  color: #d1640e; border: 0; text-shadow: none;
+  font: 700 12px var(--px-display) !important; letter-spacing: .15em !important;
+}
+.ui-root .br-dock .depot-card > .panel-title::before { content: none; display: none; }
+.ui-root .br-dock .depot-card :is(.depot-card-row, .depot-card-count) { color: #182126; }
+.ui-root .br-dock .depot-card :is(.depot-card-row, .depot-card-count) b { color: #bd570c; }
+.ui-root .br-dock .depot-card :is(.post-btn, .mini) {
+  border-radius: 0; border: 1.5px solid #1e2527; background: #fbf5e8; color: #182126;
+  font: 700 13px var(--px-display); letter-spacing: .08em; text-transform: uppercase;
+}
+.ui-root .br-dock .depot-card :is(.post-btn, .mini):first-child { background: #ef7c17; border: 0; color: #fff8ec; }
+.ui-root .br-dock .depot-card :is(.post-btn, .mini):first-child:hover:not(:disabled) { background: #d1640e; color: #fff; }
+.ui-root .br-dock .depot-card :is(.post-btn, .mini):hover:not(:disabled) { background: #10191e; color: #f2e8d4; }
+
+/* the drawer's paper content (the Bank / Market / Black Market / Feed /
+   Contracts sheets) and the drawer's own backing */
+.ui-root .aside.right { background: var(--px-paper-bg) !important; }
+.ui-root .aside.right .pane { background: var(--px-paper-bg); }
+/* the bottom tabs' active tab (BANK): the paper, not flat bone */
+.ui-root:not([data-rail-right="1"]) .aside.right .tab.active { background: var(--px-paper-bg); color: #171f20; }
+
+/* the confirm-to-place sheet (MOB-1) and its paper friends */
+.ui-root .confirm-sheet { background: var(--px-paper-bg); }
+
+/* toasts, the held-tool hint and the banner: notices ride the paper */
+.ui-root .toast { background: var(--px-paper-bg); }
+.ui-root .modebar { background: var(--px-paper-bg); }
+.ui-root .banner, .ui-root .banner.narrated { background: var(--px-paper-bg); }
+
+/* the tutorial strip: paper, like every other notice */
+#iso-guide .guide-strip { background: var(--px-paper-bg); }
+
+/* the How to Play / tutorial dialog card */
+:is(#iso-battle-howto, #iso-tutorial) .tut-card { background: var(--px-paper-bg) !important; }
+
+/* the ending card ("results / ending card") — the same paper, ink frames
+   and orange rule it already wears; the texture was missing. */
+#iso-ending .ending-card { background: var(--px-paper-bg); }
+
+/* phones: the Economy sheet is paper too */
+@media (max-width: 760px) {
+  .ui-root #iso-aside-right { background: var(--px-paper-bg) !important; }
+  .ui-root #iso-aside-right > #iso-trade.panel,
+  .ui-root #iso-aside-right > .plant-card { background: var(--px-paper-bg) !important; }
+  .ui-root #iso-aside-right .tab.active { background: var(--px-paper-bg); color: #171f20; }
+}

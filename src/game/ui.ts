@@ -97,7 +97,7 @@ import { coarsePointer } from "../iso/touch";
 // One sprite per cargo (./gem-art.ts), mapped through the same gem→cargo
 // bijection quarry.ts uses, so a colour can never draw the wrong sprite.
 import { GEM_ART } from "./gem-art";
-import { STAR_SCALE, starGlyphs, tuningStarScores } from "../match3/stars";
+import { STAR_SCALE, TUNING_STARS, starGlyphs, tuningStarScores } from "../match3/stars";
 import { attachBoardVoice } from "../match3/audio";
 import { mountBoardCanvas, type BoardCanvas } from "./board-canvas";
 import {
@@ -1455,7 +1455,19 @@ export function createOriginalUi(
   });
   tpMeterTrack.append(tpMeterBar, ...tpMeterStars);
   tpMeter.append(tpMeterTrack, tpMeterLabel);
-  tpRow.append(tpScore, tpYield, tpMeter, tpFinish, tpAbandon);
+  // UIX-6 (#601): the star curve's labels (Tuned → Legendary) ride the
+  // session page as a paper readout beside the board — the same TUNING_STARS
+  // table the bars above and the results pop-up rate on, so the label and
+  // the bar that lights off it can never disagree.
+  const tpCurve = h("div", "tp-curve");
+  tpCurve.title = "The star curve — Tuned → Legendary";
+  const tpCurveLabels = TUNING_STARS.map((row) => {
+    const label = h("span", "tp-curve-label", `${"★".repeat(row.stars)} ${row.label}`);
+    label.dataset.stars = String(row.stars);
+    return label;
+  });
+  tpCurve.append(...tpCurveLabels);
+  tpRow.append(tpScore, tpYield, tpCurve, tpMeter, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
   const tpIdleText = h("span", "tp-idle-text");
   // L6 (#220): the re-match key, beside the line that explains it. Built once
@@ -4161,7 +4173,9 @@ export function createOriginalUi(
       if (sessionFrame.offsetHeight > 100 && chromeH >= 0) {
         const cs = getComputedStyle(sessionFrame);
         const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
-        const maxW = Math.min(window.innerWidth * 0.96, 760) - padX;
+        // UIX-6 (#601): the frame's CSS cap is min(96vw, 820px) — the 820 keeps
+        // the clamp and the sheet honest (the side readouts live inside it).
+        const maxW = Math.min(window.innerWidth * 0.96, 820) - padX;
         const maxH = window.innerHeight * 0.94 - chromeH;
         z = Math.max(0.3, Math.min(
           (maxW - PHONE_SLOT_PAD_W) / (CELL * board.w),
@@ -4911,6 +4925,8 @@ export function createOriginalUi(
     const prog = Math.min(1, Math.max(0, t.score / top));
     tpMeterFill.style.width = `${(prog * 100).toFixed(1)}%`;
     tpMeterStars.forEach((star, i) => star.classList.toggle("lit", t.score >= bars[i]));
+    // UIX-6 (#601): the side-column star curve lights the same way the bars do.
+    tpCurveLabels.forEach((label, i) => label.classList.toggle("lit", t.score >= bars[i]));
     // The next bar worth naming: ★ is "any cleared gem", so the chase starts at ★★.
     const nextIdx = bars.findIndex((bar, i) => i > 0 && t.score < bar);
     tpMeterLabel.textContent = nextIdx < 0
