@@ -26,7 +26,7 @@ function state(patch: Partial<UiState> = {}): UiState {
   return {
     players: [], purse: emptyBag(), money: 500, phase: "play", tool: "select",
     freeTrack: 0, freeDepots: 0, banner: null, bannerKey: null, costInfo: null,
-    inspect: null, reach: {}, resetIn: 0, portrait: "you", tuning: null,
+    inspect: null, reach: {}, resetIn: 0, portrait: "james", tuning: null,
     ...patch,
   };
 }

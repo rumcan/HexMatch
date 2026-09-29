@@ -101,7 +101,7 @@ function state(over: Partial<UiState> = {}): UiState {
     ],
     purse: {}, phase: "play", tool: "select", freeTrack: 0, freeDepots: 0,
     banner: null, bannerKey: null, costInfo: null, inspect: null,
-    reach: {}, resetIn: 0, portrait: "you",
+    reach: {}, resetIn: 0, portrait: "james",
     ...over,
   };
 }
