@@ -3202,80 +3202,69 @@ export function railStructureItems(state: RailState, atlas?: RailSpriteSource): 
   const out: DrawItem[] = [];
   for (const s of state.structures) {
     const ref = { kind: "rail", structure: s.id, railKind: s.kind, ownerId: s.ownerId };
-    if (s.kind === "depot") {
-      out.push({ sprite: depotSprite(s.view), tx: s.tx, ty: s.ty, ref });
-      continue;
-    }
-    const lanes = stationLanes(s);
-    const tier = stationWarehouseTier(lanes.length);
-    if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {
-      out.push({ sprite: platformSprite(s.view), tx: s.tx, ty: s.ty, ref });
-      continue;
-    }
-    const [wx, wy] = stationWarehouseTile(s);
-    out.push({ sprite: stationWhSprite(tier, s.view), tx: wx, ty: wy, ref });
-    for (let li = 0; li < lanes.length; li++) {
-      const l = lanes[li];
-      const slab = laneSlabTiles(l);
-      // The cap finishes the lane's far end; the slab tiles before it are the
-      // code-painted concrete strip. The first lane's head tile is the
-      // warehouse's own ground, so no slab is painted under it.
-      for (let i = li === 0 ? 1 : 0; i < slab.length - 1; i++) {
-        out.push({ sprite: laneSlabSprite(l.view), tx: slab[i][0], ty: slab[i][1], ref });
-      }
-      const [cx, cy] = laneCapTile(l);
-      out.push({ sprite: stationCapSprite(l.view), tx: cx, ty: cy, ref });
-    }
+    for (const it of structureSprites(s, atlas)) out.push({ ...it, ref });
   }
   return out;
 }
 
 /**
- * RAIL-7 (#603) — GHOST HELPERS: one source of truth for what a placed
- * station looks like. The ghost and the placed structure call the SAME sprite
- * lookup (stationWhSprite / laneSlabSprite / stationCapSprite / depotSprite)
- * and the SAME tile helpers (laneSlabTiles / laneCapTile /
- * stationWarehouseTile), so they cannot drift again.
- *
- * The overlay (game.ts) builds its ghost from these; the unit test
- * rail-7-ghost.test.ts asserts that the ghost's sprite keys equal the placed
- * structure's sprite keys for every rotation.
+ * The sprites one rail structure draws. RAIL-7 (#603): the ONE source of truth
+ * — the placed structure (`railStructureItems`) and the placement ghost
+ * (`platformGhostItems` / `depotGhostItems` / `laneGhostItems`) both come from
+ * here, so the ghost can never again show different art from what lands.
  */
+export function structureSprites(s: RailStructure, atlas?: RailSpriteSource): GhostDrawItem[] {
+  if (s.kind === "depot") return [{ sprite: depotSprite(s.view), tx: s.tx, ty: s.ty }];
+  const lanes = stationLanes(s);
+  const tier = stationWarehouseTier(lanes.length);
+  if (atlas && !atlas.has(stationWhSprite(tier, s.view))) {
+    return [{ sprite: platformSprite(s.view), tx: s.tx, ty: s.ty }];
+  }
+  const out: GhostDrawItem[] = [];
+  const [wx, wy] = stationWarehouseTile(s);
+  out.push({ sprite: stationWhSprite(tier, s.view), tx: wx, ty: wy });
+  for (let li = 0; li < lanes.length; li++) out.push(...laneSprites(lanes[li], li === 0));
+  return out;
+}
+
+/**
+ * One lane's slab strip and cap. The cap finishes the lane's far end; the slab
+ * tiles before it are the code-painted concrete strip. The first lane's head
+ * tile is the warehouse's own ground, so no slab is painted under it.
+ */
+function laneSprites(l: Pick<RailLane, "view" | "tx" | "ty">, first: boolean): GhostDrawItem[] {
+  const out: GhostDrawItem[] = [];
+  const slab = laneSlabTiles(l);
+  for (let i = first ? 1 : 0; i < slab.length - 1; i++) {
+    out.push({ sprite: laneSlabSprite(l.view), tx: slab[i][0], ty: slab[i][1] });
+  }
+  const [cx, cy] = slab[slab.length - 1];
+  out.push({ sprite: stationCapSprite(l.view), tx: cx, ty: cy });
+  return out;
+}
+
 export interface GhostDrawItem { sprite: string; tx: number; ty: number; }
 
-/** The warehouse + one slab + cap that a 1-lane platform placement will build. */
-export function platformGhostItems(tx: number, ty: number, view: RailView, tier: number = 1): GhostDrawItem[] {
-  const wh = stationWhSprite(tier, view);
-  const lane = { view, tx, ty } as RailLane;
-  const slab = laneSlabTiles(lane);
-  const cap = laneCapTile(lane);
-  const out: GhostDrawItem[] = [];
-  out.push({ sprite: wh, tx, ty });
-  if (slab.length >= 2) {
-    out.push({ sprite: laneSlabSprite(view), tx: slab[1][0], ty: slab[1][1] });
-  }
-  out.push({ sprite: stationCapSprite(view), tx: cap[0], ty: cap[1] });
-  return out;
+/** A structure the click would build, for its ghost (never added to the state). */
+const virtualStructure = (kind: RailKind, tx: number, ty: number, view: RailView): RailStructure => {
+  const [w, h] = kind === "platform" ? PLATFORM_FOOTPRINT[view] : DEPOT_FOOTPRINT;
+  return { id: -1, kind, ownerId: 0, owner: "", tx, ty, w, h, view };
+};
+
+/** RAIL-7: what a new 1-lane station placement will build. */
+export function platformGhostItems(tx: number, ty: number, view: RailView, atlas?: RailSpriteSource): GhostDrawItem[] {
+  return structureSprites(virtualStructure("platform", tx, ty, view), atlas);
 }
 
-/** A train depot ghost — same sprite as the placed depot. */
+/** RAIL-7: a train depot ghost — the placed depot's sprite. */
 export function depotGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
-  return [{ sprite: depotSprite(view), tx, ty }];
+  return structureSprites(virtualStructure("depot", tx, ty, view));
 }
 
-/** The lane that a station upgrade will add: two slabs + cap. */
+/** RAIL-7: the lane a station upgrade will add (slabs + cap; never the first lane). */
 export function laneGhostItems(tx: number, ty: number, view: RailView): GhostDrawItem[] {
-  const lane = { view, tx, ty } as RailLane;
-  const slab = laneSlabTiles(lane);
-  const cap = laneCapTile(lane);
-  const out: GhostDrawItem[] = [];
-  for (let i = 0; i < slab.length - 1; i++) {
-    out.push({ sprite: laneSlabSprite(view), tx: slab[i][0], ty: slab[i][1] });
-  }
-  out.push({ sprite: stationCapSprite(view), tx: cap[0], ty: cap[1] });
-  return out;
+  return laneSprites({ view, tx, ty }, false);
 }
-
 
 /**
  * A train as two moving draw items: the locomotive on its own ground point and

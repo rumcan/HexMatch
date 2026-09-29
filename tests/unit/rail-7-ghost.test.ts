@@ -51,7 +51,7 @@ describe("RAIL-7 ghost draws what will be placed", () => {
     it(`platform ghost equals placed 1-lane station for view ${view}`, () => {
       const tx = 10, ty = 10;
       // Ghost items — what the hover preview will draw
-      const ghost = platformGhostItems(tx, ty, view, 1);
+      const ghost = platformGhostItems(tx, ty, view, hasAllStationArt);
       // Placed structure items — what railStructureItems draws for a real station
       const state = createRailState();
       const s = placePlatform(state, "you", 1, tx, ty, view, { kind: "industry", id: 1, tiles: [] });
@@ -126,5 +126,16 @@ describe("RAIL-7 ghost draws what will be placed", () => {
     // middle slab is second tile of the 3-tile footprint
     expect(ghost[1].tx).not.toBe(tx);
     expect(ghost[2].sprite).toBe(stationCapSprite(view));
+  });
+});
+
+describe("RAIL-7 ghost while the station art is still loading", () => {
+  it("falls back to the same old-platform sprite the placed station would draw", () => {
+    const noStationArt = { has: () => false };
+    const ghost = platformGhostItems(10, 10, "ne", noStationArt);
+    const state = createRailState();
+    placePlatform(state, "you", 1, 10, 10, "ne", { kind: "industry", id: 1, tiles: [] });
+    const placed = railStructureItems(state, noStationArt);
+    expect(ghost.map((g) => [g.sprite, g.tx, g.ty])).toEqual(placed.map((p) => [p.sprite, p.tx, p.ty]));
   });
 });

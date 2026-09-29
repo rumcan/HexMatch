@@ -659,10 +659,8 @@ export class PlacementOverlay {
     const entries = ghost.sprites && ghost.sprites.length
       ? ghost.sprites
       : [{ sprite: ghost.sprite, tx: ghost.tx, ty: ghost.ty }];
-    // For the pool we need at least one placed position to anchor? The pool
-    // itself is based on siteLoops, not on the sprite, so we can draw it
-    // unconditionally when loops exist, even if no sprite has art yet — the
-    // pool alone still previews.
+    // The light pool comes from the site loops, not the sprites, so it previews
+    // even before any art has loaded.
     const b = siteLoops.length ? loopsBounds(cam, siteLoops) : null;
     if (b) {
       const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;

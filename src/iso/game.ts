@@ -12238,7 +12238,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // the shared helpers `platformGhostItems` / `depotGhostItems` (one source
       // of truth, so they can't drift again).
       if (kind === "platform") {
-        const g = platformGhostItems(tx, ty, railView, 1);
+        const g = platformGhostItems(tx, ty, railView, atlasRef ?? undefined);
         ghost = { sprite: g[0].sprite, tx: g[0].tx, ty: g[0].ty, valid: ok, sprites: g };
       } else {
         const g = depotGhostItems(tx, ty, railView);
