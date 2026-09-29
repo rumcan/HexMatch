@@ -333,9 +333,10 @@
   column-gap: 20px; row-gap: 7px; margin: 0; padding: 14px 34px 24px clamp(46px, 4.4vw, 74px);
   border-top: 1px solid #111b2033;
 }
-.px-modes > * { grid-column: 1; }
-.px-modes > .start-actions-label ~ .start-actions-label,
-.px-modes > .start-actions-label ~ .start-actions-label ~ * { grid-column: 2; }
+/* Owner (2026-09-29): Multiplayer moved to its own screen (the header tab),
+   so the Solo doors flow across BOTH columns; the labels span the row. */
+.px-modes > * { grid-column: auto; }
+.px-modes > :is(.px-playing-as, .start-actions-label, .start-back) { grid-column: 1 / -1; }
 .start-screen.px .px-modes .start-actions-label { margin: 0 0 1px; color: var(--accent); font: 700 13px var(--px-display); letter-spacing: .18em; text-transform: uppercase; text-align: left; }
 .start-screen.px .px-modes button {
   display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px;
@@ -865,9 +866,16 @@
   display: inline-block; margin: 10px 0 0; padding: 5px 10px; background: #11191d; color: #f2e8d4;
   font: 700 12px/1.2 var(--px-display); letter-spacing: .12em; text-transform: uppercase;
 }
-.px-perks { display: grid; gap: 4px; max-width: 540px; margin: 12px 0 0; }
-.px-perk { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; align-items: baseline; margin: 0; }
-.px-perk dt { color: var(--accent); font: 700 12px var(--px-display); letter-spacing: .16em; text-transform: uppercase; }
+/* Owner (2026-09-29): the five perks + quirk were one column with a 54px
+   name column — names wrapped and the list ran off the bottom. Each perk is
+   a name-over-text cell now, and the list takes a SECOND column whenever the
+   panel is wide enough (auto-fill), so all six fit without a scrollbar. */
+.px-perks {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 8px 22px; max-width: none; margin: 12px 0 0;
+}
+.px-perk { display: flex; flex-direction: column; gap: 1px; margin: 0; min-width: 0; }
+.px-perk dt { color: var(--accent); font: 700 11px/1.2 var(--px-display); letter-spacing: .14em; text-transform: uppercase; }
 .px-perk dd { margin: 0; color: var(--px-text); font: 600 clamp(13px, min(1.05vw, 1.9vh), 16px)/1.25 var(--px-body); }
 .px-perk.quirk dt { color: var(--px-mute); }
 .px-perk.quirk dd { font-weight: 500; color: var(--px-text-2); }

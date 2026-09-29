@@ -146,6 +146,7 @@ export type StartChoice =
 type ScreenState =
   | "choose"
   | "ladder"
+  | "multiplayer"
   | "story"
   | "scenarios"
   | "host"
@@ -252,7 +253,7 @@ interface StartScreenProps {
   /** STORY-01: reopening on the campaign list (the ledger's third door). */
   /** UI-3: the main menu's Ladder tab opens straight on the full board.
    *  PROG-1 (#475): …and a scenario ledger's door reopens on the scenario list. */
-  initial?: "choose" | "story" | "ladder" | "scenarios";
+  initial?: "choose" | "story" | "ladder" | "scenarios" | "multiplayer";
 }
 
 /** The deliberately low-friction entry point: AI is always available without auth. */
@@ -1051,13 +1052,14 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   // UI-3: every state stands in the MenuShell frame. The header's Home, Play
   // and Ladder tabs only work from the neutral screens; a lobby, a search or
   // a rejoin offer keeps its own Leave / Cancel so no room is left dangling.
-  const free = state === "choose" || state === "story" || state === "ladder" || state === "join" || state === "error";
+  const free = state === "choose" || state === "story" || state === "ladder" || state === "multiplayer" || state === "join" || state === "error";
   const shell = (tab: ShellTab | null, aria: string, cls: string, content: ReactNode) => (
     <MenuShell tab={tab} ariaLabel={aria} className={cls}
       onTutorialSection={onTutorialSection}
       onHome={free ? onBack : undefined}
       onPlay={free ? () => { setError(""); setState("choose"); } : undefined}
-      onLadder={free ? () => { loadLadder(); setState("ladder"); } : undefined}>
+      onLadder={free ? () => { loadLadder(); setState("ladder"); } : undefined}
+      onMultiplayer={free ? () => { setError(""); setState("multiplayer"); } : undefined}>
       {content}
     </MenuShell>
   );
@@ -1209,13 +1211,8 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
           <button data-sfx="open" onClick={() => beginAiNew(true)}>Play vs AI — Conquest <small>no ★ line · win when the rival is bankrupt</small></button>
           {/* PROG-1 (#475): four tuned maps beyond the default island. */}
           <button data-sfx="open" onClick={() => { setScenProgress(loadScenarioProgress()); setState("scenarios"); }}>Scenarios <small>four maps · unlock by winning</small></button>
-          <p className="start-actions-label">Multiplayer</p>
-          <button disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
-          <div className="start-actions-pair">
-            <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game <small>invite a friend · unranked</small></button>
-            <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
-          </div>
-          <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
+          {/* Owner (2026-09-29): Multiplayer has its own screen — the header's
+              Multiplayer tab, beside the Ladder. The Play card is Solo only. */}
           {onBack ? <button className="start-back" data-sfx="close" onClick={onBack}>Back to the menu</button> : null}
         </nav>
       </div>
@@ -1398,6 +1395,27 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         </div>
       </main>
     );
+  }
+
+  if (state === "multiplayer") {
+    return shell("multiplayer", "Hexmatch multiplayer", "multiplayer", (
+        <div className="start-panel px-dialog-card mp-panel">
+          <p className="start-kicker">MULTIPLAYER · PLAYING AS {fullName(portrait).toUpperCase()}</p>
+          <h1>Play a person</h1>
+          <p className="start-subtitle">A rated stranger on the ladder, or a friend with a room code.</p>
+          <nav className="start-actions mp-actions" aria-label="Multiplayer modes">
+            <button className="start-primary" disabled={busy} onClick={() => void beginMatch()}>Auto Matchmaking <small>ranked · a rated stranger</small></button>
+            <div className="start-actions-pair">
+              <button disabled={busy} onClick={() => { setState("host"); void beginRoom("host"); }}>Host a game <small>invite a friend · unranked</small></button>
+              <button disabled={busy} onClick={openJoinScreen}>Join with a code <small>unranked</small></button>
+            </div>
+            <button disabled={busy} onClick={() => { loadLadder(); setState("ladder"); }}>The ladder <small>top ratings</small></button>
+          </nav>
+          <div className="lobby-actions">
+            <button onClick={() => setState("choose")}>Back</button>
+          </div>
+        </div>
+    ));
   }
 
   if (state === "ladder") {

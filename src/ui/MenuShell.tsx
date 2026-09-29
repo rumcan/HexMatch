@@ -26,7 +26,7 @@ import { currentVersionLabel } from "./version";
 // "Play" is never shadowed by the tab of the same name.
 // ══════════════════════════════════════════════════════════════════════════
 
-export type ShellTab = "home" | "play" | "ladder";
+export type ShellTab = "home" | "play" | "ladder" | "multiplayer";
 
 export interface MenuShellProps {
   /** The scene this screen is, for the active tab underline. */
@@ -36,6 +36,8 @@ export interface MenuShellProps {
   onHome?: () => void;
   onPlay?: () => void;
   onLadder?: () => void;
+  /** Owner (2026-09-29): Multiplayer has its own screen, beside the Ladder. */
+  onMultiplayer?: () => void;
   /** FTUE-1 (#464): offered as a row in the Tutorial menu. */
   onStarterIsland?: () => void;
   onTutorialSection?: (id: import("../iso/guide/types").GuideSectionId) => void;
@@ -54,7 +56,7 @@ const HexMark = () => (
 const canFullscreen = (): boolean =>
   typeof document !== "undefined" && !!document.fullscreenEnabled && !!document.documentElement.requestFullscreen;
 
-export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, onStarterIsland, onTutorialSection, children }: MenuShellProps) {
+export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPlay, onLadder, onMultiplayer, onStarterIsland, onTutorialSection, children }: MenuShellProps) {
   const [popup, setPopup] = useState<Popup>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(() => typeof document !== "undefined" && !!document.fullscreenElement);
@@ -103,11 +105,12 @@ export default function MenuShell({ tab, ariaLabel, className = "", onHome, onPl
     { id: "home", n: "01", label: "Home", on: tab === "home", go: onHome },
     { id: "play", n: "02", label: "Play", on: tab === "play", go: onPlay },
     { id: "ladder", n: "03", label: "Ladder", on: tab === "ladder", go: onLadder },
-    { id: "settings", n: "04", label: "Settings", on: popup === "settings", go: () => setPopup("settings") },
-    { id: "tutorial", n: "05", label: "Tutorial", on: popup === "tutorial", go: () => setPopup("tutorial") },
+    { id: "multiplayer", n: "04", label: "Multiplayer", on: tab === "multiplayer", go: onMultiplayer },
+    { id: "settings", n: "05", label: "Settings", on: popup === "settings", go: () => setPopup("settings") },
+    { id: "tutorial", n: "06", label: "Tutorial", on: popup === "tutorial", go: () => setPopup("tutorial") },
   ];
   // MON-1 (#367): the RUN Bits store stays a dev-only door.
-  if (import.meta.env.DEV) tabs.push({ id: "store", n: "06", label: "Store", on: popup === "store", go: () => setPopup("store") });
+  if (import.meta.env.DEV) tabs.push({ id: "store", n: "07", label: "Store", on: popup === "store", go: () => setPopup("store") });
 
   return (
     <main className={`start-screen px ${className}`.trim()} aria-label={ariaLabel}>
