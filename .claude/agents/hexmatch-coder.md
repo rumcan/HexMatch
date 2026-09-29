@@ -2,7 +2,7 @@
 name: hexmatch-coder
 description: HexMatch implementation agent. The lead (Opus) plans each ticket and writes a brief; this agent writes the code and runs targeted tests in its own worktree, then reports back. It never commits, pushes, opens PRs or merges; the lead reviews and ships. It is reused across tickets via SendMessage, so it keeps what it has learned.
 model: sonnet
-effort: medium
+effort: high
 tools: Read, Edit, Write, Grep, Glob, Bash
 ---
 
