@@ -279,6 +279,13 @@ export function truckRateMultOf(truck: Truck): number {
 
 export function tickTrucks(
   state: TruckState, dtMs: number, blocked?: ReadonlySet<number>, track?: Track | null,
+  /**
+   * PERK-1 (#600): the owner's Lead Foot — a per-owner multiplier on the
+   * whole segment speed (the game hands its seat's perk here; `TRUCK_SPEED`
+   * itself never moves, so the pinned constant tests stay untouched).
+   * Absent = every seat at the base rate.
+   */
+  ownerMult?: (ownerId: number) => number,
 ): void {
   if (dtMs <= 0) return;
   // TRAFFIC-1: spatial hash of driving trucks at start of tick for same-lane
@@ -345,10 +352,12 @@ export function tickTrucks(
     // E4 (#268): `reverse` is passed in because the GRADE is signed: the lorry
     // is slower on the segments it is climbing and keeps its pace on the flat
     // and the way down, so the same segment is slow one way and quick the other.
+    // PERK-1 (#600): the owner's Lead Foot rides the whole segment speed.
+    const ownerM = ownerMult ? ownerMult(truck.ownerId) : 1;
     const speed = (k: number, reverse: boolean): number => {
       const climb = truck.segClimb?.[k] ?? 0;
       const pace = truck.segMult?.[k] ?? (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
-      return TRUCK_SPEED * rate * pace
+      return TRUCK_SPEED * ownerM * rate * pace
         * uphillSpeed(reverse ? -climb : climb);
     };
     let ms = dtMs;
@@ -462,26 +471,28 @@ export function tickTrucks(
  * integrates (`TRUCK_SPEED × rate × pace × uphill`), so the number on the
  * depot card is the lorry the player is watching, not a second clock.
  */
-export function lorryRoundTripMs(truck: Truck): number {
+export function lorryRoundTripMs(truck: Truck, ownerMult?: (ownerId: number) => number): number {
   const max = truck.route.length - 1;
   if (max < 1) return Infinity;
   const rate = truckRateMultOf(truck);
+  // PERK-1 (#600): the readout rides the same Lead Foot the tick integrates.
+  const ownerM = ownerMult ? ownerMult(truck.ownerId) : 1;
   let ms = DEPOT_LOAD_MS;
   for (let k = 0; k < max; k++) {
     const a = truck.route[k], b = truck.route[k + 1];
     const length = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
     const climb = truck.segClimb?.[k] ?? 0;
     const pace = truck.segMult?.[k] ?? (truck.segFast?.[k] ? TRUCK_ROAD_MULT : 1);
-    const out = TRUCK_SPEED * rate * pace * uphillSpeed(climb);
-    const back = TRUCK_SPEED * rate * pace * uphillSpeed(-climb);
+    const out = TRUCK_SPEED * ownerM * rate * pace * uphillSpeed(climb);
+    const back = TRUCK_SPEED * ownerM * rate * pace * uphillSpeed(-climb);
     if (out > 0) ms += length / out;
     if (back > 0) ms += length / back;
   }
   return ms;
 }
 
-export function lorryTripsPerMin(truck: Truck): number {
-  const ms = lorryRoundTripMs(truck);
+export function lorryTripsPerMin(truck: Truck, ownerMult?: (ownerId: number) => number): number {
+  const ms = lorryRoundTripMs(truck, ownerMult);
   return Number.isFinite(ms) && ms > 0 ? 60000 / ms : 0;
 }
 

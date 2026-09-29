@@ -7,6 +7,7 @@
 // pick up the plate's brass and stay crisp at every button size.
 // ══════════════════════════════════════════════════════════════════════════
 import { CARGO, CARGOES, moneyValueOf, type Cargo } from "../iso/config";
+import { perkPrice } from "../iso/managers";
 import { DEPOT_COST, cheapestDepotType } from "../iso/construction";
 import { GEM_ART } from "./gem-art";
 import type { Purse } from "../iso/track";
@@ -179,15 +180,19 @@ export function moneyMarkup(cost: Purse, priced?: number): string {
  * single mix, unchanged.
  */
 export function depotButtonMarkup(
-  freeDepots: number, opts: { newLoop?: boolean; tier?: number } = {},
+  freeDepots: number, opts: { newLoop?: boolean; tier?: number; manager?: import("../iso/managers").ManagerId | null } = {},
 ): string {
+  // PERK-1 (#600): the button quotes the money the click charges (W1) — the
+  // seat's Yard Deal prices the bill in the "depot" class.
+  const priceOf = (cost: Purse): string =>
+    moneyMarkup(cost, opts.manager ? perkPrice(moneyValueOf(cost), opts.manager, "depot") : undefined);
   if (opts.newLoop === true) {
     const cheap = cheapestDepotType(Math.max(0, Math.floor(opts.tier ?? 0)), true).cost;
     return freeDepots > 0
-      ? `free setup · then from ${moneyMarkup(cheap)}`
-      : `from ${moneyMarkup(cheap)} · by industry`;
+      ? `free setup · then from ${priceOf(cheap)}`
+      : `from ${priceOf(cheap)} · by industry`;
   }
   return freeDepots > 0
-    ? `free setup · then ${moneyMarkup(DEPOT_COST)}`
-    : `${moneyMarkup(DEPOT_COST)} · on industry`;
+    ? `free setup · then ${priceOf(DEPOT_COST)}`
+    : `${priceOf(DEPOT_COST)} · on industry`;
 }

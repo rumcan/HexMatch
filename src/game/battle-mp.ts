@@ -21,7 +21,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   createBattle,
-  type Battle, type BattleMove, type BattleSeat,
+  type Battle, type BattleMove, type BattlePerkFlags, type BattleSeat,
   type TurnOutcome, type AbilityOutcome,
 } from "./battle";
 import type { BattleRules } from "../iso/config";
@@ -63,8 +63,10 @@ export function createDuel(
   players: [Parameters<typeof createBattle>[0]["players"][0], Parameters<typeof createBattle>[0]["players"][1]],
   now: number,
   animate = true,
+  // PERK-1 (#600): the seats' battle perks, seat by seat (absent = shipped).
+  perks?: [BattlePerkFlags | null, BattlePerkFlags | null],
 ): Duel {
-  const battle = createBattle({ seed, players, rules, animate });
+  const battle = createBattle({ seed, players, rules, animate, perks });
   return {
     seed, rules, battle,
     turnDeadline: now + rules.turnMs,
@@ -161,8 +163,13 @@ export function duelToWire(d: Duel): DuelWire {
 }
 
 /** Rejoin: the exact continuation (same battle, same move log). */
-export function duelFromWire(w: DuelWire, players: Parameters<typeof createDuel>[2], animate = true): Duel {
-  const battle = createBattle({ seed: w.seed, players, rules: w.rules, animate });
+export function duelFromWire(
+  w: DuelWire, players: Parameters<typeof createDuel>[2], animate = true,
+  // PERK-1 (#600): the guest's engine must read the SAME perks the host's
+  // does, or the replay diverges — the snapshot alone carries no perks.
+  perks?: [BattlePerkFlags | null, BattlePerkFlags | null],
+): Duel {
+  const battle = createBattle({ seed: w.seed, players, rules: w.rules, animate, perks });
   battle.restore(w.saved);
   return {
     seed: w.seed,

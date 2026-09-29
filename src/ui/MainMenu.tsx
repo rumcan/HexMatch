@@ -202,9 +202,17 @@ export default function MainMenu({ onPlay, onContinue, onLadder, onStarterIsland
                       <span>
                         <b>{c.first} {c.last}</b>
                         <em className="px-cast-title">{c.title}</em>
-                        {hired
-                          ? <i className="px-cast-perk">{c.perk}</i>
-                          : <i className="px-cast-lock">Locked · {unlockLabel(c.id)}</i>}
+                        {hired ? (
+                          // PERK-1 (#600): the picker lists all five perks + the
+                          // quirk — the same rows the profile card prints.
+                          <ul className="px-cast-perks">
+                            {c.perks.map((pk) => (
+                              <li key={pk.title} className={pk.quirk ? "quirk" : undefined}>
+                                <strong>{pk.quirk ? "Quirk" : pk.title}</strong>{pk.text}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <i className="px-cast-lock">Locked · {unlockLabel(c.id)}</i>}
                       </span>
                     </button>
                   );

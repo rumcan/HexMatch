@@ -15,10 +15,21 @@ export interface BlackMarketState {
   frostUntil: number;
   redTapeUntil: number;
   readyAt: number;
+  /**
+   * PERK-1 (#600): Rafael's Heavy Hands — while a frost card is armed on
+   * THIS seat, its frost and girder counts grow by these (both 1 for the
+   * perk). Additive optional: an old save or wire without them reads 0.
+   */
+  frostBonus?: number;
+  girdersBonus?: number;
 }
 export function readBlackMarket(raw?: Partial<BlackMarketState>): BlackMarketState {
   const deadline = (n: unknown) => typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : 0;
-  return { frostUntil: deadline(raw?.frostUntil), redTapeUntil: deadline(raw?.redTapeUntil), readyAt: deadline(raw?.readyAt) };
+  const bonus = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0);
+  return {
+    frostUntil: deadline(raw?.frostUntil), redTapeUntil: deadline(raw?.redTapeUntil), readyAt: deadline(raw?.readyAt),
+    frostBonus: bonus(raw?.frostBonus), girdersBonus: bonus(raw?.girdersBonus),
+  };
 }
 /** Translate live deadlines to remaining time for saves, or back on restore. */
 export function rebaseBlackMarket(state: BlackMarketState | undefined, from: number, to: number): BlackMarketState {
@@ -29,15 +40,36 @@ export function rebaseBlackMarket(state: BlackMarketState | undefined, from: num
 export function isSessionSabotage(key: string): key is SessionSabotageKey {
   return Object.prototype.hasOwnProperty.call(SESSION_SABOTAGE, key);
 }
-export function armSessionSabotage(actor: BlackMarketState, target: BlackMarketState, key: SessionSabotageKey, now: number): void {
+/**
+ * PERK-1 (#600): `bonusTiles` is the SENDER's Heavy Hands — a frost card
+ * armed with it lands that many EXTRA frost tiles and girders on the target,
+ * riding the card's own deadline (the bonus dies with `frostUntil`). 0/omitted
+ * arms the shipped card.
+ */
+export function armSessionSabotage(
+  actor: BlackMarketState, target: BlackMarketState, key: SessionSabotageKey, now: number,
+  bonusTiles = 0,
+): void {
   actor.readyAt = now + SESSION_SABOTAGE_COOLDOWN_MS;
-  target[key === "frost" ? "frostUntil" : "redTapeUntil"] = now + SESSION_SABOTAGE[key].durationMs;
+  if (key === "frost") {
+    target.frostUntil = now + SESSION_SABOTAGE.frost.durationMs;
+    if (bonusTiles > 0) {
+      target.frostBonus = bonusTiles;
+      target.girdersBonus = bonusTiles;
+    }
+  } else {
+    target.redTapeUntil = now + SESSION_SABOTAGE.redTape.durationMs;
+  }
 }
 /** Read once when a session opens. Existing sessions are never changed mid-swap. */
 export function sessionSabotage(state: BlackMarketState | undefined, now: number) {
   return {
-    frost: now < (state?.frostUntil ?? 0) ? SESSION_SABOTAGE.frost.frost : 0,
-    girders: now < (state?.frostUntil ?? 0) ? SESSION_SABOTAGE.frost.girders : 0,
+    frost: now < (state?.frostUntil ?? 0)
+      ? SESSION_SABOTAGE.frost.frost + (state?.frostBonus ?? 0)
+      : 0,
+    girders: now < (state?.frostUntil ?? 0)
+      ? SESSION_SABOTAGE.frost.girders + (state?.girdersBonus ?? 0)
+      : 0,
     lostMoves: now < (state?.redTapeUntil ?? 0) ? SESSION_SABOTAGE.redTape.lostMoves : 0,
   };
 }

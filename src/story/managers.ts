@@ -21,7 +21,7 @@ import thumbGraves from "../assets/poster/thumb-graves.webp";
 import bustGraves from "../assets/poster/bust-graves.webp";
 import heroGraves from "../assets/poster/hero-graves.webp";
 import {
-  DEFAULT_MANAGER, FRESH_RECORD, MANAGER_IDS, UNLOCKS, isUnlocked, normalizeManager, readRecord, recordOutcome,
+  DEFAULT_MANAGER, FRESH_RECORD, MANAGER_IDS, UNLOCKS, isUnlocked, normalizeManager, perkLines, readRecord, recordOutcome,
   type ManagerId, type ManagerRecord, type MatchOutcome,
 } from "../iso/managers";
 
@@ -46,9 +46,16 @@ export interface ManagerProfile {
   rivalry: string;
   perk: string;
   quirk: string;
+  /**
+   * PERK-1 (#600): the five perk rows + the quirk, in display order, derived
+   * from the rules' `MANAGER_PERKS` (via `perkLines`) — the profile card and
+   * the picker print these. The `perk`/`quirk` headlines above stay for the
+   * ending card and older screens.
+   */
+  perks: readonly { title: string; text: string; quirk?: boolean }[];
 }
 
-export const MANAGERS: readonly ManagerProfile[] = [
+const MANAGER_FACES: Omit<ManagerProfile, "perks">[] = [
   {
     id: "james", first: "James", last: "Calloway", title: "The Road Man",
     hero: heroJames, thumb: thumbJames, accent: "#d9600a", stage: "#f07d12",
@@ -120,6 +127,9 @@ export const MANAGERS: readonly ManagerProfile[] = [
     quirk: "Level Ground costs 25% more. He'd rather redraw the plan than move the hill.",
   },
 ];
+
+export const MANAGERS: readonly ManagerProfile[] =
+  MANAGER_FACES.map((m) => ({ ...m, perks: perkLines(m.id) }));
 
 export const MANAGER_BY_ID: Record<ManagerId, ManagerProfile> =
   Object.fromEntries(MANAGERS.map((m) => [m.id, m])) as Record<ManagerId, ManagerProfile>;

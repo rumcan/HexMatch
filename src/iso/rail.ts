@@ -2747,7 +2747,14 @@ export function planLeg(
  * grid, a train climbing a slope moves at `uphillFactor` of `RAIL_SPEED`; with
  * none (a hand-built test state, a flat map) it moves exactly as it always did.
  */
-export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
+export function tickTrains(state: RailState, dtMs: number, grid?: Grid,
+  /**
+   * PERK-1 (#600): the owner's Express — a per-owner multiplier on the whole
+   * segment speed (the game hands its seat's perk here; `RAIL_SPEED` itself
+   * never moves). Absent = every seat at the base rate.
+   */
+  ownerMult?: (ownerId: number) => number,
+): void {
   if (dtMs <= 0) return;
   for (const train of state.trains) {
     // A train that is out on the line replans the moment the graph moves under
@@ -2809,9 +2816,11 @@ export function tickTrains(state: RailState, dtMs: number, grid?: Grid): void {
       // only the clock the head advances by changes, so the wagons, the trail
       // and the cornering are the same maths they always were.
       const seg = train.route.length > 1 ? segmentAt(train.route, train.dist, cum) : -1;
-      const speed = grid && seg > 0
+      // PERK-1 (#600): the owner's Express rides the whole segment speed.
+      const ownerM = ownerMult ? ownerMult(train.ownerId) : 1;
+      const speed = (grid && seg > 0
         ? RAIL_SPEED * uphillFactor(grid, train.route[seg - 1], train.route[seg])
-        : RAIL_SPEED;
+        : RAIL_SPEED) * ownerM;
       const step = speed * ms;
       if (step < remaining) {
         recordTrail(state, train, cum, train.dist, train.dist + step);

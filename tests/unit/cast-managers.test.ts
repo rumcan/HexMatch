@@ -25,8 +25,8 @@ describe("CAST-1 perks", () => {
     expect(perkPrice(120, "anne", "rail")).toBe(90);
     expect(perkPrice(120, "anne", "road")).toBe(132);
   });
-  it("Kenji: tuning +20%, levelling +25%", () => {
-    expect(tuningScore(1000, "kenji")).toBe(1200);
+  it("Kenji: tuning +25% (PERK-1 #600 raised the Showman from +20%), levelling +25%", () => {
+    expect(tuningScore(1000, "kenji")).toBe(1250);
     expect(tuningScore(1000, "james")).toBe(1000);
     expect(perkPrice(40, "kenji", "level")).toBe(50);
   });
@@ -50,7 +50,9 @@ describe("CAST-1 perks", () => {
     // and never past the starters' 25% ceiling, so hiring one is a reward.
     expect(perksOf("rafael").freeBlack).toBe(4);        // was 3 free cards a window
     expect(perksOf("dolores").sabotageGold).toBeCloseTo(1.1); // was a +20% surcharge
-    expect(perksOf("kenji").tuning).toBeCloseTo(1.2);   // was a +10% bonus
+    // PERK-1 (#600): the Showman is the named perk now — 1.25, overriding
+    // CAST-2's 1.2. The ceiling check below still holds.
+    expect(perksOf("kenji").tuning).toBeCloseTo(1.25); // was a +10% bonus (CAST-2: +20%)
     expect(Math.abs(perksOf("kenji").tuning - 1)).toBeLessThanOrEqual(0.25);
     // James and Anne are untouched.
     expect(perkPrice(100, "james", "road")).toBe(75);

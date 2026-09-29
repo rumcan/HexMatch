@@ -17,7 +17,7 @@
 
 export * from "./types";
 export * from "./rng";
-export { Match3Engine, BASE_POOL, SWAP_CONTACT_AT, type EngineOptions, type Move, type Resolution } from "./engine";
+export { Match3Engine, BASE_POOL, SHORTCUT_LINE_CAP, SWAP_CONTACT_AT, type EngineOptions, type Move, type Resolution } from "./engine";
 export { Board } from "./board";
 export * from "./stars";
 export * from "./session";

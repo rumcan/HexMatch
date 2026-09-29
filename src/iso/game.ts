@@ -217,8 +217,10 @@ import {
 } from "./config";
 // CAST-1 (docs/CAST.md): the managers' perks — one multiplier per price seam.
 import {
-  DEFAULT_MANAGER, effectiveBalance, fixerLeft, fixerRefillIn, freshFixer, managerOrNull,
-  perkPrice, perksOf, readFixer, sabotageGold, securityCost, spendFixer, tuningScore,
+  DEFAULT_MANAGER, effectiveBalance, buyMovesOffer, fixerLeft, fixerRefillIn, freshFixer,
+  managerOrNull, perkPrice, perksOf, readFixer, sabotageGold, sabotageTilesBonus, securityCost,
+  spendFixer, tuningScore, returnToSenderOf, truckSpeedOf, trainSpeedOf,
+  battlePerksOf,
   type BuildClass, type FixerState, type LegacyPortrait, type ManagerId,
 } from "./managers";
 // ECON-1 (#421): the market — prices, slippage, demand events and the money
@@ -283,6 +285,7 @@ import {
   type ContractWire,
 } from "./quests";
 import { mulberry32 } from "../game/config";
+import { Board } from "../game/board";
 // L4 (#218): the tuning session — the one thing that sets a depot's yield.
 // The rules live in `tuning.ts` (pure, unit-tested); this file is where they
 // meet the board, the depot record and the HUD.
@@ -290,9 +293,9 @@ import { mulberry32 } from "../game/config";
 // depot tree / confirms a city upgrade (Addition A's gate).
 import {
   abandonYieldFor, birthYieldFor, createTownSession, createTuningSession, decayYield,
-  depotSessionOutcome, difficultyRulesFor, obstacleIntroLine, recordTuningCleared, retuneOwed,
+  depotSessionOutcome, difficultyRulesFor, obstacleIntroLine, openingActCell, recordTuningCleared, retuneOwed,
   rivalTuningScore, settleTuningYield,
-  sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
+  sessionMovesFor, sessionObstacles as sessionObstaclesFor, takeTuningMove, townBonusFor, tuningMovesLeft,
   unlockTierAfterSession, tuningOver, tuningSessionGold, tuningSessionYield,
    tuningStarLabel, tuningStarScores, tuningStarsFor, tuningYieldFor, tuningGoldFor,
   TUNING_ABANDON_YIELD, TUNING_REWARD_SCORE, type TuningOutcome, type TuningSession, type TuningStars,
@@ -648,6 +651,12 @@ export interface PlayerState {
   /** CAST-1: Rafael's free Black Market allowance (the window and its spends). */
   fixer: FixerState;
   blackMarket?: BlackMarketState;
+  /**
+   * PERK-1 (#600): Dolores' Return to Sender has already bounced the match's
+   * first sabotage card (set on the DEFENDER the card was played on). Additive
+   * optional: an old save or wire without it reads as "not spent yet".
+   */
+  sentBack?: boolean;
 }
 
 type Phase = "setup-factory" | "setup-harvester" | "play" | "won";
@@ -2006,7 +2015,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     },
     // L15: tokens retired — no toast
     onChange: () => onBoardChange(),
-  }, undefined);
+  },
+  // PERK-1 (#600): Kenji's Shortcut rides the seat's board. The board is
+  // constructed HERE, inside the call — the fill (and its rolls off the game's
+  // stream) happen before the quarry body, exactly as with the default
+  // `new Board()` the quarry used to build, so the deterministic boot order
+  // is untouched. Null seats build the shipped board.
+  new Board({ shortcut: perksOf(me.manager).shortcut }));
 
   // AI-03: the RIVAL's Processing Plant board — a real quarry of its own,
   // played by a clock-driven autoplayer (`skill().moveMs`, below). It pays the
@@ -2245,6 +2260,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // #300: Finish ENDS the session into its results pop-up (the one running
     // out of moves opens); ✕ still abandons straight onto the map, no pop-up.
     onTuningEnd: (abandon) => (abandon ? closeTuningSession(true) : requestTuningFinish()),
+    // PERK-1 (#600): the session's perk keys — the game owns the Gold, the
+    // busy gate and the +3; the chrome only reports the press.
+    onTuningBuyMoves: () => sessionBuyMoves(),
+    onTuningHint: () => sessionHint(),
+    onTuningShuffle: () => sessionShuffle(),
     // #300: the pop-up's Confirm — applies the result it shows, exactly.
     onTuningConfirm: () => confirmTuningResult(),
     onTuningRetune: () => retuneNow(),
@@ -4878,10 +4898,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canPayBuild(p, RAIL_COSTS.platform, "rail")) {
+    // PERK-1 (#600): the platform is its OWN class — Anne's Station Master
+    // cuts it; James's rail quirk no longer taxes the platform he distrusts.
+    if (!canPayBuild(p, RAIL_COSTS.platform, "platform")) {
       if (p.human) {
-        toast(`Not enough money — a platform costs $${seatCostOf(p, RAIL_COSTS.platform, "rail")}.`, "bad");
-        flashAt(tx, ty, `Platform costs $${seatCostOf(p, RAIL_COSTS.platform, "rail")}`);
+        toast(`Not enough money — a platform costs $${seatCostOf(p, RAIL_COSTS.platform, "platform")}.`, "bad");
+        flashAt(tx, ty, `Platform costs $${seatCostOf(p, RAIL_COSTS.platform, "platform")}`);
       }
       return false;
     }
@@ -4892,7 +4914,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, "Finish the tuning session first");
       return false;
     }
-    if (!spendBuild(p, RAIL_COSTS.platform, "rail")) return false;
+    if (!spendBuild(p, RAIL_COSTS.platform, "platform")) return false;
     // BUILD-1 (#460): snapshot the rail the platform's build is about to
     // touch — its footprint plus the three stopping tiles — so an undo can
     // hand the ground back exactly as it was.
@@ -4905,7 +4927,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const depot = adoptPlatformDepot(built, p);
     recordUndo({
       kind: "platform", structureId: built.id, depotRecordId: depot?.id,
-      money: seatCostOf(p, RAIL_COSTS.platform, "rail"), freeDepotsSpent: false, railBytes,
+      money: seatCostOf(p, RAIL_COSTS.platform, "platform"), freeDepotsSpent: false, railBytes,
     }, p);
     if (p.human) sfx.play("build");
     syncWorld();
@@ -4982,18 +5004,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canPayBuild(p, RAIL_COSTS.lane, "rail")) {
+    // PERK-1 (#600): the station lane prices with the platform (Station
+    // Master covers "platforms and station lanes").
+    if (!canPayBuild(p, RAIL_COSTS.lane, "platform")) {
       if (p.human) {
-        toast(`Not enough money — a lane costs $${seatCostOf(p, RAIL_COSTS.lane, "rail")}.`, "bad");
+        toast(`Not enough money — a lane costs $${seatCostOf(p, RAIL_COSTS.lane, "platform")}.`, "bad");
         const s = structureById(rail, stationId);
-        if (s) flashAt(s.tx, s.ty, `A lane costs $${seatCostOf(p, RAIL_COSTS.lane, "rail")}`);
+        if (s) flashAt(s.tx, s.ty, `A lane costs $${seatCostOf(p, RAIL_COSTS.lane, "platform")}`);
       }
       return false;
     }
-    if (!spendBuild(p, RAIL_COSTS.lane, "rail")) return false;
+    if (!spendBuild(p, RAIL_COSTS.lane, "platform")) return false;
     const res = addStationLane(grid, track, rail, ownerId, stationId, side);
     if (!res.ok || !res.lane) {
-      refundBuild(p, RAIL_COSTS.lane, 1, "rail");   // the refusal moved mid-click
+      refundBuild(p, RAIL_COSTS.lane, 1, "platform");   // the refusal moved mid-click
       return false;
     }
     syncWorld();
@@ -5023,14 +5047,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       return false;
     }
-    if (!canPayBuild(p, RAIL_COSTS.depot, "rail")) {
+    // PERK-1 (#600): the Train Depot is Anne's Shed Deal class, not track.
+    if (!canPayBuild(p, RAIL_COSTS.depot, "trainDepot")) {
       if (p.human) {
-        toast(`Not enough money — a train depot costs $${seatCostOf(p, RAIL_COSTS.depot, "rail")}.`, "bad");
-        flashAt(tx, ty, `Train depot costs $${seatCostOf(p, RAIL_COSTS.depot, "rail")}`);
+        toast(`Not enough money — a train depot costs $${seatCostOf(p, RAIL_COSTS.depot, "trainDepot")}.`, "bad");
+        flashAt(tx, ty, `Train depot costs $${seatCostOf(p, RAIL_COSTS.depot, "trainDepot")}`);
       }
       return false;
     }
-    if (!spendBuild(p, RAIL_COSTS.depot, "rail")) return false;
+    if (!spendBuild(p, RAIL_COSTS.depot, "trainDepot")) return false;
     // BUILD-1 (#460): the shed's lane autotiles into its neighbours — the
     // snapshot ring covers them, so the undo restores the whole patch.
     const railBytes = snapshotRailBytes([
@@ -5039,7 +5064,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const built = placeDepot(rail, p.id, ownerId, tx, ty, view);
     recordUndo({
       kind: "raildepot", structureId: built.id,
-      money: seatCostOf(p, RAIL_COSTS.depot, "rail"), freeDepotsSpent: false, railBytes,
+      money: seatCostOf(p, RAIL_COSTS.depot, "trainDepot"), freeDepotsSpent: false, railBytes,
     }, p);
     if (p.human) sfx.play("build");
     syncWorld();
@@ -5756,6 +5781,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     } catch { return 0; }
   }
 
+  /**
+   * PERK-1 (#600): the session's perk spend counters — the extra-moves buy
+   * (Overtime Crew / Bulk Buyer) and the free reshuffle (Second Sight). A
+   * session is a bounded, once-per-depot burst, so the uses live with the
+   * session and die with it; null seats open with none of either.
+   */
+  let sessionBuysLeft = 0;
+  let sessionShufflesLeft = 0;
+
   function openTuningSession(depot: Harvester, isRematch = false): void {
     const rules = difficultyRules();
     // L6 (#220): `matchEnabled` is the ONE flag that can keep this from
@@ -5768,7 +5802,13 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (!cargo) return;
     quarry.board.resetNeutral();
     quarry.board.setBias(CARGO_TO_GEM[cargo], TUNING.cargoBias);
-    tuning = createTuningSession(depot.id, cargo);
+    // PERK-1 (#600): Stamina starts the session with a bigger budget.
+    tuning = createTuningSession(depot.id, cargo, sessionMovesFor(me.manager));
+    // PERK-1: the session's perk uses — the buy and the reshuffle each reset
+    // with the session, whatever the seat's manager carries.
+    const offer = buyMovesOffer(me.manager);
+    sessionBuysLeft = offer ? offer.uses : 0;
+    sessionShufflesLeft = perksOf(me.manager).secondSight ? 1 : 0;
     resetFinale();
     applySessionSabotageMoves();
     // The obstacles go on AFTER the fresh fill and BEFORE the plate opens:
@@ -5776,6 +5816,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // player sees is the table as it will be played, not a clean one that
     // grows ice a beat later.
     const obstacles = seedSessionObstacles(depot);
+    // PERK-1 (#600): Kenji's Opening Act — the session board opens its act
+    // with a disco ball. Placed after the obstacles (the act walks around
+    // them), on the same board the player will play; the spiral is pure and
+    // deterministic, so the session's seed stays the seed.
+    if (perksOf(me.manager).startingSpecial === "disco") {
+      const cell = openingActCell(quarry.board.grid);
+      const g = cell ? quarry.board.grid[cell.r]?.[cell.c] : undefined;
+      if (g) {
+        g.special = "disco";
+        quarry.board.onChange();
+      }
+    }
     sfx.play("open");
     // #461 TUNE-1: target card BEFORE the session — current/possible cargo/min, last rating.
     const curYield = depotYield(depot);
@@ -5811,6 +5863,62 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
     } catch {}
     void isRematch; void rules;
+  }
+
+  /**
+   * PERK-1 (#600): the session's extra-moves buy — Overtime Crew (Rafael,
+   * 8 Gold, once) and Bulk Buyer (Dolores, 4 Gold, twice) are the SAME key
+   * priced by the seat's perk row. Gold (the board's coin), not money: the
+   * Black Market's currency is what a session's score pays, so the buy sits
+   * with the session's other spend.
+   */
+  function sessionBuyMoves(): boolean {
+    const offer = buyMovesOffer(me.manager);
+    if (!tuning || !offer || sessionBuysLeft <= 0) return false;
+    const gold = me.purse.gold ?? 0;
+    if (gold < offer.gold) {
+      toast(`Not enough Gold — the extra moves cost ${offer.gold}.`, "bad");
+      return false;
+    }
+    me.purse.gold = gold - offer.gold;
+    tuning.moves += 3;
+    sessionBuysLeft--;
+    toast(`+3 moves for ${offer.gold} Gold — ${tuningMovesLeft(tuning)} to play.`, "good");
+    sfx.play("coin");
+    onBoardChange();   // the plate re-reads its budget
+    return true;
+  }
+
+  /**
+   * PERK-1 (#600): Second Sight's hint — the best move the session board
+   * carries, highlighted by the chrome (two gems glow). A hint costs nothing
+   * and is repeatable while the session is open; the board may move on, so
+   * the glow is always one move old at most.
+   */
+  function sessionHint(): boolean {
+    if (!tuning || !perksOf(me.manager).secondSight) return false;
+    const mv = quarry.board.bestMove();
+    if (!mv) {
+      toast("No move to point at — the board needs a reshuffle.", "info");
+      return false;
+    }
+    ui.hintMove(mv.r1, mv.c1, mv.r2, mv.c2);
+    return true;
+  }
+
+  /**
+   * PERK-1 (#600): Second Sight's reshuffle — one free `reshuffle` per
+   * session (the board's own deadlock shuffle is separate and always on).
+   * Refused mid-cascade, like every other board input.
+   */
+  function sessionShuffle(): boolean {
+    if (!tuning || !perksOf(me.manager).secondSight || sessionShufflesLeft <= 0) return false;
+    if (quarry.board.busy) return false;
+    sessionShufflesLeft--;
+    toast("The board reshuffles — one free cut per session.", "good");
+    sfx.play("open");
+    void quarry.board.reshuffle();
+    return true;
   }
 
   // ── L17 (#245): the town on the map grows with the seat ──────────────────
@@ -6777,7 +6885,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
 
   function tripsForDepot(h: Harvester): number {
     const live = trucks.trucks.find((t) => t.depotId === h.id);
-    return live ? lorryTripsPerMin(live) : 0;
+    // PERK-1 (#600): the card's trips/min rides the same Lead Foot the tick
+    // integrates, so the number on the card is the lorry you're watching.
+    return live ? lorryTripsPerMin(live, truckSpeedForOwner) : 0;
   }
 
   function armedUpgradeTier(): "street" | "road" | "highway" | null {
@@ -7086,16 +7196,20 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (p.human) flashAt(tx, ty, `${price.type.name}: rung ${need} locked`);
       return false;
     }
-    if (!price.affordable) {
+    // PERK-1 (#600): the Yard Deal — the Depot bill prices in its own class.
+    // `priceDepot` still QUOTES the resource purse untouched; the seat's
+    // money leg (refusal, charge, undo) all read this one number, so the
+    // button label, the refusal and the charge are one number (W1).
+    const priceUsd = seatCostOf(p, price.cost, "depot");
+    if (!canPayBuild(p, price.cost, "depot")) {
       const label = depotTypeLabel(price.type);
       // BUILD-1 (#460): one currency story — the refusal quotes the $ the
       // build charges and how much is short, never a resource mix.
-      const priceUsd = moneyCostOf(price.cost);
       toast(`Not enough money — a ${label} costs $${priceUsd}, ${moneyFix(priceUsd, p.money)}.`, "bad");
       if (p.human) flashAt(tx, ty, `Not enough money — ${moneyFix(priceUsd, p.money)}`);
       return false;
     }
-    if (!spendBuild(p, price.cost)) return false; // guard; `price.affordable` holds
+    if (!spendBuild(p, price.cost, "depot")) return false; // guard; the checks above hold
     p.freeDepots = price.freeLeft;
     const firstDepot = p.human && !eco.harvesters.some((x) => x.owner === p.id);
     // L4 (#218): under the new loop every Depot is BORN at the default yield
@@ -7113,7 +7227,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // the build took ($ charged, free allowance spent) so the undo returns it.
     recordUndo({
       kind: "harvester", harvesterId: h.id,
-      money: moneyCostOf(price.cost), freeDepotsSpent: price.free,
+      money: priceUsd, freeDepotsSpent: price.free,   // PERK-1: refund what the perk price charged
     }, p);
     if (p.human) sfx.play("build");      // SFX-01
     // VO-1: the opening depot is the player's line; a later claim is the rival's.
@@ -7445,8 +7559,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       }
       // #142: demolition returns floor(50%) of the build price, and the
       // platform's ★ goes with it (`rescoreNow` below revokes it).
+      // PERK-1 (#600): the salvage refunds in the class the build PAID — a
+      // platform and a train depot are no longer "rail" to the perk table.
+      const refundCls: BuildClass = rs.kind === "platform" ? "platform" : "trainDepot";
       const refund = resaleValue(cost);
-      if (Object.keys(refund).length) refundBuild(p, refund, 1, "rail");   // ECON-1: money back (CAST-1: of what was paid)
+      if (Object.keys(refund).length) refundBuild(p, refund, 1, refundCls);   // ECON-1: money back (CAST-1: of what was paid)
 
       dropPlatformDepot(rs.id);
       if (p.human) sfx.play("demolish");
@@ -8194,6 +8311,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       { id: rival.id, name: rival.name, portrait: seatFace(rival), depots: mapDepotCargos(2 - me.i) },
     ], {
       ...battleOnboarding(),
+      // PERK-1 (#600): the player's battle perks, seat 0; the AI rival's
+      // seat carries no manager, so its seat is the shipped battle exactly.
+      perks: [battlePerksOf(me.manager), null],
       stake: stakeText,
       consequence: battleConsequence(stake),
       // B4 (#249): the rival fights its live skill's line — watchable.
@@ -8846,7 +8966,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const now = performance.now();
     const seed = rand(4294967296) >>> 0;
     const players = duelContenders();
-    const d = createDuel(seed, nextDuelRules ?? BATTLE_RULES, [players[0], players[1]], now);
+    // PERK-1 (#600): the perks pair follows duelContenders' seat order —
+    // seat 0 is the host's seat here, seat 1 the guest's.
+    const d = createDuel(seed, nextDuelRules ?? BATTLE_RULES, [players[0], players[1]], now,
+      undefined, [battlePerksOf(me.manager), battlePerksOf(rival.manager)]);
     nextDuelRules = null;
     duel = d;
     duelSettled = false;
@@ -9098,7 +9221,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     old?.destroy();
     guestDuelSeed = seed;
     const players = duelContenders();
-    const d = duelFromWire(e, [players[0], players[1]]);
+    // PERK-1 (#600): the guest's engine reads the SAME perks the host's does
+    // (duelContenders' seat order, from the guest's view).
+    const g = isGuest();
+    const d = duelFromWire(e, [players[0], players[1]], undefined,
+      [battlePerksOf(g ? rival.manager : me.manager), battlePerksOf(g ? me.manager : rival.manager)]);
     const screen = openBattleScreen({
       ...battleOnboarding(),
       battle: d.battle,
@@ -9175,8 +9302,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (now < securityOf(defender.id)) {
         state.readyAt = marketMs + SESSION_SABOTAGE_COOLDOWN_MS;
         toast(`Security Forces turned ${SABOTAGE[key].name} away.`, "info");
+      } else if (returnToSenderOf(defender.manager) && !defender.sentBack) {
+        // PERK-1 (#600): Return to Sender — the match's first card played on
+        // her is handed back to its sender (the flag rides the defender's
+        // seat, and a card turned away by Security never spends it). The
+        // sender's own next session chills instead; Heavy Hands still rides
+        // the card — its bonus is the sender's to keep.
+        defender.sentBack = true;
+        armSessionSabotage(state, state, key, marketMs, sabotageTilesBonus(actor.manager));
+        toast(
+          `${escText(defender.name)} sent the ${SABOTAGE[key].name} back to ${escText(actor.name)} — ${escText(actor.name)}'s next tuning session is chilled instead.`,
+          defender === me ? "good" : "bad",
+        );
       } else {
-        armSessionSabotage(state, defender.blackMarket ??= readBlackMarket(), key, marketMs);
+        // PERK-1: Heavy Hands — the sender's frost lands one tile extra.
+        armSessionSabotage(state, defender.blackMarket ??= readBlackMarket(), key, marketMs, sabotageTilesBonus(actor.manager));
         toast(`${SABOTAGE[key].name} set against ${escText(defender.name)} — affects newly opened Depot and city tuning sessions.`, defender === me ? "bad" : "good");
       }
       if (isMp()) publishNet(now, true);
@@ -9199,16 +9339,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // TK-008: there is exactly ONE rival per seat, so a Blockade needs no
       // targeting step — auto-route it to the industry that costs the OTHER
       // seat the most yield, whoever is buying.
-      const target = pickBlockadeTarget(eco, defender.id, now);
+      // PERK-1 (#600): Return to Sender — the match's first Blockade played
+      // on her auto-routes to the SENDER'S busiest industry instead (and a
+      // card turned away by Security, like the session cards, never spends
+      // the bounce).
+      const bounced = returnToSenderOf(defender.manager) && !defender.sentBack;
+      if (bounced) defender.sentBack = true;
+      const target = pickBlockadeTarget(eco, bounced ? actor.id : defender.id, now);
       if (!target) {
         refundCard();   // refund (the Gold, or the Fixer's card); nothing to hit
+        if (bounced) defender.sentBack = false;   // nowhere to bounce: the bounce is not spent
         toast("No industry to blockade — gold refunded.", "bad");
         return false;
       }
       // B5 (#250): a Blockade landing on the LOCAL player with no Security up
       // can be FOUGHT OFF — held at the door instead of applied (the hire is
-      // already spent, win or lose). MP keeps the old instant apply (B6).
-      if (defender.id === players[0].id
+      // already spent, win or lose). MP keeps the old instant apply (B6). The
+      // bounced card "lands" on its sender, so the sender is the one who may
+      // fight it off.
+      const blocked = bounced ? actor : defender;
+      if (blocked.id === players[0].id
         && offerFightOff("blockade", actor.id, target.id, undefined, now + BANDIT_MS)) {
         return true;
       }
@@ -9219,7 +9369,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // "no one may harvest" any more (nobody harvests by hand), it is "every
       // depot holding that industry stops ticking", which is exactly what
       // `harvesterYield`'s `banditUntil` gate does to the income clock.
-      toast(`Blockade set on ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "good");
+      if (bounced) {
+        toast(`Returned to sender — the blockade stops ${escText(actor.name)}'s ${def?.name ?? target.type} for ${BANDIT_MS / 1000}s.`,
+          blocked === me ? "bad" : "good");
+      } else {
+        toast(`Blockade set on ${def?.name ?? target.type} — its depots stop ticking for ${BANDIT_MS / 1000}s.`, "good");
+      }
       voiceCue("rival:blockade");
       if (actor.id === players[0].id) {
         sfx.play("boom", { gain: 0.65 });   // SFX-01
@@ -9241,6 +9396,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!canPayBlackCard(actor, "protest")) {
         toast(`Needs ${blackGoldFor(actor, "protest")} Gold.`, "bad");
         return false;
+      }
+      // PERK-1 (#600): Return to Sender — the match's first card played on
+      // her is returned at the door: the crowd auto-places on the SENDER'S
+      // own costliest public road (the same auto-target the rival's raid
+      // uses), and never needs a click.
+      const defender = otherSeat(actor);
+      if (returnToSenderOf(defender.manager) && !defender.sentBack) {
+        defender.sentBack = true;
+        const tile = pickProtestTarget(actor.id, now);
+        if (tile) {
+          const refund = payBlackCard(actor, "protest");
+          if (!refund) {
+            defender.sentBack = false;   // the purse emptied mid-buy: not spent
+            return false;
+          }
+          sfx.play("boom", { gain: 0.6 });
+          protests.set(tIdx(tile[0], tile[1]), { tx: tile[0], ty: tile[1], until: now + PROTEST_MS, owner: actor.id });
+          floats.add("✊ PROTEST", tile[0], tile[1], { cls: "sabotage", now });
+          toast(`${escText(defender.name)} sent the protest back to ${escText(actor.name)} — ${escText(actor.name)}'s own road stops for ${fmtProtestLeft(PROTEST_MS)}.`,
+            defender === me ? "good" : "bad");
+          if (isMp()) publishNet(now, true);
+          return true;
+        }
+        defender.sentBack = false;   // no road of the sender's to stop: not spent
       }
       pendingProtest = true;
       toast(`Protest ready — click any public road to stop every depot routed through it for ${fmtProtestLeft(PROTEST_MS)}.`, "info");
@@ -9980,6 +10159,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       rivalSpeaks("thwarted", "protest");
       return;
     }
+    // PERK-1 (#600): Return to Sender — the match's first card played on
+    // Dolores bounces onto the RIVAL'S OWN route (the hire is paid either
+    // way, and a card turned away by Security above never spent the bounce).
+    if (returnToSenderOf(me.manager) && !me.sentBack) {
+      me.sentBack = true;
+      const own = pickProtestTarget(rival.id, now);
+      if (own) {
+        protests.set(tIdx(own[0], own[1]), { tx: own[0], ty: own[1], until: now + PROTEST_MS, owner: rival.id });
+        floats.add("✊ PROTEST", own[0], own[1], { cls: "sabotage", now });
+        toast(`Your guard sent the ${def.name} back to the sender — the rival's own road stops for ${fmtProtestLeft(PROTEST_MS)}.`, "good");
+        ui.feed(`${rival.name}'s ${def.name} was returned to sender`, rival.name);
+        rivalSpeaks("thwarted", "protest");
+        if (isMp()) publishNet(now, true);
+        return;
+      }
+      me.sentBack = false;    // nowhere of the rival's to stop: not spent
+    }
     const [tx, ty] = spot;
     // B5 (#250): the player may FIGHT OFF a Protest at the gates (solo).
     if (offerFightOff("protest", rival.id, undefined, [tx, ty], now + PROTEST_MS)) {
@@ -10159,6 +10355,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       toast(`Security Forces turned the rival's ${SABOTAGE.bandit.name} away.`, "info");
       rivalSpeaks("thwarted", "bandit");
       return;
+    }
+    // PERK-1 (#600): Return to Sender — the match's first card played on
+    // Dolores bounces onto the RIVAL'S OWN busiest industry (the hire above
+    // is already spent, and a card Security turned away never spent the
+    // bounce).
+    if (returnToSenderOf(me.manager) && !me.sentBack) {
+      me.sentBack = true;
+      const own = pickBlockadeTarget(eco, rival.id, now);
+      if (own) {
+        own.banditUntil = now + BANDIT_MS;
+        own.banditOwner = rival.id;
+        floats.add("⛓ BLOCKADED", own.tx, own.ty, { cls: "sabotage", now });
+        toast(`Your guard sent the blockade back to the sender — the rival's own ${INDUSTRY_BY_KEY[own.type]?.name ?? own.type} stops for ${BANDIT_MS / 1000}s.`, "good");
+        rivalSpeaks("thwarted", "bandit");
+        return;
+      }
+      me.sentBack = false;    // the rival holds no industry: not spent
     }
     // B5 (#250): the player may FIGHT OFF a Blockade at the gates (solo; the
     // hire above is already spent either way).
@@ -10989,6 +11202,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // CAST-1: the seat's manager and the Fixer's allowance — additive-optional
     // like `money`, so an older peer simply ignores them.
     manager: p.manager, fixer: p.fixer, blackMarket: readBlackMarket(p.blackMarket),
+    // PERK-1 (#600): the Return-to-Sender spend, so a resync cannot re-arm it.
+    sentBack: p.sentBack === true,
   }));
 
   /**
@@ -11368,6 +11583,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // guest then prices exactly as the host will) and the Fixer's allowance.
     const mg = (wire as { manager?: unknown }).manager;
     if (mg !== undefined) p.manager = managerOrNull(mg);
+    // PERK-1 (#600): the Return-to-Sender spend rides the same record.
+    const sbk = (wire as { sentBack?: boolean }).sentBack;
+    if (typeof sbk === "boolean") p.sentBack = sbk;
     const fx = (wire as { fixer?: unknown }).fixer;
     if (fx !== undefined) p.fixer = readFixer(fx);
     p.blackMarket = readBlackMarket(wire.blackMarket);
@@ -11825,17 +12043,43 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // #115: the guest armed its own targeting and clicked a road — the
           // HOST is authoritative for affordability, road eligibility,
           // occupancy and the charge; the guest paid nothing locally.
-          if (!canPayBlackCard(p, "protest")) {
-            toast("Needs Gold for protest.", "bad");
-          } else if (!isPublicRoad(track, tx, ty)) {
-            toast("Protests go on public roads.", "bad");
-          } else if (protests.has(tIdx(tx, ty))) {
-            toast("Protest already there.", "bad");
-          } else {
-            payBlackCard(p, "protest");
-            protests.set(tIdx(tx, ty), { tx, ty, until: performance.now() + PROTEST_MS, owner: p.id });
-            floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now: performance.now() });
-            toast("Protest placed.", "good");
+          const placeNow = performance.now();
+          let bounced = false;
+          // PERK-1 (#600): Return to Sender — the match's first card played
+          // on the host's Dolores is returned to the guest at the door: the
+          // crowd auto-places on the GUEST'S OWN costliest public road.
+          const defender = otherSeat(p);
+          if (returnToSenderOf(defender.manager) && !defender.sentBack) {
+            defender.sentBack = true;
+            const tile = pickProtestTarget(p.id, placeNow);
+            if (tile) {
+              if (!canPayBlackCard(p, "protest")) {
+                defender.sentBack = false;
+                toast("Needs Gold for protest.", "bad");
+              } else {
+                payBlackCard(p, "protest");
+                protests.set(tIdx(tile[0], tile[1]), { tx: tile[0], ty: tile[1], until: placeNow + PROTEST_MS, owner: p.id });
+                floats.add("✊ PROTEST", tile[0], tile[1], { cls: "sabotage", now: placeNow });
+                toast(`Returned to sender — the protest stops ${escText(p.name)}'s own road.`, "bad");
+                bounced = true;
+              }
+            } else {
+              defender.sentBack = false;   // no road of the guest's to stop: not spent
+            }
+          }
+          if (!bounced) {
+            if (!canPayBlackCard(p, "protest")) {
+              toast("Needs Gold for protest.", "bad");
+            } else if (!isPublicRoad(track, tx, ty)) {
+              toast("Protests go on public roads.", "bad");
+            } else if (protests.has(tIdx(tx, ty))) {
+              toast("Protest already there.", "bad");
+            } else {
+              payBlackCard(p, "protest");
+              protests.set(tIdx(tx, ty), { tx, ty, until: performance.now() + PROTEST_MS, owner: p.id });
+              floats.add("✊ PROTEST", tx, ty, { cls: "sabotage", now: performance.now() });
+              toast("Protest placed.", "good");
+            }
           }
         } else if (key === "protest") {
           // #115: the guest arms its own targeting; this arm intent is only
@@ -12494,7 +12738,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (price.locked && price.type) {
         return { reason: "Rung locked", fix: `tune a Depot to open rung ${price.tier + 1}` };
       }
-      if (!price.affordable) return MONEY_ASSIST(moneyCostOf(price.cost), me.money);
+      // PERK-1 (#600): the refusal quotes the money the click charges.
+      if (!canPayBuild(me, price.cost, "depot")) return MONEY_ASSIST(seatCostOf(me, price.cost, "depot"), me.money);
       return null;
     }
     if (tool === "plant") {
@@ -12516,8 +12761,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (!st) return null;
       const why = laneRefusal(grid, rail, me.i + 1, st.id, laneSideFor(st, tx, ty));
       if (why !== "ok") return RAIL_ASSIST[why];
-      if (!canPayBuild(me, RAIL_COSTS.lane, "rail")) {
-        return MONEY_ASSIST(seatCostOf(me, RAIL_COSTS.lane, "rail"), me.money);
+      // PERK-1 (#600): the lane prices with the platform class.
+      if (!canPayBuild(me, RAIL_COSTS.lane, "platform")) {
+        return MONEY_ASSIST(seatCostOf(me, RAIL_COSTS.lane, "platform"), me.money);
       }
       return null;
     }
@@ -12544,7 +12790,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         return RAIL_ASSIST[why];
       }
       const cost = tool === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot;
-      if (!canPayBuild(me, cost, "rail")) return MONEY_ASSIST(seatCostOf(me, cost, "rail"), me.money);
+      // PERK-1 (#600): the assist prices in the class the click will charge.
+      const railCls: BuildClass = tool === "platform" ? "platform" : "trainDepot";
+      if (!canPayBuild(me, cost, railCls)) return MONEY_ASSIST(seatCostOf(me, cost, railCls), me.money);
       return null;
     }
     return null;
@@ -12743,7 +12991,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (assist) costInfo = hintLine(`<i>${assistText(assist)}</i>`);
       else {
         const name = tool === "platform" ? "Platform" : "Train depot";
-        const price = seatCostOf(me, tool === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot, "rail");
+        const price = seatCostOf(me, tool === "platform" ? RAIL_COSTS.platform : RAIL_COSTS.depot,
+        tool === "platform" ? "platform" : "trainDepot");  // PERK-1 (#600): the class the click charges
         costInfo = hintLine(`${name} · ready`, `$${price.toLocaleString("en-US")}`);
       }
     } else if (tool === "harvester" || phase === "setup-harvester") {
@@ -12770,14 +13019,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         costInfo = hintLine(`<i>${assistText(assist)}</i>`);
       } else if (price.locked && price.type) {
         costInfo = hintLine(`<i>${label} — rung ${price.tier + 1} locked · ${rungLabel(price.unlocked)}</i>`);
-      } else if (price.affordable) {
+      } else if (canPayBuild(me, price.cost, "depot")) {
+        // PERK-1 (#600): the hint quotes the money the click charges.
         costInfo = hintLine(
           newLoop && price.type
-            ? `place it inside an industry's catchment · ${label} ${moneyMarkup(price.cost)}`
+            ? `place it inside an industry's catchment · ${label} ${moneyMarkup(price.cost, seatCostOf(me, price.cost, "depot"))}`
             : "place it inside an industry's catchment",
         );
       } else {
-        costInfo = hintLine(`<i>${assistText(MONEY_ASSIST(moneyCostOf(price.cost), me.money))}</i>`);
+        costInfo = hintLine(`<i>${assistText(MONEY_ASSIST(seatCostOf(me, price.cost, "depot"), me.money))}</i>`);
       }
     }
 
@@ -13295,6 +13545,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
               // #301: whether the board is mid-cascade — Finish is disabled
               // only while this is true, not when moves run out.
               busy: quarry.board.busy,
+              // PERK-1 (#600): the seat's session keys, as the plate prints
+              // them — undefined (the key absent) when the seat carries no
+              // such perk, so a null manager opens the shipped plate exactly.
+              ...(buyMovesOffer(me.manager) && sessionBuysLeft > 0
+                ? { buyGold: buyMovesOffer(me.manager)!.gold, buysLeft: sessionBuysLeft }
+                : {}),
+              ...(perksOf(me.manager).secondSight
+                ? { hintOk: true, shufflesLeft: sessionShufflesLeft }
+                : {}),
             }
           : null)
         : undefined,
@@ -13341,7 +13600,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           // what the next lane costs this seat (perk included), and while the
           // tool is armed, what the click will do.
           hint: r.actions.includes("lane")
-            ? `next lane $${seatCostOf(me, RAIL_COSTS.lane, "rail")}`
+            ? `next lane $${seatCostOf(me, RAIL_COSTS.lane, "platform")}`
               + (laneToolStation === r.id ? " · click a side of the station" : "")
             : r.actions.includes("assign") || r.actions.includes("buy") ? `buys a train · ${railCostLabel(RAIL_COSTS.train)}`
               : r.actions.includes("sell") ? `refund ${railCostLabel(resaleValue(RAIL_COSTS.train))} once`
@@ -14674,6 +14933,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         money: p.money,
         // CAST-1: a resumed match keeps the manager it was started with.
         manager: p.manager, fixer: p.fixer,
+        // PERK-1 (#600): a resumed match keeps a spent Return-to-Sender bounce.
+        sentBack: p.sentBack === true,
         blackMarket: rebaseBlackMarket(p.blackMarket, marketMs, 0),
       })),
       // live AI clocks START FRESH on load — a few seconds of drift is not
@@ -14834,6 +15095,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // none and keeps the boot's (legacy "vex"/"you" read as Anne/James).
       const sm = (d.players[i] as { manager?: unknown }).manager;
       if (sm !== undefined) players[i].manager = players[i].human ? managerOrNull(sm) : null;
+      // PERK-1 (#600): the bounce spend survives a reload (pre-#600 saves: absent = unspent).
+      const sbk = (d.players[i] as { sentBack?: boolean }).sentBack;
+      if (typeof sbk === "boolean") players[i].sentBack = sbk;
       players[i].fixer = readFixer((d.players[i] as { fixer?: unknown }).fixer);
       players[i].blackMarket = rebaseBlackMarket(d.players[i].blackMarket, 0, marketMs);
     }
@@ -15372,6 +15636,21 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     }
   }
 
+  // PERK-1 (#600): Lead Foot (trucks) and Express (trains) ride each seat's
+  // manager. The ticks take the owner multiplier as a closure, so the shared
+  // TRUCK_SPEED/RAIL_SPEED constants — and every pinned constant test — stay
+  // untouched; an absent/None/other manager is the base rate.
+  const seatForOwner = (ownerId: number): PlayerState | null =>
+    ownerId === me.i + 1 ? me : ownerId === rival.i + 1 ? rival : null;
+  const truckSpeedForOwner = (ownerId: number): number => {
+    const p = seatForOwner(ownerId);
+    return p ? truckSpeedOf(p.manager) : 1;
+  };
+  const trainSpeedForOwner = (ownerId: number): number => {
+    const p = seatForOwner(ownerId);
+    return p ? trainSpeedOf(p.manager) : 1;
+  };
+
   /** Plan the depot lorries, or the empty list when the debug gate is off. */
   /** The rail signature `autoTrains` last ran against (see the frame). */
   let autoTrainSig = "";
@@ -15825,7 +16104,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // Protests hold lorries before the blocked tile — the set is rebuilt per
         // frame only while a protest stands (usually it is undefined: no crowd,
         // no cost, no behaviour change).
-        tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined, track);
+        tickTrucks(trucks, dt, protests.size > 0 ? new Set(protests.keys()) : undefined, track, truckSpeedForOwner);
       } else {
         // Guest: vehicles are host-authoritative — already synced via snapshot/delta,
         // just ensure world.vehicles reflects the synced state (applied in delta handler)
@@ -15862,7 +16141,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // its lorries into the Factory while the bar is still up.
       // E4 (#268): the grid rides along so a train climbing a slope loses
       // speed the way a lorry does.
-      if (sim) tickTrains(rail, dt, grid);
+      if (sim) tickTrains(rail, dt, grid, trainSpeedForOwner);
       // SFX-1 (#463): departures whistle on the same frame the wheels start.
       if (sim) whistleDepartures();
       if (sim) collectDeliveries(t);
@@ -16464,6 +16743,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
          * the grid. Null only if a session is somehow up with no record.
          */
         obstacles: sessionObstacles,
+        /**
+         * PERK-1 (#600): the seat's session perk state, the same numbers the
+         * plate's keys print — the extra-moves buy (Gold price + uses left)
+         * and Second Sight's reshuffles. Absent when the seat carries no
+         * such perk (null manager opens the shipped plate exactly).
+         */
+        buyGold: buyMovesOffer(me.manager)?.gold,
+        buysLeft: sessionBuysLeft,
+        hintOk: perksOf(me.manager).secondSight,
+        shufflesLeft: sessionShufflesLeft,
       };
     },
     /**
@@ -16485,6 +16774,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     retuneOffer: () => retuneOffer(),
     /** L6: press the plate's Retune key — the same call the DOM key makes. */
     retuneDepot: (depotId?: number) => retuneNow(depotId),
+    /** PERK-1 (#600): the session's perk keys, as test twins — the same
+     *  calls the plate's DOM keys make. */
+    sessionBuyMoves: () => sessionBuyMoves(),
+    sessionHint: () => sessionHint(),
+    sessionShuffle: () => sessionShuffle(),
     /** 2026-09: the Depot card's Upgrade door, as a test twin. */
     upgradeDepot: (depotId: number) => upgradeDepot(depotId),
     /** L6: the tier a Depot's link is worth right now (the upgrade axis). */
@@ -16578,7 +16872,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         rivalQuarry.setTruckServed(truckServedCargos(now, "ai"));
       }
       refreshTruckRates();
-      tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined, track);
+      tickTrucks(trucks, dtMs, protests.size > 0 ? new Set(protests.keys()) : undefined, track, truckSpeedForOwner);
       stepAmbience(dtMs);
       collectDeliveries(now);
     },
@@ -16849,7 +17143,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     railRename: (lineId: number, name: string, who: "you" | "ai" = "you") =>
       railRename(lineId, name, who === "ai" ? rival : me),
     /** Advance the trains by hand — the headless twin of the frame's tick. */
-    railTick: (dtMs = 1000) => { tickTrains(rail, dtMs, grid); return rail.trains.length; },
+    railTick: (dtMs = 1000) => { tickTrains(rail, dtMs, grid, trainSpeedForOwner); return rail.trains.length; },
     /** How many tiles of this seat's rail the layer holds. */
     railTiles: (who: "you" | "ai" = "you") =>
       ownerRailTilesOf(rail, who === "ai" ? rival.i + 1 : me.i + 1).length,
