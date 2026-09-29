@@ -662,3 +662,47 @@
 }
 .session-window .sr-card .sr-k { color: #3d474a !important; }
 .session-window .sr-card .sr-note { color: #3d474a !important; font-size: 13px; line-height: 1.35; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Owner (2026-09-29): "have the media player hover display open to the bottom
+   and not over the other menu icons". The expanded radio used to grow LEFT
+   from the play key and cover the ★ badge, the ? and the ☰. Now the play key
+   stays exactly where it is (top-right corner) and the controls drop DOWN
+   under it as a small ink panel: ◀ title ▶ 🔊 (the volume slider still opens
+   below that). Only the panel and the keys take the pointer — the empty cells
+   beside the play key are transparent AND click-through, so the neighbouring
+   icons stay reachable. Desktop only; the phone keeps its round key.
+   ═══════════════════════════════════════════════════════════════════ */
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) {
+  display: grid !important;
+  grid-template-columns: 30px minmax(0, 1fr) 30px 30px;
+  grid-template-rows: 27px 36px;
+  align-items: center; justify-items: center;
+  width: 250px !important; max-width: none !important; height: auto !important;
+  padding: 0 !important; gap: 0 !important;
+  border: 0 !important; background: transparent !important; box-shadow: none !important;
+  pointer-events: none;                 /* the empty cells beside ▶ are not a target */
+}
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) > * {
+  position: relative; z-index: 1; pointer-events: auto;
+}
+/* the play key holds the corner, under the pointer */
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) .radio-play { grid-column: 4; grid-row: 1; order: 0; align-self: start; margin-top: 3px; }  /* flush with the panel: no gap to lose the hover in */
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) .radio-prev { grid-column: 1; grid-row: 2; }
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) .radio-now {
+  grid-column: 2; grid-row: 2; max-width: none; width: 100%; text-align: center;
+}
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) .radio-next { grid-column: 3; grid-row: 2; }
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) .radio-vol { grid-column: 4; grid-row: 2; }
+/* the panel itself: ink, with the orange rule; it starts flush under the key so
+   the pointer never leaves the pill on its way down */
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within)::before {
+  content: ""; grid-column: 1 / -1; grid-row: 2; align-self: stretch; justify-self: stretch;
+  background: #0c161b; border: 1px solid #0c161b; border-top: 3px solid #ed7414;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .45);
+  pointer-events: auto; z-index: 0;
+}
+/* the volume popover keeps opening below the panel, flush with it */
+.ui-root:not([data-phone="1"]) .topbar .radio-pill:is(:hover, :focus-within) .radio-slider {
+  top: 100%; right: 0; margin-top: 2px; background: #0c161b; border: 1px solid #0c161b; border-top: 0;
+}
