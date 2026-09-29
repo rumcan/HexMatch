@@ -9,8 +9,9 @@
 // balance is read; below --min-credits the run stops cleanly (a task is
 // never started that the account cannot finish), and a re-run resumes.
 //
-// For each <name> it uploads <src>/<name>@2x.png (upscaled 4× with lanczos
-// first — the masters are small, and image-to-3D reads detail it is given),
+// For each <name> it uploads <src>/<name>@2x.png (upscaled with lanczos first,
+// 4× up to a 3072 px ceiling — the masters are small, and image-to-3D reads
+// detail it is given),
 // polls the image-to-3d task, and downloads the result into
 // tools/art-src/meshy/<name>/ (model.glb, thumbnail.png, task.json).
 // Re-runnable: a name whose model.glb exists is skipped, and a task already
@@ -71,10 +72,16 @@ async function balance(key) {
   try { return (await api(key, "GET", "/balance")).balance ?? null; } catch { return null; }
 }
 
+/** The largest upload: a 768 px master (the biggest building master) at 4×. */
+const MAX_UPLOAD_PX = 3072;
+
 async function dataUri(file) {
   const meta = await sharp(file).metadata();
+  // Up to 4×, but never past the ceiling: a large painted master (the 1×4
+  // platform is 1448 px wide) would otherwise upload at ~6k px for nothing.
+  const k = Math.min(4, Math.max(1, Math.floor(MAX_UPLOAD_PX / Math.max(meta.width, meta.height))));
   const png = await sharp(file)
-    .resize(meta.width * 4, meta.height * 4, { kernel: "lanczos3" })
+    .resize(meta.width * k, meta.height * k, { kernel: "lanczos3" })
     .png()
     .toBuffer();
   return `data:image/png;base64,${png.toString("base64")}`;
