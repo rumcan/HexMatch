@@ -2218,6 +2218,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // step about the middle of the screen, exactly where a thumb-panner's eye
     // already is. Anchored at the viewport centre, like a wheel at centre.
     onZoom: (dir) => {
+      stopCameraMotion();
       commitCamera(zoomStepAt(cam, dir, cam.vw / 2, cam.vh / 2));
     },
     onSwap: (r1, c1, r2, c2) => {
@@ -3024,6 +3025,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
    * player's hand outranks the choreography.
    */
   let flyRaf = 0;
+  /**
+   * Owner bug (2026-09-29): "on your very first zoom the camera jumps north".
+   * A running fly-to or ease-back keeps writing x/y toward a target computed
+   * at the OLD zoom, so a wheel/key zoom mid-flight lands somewhere else. Any
+   * zoom is the player's hand: it stops both animations first.
+   */
+  function stopCameraMotion(): void {
+    window.cancelAnimationFrame(flyRaf);
+    cameraAnim = null;
+  }
   function flyCameraTo(tx: number, ty: number, ms = 750): void {
     let reduced = false;
     try { reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches; }
@@ -14548,6 +14559,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   canvases.overlay.addEventListener("wheel", (e) => {
     e.preventDefault();
     const [x, y] = pos(e as unknown as PointerEvent);
+    stopCameraMotion();
     commitCamera(zoomStepAt(cam, e.deltaY < 0 ? +1 : -1, x, y));
   }, { passive: false });
 
