@@ -52,6 +52,7 @@ import {
   type Cargo, type DifficultyKey, type DifficultyRules, type ObstacleRules, DEPOT_LEVELS,
 } from "./config";
 import { RIVAL_SKILLS, type SkillKey } from "./skill";
+import { sessionExtraMoves, type ManagerId } from "./managers";
 import { BOARD_H, BOARD_W } from "../game/config";
 import type { BoardObstacles, RewardKind } from "../game/board";
 
@@ -357,8 +358,8 @@ export interface TuningSession {
 /** L5 (#219): the `depotId` a city-upgrade session carries. */
 export const TOWN_SESSION_ID = -1;
 
-export const createTuningSession = (depotId: number, cargo: Cargo): TuningSession => ({
-  kind: "depot", depotId, cargo, moves: TUNING.moves, used: 0, score: 0,
+export const createTuningSession = (depotId: number, cargo: Cargo, moves?: number): TuningSession => ({
+  kind: "depot", depotId, cargo, moves: moves ?? TUNING.moves, used: 0, score: 0,
 });
 
 /**
@@ -366,10 +367,52 @@ export const createTuningSession = (depotId: number, cargo: Cargo): TuningSessio
  * score→strength rule; the board is left NEUTRAL (no `cargo`), because the
  * upgrade benefits every cargo the city already handles.
  */
-export const createTownSession = (): TuningSession => ({
+export const createTownSession = (moves?: number): TuningSession => ({
   kind: "town", depotId: TOWN_SESSION_ID, cargo: null,
-  moves: TUNING.moves, used: 0, score: 0,
+  moves: moves ?? TUNING.moves, used: 0, score: 0,
 });
+
+/**
+ * PERK-1 (#600): the moves a seat's sessions OPEN with — the base budget plus
+ * the seat's Stamina (Dolores: +3). Null seats (the rival never plays a
+ * board) read exactly the shipped budget, so the calibration tests that
+ * simulate a session are untouched.
+ */
+export const sessionMovesFor = (id: ManagerId | null | undefined): number =>
+  TUNING.moves + sessionExtraMoves(id);
+
+/**
+ * PERK-1 (#600): Kenji's Opening Act — the cell a fresh session board opens
+ * its DISCO BALL on. Pure and grid-shaped (the caller holds the Board):
+ * a spiral out from the centre, first cell that can wear a special — not a
+ * girder, not already a special. `null` on a board with nowhere to place it
+ * (the session simply opens without the act). Deterministic: same grid,
+ * same cell — the session's seed stays the seed.
+ */
+export function openingActCell(
+  grid: ({ block?: boolean; special?: string | null; hard?: number } | null | undefined)[][],
+): { r: number; c: number } | null {
+  const h = grid.length;
+  if (!h) return null;
+  const w = grid[0].length;
+  const cr = Math.floor((h - 1) / 2);
+  const cc = Math.floor((w - 1) / 2);
+  const takes = (r: number, c: number): boolean => {
+    if (r < 0 || r >= h || c < 0 || c >= w) return false;
+    const cell = grid[r][c];
+    // no girder, no special already on it, no frost under it.
+    return !!cell && !cell.block && !cell.special && !((cell.hard ?? 0) > 0);
+  };
+  const maxD = Math.max(cr, cc, h - 1 - cr, w - 1 - cc);
+  for (let d = 0; d <= maxD; d++) {
+    // one ring, clockwise from the right-most cell — a spiral by rings.
+    for (let c = cc + d; c >= cc - d; c--) if (takes(cr - d, c)) return { r: cr - d, c };
+    for (let r = cr - d + 1; r <= cr + d; r++) if (takes(r, cc + d)) return { r, c: cc + d };
+    for (let c = cc + d - 1; c >= cc - d; c--) if (takes(cr + d, c)) return { r: cr + d, c };
+    for (let r = cr + d - 1; r >= cr - d + 1; r--) if (takes(r, cc - d)) return { r, c: cc - d };
+  }
+  return null;
+}
 
 /**
  * L5 (#219) — THE SESSION GATE, in one function: what finishing a session

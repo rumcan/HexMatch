@@ -61,7 +61,20 @@ export interface EngineOptions {
   /** The stream to roll on; omitted, the module facade (`setRng`) is read on every roll. */
   rng?: Rng;
   pool?: ResKey[];
+  /**
+   * PERK-1 (#600): Kenji's Shortcut. OFF by default — a bare engine plays
+   * exactly the shipped rules. ON, specials need one gem fewer to mint:
+   * a 3-run leaves a LINE (up to `SHORTCUT_LINE_CAP` free mints per board),
+   * a 4-run leaves a DISCO, and an L shapes at a union of ≥4 (the reachable
+   * minimum is 5; T-crosses already blast via `crosses`, which wins the
+   * mint priority). The line-mint counter resets in `initFill` — the session
+   * boundary, the same clock `crazyCount` runs on.
+   */
+  shortcut?: boolean;
 }
+
+/** PERK-1: the free shortcut line-mints per board (one tuning session). */
+export const SHORTCUT_LINE_CAP = 3;
 
 export type Move = [number, number, number, number];
 
@@ -80,6 +93,11 @@ export class Match3Engine {
   /** What a harvest actually credited (the adapter wires `onHarvest` here). */
   credit: (res: ResKey, amount: number, forged: boolean) => number = (_r, amount) => amount;
 
+  /** PERK-1 (#600): the Shortcut mint rules are on (see `EngineOptions`). */
+  shortcut = false;
+  /** PERK-1: shortcut line-mints used since `initFill` (the session clock). */
+  shortcutLines = 0;
+
   private readonly rngFn: Rng | null;
   private w0: number;
   private h0: number;
@@ -89,6 +107,7 @@ export class Match3Engine {
     this.h0 = opts.h ?? BOARD_H;
     this.pool = opts.pool ? [...opts.pool] : [...BASE_POOL];
     this.rngFn = opts.rng ?? null;
+    this.shortcut = opts.shortcut === true;
     this.initFill();
   }
 
@@ -167,6 +186,9 @@ export class Match3Engine {
   /** A fresh board with no match on it (and the previous rectangle kept). */
   initFill(): void {
     this.crazyCount = 0;
+    // PERK-1: the shortcut line-mint budget is the session's — a fresh fill
+    // (a new tuning session board) starts a fresh budget, like crazyCount.
+    this.shortcutLines = 0;
     const W = this.w;
     const H = this.h;
     this.grid = [];
@@ -236,7 +258,10 @@ export class Match3Engine {
         if (shared.length !== 1) continue;
         const union = [...a];
         for (const g of b) if (!ids.has(g.id)) union.push(g);
-        if (union.length < 5) continue;
+        // PERK-1 (#600): a Shortcut board shapes its bomb one gem earlier —
+        // a union of ≥4 (the reachable minimum from two ≥3-runs is 5, so this
+        // reads the same on the shipped board).
+        if (union.length < (this.shortcut ? 4 : 5)) continue;
         const sameRow = a.every((g) => g.r === a[0].r);
         const otherCol = b.every((g) => g.c === b[0].c);
         const sameCol = a.every((g) => g.c === a[0].c);
@@ -407,8 +432,11 @@ export class Match3Engine {
     const crackIds = new Set<number>();
     const forge: { r: number; c: number; res: ResKey; tier: 1 | 2 }[] = [];
     const bombs: { r: number; c: number; res: ResKey }[] = [];
-    const lines: { r: number; c: number; res: ResKey }[] = [];
+    const lines: { r: number; c: number; res: ResKey; shortcut?: boolean }[] = [];
     const discos: { r: number; c: number; res: ResKey }[] = [];
+    // PERK-1: shortcut line-mints queued in THIS pass (the budget is counted
+    // when they land; the cap must still hold for a multi-mint pass).
+    let queued = 0;
     const fx: FxEvent[] = [];
     const rewards: RewardKind[] = [];
     const bonus: ClearPhase["bonus"] = [];
@@ -431,11 +459,24 @@ export class Match3Engine {
         }
       }
       const mid = grp[Math.floor(size / 2)];
+      // PERK-1 (#600): on a Shortcut board a special needs one gem fewer — a
+      // 3-run leaves a LINE, up to SHORTCUT_LINE_CAP mints per board. The
+      // budget (`shortcutLines`) is counted when a mint actually lands (the
+      // apply loop below), and `queued` holds a pass that mints several at
+      // once under the same cap.
+      if (size === 3 && this.shortcut && !this.quietSpecials
+          && this.shortcutLines + queued < SHORTCUT_LINE_CAP) {
+        const spot = [mid, ...grp].find((g) => g.hard === 0) ?? mid;
+        lines.push({ r: spot.r, c: spot.c, res: anchor, shortcut: true });
+        queued++;
+      }
       // Owner (2026-09-28): a match of 4 leaves a LINE gem of its colour behind.
       // (on a cell that actually clears: a frozen gem only cracks and keeps its cell)
+      // PERK-1: on a Shortcut board the 4-run mints the DISCO instead.
       if (size === 4) {
         const spot = [mid, ...grp].find((g) => g.hard === 0) ?? mid;
-        lines.push({ r: spot.r, c: spot.c, res: anchor });
+        if (this.shortcut && !this.quietSpecials) discos.push({ r: spot.r, c: spot.c, res: anchor });
+        else lines.push({ r: spot.r, c: spot.c, res: anchor });
       }
       // Owner (2026-09-28): a match of 5 is the DISCO BALL now (wipes the board).
       if (size >= 5 && !this.quietSpecials) {
@@ -521,6 +562,8 @@ export class Match3Engine {
       this.grid[l.r][l.c] = g;
       minted.push({ r: l.r, c: l.c, what: "line" });
       fx.push({ type: "up", r: l.r, c: l.c });
+      // PERK-1: the shortcut budget counts mints that actually landed.
+      if (l.shortcut) this.shortcutLines++;
     }
     for (const a of areas) {
       if (this.grid[a.r][a.c]) continue;

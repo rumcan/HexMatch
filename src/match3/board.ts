@@ -186,6 +186,19 @@ export class Board {
   hasMove(): boolean {
     return this.engineHasMove();
   }
+  /**
+   * PERK-1 (#600): the highest-gain legal swap — Kenji's Second Sight hint.
+   * `null` when no swap is legal (the deadlock guard reshuffles in that case).
+   * Ties break row-major, first seen — a hint is a suggestion, not a verdict.
+   */
+  bestMove(): { r1: number; c1: number; r2: number; c2: number } | null {
+    const moves = this.engine.legalMoves();
+    if (!moves.length) return null;
+    let best = moves[0];
+    for (const m of moves) if (m.gain > best.gain) best = m;
+    const [r1, c1, r2, c2] = best.move;
+    return { r1, c1, r2, c2 };
+  }
   seedObstacles(frost = 0, girders = 0, frostHard: 1 | 2 = 2): BoardObstacles {
     const placed = this.engine.seedObstacles(frost, girders, frostHard);
     this.onChange();

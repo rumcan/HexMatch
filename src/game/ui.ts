@@ -563,6 +563,18 @@ export interface UiTuningSession {
   /** #301: whether the board is currently animating a cascade — Finish and
    *  Abandon are disabled only while this is true, not when moves run out. */
   busy?: boolean;
+  /**
+   * PERK-1 (#600): the seat's session perk keys, as the game paints them.
+   * All optional and ABSENT for a seat without the perk (null manager opens
+   * the shipped plate exactly): `buyGold`/`buysLeft` the extra-moves buy
+   * (Overtime Crew / Bulk Buyer — the same key, the perk's price and uses),
+   * `hintOk`/`shufflesLeft` Second Sight (the hint is free and repeatable;
+   * the reshuffle is one per session).
+   */
+  buyGold?: number;
+  buysLeft?: number;
+  hintOk?: boolean;
+  shufflesLeft?: number;
 }
 
 /** #461 TUNE-1: target card before a session — short target + current/possible cargo/min. */
@@ -731,6 +743,19 @@ export interface UiHooks {
    */
   onTuningEnd?: (abandon: boolean) => void;
   /**
+   * PERK-1 (#600): the plate's extra-moves key (Overtime Crew / Bulk Buyer).
+   * The chrome shows it only because `UiState.tuning` carried the perk's
+   * price and uses; the game owns the Gold, the refusal and the +3, and
+   * reports nothing back — the next paint carries the new budget.
+   */
+  onTuningBuyMoves?: () => void;
+  /** PERK-1 (#600): Second Sight's hint key — the game highlights the best
+   *  move on the session board; the chrome only reports the press. */
+  onTuningHint?: () => void;
+  /** PERK-1 (#600): Second Sight's reshuffle key — one free `reshuffle` per
+   *  session, owned by the game (the busy gate included). */
+  onTuningShuffle?: () => void;
+  /**
    * #300: the results pop-up's one key. The game applies the result it froze
    * when the session ended — the same record the pop-up is painting — and
    * closes the session; the chrome only reports the press.
@@ -858,6 +883,12 @@ export interface OriginalUi {
   /** #461 TUNE-1: show the target card before a session — current/possible cargo/min, last rating. */
   showTuningTarget: (info: UiTuningTarget, onStart: () => void) => void;
   openSessionBoard: () => void;
+  /**
+   * PERK-1 (#600): Second Sight's hint, as the board sees it — the two gems
+   * of the move glow until the next board change (a re-style deliberately
+   * drops `.hint`, since a changed board voids the old hint).
+   */
+  hintMove: (r1: number, c1: number, r2: number, c2: number) => void;
   /**
    * L17 (#245): bring the BANK into view — the map door to it is the town's
    * middle building, which is what you click to upgrade the city and to
@@ -1467,7 +1498,28 @@ export function createOriginalUi(
     return label;
   });
   tpCurve.append(...tpCurveLabels);
-  tpRow.append(tpScore, tpYield, tpCurve, tpMeter, tpFinish, tpAbandon);
+  // PERK-1 (#600): the session's perk keys, between the meter and Finish.
+  // Built once, hidden by default — `paintTuning` shows exactly the keys the
+  // seat's perk row earns, the same way `tpRetune` appears only when a
+  // Depot is owed a re-match.
+  const tpBuyMoves = h("button", "tp-buy-moves hidden", "");
+  tpBuyMoves.type = "button";
+  tpBuyMoves.dataset.sfx = "select";
+  tpBuyMoves.setAttribute("aria-label", "Buy 3 extra moves with Gold");
+  tpBuyMoves.onclick = () => hooks.onTuningBuyMoves?.();
+  const tpHint = h("button", "tp-hint hidden", "Hint");
+  tpHint.type = "button";
+  tpHint.dataset.sfx = "select";
+  tpHint.title = "Second Sight — light up the best move on the board";
+  tpHint.setAttribute("aria-label", "Hint — highlight the best move");
+  tpHint.onclick = () => hooks.onTuningHint?.();
+  const tpShuffle = h("button", "tp-shuffle hidden", "Shuffle");
+  tpShuffle.type = "button";
+  tpShuffle.dataset.sfx = "select";
+  tpShuffle.title = "Second Sight — one free reshuffle per session";
+  tpShuffle.setAttribute("aria-label", "Shuffle the board for free");
+  tpShuffle.onclick = () => hooks.onTuningShuffle?.();
+  tpRow.append(tpScore, tpYield, tpCurve, tpMeter, tpBuyMoves, tpHint, tpShuffle, tpFinish, tpAbandon);
   const tpIdle = h("div", "tp-idle");
   const tpIdleText = h("span", "tp-idle-text");
   // L6 (#220): the re-match key, beside the line that explains it. Built once
@@ -2606,7 +2658,7 @@ export function createOriginalUi(
     // allowance burns down. L5 (#219): on the new loop the price is the
     // industry's own mix, so the line says "from …" rather than quoting the
     // retired loop's single mix.
-    { key: "harvester", label: "Depot", sub: `${depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0 })} · R turns` },
+    { key: "harvester", label: "Depot", sub: `${depotButtonMarkup(0, { newLoop: newLoopChrome, tier: 0, manager: opts.manager ?? null })} · R turns` },
     // PP-06: another instance of the SAME processing building, raised beside
     // another town.
     { key: "plant", label: "Processing Plant", sub: `${moneyMarkup(PLANT_COST)} · next to a town · R turns` },
@@ -4826,6 +4878,10 @@ export function createOriginalUi(
    * here, so a still session writes nothing.
    */
   function paintTuning(t: UiTuningSession | null | undefined, idle?: UiTuningIdle) {
+    // PERK-1 (#600): the perk keys' state rides the signature — a buy or a
+    // spent reshuffle repaints the row without a poll of its own.
+    const perkSig = (t: UiTuningSession) =>
+      `${t.buyGold ?? "-"}:${t.buysLeft ?? "-"}:${t.hintOk ? 1 : 0}:${t.shufflesLeft ?? "-"}`;
     const sig = t === undefined ? "legacy"
       // L6: the idle signature carries the offer, so a Depot cooling into (or
       // out of) a re-match repaints the plate without a poll of its own.
@@ -4835,7 +4891,7 @@ export function createOriginalUi(
       // #301: busy is part of the sig — Finish is disabled only while the
       // board animates, not when moves run out, so a cascade must repaint.
       : t === null ? `none:${idle?.retune ? `${idle.retune.depotId}:${idle.retune.yield}` : "-"}`
-        : `${t.kind}:${t.cargo ?? "-"}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}:${t.busy ? 1 : 0}`;
+        : `${t.kind}:${t.cargo ?? "-"}:${t.movesLeft}:${t.moves}:${t.score}:${t.yield}:${t.busy ? 1 : 0}:${perkSig(t)}`;
     if (sig === lastTuningSig) return;
     lastTuningSig = sig;
     if (t === undefined) {
@@ -4952,6 +5008,23 @@ export function createOriginalUi(
       : town
         ? "Abandon — close without playing it out. The upgrade is refunded and the city is unchanged"
         : `Abandon — close without playing it out. The Depot keeps the default yield ×${fmtYield(t.abandonYield)}`;
+    // PERK-1 (#600): the perk keys — the game's perk row decides which exist;
+    // the chrome only prices, counts and greys them (the busy gate shared
+    // with Finish).
+    const canBuy = t.buyGold !== undefined && (t.buysLeft ?? 0) > 0;
+    tpBuyMoves.classList.toggle("hidden", !canBuy);
+    if (canBuy) {
+      tpBuyMoves.textContent = `+3 moves · ${t.buyGold} Gold${(t.buysLeft ?? 0) > 1 ? ` (${t.buysLeft})` : ""}`;
+      tpBuyMoves.title = "Buy 3 extra moves with Gold — the session's budget grows";
+    }
+    tpBuyMoves.disabled = busy;
+    const canHint = t.hintOk === true;
+    tpHint.classList.toggle("hidden", !canHint);
+    tpHint.disabled = busy;
+    const canShuffle = t.hintOk === true && (t.shufflesLeft ?? 0) > 0;
+    tpShuffle.classList.toggle("hidden", !canShuffle);
+    tpShuffle.disabled = busy;
+    tpShuffle.textContent = t.shufflesLeft === 1 ? "Shuffle (1 left)" : "Shuffle";
     // #301: keep abandon label honest — if confirm window expired or score is 0,
     // show the default label, not a stale "Confirm abandon?" from a previous score.
     const now = Date.now();
@@ -5698,7 +5771,7 @@ export function createOriginalUi(
     // (a rebuilt button drops a click mid-gesture, the reason `renderSabotage`
     // is change-gated too). The cost text comes from the same table the
     // placement charges; `disabled` mirrors the affordability the click checks.
-    const sub = depotButtonMarkup(state.freeDepots, { newLoop: newLoopChrome, tier: state.depotTier ?? 0 });
+    const sub = depotButtonMarkup(state.freeDepots, { newLoop: newLoopChrome, tier: state.depotTier ?? 0, manager: opts.manager ?? null });
     if (sub !== lastDepotSub) {
       lastDepotSub = sub;
       if (depotSub) depotSub.innerHTML = sub;
@@ -6005,6 +6078,16 @@ export function createOriginalUi(
     closeSessionBoard: () => {
       if (sessionMode) { setSessionWindow(false); return; }
       if (isPhoneViewport() && root.dataset.view === "trade") setMobileView("map");
+    },
+    // PERK-1 (#600): the Second Sight hint — glow the move's two gems. The
+    // glow is a plain class, so it dies with the next re-style (a changed
+    // board voids the old hint) and costs the board nothing.
+    hintMove: (r1, c1, r2, c2) => {
+      for (const el of gemEls.values()) el.classList.remove("hint");
+      const a = board.grid[r1]?.[c1];
+      const b = board.grid[r2]?.[c2];
+      if (a) gemEls.get(a.id)?.classList.add("hint");
+      if (b) gemEls.get(b.id)?.classList.add("hint");
     },
     showModal,
     hideModal,

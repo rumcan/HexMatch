@@ -244,6 +244,16 @@
 .px-cast img { width: 92px; aspect-ratio: .91; object-fit: cover; object-position: center top; border-radius: 2px; background: #353d3b; }
 .px-cast b { display: block; font: 400 30px/.95 var(--px-poster); text-transform: uppercase; }
 .px-cast i { display: block; margin-top: 6px; font: italic 600 16px/1.25 var(--px-body); }
+/* PERK-1 (#600): the picker's five perks + quirk — flat paper rows, no
+   gradients; the quirk runs muted like the profile card's. */
+.px-cast-perks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 3px; }
+.px-cast-perks li { font: 600 14px/1.25 var(--px-body); color: var(--px-text); }
+.px-cast-perks li strong {
+  display: inline-block; margin-right: 10px; min-width: 92px;
+  font: 700 11px/1.6 var(--px-display); letter-spacing: .12em; text-transform: uppercase; color: var(--accent);
+}
+.px-cast-perks li.quirk { color: var(--px-text-2); }
+.px-cast-perks li.quirk strong { color: var(--px-mute); }
 
 /* ── PLAY: the roster card (sidebar · portrait stage · profile + modes) ── */
 .start-screen.px .start-panel.start-modes.px-roster {
@@ -893,6 +903,9 @@
 .px-cast b { font-size: 24px; }
 .px-cast .px-cast-title { display: block; margin-top: 2px; color: var(--px-mute); font: 700 11px var(--px-display); font-style: normal; letter-spacing: .14em; text-transform: uppercase; }
 .px-cast i { margin-top: 3px; font: 600 13px/1.2 var(--px-body); font-style: normal; }
+.px-cast-perks { margin-top: 5px; gap: 2px; }
+.px-cast-perks li { font-size: 12.5px; }
+.px-cast-perks li strong { min-width: 76px; font-size: 10px; }
 .px-cast.locked { cursor: not-allowed; background: #e0d6c1; border-color: #8e7f66; }
 .px-cast.locked:hover { transform: none; box-shadow: none; border-color: #8e7f66; }
 .px-cast.locked img { filter: grayscale(1); opacity: .6; }

@@ -2,7 +2,7 @@
 // colour's own art, marked); caught in a match it clears its whole row and
 // column; swapped left/right it clears just its row, up/down just its column.
 import { describe, expect, it } from "vitest";
-import { Match3Engine, mulberry32, type ResKey } from "../../src/match3";
+import { Match3Engine, mulberry32, SHORTCUT_LINE_CAP, type ResKey } from "../../src/match3";
 
 const K: ResKey[] = ["wood", "brick", "ore"];
 /** A dead board (three colours on diagonals: no match, no move) to paint on. */
@@ -172,5 +172,64 @@ describe("every shape its own power", () => {
     const phases = drain(f, f.resolveSwap(3, 3, 3, 4));
     const blast = phases.find((p) => p.type === "bombClear")!;
     expect(blast.removed!.length).toBe(25);
+  });
+});
+
+// ── PERK-1 (#600): Kenji's Shortcut — the engine's opt-in mint rules ───
+describe("PERK-1 (#600) the shortcut option", () => {
+  const paint = (e: Match3Engine): void => {
+    // the dead diagonal, then the runs under test — exactly three each.
+    e.grid = e.grid.map((row, r) => row.map((_, c) => e.newGem(K[(r + c) % 3], r, c)));
+  };
+  // The runs use colours OUTSIDE the diagonal pool (wood/brick/ore), so a
+  // painted run can never accidentally connect to the dead board: exactly
+  // three each, nothing else.
+  const threeRuns = (e: Match3Engine): void => {
+    for (const c of [0, 1, 2]) e.grid[1][c]!.res = "sheep";
+    for (const c of [3, 4, 5]) e.grid[4][c]!.res = "gold";
+    for (const c of [1, 2, 3]) e.grid[6][c]!.res = "wheat";
+  };
+
+  it("a 3-run leaves a LINE on the shortcut board; the shipped board mints nothing", () => {
+    const on = new Match3Engine({ rng: mulberry32(11), shortcut: true });
+    paint(on); threeRuns(on);
+    const clear = on.resolve(on.findGroups(), {}, 1);
+    const lines = clear.minted.filter((m) => m.what === "line");
+    expect(lines).toHaveLength(3);
+    expect(on.gems().filter((g) => g.special === "line")).toHaveLength(3);
+
+    const off = new Match3Engine({ rng: mulberry32(11) });
+    paint(off); threeRuns(off);
+    const c2 = off.resolve(off.findGroups(), {}, 1);
+    expect(c2.minted).toHaveLength(0);
+    expect(off.gems().some((g) => g.special === "line")).toBe(false);
+  });
+
+  it("the cap holds: 3 free line mints per board, the 4th 3-run mints nothing", () => {
+    const e = new Match3Engine({ rng: mulberry32(11), shortcut: true });
+    paint(e); threeRuns(e);
+    expect(e.resolve(e.findGroups(), {}, 1).minted.filter((m) => m.what === "line")).toHaveLength(3);
+    // The budget is the board's (the session's): a fresh move on the same
+    // board has spent it.
+    paint(e);
+    for (const c of [0, 1, 2]) e.grid[1][c]!.res = "sheep";
+    const c2 = e.resolve(e.findGroups(), {}, 1);
+    expect(c2.minted.filter((m) => m.what === "line")).toHaveLength(0);
+    // A fresh fill — a new session board — starts a fresh budget.
+    e.initFill();
+    expect(e.shortcutLines).toBe(0);
+  });
+
+  it("a 4-run mints the DISCO instead of a line; a 5-run still wipes the board", () => {
+    const e = new Match3Engine({ rng: mulberry32(11), shortcut: true });
+    paint(e);
+    for (const c of [0, 1, 2, 3]) e.grid[0][c]!.res = "sheep";
+    const clear = e.resolve(e.findGroups(), {}, 1);
+    const what = clear.minted.map((m) => m.what);
+    expect(what).toEqual(["disco"]);
+  });
+
+  it("the shipped constant is 3 free lines per board", () => {
+    expect(SHORTCUT_LINE_CAP).toBe(3);
   });
 });

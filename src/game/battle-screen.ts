@@ -29,7 +29,7 @@ import { GEM_ART } from "./gem-art";
 import { BOARD_ANIMATION_MS, type FxType, type Gem } from "./board";
 import { sfx } from "../audio/sfx";
 import {
-  createBattle, type AbilityOutcome, type Battle, type BattleMove, type BattleSeat, type TurnOutcome,
+  createBattle, type AbilityOutcome, type Battle, type BattleMove, type BattlePerkFlags, type BattleSeat, type TurnOutcome,
   maxHealthOf,
 } from "./battle";
 import { GEM_TO_CARGO } from "../iso/quarry";
@@ -1024,7 +1024,7 @@ export function openBattleScreen(opts: BattleScreenOptions): BattleScreenHandle 
 export function startBattleScreen(
   seed: number,
   contenders: [BattleContenderView, BattleContenderView],
-  opts: Partial<BattleScreenOptions> & { rules?: BattleRules } = {},
+  opts: Partial<BattleScreenOptions> & { rules?: BattleRules; perks?: [BattlePerkFlags | null, BattlePerkFlags | null] } = {},
 ): BattleScreenHandle {
   const battle = createBattle({
     seed,
@@ -1033,6 +1033,9 @@ export function startBattleScreen(
       { id: contenders[1].id, name: contenders[1].name, depots: contenders[1].depots },
     ],
     rules: opts.rules ?? BATTLE_RULES,
+    // PERK-1 (#600): the seats' battle perks, seat by seat (the game fills
+    // them from the manager rulebook; absent = the shipped battle).
+    perks: opts.perks,
     animate: true,
   });
   return openBattleScreen({

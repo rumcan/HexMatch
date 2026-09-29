@@ -115,6 +115,19 @@ export interface BattleState {
    * then lift when the turn comes back, like a turn-costing cast's do.
    */
   armed?: { seat: BattleSeat; girders: number; frost: number; frostHard: 1 | 2 } | null;
+  /**
+   * PERK-1 (#600): Sucker Punch spent, per seat (`[seat 0, seat 1]`) — the
+   * one-shot is consumed only when it actually KEEPS the turn (a chain-cap
+   * denial leaves it for a later move).
+   */
+  suckerPunch?: [boolean, boolean];
+  /**
+   * PERK-1 (#600): the Encore owed to a seat — the seat the turn just passed
+   * to (Kenji), waiting to spend its one bonus turn on its next move (see
+   * `resolveTurn` / `finishTurn`). Armed once per pass, spent once; null =
+   * none owed.
+   */
+  encorePending?: BattleSeat | null;
 }
 
 /** One entry in the replayable move log. B3 adds `{ t: "ability", … }`. */
@@ -195,6 +208,27 @@ export interface BattleOptions {
    * sims live.
    */
   animate?: boolean;
+  /**
+   * PERK-1 (#600): the seats' battle perks, seat by seat (the game passes
+   * them through from the manager rulebook; `null` = the seat carries none,
+   * which is the shipped rules exactly). The engine is manager-free — it
+   * reads ONLY these flags, and a null seat plays today's battle.
+   */
+  perks?: [BattlePerkFlags | null, BattlePerkFlags | null];
+}
+
+/**
+ * PERK-1 (#600): the pure shape the engine reads for one seat's battle perks
+ * (the game fills it from `battlePerksOf` in the manager rulebook). Every
+ * field is optional; a null / absent flags object is the shipped battle.
+ */
+export interface BattlePerkFlags {
+  /** Sucker Punch: one extra turn, once per battle (Rafael). */
+  extraTurnOnce?: boolean;
+  /** Momentum: a match of at least this length earns an extra turn (Dolores: 4). */
+  extraTurnMinMatch?: number;
+  /** Encore: one bonus turn at the end of every round (Kenji). */
+  bonusTurnPerRound?: boolean;
 }
 
 export interface Battle {
@@ -317,6 +351,14 @@ export function createBattle(opts: BattleOptions): Battle {
     maxHealth: fullHealth(seat),
   });
 
+  // PERK-1 (#600): the seats' battle perks, read ONCE here — the engine never
+  // imports the manager rulebook, it plays what the game handed it. Absent or
+  // null seats are the shipped battle, exactly.
+  const perks: [BattlePerkFlags | null, BattlePerkFlags | null] = [
+    opts.perks?.[0] ?? null,
+    opts.perks?.[1] ?? null,
+  ];
+
   const state: BattleState = {
     players: [makePlayer(opts.players[0], 0), makePlayer(opts.players[1], 1)],
     turn: 0,
@@ -328,6 +370,10 @@ export function createBattle(opts: BattleOptions): Battle {
     obstaclesBy: null,
     chain: 0,
     armed: null,
+    // PERK-1: the perk bookkeeping starts empty — a seat without the perk
+    // never touches it, so the saved state is identical for a null seat.
+    suckerPunch: [false, false],
+    encorePending: null,
   };
 
   const moves: BattleMove[] = [];
@@ -351,7 +397,18 @@ export function createBattle(opts: BattleOptions): Battle {
     opp.extraTurn = false;
     // B7: the chain counter follows the seat that keeps the turn.
     state.chain = extraTurn ? (state.chain ?? 0) + 1 : 0;
-    if (!extraTurn) state.turn = 1 - mover as BattleSeat;
+    if (extraTurn) {
+      // the mover keeps it — nothing new is owed (the Encore, if unspent,
+      // stays owed to whoever it was armed for; see below)
+    } else {
+      state.turn = 1 - mover as BattleSeat;
+      // PERK-1 (#600): Encore — the seat the turn just passed to (Kenji) is
+      // owed one bonus turn for this pass: it spends it on its next move
+      // (`resolveTurn`), keeping the turn once, and it is armed once per pass.
+      const next = state.turn;
+      if (perks[next]?.bonusTurnPerRound) state.encorePending = next;
+      else state.encorePending = null;
+    }
     state.turns++;
     // Playtest (2026-09): the caster's obstacles lift when their turn returns
     // — on a shared board they must never block the one who cast them.
@@ -428,15 +485,43 @@ export function createBattle(opts: BattleOptions): Battle {
     // extra turn — a 4+ run, a special shape, or a real cascade of 2+ match
     // passes. A bomb's blast is not a match pass (`biggest` 0); its follow-on
     // matches count normally.
+    // PERK-1 (#600): Momentum lowers the run's length for ITS seat only — a
+    // per-seat threshold on top of the rules' (the baseline seat plays the
+    // rules' number, so a null seat's battle is bit-identical to today's).
     const matchPasses = passes.filter((p) => p.biggest > 0);
+    const minMatch = perks[mover]?.extraTurnMinMatch ?? rules.extraTurnMinMatch;
     const earned =
-      matchPasses.some((p) => p.biggest >= rules.extraTurnMinMatch) ||
+      matchPasses.some((p) => p.biggest >= minMatch) ||
       (rules.extraTurnOnShape && matchPasses.some((p) => p.shaped)) ||
       (rules.extraTurnOnCascade > 0 && matchPasses.length >= rules.extraTurnOnCascade);
     // B7 (#252): the chain cap — past `extraTurnChain` extras in a row the
     // move still scores, but the turn passes.
     const cap = rules.extraTurnChain ?? 0;
-    const extraTurn = earned && !(cap > 0 && (state.chain ?? 0) >= cap);
+    const capBlocked = cap > 0 && (state.chain ?? 0) >= cap;
+    let extraTurn = earned && !capBlocked;
+
+    // PERK-1 (#600): Sucker Punch — the mover's one extra turn for the whole
+    // battle. It is exempt of nothing: the chain cap still denies it, and a
+    // denial does NOT spend it (the punch waits for a move the cap allows).
+    if (!extraTurn && !earned && perks[mover]?.extraTurnOnce
+      && !state.suckerPunch?.[mover] && !capBlocked) {
+      const used = state.suckerPunch ?? [false, false];
+      used[mover] = true;
+      state.suckerPunch = [used[0], used[1]];
+      extraTurn = true;
+    }
+    // PERK-1 (#600): Encore — the bonus turn the turn's pass armed (see
+    // `finishTurn`) is spent HERE, on this move, keeping the turn (again
+    // subject to the chain cap; a denial simply leaves the bonus unspent).
+    if (!extraTurn && state.encorePending === mover) {
+      if (capBlocked) {
+        // the cap eats the encore for this round — do not re-arm it
+        state.encorePending = null;
+      } else {
+        state.encorePending = null;
+        extraTurn = true;
+      }
+    }
 
     const winner = finishTurn(mover, extraTurn);
     return { ok: true, mana, damage, extraTurn, smogged, passes, winner };
@@ -615,6 +700,10 @@ export function createBattle(opts: BattleOptions): Battle {
           obstaclesBy: state.obstaclesBy ?? null,
           chain: state.chain ?? 0,
           armed: state.armed ? { ...state.armed } : null,
+          // PERK-1 (#600): the perk bookkeeping rides the snapshot, so a
+          // rejoin mid-battle cannot re-arm a spent Sucker Punch or Encore.
+          suckerPunch: state.suckerPunch ? [...state.suckerPunch] as [boolean, boolean] : undefined,
+          encorePending: state.encorePending ?? null,
         },
         moves: moves.map((m) => ({ ...m })),
         board: board.save(),
@@ -656,6 +745,14 @@ export function createBattle(opts: BattleOptions): Battle {
         state.obstaclesBy = st.obstaclesBy ?? null;
         state.chain = st.chain ?? 0;
         state.armed = st.armed ? { ...st.armed } : null;
+        // PERK-1 (#600): the perk bookkeeping — a pre-#600 snapshot has none
+        // and reads as the shipped battle (punch unspent, no encore owed).
+        state.suckerPunch = st.suckerPunch
+          ? [!!st.suckerPunch[0], !!st.suckerPunch[1]]
+          : [false, false];
+        state.encorePending = (st.encorePending === 0 || st.encorePending === 1)
+          ? st.encorePending
+          : null;
         state.cooldowns = [
           { ...(st.cooldowns?.[0] ?? {}) },
           { ...(st.cooldowns?.[1] ?? {}) },

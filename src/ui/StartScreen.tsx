@@ -1162,8 +1162,16 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
                 <p className="px-cast-role">{cast.title}</p>
                 {hired ? null : <p className="px-lock-note" role="note">Locked · {unlockLabel(cast.id)}</p>}
                 <dl className="px-perks">
-                  <div className="px-perk"><dt>Perk</dt><dd>{cast.perk}</dd></div>
-                  <div className="px-perk quirk"><dt>Quirk</dt><dd>{cast.quirk}</dd></div>
+                  {/* PERK-1 (#600): all five perks + the quirk, from the rules'
+                      MANAGER_PERKS via the profile. The first row keeps the
+                      "Perk" label the CAST-2 test pins; the quirk row keeps
+                      "Quirk" and its dim style. */}
+                  {cast.perks.map((pk, i) => (
+                    <div key={pk.title} className={`px-perk${pk.quirk ? " quirk" : ""}`}>
+                      <dt>{pk.quirk ? "Quirk" : i === 0 ? "Perk" : pk.title}</dt>
+                      <dd>{pk.text}</dd>
+                    </div>
+                  ))}
                 </dl>
                 <p className="px-quote">“{cast.quote}”</p>
               </div>

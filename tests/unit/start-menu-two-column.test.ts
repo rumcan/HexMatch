@@ -101,16 +101,22 @@ describe("#184 two-column mode menu", () => {
     expect(actions.querySelector(".portrait-picker")).toBeNull();
   });
 
-  it("CAST-2 (#558): the profile shows perk and quirk; the HISTORY tab is gone", async () => {
+  it("CAST-2 (#558) / PERK-1 (#600): the profile lists all five perks + quirk; the HISTORY tab is gone", async () => {
     await renderModes();
     const tabs = [...container.querySelectorAll(".px-subtabs button")]
       .map((b) => (b.textContent ?? "").trim());
     expect(tabs).toEqual(["profile", "rivals"]);
-    // The perk and quirk block is the profile's main content and stays readable.
+    // The perk block is the profile's main content and stays readable.
+    // PERK-1 (#600): every manager lists all five perks + its quirk (6 rows),
+    // from the rules' MANAGER_PERKS via the story profile. The first row keeps
+    // the "Perk" label CAST-2 pinned; the quirk row keeps "Quirk" + its style.
     const perks = container.querySelector(".px-perks");
     expect(perks).not.toBeNull();
+    const rows = perks!.querySelectorAll(".px-perk");
+    expect(rows).toHaveLength(6);
     expect(perks!.querySelector(".px-perk dt")?.textContent).toBe("Perk");
     expect(perks!.querySelector(".px-perk.quirk dt")?.textContent).toBe("Quirk");
+    expect(rows[rows.length - 1].classList.contains("quirk")).toBe(true);
     // The old history view no longer renders anywhere.
     expect(container.querySelector(".px-history")).toBeNull();
   });
