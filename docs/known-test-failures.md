@@ -6,7 +6,6 @@ This file tracks tests that are **quarantined** on `main` — they are `it.skip`
 
 | Test file | Test name | Since | Issue | Reason | Owner |
 |---|---|---|---|---|---|
-| `tests/unit/iso-pp12-assets.test.ts` | `packs every file cell at its trimmed opaque-bbox size` | 2026-09-30 | _to file_ | The ART-3D (#564) car PNGs were re-drawn without re-packing the atlas (e.g. `car1_ne`: 23x14 on disk, 22x14 in `assets/iso-atlas/manifest.json`). Fix: `npm run slice-atlas` (regenerates the atlas PNGs + manifest - image work), then un-skip. | lead |
 | `tests/unit/iso-progression.test.ts` | `PP-07 opening progression on the real 144×144 map` (whole describe) | 2026-09-30 | _to file_ | The six-seed cargo-purse opening simulation trips its 90 s SLOW watchdog (seed 1337: 2 Depots / 1 plant at t=172 s) since the x3 price pass and ECON-1 (builds paid in $). Needs re-modelling on money; ~90 s of wall time when it runs. | lead |
 | `tests/unit/iso-l8-legibility.test.ts` | the four `L8 the quest panel on a live game` tests (`offers 2-3 plans…`, `pays a completed quest once…`, `never touches what the win rule…`, `rides the save…`) | 2026-09-30 | _to file_ | OBSOLETE, not a bug: CONTRACT-1 (#466) replaced the L8 quests panel with town contracts (covered by `iso-466-contracts.test.ts`). Delete or rewrite them against contracts. | lead |
 
