@@ -77,6 +77,10 @@ function stubCanvas() {
     get: (_t, prop) => {
       if (prop === "canvas") return null;
       if (prop === "imageSmoothingEnabled") return false;
+      // STALE: the renderer paints gradients (cloud shadows) now; an undefined one threw every frame.
+      if (prop === "createLinearGradient" || prop === "createRadialGradient" || prop === "createConicGradient") {
+        return () => ({ addColorStop: () => undefined });
+      }
       if (prop === "getImageData") {
         return (_x: number, _y: number, w: number, h: number) =>
           ({ data: new Uint8ClampedArray(Math.max(1, w * h) * 4).fill(255), width: w, height: h });
@@ -108,10 +112,10 @@ const menuBtn = () => document.getElementById("iso-menu-btn")!;
 const menuItems = () =>
   Array.from(document.querySelectorAll<HTMLButtonElement>("#iso-topmenu .tm-item"));
 const leaveItem = () => menuItems().find((b) => b.textContent?.includes("Leave Room"))!;
-const sheet = () => document.querySelector<HTMLElement>(".confirm-sheet");
-const sheetOk = () => document.querySelector<HTMLButtonElement>(".confirm-sheet [data-confirm-ok]")!;
+const sheet = () => document.querySelector<HTMLElement>(".modal-root.confirm-sheet");   // STALE: the placement confirm (#460) also carries .confirm-sheet, hidden, first in the DOM
+const sheetOk = () => document.querySelector<HTMLButtonElement>(".modal-root.confirm-sheet [data-confirm-ok]")!;
 const sheetCancel = () =>
-  document.querySelector<HTMLButtonElement>(".confirm-sheet button[data-confirm-cancel]")!;
+  document.querySelector<HTMLButtonElement>(".modal-root.confirm-sheet button[data-confirm-cancel]")!;
 const modal = () => root.querySelector<HTMLElement>(".modal-root")!;
 
 /**
@@ -269,7 +273,7 @@ describe("#121 Leave Room", () => {
     openMenu();
     leaveItem().click();
     await settle();
-    expect(document.querySelectorAll(".confirm-sheet")).toHaveLength(1);
+    expect(document.querySelectorAll(".modal-root.confirm-sheet")).toHaveLength(1);
     sheetCancel().click();
     await settle();
     expect(quits).toBe(0);
@@ -434,8 +438,13 @@ const doorByLabel = (label: string) =>
 async function makeMatchLive(): Promise<void> {
   await new Promise((r) => setTimeout(r, 320));
   const before = room.sentCount("snapshot-chunk");
-  session.receive({ type: "resync" });
-  await settle();
+  // LOAD: the host answers a resync only once its first frames have run; a fixed 320 ms was
+  // enough on an idle machine and not in a full-suite run, so ask again until it does.
+  for (let attempt = 0; attempt < 20 && room.sentCount("snapshot-chunk") <= before; attempt++) {
+    session.receive({ type: "resync" });
+    await settle();
+    if (room.sentCount("snapshot-chunk") <= before) await new Promise((r) => setTimeout(r, 250));
+  }
   expect(room.sentCount("snapshot-chunk")).toBeGreaterThan(before);
 }
 

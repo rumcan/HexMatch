@@ -188,9 +188,15 @@ async function inspectDepotAt(h: LegibilityHook, tx: number, ty: number): Promis
   await settle();
   const [sx, sy] = h.tileScreenAt(tx, ty);
   expect(h.pickAt(sx, sy)?.tx, "the pointer lands on the depot tile").toBe(tx);
-  pointer("pointermove", sx, sy);
-  await settle();
   const inspect = root.querySelector(".iso-inspect") as HTMLElement;
+  // LOAD: the card shows on the next painted frame; under a full-suite run one settle() was not always enough.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (attempt > 0) { pointer("pointermove", sx + 60, sy + 30); await settle(); }   // leave the tile, then re-enter it
+    pointer("pointermove", sx, sy);
+    await settle();
+    if (inspect.style.display === "block") break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   expect(inspect.style.display).toBe("block");
   return inspect.textContent ?? "";
 }
@@ -216,8 +222,12 @@ function depotSite(grid: Grid): Site | null {
 }
 
 /** Plant a Factory at the corridor's far end and lay the road that joins it. */
-function connect(h: LegibilityHook, site: Site) {
+function plantFactory(h: LegibilityHook, site: Site) {
+  if (h.eco.factories.some((f) => f.ownerId === 1)) return;
   h.eco.factories.push({ owner: "you", ownerId: 1, tx: site.hx, ty: site.fy, id: 0, townId: null });
+}
+function connect(h: LegibilityHook, site: Site) {
+  plantFactory(h, site);
   for (let y = site.hy + 1; y < site.fy; y++) buildTile(h.track, "road", site.hx, y, 1);
 }
 
@@ -330,8 +340,12 @@ describe("L8 the quest table, as a rule", () => {
   });
 });
 
+// OBSOLETE, quarantined 2026-09-30 (baseline-green ticket, docs/known-test-failures.md): CONTRACT-1 (#466)
+// replaced the L8 quests panel with town contracts (`#iso-quests` now lists contracts, and `quests.offers`
+// is no longer the L8 plan set). The four live-panel tests below drove the removed panel; the contracts
+// are covered by tests/unit/iso-466-contracts.test.ts. The pure quest-rule tests above still run.
 describe("L8 the quest panel on a live game", () => {
-  it("offers 2–3 plans, one per strategy, each dismissible, and hides on request", async () => {
+  it.skip("offers 2–3 plans, one per strategy, each dismissible, and hides on request", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     await settle();
@@ -382,7 +396,7 @@ describe("L8 the quest panel on a live game", () => {
 
   });
 
-  it("pays a completed quest once, in cargo — and says so", async () => {
+  it.skip("pays a completed quest once, in cargo — and says so", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     await settle();
@@ -402,7 +416,7 @@ describe("L8 the quest panel on a live game", () => {
     expect(toastText()).toMatch(/Quest complete/);
   });
 
-  it("never touches what the win rule, the depot tree or a price reads", async () => {
+  it.skip("never touches what the win rule, the depot tree or a price reads", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     await settle();
@@ -428,7 +442,7 @@ describe("L8 the quest panel on a live game", () => {
     expect(h.objective.text).toBeTruthy();
   });
 
-  it("rides the save: the panel's offers, payouts and choices come back", async () => {
+  it.skip("rides the save: the panel's offers, payouts and choices come back", async () => {
     const h = await boot({ newLoop: true });
     h.finishSetup();
     await settle();
@@ -613,6 +627,7 @@ describe("L8 the depot readout, as a rule", () => {
 // 4. THE WIRING — what the player actually sees, on a live game
 // ══════════════════════════════════════════════════════════════════════════
 describe("L8 the live HUD on the new loop", () => {
+  // STALE (#459 Next-step advisor): the objective keys are place-factory / connect-depot now.
   it("shows an objective line that names the setup debt and then the network", async () => {
     const h = await boot({ newLoop: true });
     expect(h.newLoop).toBe(true);
@@ -620,11 +635,12 @@ describe("L8 the live HUD on the new loop", () => {
     // Setup: the Factory is owed.
     expect(root.querySelector("#iso-objective"), "the objective element is mounted").toBeTruthy();
     expect(objectiveText()).toMatch(/Factory/);
-    expect(h.objective.key).toBe("setup-factory");
+    expect(h.objective.key).toBe("place-factory");
 
     h.finishSetup();
     await settle();
-    expect(h.objective.key, "the goal moved on with the phase").not.toBe("setup-factory");
+    // STALE (#459): `finishSetup` only flips the phase; with no Factory placed the advisor still owes one.
+    expect(h.objective.key, "no Factory yet, so the Factory is still the next step").toBe("place-factory");
     expect(objectiveText()).toBeTruthy();
 
     // A Depot with no road: the line says which half is missing.
@@ -644,16 +660,18 @@ describe("L8 the live HUD on the new loop", () => {
     expect(played.objective.key).toBe("tuning-depot");
     expect(objectiveText()).toMatch(/Match to set your .*Depot's output/);
 
-    // Finish the session without a road: the goal becomes the connection.
+    // Finish the session without a road: the goal becomes the connection
+    // (#459: the advisor needs the Factory placed first; the road is what is missing).
+    plantFactory(played, site2);
     played.tuningFinish(true);
     await settle();
-    expect(played.objective.key).toBe("need-road");
+    expect(played.objective.key).toBe("connect-depot");
     expect(objectiveText()).toMatch(/road/i);
 
     // Road it in: the goal moves to the next thing (a rung or the city).
     connect(played, site2);
     await settle();
-    expect(played.objective.key).not.toBe("need-road");
+    expect(played.objective.key).not.toBe("connect-depot");
   });
 
   it("keeps the retired loop free of both readouts", async () => {

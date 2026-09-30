@@ -4298,7 +4298,12 @@ export function depotGhostItems(tx: number, ty: number, view: RailView): GhostDr
  * RAIL-7: the lane a station upgrade will add (slabs + cap; never the first
  * lane). `len` is the station's own length (`stationLaneLen`).
  */
-export function laneGhostItems(tx: number, ty: number, view: RailView, len = PLATFORM_LEN): GhostDrawItem[] {
+export function laneGhostItems(
+  tx: number, ty: number, view: RailView, len = PLATFORM_LEN, atlas?: RailSpriteSource,
+): GhostDrawItem[] {
+  // Owner art (#635/#637): a four-tile lane is drawn as the owner's platform drawing, one sprite at the
+  // lane's origin (`structureSprites`), so its ghost must be that same sprite, not the old slab strip.
+  if (len === 4 && (!atlas || atlas.has(platformSprite(view)))) return [{ sprite: platformSprite(view), tx, ty }];
   return laneSprites({ view, tx, ty, len }, false);
 }
 

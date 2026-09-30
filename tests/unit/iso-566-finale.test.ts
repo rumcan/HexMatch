@@ -151,14 +151,14 @@ describe("MATCH-2 the star moment", () => {
     const h = await depotSession();
     expect(h.board.timeScale()).toBe(1);
 
-    h.board.onClear(2160, 1);                 // the pass that crosses ★★★★
-    expect(h.tuning!.score).toBeGreaterThanOrEqual(2160);
+    h.board.onClear(1500, 1);                 // the pass that crosses ★★★★ (STALE: bars are 500/1000/1500/2000 since #612)
+    expect(h.tuning!.score).toBeGreaterThanOrEqual(1500);
     expect(banner(4), "the OVERDRIVE banner").toBeTruthy();
     expect(banner(4)!.textContent).toContain("Overdrive");
     expect(wrap().classList.contains("m3-finale-4")).toBe(true);
     expect(h.board.timeScale(), "4★ never slows the board").toBe(1);
 
-    h.board.onClear(300, 1);                 // …and the one that crosses ★★★★★
+    h.board.onClear(600, 1);                 // …and the one that crosses ★★★★★
     expect(banner(5), "the LEGENDARY banner").toBeTruthy();
     expect(banner(5)!.textContent).toContain("Legendary");
     expect(banner(5)!.querySelectorAll(".m3-finale-stars span").length).toBe(5);

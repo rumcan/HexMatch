@@ -19,7 +19,7 @@ exports[`#460 cost clarity on the build cards > every build card quotes $ and th
     "tool": "road",
   },
   {
-    "sub": "$262 · fast long haul · gentle grades · ×2.3",
+    "sub": "$262 · fastest hauling · any road joins it · ×2.3",
     "tool": "highway",
   },
   {
@@ -27,12 +27,16 @@ exports[`#460 cost clarity on the build cards > every build card quotes $ and th
     "tool": "harvester",
   },
   {
-    "sub": "$15 a tile · 0★",
+    "sub": "$5 a tile · 0★",
     "tool": "rail",
   },
   {
-    "sub": "$480 · +1★ · track beside it included · R turns",
+    "sub": "$180 · +1★ · track beside it included · R turns",
     "tool": "platform",
+  },
+  {
+    "sub": "$360 · R turns",
+    "tool": "loop",
   },
   {
     "sub": "$168 · next to a town · R turns",

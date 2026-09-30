@@ -79,6 +79,7 @@ interface LoopHook {
   finishSetup: () => void;
   placeDepot: (tx: number, ty: number) => boolean;
   refreshQuarry: (now?: number) => unknown;
+  readonly tuning: { depotId: number } | null;
 }
 
 const hook = () => (window as unknown as { __iso: LoopHook }).__iso;
@@ -181,12 +182,15 @@ describe("L1f the new loop is the default", () => {
     // Processing Plant left the tab rail for its own session window, so the
     // third tab is gone and the plant's idle plate rides a small card.
     const tabs = [...root.querySelectorAll("[data-tab]")].map((b) => (b as HTMLElement).dataset.tab);
-    expect(tabs).toEqual(["bank", "feed"]);
+    // STALE: the strip grew Market, Black Market and Contracts tabs since (ECON-1, L9/L11, #466).
+    expect(tabs).toEqual(["bank", "market", "black", "feed", "contracts"]);
     expect(root.querySelector('[data-tab="plant"]')).toBeNull();
     expect(root.querySelector("#iso-session")).toBeTruthy();
     expect(root.querySelector("#iso-trade #iso-quarry")).toBeNull();
-    expect(root.querySelector(".market-pane")).toBeNull();
-    expect(root.querySelector(".aside.left .sab-list")).toBeTruthy();
+    // STALE (ECON-1 #421): the Market tab and its pane exist on the new loop now.
+    expect(root.querySelector(".market-pane")).toBeTruthy();
+    // STALE: the Black Market is its own tab in the trade drawer now (asserted with the tab list above).
+    expect(root.querySelector('[data-tab="black"]')).toBeTruthy();
   });
 
   it("?loop=old is the escape hatch, and it really is the old game", async () => {
@@ -230,7 +234,8 @@ describe("L1f the opening copy speaks the loop the game runs", () => {
     await settle();
     // Building the Depot opened a tuning session (L4) — the loop the tour just
     // promised — and nothing on screen sends the player to tokened gems.
-    expect(toastText()).toMatch(/Tuning session/i);
+    // STALE: the session opens its own board with no "Tuning session" toast (#612 tuning UI).
+    expect(h.tuning, "a tuning session opened").not.toBeNull();
     expect(toastText()).not.toMatch(/match the tokened gems/i);
     expect(h.newLoop).toBe(true);
   });
@@ -245,16 +250,18 @@ describe("L1f the opening copy speaks the loop the game runs", () => {
     expect(boardWrap().classList.contains("hidden"), "its board is always up").toBe(false);
   });
 
-  it("the tour a first game opens is the tuning session's, and only that", async () => {
-    // The ticket's own line: the tour used to say "every delivery stamps a
-    // cargo token onto a gem" — the sentence the loop has left behind.
+  it("the L15 boot tour is gone: nothing on a first boot describes the retired token loop", async () => {
+    // STALE: the tour this pinned ("every delivery stamps a cargo token onto a
+    // gem" -> the tuning session) was replaced by the Guide (TUT-03 #422) and the
+    // Starter Island (FTUE-1 #464), so no `#iso-tutorial` card stands at boot any
+    // more. What survives of the ticket's line: the sentence the loop left behind
+    // is nowhere on screen.
     await bootUrl("/?seed=1337");
-    await expect.poll(() => root.querySelector("#iso-tutorial"), { timeout: 5000, interval: 25 })
-      .toBeTruthy();
-    const card = root.querySelector("#iso-tutorial") as HTMLElement;
-    expect(card.getAttribute("data-step")).toBe("loop");
-    expect(card.textContent).toMatch(/tuning session/i);
-    expect(card.textContent).not.toMatch(/stamps a cargo token/i);
+    await settle();
+    await new Promise((r) => setTimeout(r, 300));
+    await settle();
+    expect(root.querySelector("#iso-tutorial")).toBeNull();
+    expect(root.textContent).not.toMatch(/stamps a cargo token/i);
   });
 
   it("the escape hatch stands no boot tour — the tour belongs to the loop it describes", async () => {

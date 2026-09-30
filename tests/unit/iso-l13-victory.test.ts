@@ -142,8 +142,12 @@ const seat = (owner: string, depotTier = 0, townLevel = 0): LoopSeatProgress =>
 describe("L13 (#228) the new loop's ★ table", () => {
   it("defines every source as an action the new loop actually has", () => {
     // breadth, progress, depth — and a line to race to.
+    // STALE, updated for the owner's 2026-09 table (52b11bf7): depots, paved routes,
+    // maxed depots and city tiers pay; the depot-tree rung is retired (0).
     expect(VICTORY.loop.type).toBeGreaterThan(0);
-    expect(VICTORY.loop.rung).toBeGreaterThan(0);
+    expect(VICTORY.loop.route).toBeGreaterThan(0);
+    expect(VICTORY.loop.maxDepot).toBeGreaterThan(0);
+    expect(VICTORY.loop.rung).toBe(0);
     expect(VICTORY.loop.city).toBeGreaterThan(0);
     expect(VICTORY.loop.target).toBeGreaterThan(0);
   });
@@ -151,8 +155,9 @@ describe("L13 (#228) the new loop's ★ table", () => {
   it("offers more ★ than the line needs, so no single source is mandatory", () => {
     const cargos = Object.keys(DEPOT_TREE).length;
     const cityTiers = TOWN_UPGRADES.length;
-    const pool = cargos * VICTORY.loop.type
-      + 2 * VICTORY.loop.rung              // DEPOT_TIER_MAX rungs are unlockable
+    // 2026-09: one Depot per cargo is the floor of the map; each pays a type,
+    // a paved-route and a max-level star. Rungs are retired.
+    const pool = cargos * (VICTORY.loop.type + VICTORY.loop.route + VICTORY.loop.maxDepot)
       + cityTiers * VICTORY.loop.city;     // L17 (#245): three city tiers now
     expect(pool).toBeGreaterThan(VICTORY.loop.target);
     // …and no single source can reach the line alone EXCEPT breadth, which is
@@ -292,16 +297,16 @@ describe("2026-09 the owner's ★ table: depots, paved routes, city tiers", () =
 });
 
 describe("L13 breadth: a depot type that is RUNNING", () => {
-  it("pays once per distinct cargo, however many depots feed it", () => {
-    // two forests → one Wood type; one farm → one Grain type. 2 types, not 3.
+  it("pays once per running Depot, however many feed one cargo (2026-09: 52b11bf7)", () => {
+    // STALE (was one per distinct cargo): two forests + one farm are 3 running Depots.
     const w = worldWith(["forest", "forest", "farm"]);
     const loop = loopFor(w.eco, [seat("you")]);
     const running = runningDepotTypes(w.eco, loop);
-    expect([...running.values()].map((t) => t.cargo).sort()).toEqual(["grain", "wood"]);
+    expect([...running.values()].map((t) => t.cargo).sort()).toEqual(["grain", "wood", "wood"]);
 
     const score = createScoreState();
     rescore(w.eco, score, undefined, loop);
-    expect(vpFor(score, "you")).toBe(2 * VICTORY.loop.type);
+    expect(vpFor(score, "you")).toBe(3 * VICTORY.loop.type);
   });
 
   it("does not pay for a depot with no road — it is built, not running", () => {
@@ -392,32 +397,33 @@ describe("L13 depth: rungs and city upgrades", () => {
 
 describe("L13 several routes reach the line", () => {
   const line = VICTORY.loop.target;
-  const reach = (types: number, rungs: number, city: number) =>
-    types * VICTORY.loop.type + rungs * VICTORY.loop.rung + city * VICTORY.loop.city;
+  // 2026-09 (52b11bf7): depots running, depots on a fully paved route, depots at max
+  // level, city tiers. (The rung is retired.)
+  const reach = (depots: number, paved: number, maxed: number, city: number) =>
+    depots * VICTORY.loop.type + paved * VICTORY.loop.route
+    + maxed * VICTORY.loop.maxDepot + city * VICTORY.loop.city;
 
   it("lets breadth, depth and a mixed plan all reach it", () => {
-    // WIDE: types alone.
-    expect(reach(6, 0, 0)).toBeGreaterThanOrEqual(line);
-    // TALL: fewer types, both rungs and two city tiers (#297: at 1★/tier,
-    // the depth plan needs more tiers to reach the line — that is the point,
+    // WIDE: six Depots, every route paved.
+    expect(reach(6, 6, 0, 0)).toBeGreaterThanOrEqual(line);
+    // TALL: fewer Depots, two maxed and all three city tiers (#297: at 1★/tier
     // city is no longer half the win condition).
-    expect(reach(4, 2, 2)).toBeGreaterThanOrEqual(line);
-    // MIXED: five types and the rungs, no city at all.
-    expect(reach(5, 2, 0)).toBeGreaterThanOrEqual(line);
+    expect(reach(4, 4, 2, 3)).toBeGreaterThanOrEqual(line);
+    // MIXED: six Depots, three maxed, all city tiers, gravel roads.
+    expect(reach(6, 0, 3, 3)).toBeGreaterThanOrEqual(line);
   });
 
   it("makes no single source required — each plan omits one entirely", () => {
-    expect(reach(6, 0, 0)).toBeGreaterThanOrEqual(line);   // no rungs, no city
-    expect(reach(5, 2, 0)).toBeGreaterThanOrEqual(line);   // no city
-    expect(reach(4, 2, 2)).toBeGreaterThanOrEqual(line);   // fewest types
+    expect(reach(6, 6, 0, 0)).toBeGreaterThanOrEqual(line);   // no max level, no city
+    expect(reach(6, 0, 3, 3)).toBeGreaterThanOrEqual(line);   // no paving
+    expect(reach(4, 4, 2, 3)).toBeGreaterThanOrEqual(line);   // fewest Depots
   });
 
-  it("does not hand the line to a seat that only opened rungs and the city", () => {
+  it("does not hand the line to a seat that only has city tiers", () => {
     // Depth without a network must NOT win on its own — the loop is about
     // running cargo, and a seat with no depot type running has no economy.
-    // #297: even the FULL depth pool (2 rungs + 3 city tiers = 5★) cannot
-    // reach 12★ alone.
-    expect(reach(0, 2, 3)).toBeLessThan(line);
+    // #297: even the FULL city pool (3 tiers = 3★) cannot reach 12★ alone.
+    expect(reach(0, 0, 0, 3)).toBeLessThan(line);
   });
 
   it("hasWon races the new line", () => {
@@ -461,12 +467,13 @@ describe("L13 the breakdown and the ending ledger read the new sources", () => {
   it("prints the loop's three rows on the ending ledger", () => {
     const b: EndingBreakdown = {
       paved: 0, plants: 0, pavedVp: 0, plantVp: 0,
-      types: 5, typeVp: 10, rungs: 2, rungVp: 2, city: 1, cityVp: 2,
+      types: 5, typeVp: 5, routes: 2, routeVp: 2, city: 1, cityVp: 1,
     };
     const rows = ledgerRows(b);
-    expect(rows.map((r) => r.key)).toEqual(["types", "rungs", "city"]);
-    expect(rows.reduce((n, r) => n + r.vp, 0)).toBe(14);
-    expect(rows[0].detail).toMatch(/5 cargo types/);
+    // STALE (52b11bf7, the owner's 2026-09 table): depots / paved routes / city; no rung row.
+    expect(rows.map((r) => r.key)).toEqual(["types", "routes", "city"]);
+    expect(rows.reduce((n, r) => n + r.vp, 0)).toBe(8);
+    expect(rows[0].detail).toMatch(/5 Depots connected/);
     // and a shipped-loop ledger keeps the two rows it always had
     expect(ledgerRows({ paved: 8, plants: 1, pavedVp: 2, plantVp: 1 }).map((r) => r.key))
       .toEqual(["paving", "plants"]);
@@ -503,7 +510,7 @@ describe("L13 the breakdown and the ending ledger read the new sources", () => {
       decisiveSource: "type", seed: 1337,
     });
     expect(model.outcome).toBe("victory");
-    expect(model.rows.map((r) => r.key)).toEqual(["types", "rungs", "city"]);
+    expect(model.rows.map((r) => r.key)).toEqual(["types", "routes", "city"]);
     expect(model.decisive).toMatch(/cargo/i);
     expect(model.epilogue.length).toBeGreaterThan(40);
     expect(model.title).toBeTruthy();
@@ -531,16 +538,18 @@ describe("L13 the events the UI floats", () => {
     expect(type?.delta).toBe(VICTORY.loop.type);
     // the float lands on the depot that proves the type, not at the origin
     expect(type?.tx).toBe(w.harvesters[0].tx);
-    expect(events.find((e) => e.source === "rung")?.level).toBe(1);
+    // STALE: rungs are retired (VICTORY.loop.rung = 0), so no rung event at all.
+    expect(events.find((e) => e.source === "rung")).toBeUndefined();
     expect(events.find((e) => e.source === "city")?.level).toBe(1);
   });
 
-  it("emits one event per rung when several land at once", () => {
+  it("emits one event per city tier when several land at once (rungs are retired)", () => {
     const w = worldWith([]);
     const score = createScoreState();
-    const events = rescore(w.eco, score, undefined, loopFor(w.eco, [seat("you", 2)]));
-    expect(events.filter((e) => e.source === "rung")).toHaveLength(2);
-    expect(vpFor(score, "you")).toBe(2 * VICTORY.loop.rung);
+    const events = rescore(w.eco, score, undefined, loopFor(w.eco, [seat("you", 2, 2)]));
+    expect(events.filter((e) => e.source === "rung")).toHaveLength(0);
+    expect(events.filter((e) => e.source === "city")).toHaveLength(2);
+    expect(vpFor(score, "you")).toBe(2 * VICTORY.loop.city);
   });
 });
 
@@ -563,7 +572,7 @@ describe("L13 the ledger reads the table that paid, not the numbers", () => {
     expect(loop.loop).toBe(true);
     expect(loop.typeVp + loop.rungVp + loop.cityVp).toBe(0);
     // no score yet, but it is still the loop's ledger — never a paving one
-    expect(ledgerRows(loop).map((r) => r.key)).toEqual(["types", "rungs", "city"]);
+    expect(ledgerRows(loop).map((r) => r.key)).toEqual(["types", "routes", "city"]);
     expect(endingPathFor(loop)).toBe("balanced");
   });
 
@@ -574,7 +583,7 @@ describe("L13 the ledger reads the table that paid, not the numbers", () => {
       playerWon: true, playerScore: 0, rivalScore: 0,
       playerBreakdown: b, rivalBreakdown: b, seed: 1337,
     });
-    expect(model.rows.map((r) => r.key)).toEqual(["types", "rungs", "city"]);
+    expect(model.rows.map((r) => r.key)).toEqual(["types", "routes", "city"]);
     expect(model.rows.every((r) => r.vp === 0)).toBe(true);
     // and nothing in the prose offers the player a paved tile they never laid
     expect(model.epilogue).not.toMatch(/pavement|paved/i);

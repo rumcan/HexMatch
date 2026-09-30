@@ -250,17 +250,20 @@ describe.skip("RAIL-02 crossings", () => {
 describe("RAIL-01 costs and scoring", () => {
   it("prices rail, platform, depot and train from one table", () => {
     expect(RAIL_COSTS.rail).toEqual({ stone: 1 });
-    expect(RAIL_COSTS.platform).toEqual({ wood: 4, stone: 4, ore: 12, oil: 2 });
-    expect(RAIL_COSTS.depot).toEqual({ wood: 3, stone: 3, ore: 4, oil: 2 });
-    expect(RAIL_COSTS.train).toEqual({ ore: 4, oil: 2 });
+    // STALE (#552 PLAY-FIX-1 repriced rail): the platform is 6 Wood / 6 Stone,
+    // the train depot 4/4/6/2 and the train 6 Ore / 3 Oil.
+    expect(RAIL_COSTS.platform).toEqual({ wood: 6, stone: 6, ore: 12, oil: 2 });
+    expect(RAIL_COSTS.depot).toEqual({ wood: 4, stone: 4, ore: 6, oil: 2 });
+    expect(RAIL_COSTS.train).toEqual({ ore: 6, oil: 3 });
     expect(railCost(7)).toEqual({ stone: 7 });
-    // The epic's worked example: a 20-tile line with two platforms, one depot
-    // and one train is 11 Wood, 31 Stone, 32 Ore and 8 Oil.
+    // The epic's worked example, re-summed at the current prices: a 20-tile
+    // line with two platforms, one depot and one train is 16 Wood, 36 Stone,
+    // 36 Ore and 9 Oil.
     const total = { wood: 0, stone: 0, ore: 0, oil: 0 };
     for (const cost of [railCost(20), RAIL_COSTS.platform, RAIL_COSTS.platform, RAIL_COSTS.depot, RAIL_COSTS.train]) {
       for (const [k, v] of Object.entries(cost)) total[k as keyof typeof total] += v as number;
     }
-    expect(total).toEqual({ wood: 11, stone: 31, ore: 32, oil: 8 });
+    expect(total).toEqual({ wood: 16, stone: 36, ore: 36, oil: 9 });
     // Gold is reserved for Black Market sabotage and buys no railway.
     for (const cost of Object.values(RAIL_COSTS)) expect(cost.gold).toBeUndefined();
   });
@@ -274,7 +277,7 @@ describe("RAIL-01 costs and scoring", () => {
   });
 
   it("returns floor(50%) per resource and never pays gold", () => {
-    expect(resaleValue(RAIL_COSTS.platform)).toEqual({ wood: 2, stone: 2, ore: 6, oil: 1 });
+    expect(resaleValue(RAIL_COSTS.platform)).toEqual({ wood: 3, stone: 3, ore: 6, oil: 1 });
     expect(resaleValue({ ore: 1, oil: 1 })).toEqual({});
     expect(canPay({ stone: 3 }, RAIL_COSTS.train)).toBe(false);
     expect(missingFor({ stone: 3 }, RAIL_COSTS.train)).toEqual(["ore", "oil"]);
@@ -619,7 +622,7 @@ describe("RAIL-04 the train's states and motion", () => {
     expect(train.route).toEqual([]);
     const sale = sellTrain(state, train);
     expect(sale.ok).toBe(true);
-    expect(sale.refund).toEqual({ ore: 2, oil: 1 });          // floor(50% × 4 Ore, 2 Oil)
+    expect(sale.refund).toEqual({ ore: 3, oil: 1 });          // floor(50% × 6 Ore, 3 Oil)
     expect(state.trains).toHaveLength(0);
     expect(state.lines).toHaveLength(0);
     // A resold train cannot be sold again: it is not on the books at all.
@@ -641,7 +644,7 @@ describe("RAIL-04 the train's states and motion", () => {
     // 50% is owed on "returned to depot", not on the state's name.
     const sale = sellTrain(state, train);
     expect(sale.ok).toBe(true);
-    expect(sale.refund).toEqual({ ore: 2, oil: 1 });
+    expect(sale.refund).toEqual({ ore: 3, oil: 1 });
     expect(state.trains).toHaveLength(0);
     expect(state.lines).toHaveLength(0);
   });

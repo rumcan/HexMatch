@@ -163,7 +163,8 @@ describe("D4 crossing rule and geometry agree", () => {
       expect(tile.planks).toEqual(expected.planks);
       expect(railTilesIn({ ...world, diagonalRoads: false }, 20, 20, 20, 20)[0].planks).toEqual([]);
       vi.stubEnv("DEV", false);
-      try { expect(railTilesIn(world, 20, 20, 20, 20)[0].planks).toEqual([]); }
+      // STALE: diagonals ship ON (#498), so production draws the same planks as dev.
+      try { expect(railTilesIn(world, 20, 20, 20, 20)[0].planks).toEqual(expected.planks); }
       finally { vi.unstubAllEnvs(); }
     }
   });

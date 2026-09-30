@@ -296,7 +296,8 @@ describe("L1e a new-loop save round-trips", () => {
     // Continue happened: a fresh boot would be in the factory-placement phase.
     expect(r.saveHeldBack).toBe(false);
     expect(r.phase, "the restored world is the one that was saved").toBe("play");
-    expect(toasts().join(" ")).toMatch(/restored from your save/);
+    // STALE: "good" toasts are low priority now - they go to the Feed, not a floating toast.
+    expect(root.textContent ?? "").toMatch(/restored from your save/);
 
     // Same road, same Depot, same level, same bank.
     expect(r.depotYields.find((d) => d.id === depotId)!.yield).toBe(yieldOf);

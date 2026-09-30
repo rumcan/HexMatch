@@ -167,7 +167,7 @@ describe("MOB-1 tap-target audit @ 390×844", () => {
       checkTarget("Tab Market",        ".tab[data-tab='market']",        ui),
       checkTarget("Tab Black Market",  ".tab[data-tab='black']",         ui),
       checkTarget("Tab Feed",          ".tab[data-tab='feed']",          ui),
-      checkTarget("Tab Quests",        ".tab[data-tab='quests']",        ui),
+      checkTarget("Tab Contracts",     ".tab[data-tab='contracts']",     ui),
     ];
 
     // Bank pane controls
@@ -203,11 +203,11 @@ describe("MOB-1 tap-target audit @ 390×844", () => {
 
     // Quests pane
     ui.paint({
-      players: [{ i: 0, name: "You", human: true, vp: 0, purse: seat.res, portrait: "vex" }],
-      purse: seat.res,
+      players: [{ i: 0, name: "You", human: true, vp: 0, purse: seat.res, portrait: "anne" }],
+      purse: seat.res, portrait: "anne",
       quests: { hidden: false, items: [{ id: "q1", who: "Vex", text: "Build 5 roads", progress: "0/5", reward: "10 Gold" }] },
     });
-    (ui.el.querySelector(".tab[data-tab='quests']") as HTMLElement).click();
+    (ui.el.querySelector(".tab[data-tab='contracts']") as HTMLElement).click();
     await vi.advanceTimersByTimeAsync(50);
     results.push(
       checkTarget("Quest dismiss ✕",  ".quest .q-x",  ui),

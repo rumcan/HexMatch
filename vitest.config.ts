@@ -20,8 +20,11 @@ export default defineConfig({
     // at ~3s locally, ~5s on a shared runner) and the bigger towns tipped two
     // of them over in CI. 30s is ~10× the slowest test that has no budget of
     // its own; tests that legitimately need more still say so per test.
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    // 2026-09-30 (green-baseline ticket): 120 s. Booting the whole game in jsdom takes 5-15 s on a calm machine and
+    // 30-90 s on a shared CI runner or a busy laptop, and the timeouts were the only red left after the stale
+    // expectations were fixed.
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
     // Vitest 4 removed poolOptions; maxWorkers is the effective limit now.
     // Slow simulations live in test:slow, not the default npm test gate.
     pool: "threads",

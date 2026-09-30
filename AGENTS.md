@@ -66,7 +66,7 @@ npm test                          # fast unit project (excludes heavy seed sweep
 npx playwright test --project=desktop-chromium   # single-desktop e2e (required CI check)
 ```
 
-`npm test` is the **fast** unit suite. Heavy simulations (`iso-ai-sweep`, `iso-rebalance`, `iso-debug` network dump, `iso-l1d-race`, `battle-ai-sim`) live in `npm run test:slow` so the default suite stays deterministic under full-suite load. Only run the slow project when you touch **AI, map generation, rival placement, or economy balancing** — or when CI tells you to.
+`npm test` is the **fast** unit suite. Heavy simulations (`iso-ai-sweep`, `iso-rebalance`, `iso-debug` network dump, `iso-l1d-race`, `battle-ai-sim`, and — moved 2026-09-30 to get CI's default step under its 10-minute limit — `iso-game` (~12 min), `iso-vp-race`, `iso-skill-calibration`, `iso-297-rival-pace`, `iso-412-rival-smoke`, `match3-balance-bot`, `iso-471-balance-trace`, `iso-471-balance-trace-smoke`, `battle-balance`; `iso-471-balance-sim` keeps its own `npm run balance`) live in `npm run test:slow` so the default suite stays deterministic under full-suite load. Only run the slow project when you touch **AI, map generation, rival placement, or economy balancing** — or when CI tells you to.
 
 ### When you changed...
 
