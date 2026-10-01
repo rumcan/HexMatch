@@ -136,8 +136,10 @@ test("#299: placing a Depot opens the session window over the map", async ({ pag
   await expect(win.locator(".tp-finish")).toBeVisible();
   await expect(win.locator(".tp-abandon")).toBeVisible();
   await expect(win.locator(".board-slot .gem").first()).toBeVisible();
-  // Inside an active session the reset / combo chrome is allowed on screen.
-  await expect(win.locator(".reset-btn")).toBeVisible();
+  // Inside an active session the combo chrome is on screen. The poster HUD (theme-poster-hud.css:
+  // `.session-window .session-frame :is(.reset-btn, .tp-city) { display: none }`) deliberately
+  // hides the Reset button inside the window — the tuning card owns Finish / Abandon instead.
+  await expect(win.locator(".reset-btn")).toBeHidden();
   await expect(win.locator(".combo-bank")).toBeVisible();
 
   // The map behind it is BLOCKED: inert, so neither a click nor a keyboard
@@ -150,7 +152,9 @@ test("#299: placing a Depot opens the session window over the map", async ({ pag
   const abandon = win.locator(".tp-abandon");
   await abandon.click();
   // If confirm armed, button text changes to "Confirm abandon?" — click again.
-  const confirmText = await abandon.textContent();
+  // (When nothing armed a confirm the window is already closing and the button is gone: a bare
+  // `textContent()` would wait for it forever, so it gets a short timeout and null means "closed".)
+  const confirmText = await abandon.textContent({ timeout: 2000 }).catch(() => null);
   if (confirmText && /Confirm abandon/i.test(confirmText)) {
     // Dismiss native confirm if it appears (some browsers show window.confirm)
     page.once("dialog", async (d) => { try { await d.dismiss(); } catch {} });

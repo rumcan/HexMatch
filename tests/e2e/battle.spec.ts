@@ -40,7 +40,9 @@ test.describe("B2 battle screen", () => {
     await expect(root.locator(".battle-side")).toHaveCount(2);
     await expect(root.locator(".battle-turn")).toHaveText(/YOUR TURN|BATTLE OVER/);
     await expect(root.locator(".gem")).toHaveCount(7 * 8);
-    await expect(root.locator(".battle-abilities")).toBeHidden();
+    // B3 (#248) un-hid the ability row B2 had reserved: six spells stand under the board.
+    await expect(root.locator(".battle-abilities")).toBeVisible();
+    await expect(root.locator(".battle-abilities .battle-ability")).toHaveCount(6);
 
     // play it out: click the oracle's two gems every time the board is ours
     let finished = false;

@@ -84,16 +84,17 @@ test("a guest's Exchange reaches the host and both purses move at the bank's rat
   }
 });
 
-test("a guest's Reset re-rolls its own board, reaches the host, and spares the host's board", async ({ browser }, testInfo) => {
+test("a guest's Reset re-rolls its own board and spares the host's board", async ({ browser }, testInfo) => {
   const pair = await matchedPair(browser);
   const { host, guest } = pair;
   try {
     const beforeGuest = await readState(guest);
     const beforeHost = await readState(host);
-    // Both boards are the fresh opening boards: one deal per seat, and each
-    // seat's copy of the other's.
-    expect(beforeHost.boardSig).toBe(beforeGuest.rivalBoardSig);
-    expect(beforeHost.rivalBoardSig).toBe(beforeGuest.boardSig);
+    // Each seat holds its own opening board. L15 (#230) took boards off the wire (the board is
+    // tuning-only), so a seat's copy of the OTHER board is no longer mirrored — the independence
+    // this test proves is now total: a Reset on one seat cannot touch the other's board at all.
+    expect(beforeHost.boardSig.length).toBeGreaterThan(0);
+    expect(beforeGuest.boardSig.length).toBeGreaterThan(0);
 
     // The guest presses ♻ Reset — the shipped button, not a test hook.
     await clickReset(guest);
@@ -103,12 +104,6 @@ test("a guest's Reset re-rolls its own board, reaches the host, and spares the h
       message: "the guest's own board is a fresh neutral one",
     }).not.toBe(beforeGuest.boardSig);
     await expectToast(guest, /Processing Plant collapsed\. Fresh neutral board\./);
-
-    // …the HOST's copy of the guest's board becomes that same new board…
-    const afterGuest = await readState(guest);
-    await expect.poll(async () => (await readState(host)).rivalBoardSig, {
-      message: "the host holds the guest's new board, byte for byte",
-    }).toBe(afterGuest.boardSig);
 
     // …and the host's own board never moved. This is the independence claim:
     // a board-local action on one seat may not deal the other seat's tiles, and

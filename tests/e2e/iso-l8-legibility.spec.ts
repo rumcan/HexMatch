@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { bootSoloIso, bootBudget } from "./boot";
+import { bootSoloIso, bootBudget, placeOpeningFactory, placeOpeningDepot } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // L8 (#222) — the loop made legible, in a REAL browser.
@@ -42,6 +42,8 @@ test("L8: the objective line, the chip rate and the Depot card on a fresh boot",
 
   // The setup is played out by the twin (the factory/setup click path is
   // iso-game.spec.ts's subject).
+  // START-1 (#611): the Factory starts the match and moves the objective; finishSetup alone does not.
+  await placeOpeningFactory(page);
   await page.evaluate(() => (window as any).__iso.finishSetup());
   await expect.poll(() => page.evaluate(() => (window as any).__iso.objective.key))
     .not.toBe(objKey);
@@ -77,7 +79,8 @@ test("L8: the objective line, the chip rate and the Depot card on a fresh boot",
   // harness uses), and the line moves to the missing half of the connection.
   await page.evaluate(() => (window as any).__iso.tuningFinish(false));
   await expect(objective).toContainText(/road/i);
-  expect(await page.evaluate(() => (window as any).__iso.objective.key)).toBe("need-road");
+  // GOAL-1 (#459): the advisor key for the missing road is "connect-depot" now (was "need-road")
+  expect(await page.evaluate(() => (window as any).__iso.objective.key)).toBe("connect-depot");
 
   // ── the connection: a Factory at the far end, free gravel between ───────
   const joined = await page.evaluate(() => {
@@ -161,6 +164,10 @@ test("L8: the quests are compact, dismissible, and gate nothing", async ({ page 
     url: `${BASE}?seed=1337`,
     remembered: { "hexmatch:tutorial": "never", "hexmatch:rival-skill": "normal" },
   });
+  await placeOpeningFactory(page);   // START-1 (#611)
+  await placeOpeningDepot(page);     // START-1 (#604): contracts are dealt once the FIRST Depot stands
+  // the Depot opens its tuning session window over the map (it would swallow the tab click)
+  await page.evaluate(() => (window as any).__iso.tuningFinish(false));
   await page.evaluate(() => (window as any).__iso.finishSetup());
 
   // ── the slim line: collapsed, it is ONE line over the map ───────────────
@@ -174,36 +181,23 @@ test("L8: the quests are compact, dismissible, and gate nothing", async ({ page 
   await expect(panel).toBeVisible({ timeout: bootBudget() });
   // Header now says Contracts, but old bundles still say Quests — accept either.
   await expect(panel.locator(".quests-head")).toContainText(/Quests|Contracts/);
-  await expect(panel.locator(".quests-list")).toBeHidden();
-
-  // 2–3 offers at once, one per strategy — the ticket's number, and its point.
-  const offers = await page.evaluate(() => (window as any).__iso.quests.offers);
-  expect(offers.length).toBeGreaterThanOrEqual(2);
-  expect(offers.length).toBeLessThanOrEqual(3);
-  expect(new Set(offers.map((o: any) => o.strategy)).size).toBe(offers.length);
-
-  // ── opening it: the offers, in the sandbox's foreman voice ─────────────
-  await panel.locator(".quests-head").click();
+  // CONTRACT-1 (#466): in the tab the list is always open (no collapsed slim line, no "hide"
+  // control any more), and the offers are TOWN CONTRACTS dealt once the first Depot stands —
+  // the old per-strategy quest offers (`__iso.quests.offers` of {strategy}) are gone on the new
+  // loop, so the offers are read off the DOM rows.
   await expect(panel.locator(".quests-list")).toBeVisible();
+
+  // a few offers at once (CONTRACT_PRIVATE_COUNT private contracts, plus any tender)
   const rows = panel.locator("li.quest");
-  await expect(rows).toHaveCount(offers.length);
-  await expect(rows.first()).toContainText(/Foreman|boss|Depot|city|road/i);
+  await expect.poll(() => rows.count()).toBeGreaterThanOrEqual(2);
+  await expect(rows.first()).toContainText(/\$|deliver|Deliver|\d/);
   await expect(rows.first().locator(".q-reward")).toContainText(/\d/);
 
   // ── dismissing one: retired for good, and the panel does not nag back ──
-  const firstId = offers[0].id;
-  const before = offers.length;
+  const firstId = await rows.first().getAttribute("data-quest");
+  expect(firstId).toBeTruthy();
   await rows.first().locator(".q-x").click();
-  await expect.poll(() => page.evaluate(() => (window as any).__iso.quests.offers.length))
-    .toBe(before - 1);
-  expect(await page.evaluate(() => (window as any).__iso.quests.spent)).toContain(firstId);
-
-  // ── hiding: the player's own choice, remembered, reversible ────────────
-  await panel.locator(".q-hide").click();
-  await expect.poll(() => page.evaluate(() => (window as any).__iso.quests.hidden)).toBe(true);
-  await expect(panel).toHaveClass(/shut/);
-  await panel.locator(".quests-head").click();
-  await expect.poll(() => page.evaluate(() => (window as any).__iso.quests.hidden)).toBe(false);
+  await expect(panel.locator(`li.quest[data-quest="${firstId}"]`)).toHaveCount(0);
 
   // ── and none of it is a gate: the ★ line, the tree and the goal are
   // untouched by anything the panel did ────────────────────────────────────

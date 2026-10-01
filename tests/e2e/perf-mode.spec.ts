@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { bootSoloIso, bootBudget } from "./boot";
+import { bootSoloIso } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // PERF-01 — the performance mode as a PLAYER sees it, in a real browser.
@@ -18,6 +18,9 @@ import { bootSoloIso, bootBudget } from "./boot";
 // ══════════════════════════════════════════════════════════════════════════
 
 const SEED = "1337";   // the seed the suite pins (iso-game.spec.ts)
+// A poll here rides on `page.evaluate`, which waits on the software-GL frame queue after a graphics
+// change (the terrain re-applies): a single call can take several seconds on a CI core.
+const slowExpect = expect.configure({ timeout: 30_000 });
 const REMEMBERED = {
   "hexmatch:rival-skill": "normal",   // AI-02: no difficulty prompt
   "hexmatch:tutorial": "never",       // TUT-01: no starting tour
@@ -97,13 +100,14 @@ test.describe("PERF-01 performance mode", () => {
     // and the map is FLAT, not textured — allow higher count after hill shading (#576)
     const colours = await terrainColourCount(page).catch(() => 0);
     expect(colours).toBeLessThan(300);
-    // and it HOLDS: 300 ms of idle passes several 30 Hz windows; the
-    // textured terrain would have redrawn on each of them
+    // PERF-01 new policy (renderer.ts `render`): the terrain stays animated in performance mode,
+    // its ambient repaint CAPPED at TERRAIN_FRAME_MS (30 Hz) — so it is no longer still while idle.
+    // What the mode promises is the cap: 300 ms holds at most ~9 windows (+ slack for timer
+    // jitter), never one repaint per 60 Hz frame (~18).
     const first = s.terrain.redraws;
     await page.waitForTimeout(300);
     const second = (await terrainState(page)).terrain.redraws;
-    // Allow at most 1 extra redraw from lazy hill shade
-    expect(second - first).toBeLessThanOrEqual(1);
+    expect(second - first).toBeLessThanOrEqual(12);
   });
 
   test("a camera move invalidates the static terrain exactly once", async ({ page }) => {
@@ -119,13 +123,13 @@ test.describe("PERF-01 performance mode", () => {
     await page.mouse.up({ button: "middle" });
     await page.waitForTimeout(100);
     const after = (await terrainState(page)).terrain;
-    // Hill shading (#576) may cause 1-2 redraws — accept at least one
+    // The move must invalidate the terrain (at least one repaint)…
     expect(after.redraws).toBeGreaterThanOrEqual(before + 1);
-    expect(after.redraws).toBeLessThanOrEqual(before + 3);
-    // …and then it is still again
+    // …and afterwards it only ambient-animates at the 30 Hz cap (PERF-01 new policy: the terrain
+    // is no longer static in performance mode), never at the 60 Hz frame rate.
     await page.waitForTimeout(300);
-    const still = (await terrainState(page)).terrain.redraws;
-    expect(still).toBe(after.redraws);
+    const later = (await terrainState(page)).terrain.redraws;
+    expect(later - after.redraws).toBeLessThanOrEqual(12);
   });
 
   test("settings sheet: the switch sits beside Miniature and suppresses it", async ({ page }) => {
@@ -151,15 +155,15 @@ test.describe("PERF-01 performance mode", () => {
       .toHaveText("Unavailable while Performance mode is on.");
 
     // the store agrees — miniature is still ON inside it
-    await expect.poll(() => page.evaluate(() => {
+    await slowExpect.poll(() => page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem("hexmatch:graphics") ?? "{}");
       return s.miniature === true && s.performance === true;
     })).toBe(true);
 
     // the terrain went flat under the sheet (the first flat frame lands on
     // the next rAF after the switch — poll it, don't race it)
-    await expect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
-    await expect.poll(() => terrainColourCount(page)).toBeLessThan(300);
+    await slowExpect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
+    await slowExpect.poll(() => terrainColourCount(page)).toBeLessThan(300);
 
     // performance OFF restores the miniature exactly as it was stored
     await perfSwitch(page).click();
@@ -168,13 +172,13 @@ test.describe("PERF-01 performance mode", () => {
     await expect(miniSwitch(page)).toHaveAttribute("aria-checked", "true");
     await expect(page.locator(".settings-sheet .gfx-mini-note"))
       .not.toHaveText("Unavailable while Performance mode is on.");
-    await expect.poll(async () => (await terrainState(page)).terrain.performance).toBe(false);
+    await slowExpect.poll(async () => (await terrainState(page)).terrain.performance).toBe(false);
 
     // back to performance ON for the camera check: the world point under the
     // viewport centre must not move (the DPR re-size re-anchors it)
     const before = (await terrainState(page)).worldAtCentre;
     await perfSwitch(page).click();
-    await expect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
+    await slowExpect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
     const after = (await terrainState(page)).worldAtCentre;
     expect(Math.abs(before[0] - after[0])).toBeLessThan(1e-6);
     expect(Math.abs(before[1] - after[1])).toBeLessThan(1e-6);
@@ -184,19 +188,19 @@ test.describe("PERF-01 performance mode", () => {
   });
 
   test("persists across reloads — the stored choice outlives the URL flag", async ({ page }) => {
-    await bootIso(page, "&performance=1");
-    expect((await terrainState(page)).terrain.performance).toBe(true);
+    // The `?performance=1` flag never writes back to storage (graphics.ts `parseSettings`: "the
+    // saved choice survives the bookmark"), so the choice is made the way a player makes it — the
+    // graphics call the settings switch uses — and THAT is what must outlive the reload.
+    await bootIso(page);
+    await page.evaluate(() => {
+      (window as unknown as { __iso: { graphics: (q?: string, m?: boolean, p?: boolean) => unknown } })
+        .__iso.graphics(undefined, undefined, true);
+    });
+    await slowExpect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
     // same seed, NO performance flag: the choice must come from storage
-    await page.goto(`/?seed=${SEED}&iso-debug=1`);
-    await page.locator(".menu-btn.primary").click();
-    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
-    await page.waitForFunction(() => {
-      const h = (window as unknown as {
-        __iso?: { phase: string; loading: boolean; grid?: { industries: unknown[] } };
-      }).__iso;
-      return !!h && h.phase === "setup-factory" && !!h.grid
-        && h.grid.industries.length > 0 && !h.loading;
-    }, null, { timeout: bootBudget() });
+    // (the first game autosaved, so the front door offers Continue — bootSoloIso resumes it, as a
+    // refresh would; the policy is read from storage either way)
+    await bootSoloIso(page, { url: `/?seed=${SEED}&iso-debug=1` });
     expect((await terrainState(page)).terrain.performance).toBe(true);
   });
 
@@ -209,17 +213,17 @@ test.describe("PERF-01 performance mode", () => {
       h.graphics(undefined, undefined, true);
     });
     // the serialised apply chain settles on the LAST toggle
-    await expect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
+    await slowExpect.poll(async () => (await terrainState(page)).terrain.performance).toBe(true);
     const s = await terrainState(page);
     expect(s.terrain.performance).toBe(true);
     expect(s.miniDisplay).toBe("none");
     expect(s.backing[0]).toBe(Math.max(1, Math.round(s.css[0] * Math.min(1, s.dpr))));
     // the terrain is the flat one — no stale textured surface survived the burst
     // Hill shading (#576) may add colours, so allow up to 300
-    await expect.poll(() => terrainColourCount(page)).toBeLessThan(300);
-    // …and idle still holds
+    await slowExpect.poll(() => terrainColourCount(page)).toBeLessThan(300);
+    // …and the repaint stays at the 30 Hz cap (PERF-01 new policy: animated, not static)
     const first = s.terrain.redraws;
     await page.waitForTimeout(300);
-    expect((await terrainState(page)).terrain.redraws).toBe(first);
+    expect((await terrainState(page)).terrain.redraws - first).toBeLessThanOrEqual(12);
   });
 });

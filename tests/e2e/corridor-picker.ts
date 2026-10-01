@@ -292,7 +292,12 @@ export function findIsoCorridor(opts?: CorridorOptions): Corridor {
   // (mobile/narrow layout) reports a 0-size box and so does not shrink it.
   const boxes = [...document.querySelectorAll<HTMLElement>(".iso-panel")]
     .map((el) => el.getBoundingClientRect())
-    .filter((r) => r.width > 1 && r.height > 1);
+    // HUD redesign (#516/#614): the Processing Plant drawer is a centred bottom
+    // dock, not a side column — it must not pin the "band" to its far edge. Only
+    // panels that touch a viewport edge narrow the band; a dock that floats over
+    // the map is caught tile by tile by `coverAt`'s real hit-test instead.
+    .filter((r) => r.width > 1 && r.height > 1
+      && (r.left <= 12 || r.right >= window.innerWidth - 12));
   let clearLeft = 0;
   let clearRight = window.innerWidth;
   for (const r of boxes) {
