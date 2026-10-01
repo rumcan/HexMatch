@@ -1,6 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
 import { STORY_MODE_ENABLED } from "../../src/story/flag";
 import { bootBudget } from "./boot";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/** Read a numeric `export const NAME = n` out of the game's source. The modules
+ *  themselves cannot be imported by Playwright's node loader (they pull in JSON
+ *  asset manifests), and a hand-typed copy goes stale — a wrong version makes the
+ *  shelf silently drop the crafted save (as it did when these were 1 and 14). */
+function sourceConst(file: string, name: string): number {
+  const src = readFileSync(fileURLToPath(new URL(`../../src/iso/${file}`, import.meta.url)), "utf8");
+  const m = new RegExp(`export const ${name}\\s*=\\s*(\\d+)`).exec(src);
+  if (!m) throw new Error(`${name} not found in src/iso/${file}`);
+  return Number(m[1]);
+}
+const SAVEGAME_VERSION = sourceConst("savegame-runtime.ts", "SAVEGAME_VERSION");
+const SNAPSHOT_VERSION = sourceConst("snapshot.ts", "SNAPSHOT_VERSION");
 
 // ══════════════════════════════════════════════════════════════════════════
 // CONTINUE-01 (#191) — Continue vs a deliberate new game, in the real app.
@@ -41,8 +56,9 @@ async function waitIsoPhase(page: Page, phase: string | RegExp): Promise<void> {
  *  always land back in "setup-factory". */
 function craftedSave(skillKey: string): string {
   return JSON.stringify({
-    v: 1,
-    snapV: 14,
+    // versions come from the game: a hand-typed pair goes stale and the shelf silently drops the save
+    v: SAVEGAME_VERSION,
+    snapV: SNAPSHOT_VERSION,
     savedAt: Date.now(),
     seed: 4242,
     skillKey,
@@ -78,11 +94,12 @@ test.describe("Continue door (#191)", () => {
     await page.locator(".menu-btn.primary").click();
     await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
     await waitIsoPhase(page, "setup-factory");
-    // the 5-second autosave puts the match on the shelf
+    // the 5-second autosave puts the match on the shelf (the boot stalls the main thread for
+    // 10s+ in software GL, so the first tick lands late — the wait follows the boot budget)
     await page.waitForFunction(
       (k) => localStorage.getItem(k) !== null,
       SAVE_KEY,
-      { timeout: 10_000 },
+      { timeout: bootBudget() },
     );
 
     await quitToMainMenu(page);
@@ -90,17 +107,19 @@ test.describe("Continue door (#191)", () => {
     // the front door now names the match and owns the gold styling
     const cont = page.getByRole("button", { name: /^Continue/ });
     await expect(cont).toBeVisible();
-    await expect(cont).toContainText(/vs AI \(Normal\)/);
-    await expect(cont).toContainText(/saved/);
+    // #614 (menu redesign): the front-door Continue prints only "Continue →"; the save
+    // summary rides in its accessible name (aria-label), so assert it there.
+    await expect(cont).toHaveAccessibleName(/vs AI \(Normal\)/);
+    await expect(cont).toHaveAccessibleName(/saved/);
     expect(await page.locator(".menu-btn.primary").textContent()).toMatch(/^Continue/);
     // Play is still here, explicitly the new-game door
     await expect(page.getByRole("button", { name: /^Play/ })).toContainText(/start a new game/i);
 
     await cont.click();
     await waitIsoPhase(page, /setup-factory|play/);
-    // the boot RESUMED — the live toast says so (a fresh boot never says it)
-    await expect(page.locator(".toast", { hasText: /restored from your save/ }))
-      .toBeVisible({ timeout: bootBudget() });
+    // the boot RESUMED — the game says so (a fresh boot never does). HUD-1: "good" toasts are
+    // low priority now — they are recorded in the Feed instead of popping up — so read the Feed.
+    await expect(page.locator(".feed-pane")).toContainText(/restored from your save/, { timeout: bootBudget() });
   });
 
   test("Play vs AI asks before replacing the save, and only confirming starts new", async ({ page }) => {
@@ -124,7 +143,7 @@ test.describe("Continue door (#191)", () => {
     await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
     await plate.getByRole("button", { name: /Start new game/ }).click();
     await waitIsoPhase(page, "setup-factory");
-    await expect(page.locator(".toast", { hasText: /restored from your save/ })).toHaveCount(0);
+    await expect(page.locator(".feed-pane")).not.toContainText(/restored from your save/);
   });
 
   test("a contract's Start-over door clears just that save into a fresh briefing", async ({ page }) => {

@@ -45,8 +45,11 @@ test("a host's ★ line and purse become the guest's rules, live and in game", a
     // what the host filed, before the match exists.
     await expect(summary(guest)).toHaveText(/First to 5★ · Rich 2× resources/);
     const guestDials = guest.page.locator(".match-settings fieldset.ms-group");
-    await expect(guestDials).toHaveCount(3);
-    for (let i = 0; i < 3; i++) await expect(guestDials.nth(i)).toBeDisabled();
+    // #642 added the fourth dial group (Manager perks On/Off) beside ★ line, purse and rival seat
+    await expect(guestDials).toHaveCount(4);
+    // (asserted on the `disabled` attribute itself: Playwright's toBeDisabled does not treat a bare
+    // <fieldset disabled> as disabled, only the controls inside it)
+    for (let i = 0; i < 4; i++) await expect(guestDials.nth(i)).toHaveAttribute("disabled", "");
 
     // ── both seats boot on those rules ────────────────────────────────────
     await startMatch(pair);

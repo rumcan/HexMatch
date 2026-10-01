@@ -99,9 +99,10 @@ test("two windows meet in one room, seat, and start on the same map", async ({ b
     // that owns it. The mirror is exact in both directions; the independence
     // of the two boards is what the reset spec proves (a board-local action on
     // one seat must not touch the other's).
-    expect(hostPlay.rivalBoardSig, "the host's copy of the guest's board is the guest's board")
-      .toBe(guestPlay.boardSig);
-    expect(guestPlay.rivalBoardSig, "and the other way round").toBe(hostPlay.boardSig);
+    // L15 (#230) took boards OFF the wire (the board is tuning-only), so the copy each seat holds of
+    // the other's board is no longer mirrored; what stays true is that both seats hold a real board.
+    expect(hostPlay.boardSig.length).toBeGreaterThan(0);
+    expect(guestPlay.boardSig.length).toBeGreaterThan(0);
 
     // ── the game never threw ─────────────────────────────────────────────
     // A page error is the one failure mode a screenshot misses: the game keeps

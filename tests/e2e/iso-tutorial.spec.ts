@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { bootBudget } from "./boot";
+import { bootBudget, bootSoloIso } from "./boot";
 
 // ══════════════════════════════════════════════════════════════════════════
 // TUT-03 (#422) — the in-game guide, against the REAL built game.
@@ -145,10 +145,12 @@ test("TUT-03 the first boot stands the guide over a live, playable game", async 
   await key(page, "guide-next").click();
   await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "topbar");
   await key(page, "guide-next").click();
-  // finishing the section is NOT dismissing the guide: the layer goes idle
-  // (display:none) and nothing is written to the record
-  await expect(page.locator(GUIDE)).toBeHidden();
-  expect(await guideRecord(page)).toBeNull();
+  // finishing the section is NOT dismissing the guide, and nothing is written to the record.
+  // FTUE-1 (#464): the first game runs the whole chain, so the guide moves on to the Factory
+  // section instead of going idle.
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "factory");
+  // …and the finished section is marked done, but never "dismissed" (that is End tutorial's)
+  expect(JSON.parse((await guideRecord(page)) ?? "{}")).toEqual({ done: ["getting-started"], dismissed: false });
 
   expect(errors).toEqual([]);
 });
@@ -158,28 +160,34 @@ test("TUT-03 the spotlight lands on the chrome it names, and a click on it advan
   await boot(page);
   await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
 
-  // Step 2's target is the recenter key in the top bar: the hole must be a
-  // real box over that button, not a full-screen dim.
+  // The camera step is a whole-screen caption now (target kind "screen", completed by Next, not by
+  // a click on the recenter key), so the spotlight is measured on the step that names chrome: the
+  // top bar. The hole must be a real box over `.topbar`, not a full-screen dim.
   await key(page, "guide-next").click();
   await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "camera");
+  await key(page, "guide-next").click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "topbar");
+  // (the hole eases onto its target after the step changes — wait for it to have a real size)
+  await expect.poll(() => page.evaluate(() =>
+    (document.querySelector("#iso-guide .guide-hole") as HTMLElement).getBoundingClientRect().width)).toBeGreaterThan(8);
   const over = await page.evaluate(() => {
     const hole = document.querySelector("#iso-guide .guide-hole") as HTMLElement;
-    const btn = document.querySelector('[data-act="recenter"]') as HTMLElement;
-    const h = hole.getBoundingClientRect(), b = btn.getBoundingClientRect();
-    return { w: h.width, h: h.height, vw: window.innerWidth, vh: window.innerHeight,
+    const bar = document.querySelector(".topbar") as HTMLElement;
+    const h = hole.getBoundingClientRect(), b = bar.getBoundingClientRect();
+    return { w: h.width, h: h.height, vh: window.innerHeight,
       dx: Math.abs(h.left + h.width / 2 - (b.left + b.width / 2)),
       dy: Math.abs(h.top + h.height / 2 - (b.top + b.height / 2)) };
   });
   expect(over.w).toBeGreaterThan(8);
   expect(over.h).toBeGreaterThan(8);
-  expect(over.w).toBeLessThan(over.vw);       // a hole, not a veil
+  // (the top bar spans the whole width, so only the height can prove "a hole, not a veil")
   expect(over.h).toBeLessThan(over.vh);
   expect(over.dx).toBeLessThan(24);
   expect(over.dy).toBeLessThan(24);
 
-  // The real click on that key is what the step waits for.
-  await page.locator('[data-act="recenter"]').click();
-  await expect(page.locator(GUIDE)).toHaveAttribute("data-step", "topbar");
+  // Next on the last step finishes the section and the first-game chain moves on to the Factory.
+  await key(page, "guide-next").click();
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "factory");
 });
 
 test("TUT-03 a real drawer tab advances the drawer section", async ({ page }) => {
@@ -215,26 +223,27 @@ test("TUT-03 a real drawer tab advances the drawer section", async ({ page }) =>
     await expect(caption(page)).toContainText(/exchange/i);
     // …and the rest of the drawer is walked the same way, one tab at a time
     // CONTRACT-1: quests renamed to contracts
-    for (const [tab, step, words] of [
-      ["black", "black", /blockade/i],
-      ["feed", "feed", /logs everything/i],
-      ["contracts", "quests", /optional|contract/i],
-    ] as const) {
-      await key(page, "guide-next").click();
-      const tabLoc = page.locator(`#iso-trade [data-tab="${tab}"], #iso-trade [data-tab="quests"]`);
-      await tabLoc.first().click();
-      // In standalone mode, guide may have already advanced via assist — accept either step
-      const curStep = await page.locator(GUIDE).getAttribute("data-step");
-      if (curStep !== step) {
-        // Try next to advance
-        await key(page, "guide-next").click().catch(() => {});
-      }
-      await expect(page.locator(GUIDE)).toHaveAttribute("data-step", step, { timeout: 5000 }).catch(async () => {
-        // If still not matching, at least caption contains expected words
-        await expect(caption(page)).toContainText(words);
-      });
-      await expect(caption(page)).toContainText(words);
+    // The drawer steps assist (they open their own tab) and complete on that tab, so a step can
+    // advance the moment it is entered — the walk collects every caption the strip shows, pressing
+    // the real tab of the step that stands or Next, and asserts each tab's step was visited. A
+    // Market step now stands between Bank and Black Market.
+    const seen: string[] = [];
+    const order = ["market", "black", "feed", "contracts"];
+    for (let i = 0; i < 12; i++) {
+      if (!(await page.locator(GUIDE).isVisible())) break;
+      if ((await page.locator(GUIDE).getAttribute("data-section")) !== "drawer") break;
+      const step = (await page.locator(GUIDE).getAttribute("data-step")) ?? "";
+      seen.push(`${step}|${(await caption(page).textContent()) ?? ""}`);
+      const tab = order.includes(step) ? step : null;
+      if (tab) await page.locator(`#iso-trade [data-tab="${tab}"]`).first().click();
+      else if (await key(page, "guide-next").isVisible()) await key(page, "guide-next").click();
+      await page.waitForTimeout(300);
     }
+    const all = seen.join("\n");
+    expect(all).toMatch(/market\|.*sell materials/i);
+    expect(all).toMatch(/black\|.*blockade/i);
+    expect(all).toMatch(/feed\|.*logs everything/i);
+    expect(all).toMatch(/contracts\|.*optional|contracts\|.*Contracts are/i);
   }
 });
 
@@ -270,14 +279,15 @@ test("TUT-03 a finished section is marked, and the mark survives a reload", asyn
   await boot(page);
   await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
   for (let i = 0; i < 3; i++) await key(page, "guide-next").click();
-  await expect(page.locator(GUIDE)).toBeHidden();
+  // FTUE-1 (#464): the first-game chain carries on into the Factory section
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "factory");
   expect(await page.evaluate(() =>
     JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done)).toContain("getting-started");
 
-  // The autosave exists by now, so this boot RESUMES — a resumed game never
-  // opens the guide by itself, and the menu shows the section as done.
-  await expect.poll(() => hasSave(page), { timeout: 15000 }).toBe(true);
-  await boot(page, "", { fresh: false });
+  // `?fresh=1` (how the guide specs boot) neither reads nor writes the save, so there is no autosave
+  // to resume; the mark lives in localStorage, so a plain (non-fresh) boot of the same seed shows
+  // it — a normal game never opens the first-game guide by itself, and the menu shows it done.
+  await bootSoloIso(page, { url: `${BASE}?seed=79` });
   await expect(page.locator(GUIDE)).toBeHidden();
   const menu = await openTutorialMenu(page);
   const row = menu.locator('[data-section="getting-started"]');
@@ -287,8 +297,9 @@ test("TUT-03 a finished section is marked, and the mark survives a reload", asyn
   // "Reset tutorial" clears the marks and the dismissal.
   await page.locator("[data-act='guide-reset']").click();
   await expect(row.locator(".guide-menu-mark")).toHaveText("");
+  // (a reset record may be cleared outright rather than rewritten as an empty list)
   expect(await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done)).toEqual([]);
+    JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done ?? [])).toEqual([]);
 });
 
 test("TUT-03 ?guide=0 and the legacy ?tutorial=0 keep the guide out of the way", async ({ page }) => {
@@ -312,7 +323,8 @@ test("TUT-03 Skip section drops the section without marking it", async ({ page }
   await boot(page);
   await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
   await key(page, "guide-skip").click();
-  await expect(page.locator(GUIDE)).toBeHidden();
+  // FTUE-1 (#464): skipping a section moves the first-game chain on to the next one
+  await expect(page.locator(GUIDE)).toHaveAttribute("data-section", "factory");
   expect(await page.evaluate(() =>
     JSON.parse(localStorage.getItem("hexmatch:guide") ?? "{}").done ?? [])).not.toContain("getting-started");
 });

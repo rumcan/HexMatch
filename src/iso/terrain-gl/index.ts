@@ -203,7 +203,7 @@ function meanLuminance(src: TexSource): number | null {
     try {
       const c = document.createElement("canvas");
       c.width = 16; c.height = 16;
-      const ctx = c.getContext("2d");
+      const ctx = c.getContext("2d", { willReadFrequently: true });
       if (!ctx) return null;
       ctx.drawImage(src, 0, 0, 16, 16);
       const d = ctx.getImageData(0, 0, 16, 16).data;
@@ -228,7 +228,7 @@ function imageToRaw(img: HTMLImageElement, size: number): RawTexture | null {
   try {
     const c = document.createElement("canvas");
     c.width = size; c.height = size;
-    const ctx = c.getContext("2d");
+    const ctx = c.getContext("2d", { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0, size, size);
     const d = ctx.getImageData(0, 0, size, size).data;

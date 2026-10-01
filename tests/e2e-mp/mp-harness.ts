@@ -27,7 +27,9 @@ import { MP_BASE, MP_ORIGIN } from "../../playwright.multiplayer.config";
  *  cheap art tier, which is the difference between a ~60s boot and a ~3min one
  *  in software rasterization. The `__iso` hook is always present under
  *  `vite dev`. */
-export const MP_URL = `${MP_ORIGIN}${MP_BASE}?quality=low`;
+// `unlimited=0`: the dev server gives the LOCAL seat a 9999 purse (game.ts `topUpDevPurse`) — these specs
+// assert real purses and exchanges, so they run the real economy, as that flag documents.
+export const MP_URL = `${MP_ORIGIN}${MP_BASE}?quality=low&unlimited=0`;
 
 /**
  * The window both seats run in. `openSide` makes its OWN contexts (the project
@@ -68,7 +70,10 @@ export const MP_REATTACH_MS = 240_000;
  */
 export async function press(locator: Locator, what: string): Promise<void> {
   try {
-    await locator.click({ timeout: 15_000 });
+    // noWaitAfter: a click that starts a match mounts the game (a multi-second synchronous boot in
+    // software GL), so "waiting for scheduled navigations" would outlast the 15s click budget
+    // although the click landed; the assertions that follow (expectBooted) own the wait.
+    await locator.click({ timeout: 60_000, noWaitAfter: true });
   } catch (err) {
     try {
       await locator.dispatchEvent("click", undefined, { timeout: 5_000 });
@@ -148,6 +153,11 @@ export async function openSide(browser: Browser, name: string): Promise<Side> {
     localStorage.setItem("hexmatch:tutorial", "never");
     // run.world feedback: a first launch skips the menu — these specs use it.
     localStorage.setItem("hexmatch:onboarded", "1");
+    // #636 (owner, 2026-09-29): the header's Multiplayer tab is hidden behind a
+    // PIN (src/ui/mp-gate.ts). The gate stays; these specs ARE the multiplayer
+    // tester, so each window arrives already unlocked, as a device that has
+    // entered the PIN once.
+    localStorage.setItem("hexmatch:mp-unlocked", "1");
   });
   // The transport seam: record every WebSocket the page opens, so a spec can
   // drop the room link exactly as a network failure does. Installed before any
@@ -163,10 +173,13 @@ export async function openSide(browser: Browser, name: string): Promise<Side> {
   return side;
 }
 
-/** The front door: Play (the main menu) → the mode screen. */
+/** The front door → the Multiplayer screen. #614 (owner, 2026-09-29): Host /
+ *  Join no longer sit on the Play card (Solo only); Multiplayer has its own
+ *  screen behind the header's tab, which #636 shows once the device is
+ *  unlocked (see `openSide`). */
 export async function toStartScreen(side: Side): Promise<void> {
-  await press(side.page.locator(".menu-btn.primary"), "the main menu's Play");
-  await side.page.getByRole("button", { name: /Play vs AI/ }).waitFor();
+  await press(side.page.locator('.px-tabs [data-tab="multiplayer"]'), "the header's Multiplayer tab");
+  await side.page.getByRole("button", { name: /Host a game/ }).waitFor();
 }
 
 /** Host a room and wait for the code the room actually minted — the lobby
@@ -253,6 +266,15 @@ export async function playSetup(pair: Pair): Promise<void> {
   await expectMirrored(pair.guest, "the host's opening");
   await setupSeat(pair.guest, "guest");
   await expectMirrored(pair.host, "the guest's opening");
+  // START-1 (#604/#611): the guest's own Depot is only in the guest's world once the host's
+  // authoritative echo lands (the guest sends an intent), so wait for BOTH openings to stand in
+  // BOTH worlds before reading either side.
+  for (const side of [pair.host, pair.guest]) {
+    await expect.poll(async () => {
+      const state = await readState(side);
+      return ["you", "ai"].every((o) => state.factories.some((f) => f[0] === o) && state.harvesters.some((h) => h[0] === o));
+    }, { message: `${side.name} holds both openings`, timeout: 60_000 }).toBe(true);
+  }
   for (const side of [pair.host, pair.guest]) await side.page.evaluate(finishSetup);
   await Promise.all([expectInPlay(pair.host), expectInPlay(pair.guest)]);
 }

@@ -35,6 +35,10 @@ export default defineConfig({
   projects: [
     {
       name: "desktop-chromium",
+      // E2E green baseline (#623): the boot rasterizes the island in software (swiftshader) and
+      // takes 15-25s on a CI core, so the old 30s left specs no room after the boot. The
+      // budget follows the boot (see tests/e2e/boot.ts); assertions are untouched.
+      timeout: 120000,
       use: { ...devices["Desktop Chrome"], channel: undefined },
     },
     // MOBILE-01: the phone projects rasterize the island at dpr 2-3 in
