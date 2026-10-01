@@ -13,9 +13,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - name: default unit suite (#458)
-        run: npm test
-        timeout-minutes: 10
       - name: atlas matches cells (G7)
         run: |
           # slice-atlas reads tools/opengfx-sprites.json, a gitignored build
@@ -28,6 +25,26 @@ jobs:
           # encoder (sharp on Windows vs Linux) with identical pixels, so they
           # are not byte-compared.
           git diff --exit-code -- assets/iso-atlas/ ':(exclude)assets/iso-atlas/groups/*.png'
+
+  # Green-baseline ticket (2026-10-01): the default unit suite (#458) alone needs ~25 CPU-minutes of test time
+  # and timed out at 10 min on a 2-4 core runner (it was slow, not hung: vitest exits cleanly). Split it across
+  # three runners with vitest's --shard instead of raising the timeout; each shard runs well under 10 min.
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: default unit suite (#458) shard ${{ matrix.shard }}/3
+        run: npm test -- --shard=${{ matrix.shard }}/3
+        timeout-minutes: 10
 
   # Import-only smoke tests on the platform that exposed the CLI path bug.
   windows-tools:

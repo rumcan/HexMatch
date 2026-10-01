@@ -206,7 +206,15 @@ export default defineConfig({
   // (the e2e webServer and Arena's sandbox live preview both use it). Vite 7
   // rejects unknown Host headers on both unless allowedHosts permits them —
   // localhost is always allowed, tunnelled/sandboxed hosts are not.
-  server: { host: true, allowedHosts: [".e2b.app"] },
+  // Green baseline (2026-10-01): the multiplayer e2e runs against THIS dev server with Playwright writing its
+  // traces and reports inside the project root. On Windows the watcher hits a trace file Playwright still
+  // holds open (EBUSY on fs.watch), which is an uncaught error that kills `vite dev` mid-suite and fails
+  // every later spec with ERR_CONNECTION_REFUSED. Nothing in those folders is app source, so don't watch them.
+  server: {
+    host: true,
+    allowedHosts: [".e2b.app"],
+    watch: { ignored: ["**/test-results*/**", "**/playwright-report*/**"] },
+  },
   preview: { host: true, allowedHosts: [".e2b.app"] },
   plugins: [
     react(),
