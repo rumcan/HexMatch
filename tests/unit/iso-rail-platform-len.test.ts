@@ -37,8 +37,10 @@ describe("the four-long platform", () => {
     const next = nextLaneAt(s, 1);
     expect(next).toEqual({ view: "se", tx: 42, ty: 20, len: 4 });
     expect(laneSlabTiles(next)).toHaveLength(4);
-    // The ghost ends in the cap on the lane's fourth tile.
-    const ghost = laneGhostItems(next.tx, next.ty, next.view, next.len);
+    // STALE (#635/#637): a four-tile lane's ghost is the owner's one platform sprite at the lane's origin...
+    expect(laneGhostItems(next.tx, next.ty, next.view, next.len)).toEqual([{ sprite: "platform_se", tx: 42, ty: 20 }]);
+    // ...and only with that art missing does it fall back to the slab strip, which ends in the cap on the fourth tile.
+    const ghost = laneGhostItems(next.tx, next.ty, next.view, next.len, { has: (n: string) => !n.startsWith("platform_") });
     expect(ghost[ghost.length - 1]).toMatchObject({ tx: 42, ty: 23 });
   });
 });

@@ -151,10 +151,11 @@ describe("D3 stored links, not inferred diagonal adjacency", () => {
     expect(w.roadBits).toEqual(road); expect(w.dirtBits).toEqual(dirt); expect(w.roadTiers).toEqual(tiers);
   });
 
-  it("production gating wins even over an explicit local renderer override", () => {
+  it("diagonal roads are ON in production too (#498 turned them on by default; only the world's own flag switches them off)", () => {
+    // STALE: this used to pin "production gating wins" while D1-D5 were behind ?diag=1.
     const w = world(); w.roadBits[index(10, 10)] = 16 | ROAD_DS; w.roadBits[index(11, 11)] = 16;
     vi.stubEnv("DEV", false);
-    try { expect(roadTilesIn(w, 10, 10, 11, 11).every((t) => !t.diagonal)).toBe(true); }
+    try { expect(roadTilesIn(w, 10, 10, 11, 11).some((t) => t.diagonal)).toBe(true); }
     finally { vi.unstubAllEnvs(); }
   });
 

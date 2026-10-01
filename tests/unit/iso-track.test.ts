@@ -406,10 +406,11 @@ describe("E5 drag-to-build acceptance", () => {
   it("an unaffordable drag previews and builds only the affordable prefix", () => {
     // gravel can never be unaffordable now, so the rule is pinned on tarmac
     const grid = flatGrid(), t = createTrack();
-    const purse = { wood: 99, stone: 99, ore: 12 };   // 4 Ore a tile → three tiles
+    // STALE: every price is x3 (2026-09 balancing pass): 12 Ore a tile → three tiles
+    const purse = { wood: 99, stone: 99, ore: 36 };
     const p = previewDrag(grid, t, "road", purse, 5, 5, 14, 5);
     expect(p.tiles).toHaveLength(3);
-    expect(p.cost).toEqual({ wood: 3, stone: 3, ore: 12 });
+    expect(p.cost).toEqual({ wood: 9, stone: 9, ore: 36 });
     expect(p.unaffordable.length).toBeGreaterThan(0);
     const c = commitDrag(t, "road", p);
     expect(c.built).toHaveLength(3);

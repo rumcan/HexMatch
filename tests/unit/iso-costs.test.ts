@@ -30,11 +30,13 @@ describe("PP-07 the ticket's suggested first playtest costs", () => {
     // `road` (premium paved). Gravel is FREE — what it costs is the lorry's
     // time — and the paved road is the thing you pay for.
     expect(BUILD_COSTS.dirt).toEqual({});
-    expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
-    expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
-    // Owner call (2026-09): one of every cargo but gold.
-    expect(BUILD_COSTS.depot).toEqual({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
-    expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
+    // STALE: the owner's 2026-09 balancing pass multiplied every price x3
+    // (config.ts BUILD_COSTS); the table shape is unchanged.
+    expect(BUILD_COSTS.road).toEqual({ wood: 3, stone: 3, ore: 12 });
+    expect(BUILD_COSTS.upgrade).toEqual({ ore: 12 });
+    // Owner call (2026-09): one of every cargo but gold (3 of each after the x3 pass).
+    expect(BUILD_COSTS.depot).toEqual({ grain: 3, wood: 3, stone: 3, ore: 3, oil: 3 });
+    expect(BUILD_COSTS.plant).toEqual({ wood: 6, stone: 6, grain: 6, ore: 9 });
   });
 
   it("the in-place upgrade is the difference, so upgrading never double-pays", () => {
@@ -53,7 +55,7 @@ describe("PP-07 one table feeds every consumer", () => {
     const t = createTrack();
     expect(tileCost(t, "dirt", 3, 3)).toEqual(BUILD_COSTS.dirt);
     expect(tileCost(t, "road", 3, 3)).toEqual(BUILD_COSTS.road);
-    expect(tileCost(t, "road", 3, 3).ore).toBe(4);
+    expect(tileCost(t, "road", 3, 3).ore).toBe(12);
   });
 
   it("PLANT_COST is the table's plant entry", () => {
@@ -73,14 +75,14 @@ describe("PP-07 one table feeds every consumer", () => {
     // the price returns a COPY — spending it can never mutate the table
     const c = priceDepot(deep, 0).cost;
     c.wood = 999;
-    expect(BUILD_COSTS.depot.wood).toBe(1);
+    expect(BUILD_COSTS.depot.wood).toBe(3);
   });
 
   it("priceDepot names exactly the cargoes the purse is short of", () => {
-    const p = priceDepot({ wood: 1, stone: 1 }, 0);
+    const p = priceDepot({ wood: 3, stone: 3 }, 0);
     expect(p.affordable).toBe(false);
     expect(p.missing).toEqual(["grain", "ore", "oil"]);   // CARGOES order
-    expect(priceDepot({ wood: 1, stone: 1, grain: 1, ore: 1, oil: 1 }, 0).affordable).toBe(true);
+    expect(priceDepot({ wood: 3, stone: 3, grain: 3, ore: 3, oil: 3 }, 0).affordable).toBe(true);
     // the free allowance makes an EMPTY purse affordable — the opening works
     expect(priceDepot({}, FREE_SETUP_DEPOTS).affordable).toBe(true);
   });

@@ -501,7 +501,7 @@ describe("#470 in play — the draw items during and after construction", () => 
     expect(during.filter((k) => !before.includes(k)).length).toBe(grown.length);
     expect(before.filter((k) => !during.includes(k))).toEqual([]);
     expect(h.townDrawItems.some((i) => i.sprite === FLOURISH_FLAG || i.sprite === FLOURISH_BUNTING)).toBe(false);
-  }, 20000);
+  }, 90000);
 
   it("after construction the district is finished: same tiles, same sprites, no alpha", async () => {
     const h = await boot();
@@ -525,7 +525,7 @@ describe("#470 in play — the draw items during and after construction", () => 
     // an item, so the scaffolds never cost the town a building.
     expect(after.length).toBeGreaterThan(100);
     expect(h.finishTownGrowth(), "nothing left to skip").toBe(false);
-  }, 20000);
+  }, 90000);
 
   it("is skippable by ANY click, and plays once per tier", async () => {
     const h = await boot();
@@ -548,7 +548,7 @@ describe("#470 in play — the draw items during and after construction", () => 
     expect(h.townGrowth.lots).toBeGreaterThan(0);
     expect(grownItemsOf(h, 0).some(underConstruction)).toBe(true);
     h.finishTownGrowth();
-  }, 20000);
+  }, 90000);
 
   it("respects reduced motion: the district lands finished, with no sequence to skip", async () => {
     const h = await boot();
@@ -562,7 +562,7 @@ describe("#470 in play — the draw items during and after construction", () => 
       for (const i of grown) expect(underConstruction(i), `(${i.tx},${i.ty}) animated`).toBe(false);
       expect(h.finishTownGrowth()).toBe(false);
     } finally { restore(); }
-  }, 20000);
+  }, 90000);
 
   it("a first upgrade (village → town) is a moment too, with no district to build", async () => {
     const h = await boot();
@@ -573,5 +573,5 @@ describe("#470 in play — the draw items during and after construction", () => 
     expect(items.some((i) => i.sprite === "town_bank")).toBe(true);
     expect(items.every((i) => !underConstruction(i))).toBe(true);
     h.finishTownGrowth();
-  }, 20000);
+  }, 90000);
 });

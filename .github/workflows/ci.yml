@@ -23,7 +23,11 @@ jobs:
           # parse-pnml.mjs first" before it ever compares the atlas.
           node tools/parse-pnml.mjs
           npm run slice-atlas
-          git diff --exit-code assets/iso-atlas/
+          # The group sheets (groups/*.png) are cut from the atlas (byte-checked
+          # here) by groups@2x.json (also checked); their PNG bytes differ by OS
+          # encoder (sharp on Windows vs Linux) with identical pixels, so they
+          # are not byte-compared.
+          git diff --exit-code -- assets/iso-atlas/ ':(exclude)assets/iso-atlas/groups/*.png'
 
   # Import-only smoke tests on the platform that exposed the CLI path bug.
   windows-tools:

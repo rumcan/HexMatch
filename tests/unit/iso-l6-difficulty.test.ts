@@ -22,11 +22,20 @@
 //
 // The `test:slow` economy sweeps stay the backstop for the decay RATE; this
 // file pins the RULES.
+//
+// 2026-09-30 (baseline-green ticket): the owner's 2026-09 call (64829d64) made the
+// SHIPPED table uniform - no decay on any row, a Depot can always be retuned - and
+// added a "trainee" row (#471/#464). The decay / re-match / monotone-settle
+// MACHINERY is still in the code and still data-driven, so this file keeps proving
+// it by installing the L6 rows below into `DIFFICULTY_RULES` for every test
+// (restored afterwards), and pins the table the game actually ships in its own
+// test ("the shipped table").
+// ══════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { WATER, type Grid, type Industry } from "../../src/iso/grid";
 import {
-  MAP_W, MAP_H, TUNING, DIFFICULTY_RULES, DEFAULT_DIFFICULTY,
+  MAP_W, MAP_H, TUNING, DIFFICULTY_RULES, DEFAULT_DIFFICULTY, depotYieldCap,
   type DifficultyKey, type DifficultyRules,
 } from "../../src/iso/config";
 import { buildTile, createTrack, type Track } from "../../src/iso/track";
@@ -34,10 +43,27 @@ import { setRng, mulberry32 } from "../../src/game/config";
 import { RIVAL_SKILLS, SKILL_KEYS } from "../../src/iso/skill";
 import {
   abandonYieldFor, birthYieldFor, clampYield, createTuningSession, decayYield,
-  difficultyRulesFor, recordTuningCleared, retuneOwed, settleTuningYield,
+  difficultyRulesFor, recordTuningCleared, retuneOwed, settleTuningYield, tuningStarScores,
   TUNING_ABANDON_YIELD, tuningSessionYield, tuningYieldFor,
 } from "../../src/iso/tuning";
 import { transportTierOf, TRANSPORT_TIERS } from "../../src/iso/loop";
+
+// STALE (#612: the yield IS the star rating, 5 stars at 2000 points; a level-1 Depot caps at x2):
+// a "full" session is the 5-star score and settles at the level-1 cap, no longer 60 points / x2.5.
+const FULL_SCORE = tuningStarScores()[4];
+const FULL_YIELD = depotYieldCap(1);
+
+/** The table as the game ships it, captured before any test installs the L6 rows. */
+const SHIPPED_ROWS: Record<DifficultyKey, DifficultyRules> = structuredClone(DIFFICULTY_RULES);
+/** The rows L6 (#220) was written against: Easy frozen and never re-matched, Normal one
+ *  re-match per upgrade, Hard cooling (0.017 a tick) with a re-match that can cost you. */
+const L6_ROWS: Pick<Record<DifficultyKey, DifficultyRules>, "easy" | "normal" | "hard"> = {
+  easy:   { ...SHIPPED_ROWS.easy, decayRate: 0, rematch: "never", yieldNeverDrops: true },
+  normal: { ...SHIPPED_ROWS.normal, decayRate: 0, rematch: "upgrade", yieldNeverDrops: true },
+  hard:   { ...SHIPPED_ROWS.hard, decayRate: 0.017, rematch: "open", yieldNeverDrops: false },
+};
+const installL6Rows = () => { Object.assign(DIFFICULTY_RULES, structuredClone(L6_ROWS)); };
+const restoreShippedRows = () => { Object.assign(DIFFICULTY_RULES, structuredClone(SHIPPED_ROWS)); };
 import { buildSnapshot, applySnapshot, SNAPSHOT_VERSION, type SnapshotSource } from "../../src/iso/snapshot";
 import {
   SAVE_KEY, SAVEGAME_VERSION, readSave, type SaveGamePayload,
@@ -117,6 +143,7 @@ const retuneBtn = () => root.querySelector("#iso-tuning-retune") as HTMLButtonEl
 const hidden = (el: HTMLElement | null) => !el || el.classList.contains("hidden");
 
 beforeEach(() => {
+  installL6Rows();
   stubCanvas();
   stubImage();
   // L1f (#237): the address bar says which loop this harness plays — the
@@ -141,6 +168,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  restoreShippedRows();
   dispose?.();
   dispose = undefined;
   root.remove();
@@ -202,8 +230,21 @@ const recOf = (h: DifficultyHook, id: number) => h.depotYields.find((d) => d.id 
 
 // ══════════════════════════════════════════════════════════════════════════
 describe("L6 the table: one setting, flags and not forks", () => {
+  it("the shipped table: four rows, no decay anywhere, a Depot can always be retuned (owner 2026-09)", () => {
+    expect(Object.keys(SHIPPED_ROWS)).toEqual(["trainee", "easy", "normal", "hard"]);
+    for (const key of Object.keys(SHIPPED_ROWS) as DifficultyKey[]) {
+      expect(SHIPPED_ROWS[key].matchEnabled).toBe(true);
+      expect(SHIPPED_ROWS[key].decayRate, `${key} never cools`).toBe(0);
+      expect(SHIPPED_ROWS[key].yieldNeverDrops, `${key} never drops`).toBe(true);
+      expect(SHIPPED_ROWS[key].rematch, `${key} may always retune`).toBe("open");
+    }
+    expect(SHIPPED_ROWS.easy.minYield).toBeGreaterThan(TUNING.minYield);
+    expect(SHIPPED_ROWS.normal.minYield).toBe(TUNING.minYield);
+  });
+
   it("has exactly one row per difficulty, and match-3 is on in every one", () => {
-    expect(Object.keys(DIFFICULTY_RULES)).toEqual(SKILL_KEYS);
+    // the picker shows three rows; the Starter Island adds its own hidden "trainee" row (#471)
+    expect(Object.keys(DIFFICULTY_RULES)).toEqual(["trainee", ...SKILL_KEYS]);
     expect(difficultyRulesFor(DEFAULT_DIFFICULTY)).toBe(DIFFICULTY_RULES.normal);
     // A key the table has never heard of falls back to the shipped row, so no
     // caller can be handed `undefined` and read `decayRate` off it.
@@ -214,7 +255,7 @@ describe("L6 the table: one setting, flags and not forks", () => {
       // row turns it off.
       expect(rules(key).matchEnabled, `${key} keeps the tuning session`).toBe(true);
       expect(rules(key).minYield).toBeGreaterThanOrEqual(TUNING.minYield);
-      expect(rules(key).minYield).toBeLessThan(TUNING.maxYield);
+      expect(rules(key).minYield).toBeLessThan(FULL_YIELD);
       expect(rules(key).decayRate).toBeGreaterThanOrEqual(0);
     }
     // the axis itself
@@ -291,8 +332,8 @@ describe("L6 the rules, pure", () => {
 
   it("settles so Easy and Normal can only climb, and Hard can lose", () => {
     const s = createTuningSession(1, "ore");
-    recordTuningCleared(s, TUNING.targetScore);
-    expect(tuningSessionYield(s, rules("easy").minYield)).toBe(TUNING.maxYield);
+    recordTuningCleared(s, FULL_SCORE);
+    expect(tuningSessionYield(s, rules("easy").minYield)).toBe(FULL_YIELD);
 
     // A Depot already at ×2.0, then played badly (score 0).
     expect(settleTuningYield(2, 0, rules("easy"))).toBe(2);
@@ -304,8 +345,8 @@ describe("L6 the rules, pure", () => {
     expect(settleTuningYield(1.5, 0, rules("hard"), { abandon: true })).toBe(TUNING.minYield);
     // First session ever, on a Depot at its birth level: the clamp is a no-op
     // on the way up.
-    expect(settleTuningYield(undefined, TUNING.targetScore, rules("normal")))
-      .toBe(TUNING.maxYield);
+    expect(settleTuningYield(undefined, FULL_SCORE, rules("normal")))
+      .toBe(FULL_YIELD);
   });
 
   it("cools a yield on one row and not the other two — same function", () => {
@@ -436,10 +477,10 @@ describe("L6 one live game, three rows", () => {
     const id = h.tuning!.depotId;
     connect(h, site);
     // Play it well: the full multiplier, on a Depot whose cargo the clock pays.
-    h.board.onClear(TUNING.targetScore, 1);
+    h.board.onClear(FULL_SCORE, 1);
     h.tuningFinish(false);
     await settle();
-    expect(levelOf(h, id)).toBe(TUNING.maxYield);
+    expect(levelOf(h, id)).toBe(FULL_YIELD);
 
     // Income at the fresh level, then the same Depot after the clock has been
     // shaving it. Same loop, same factors, same purse — the only thing that
@@ -466,7 +507,7 @@ describe("L6 one live game, three rows", () => {
     const [fresh, t1] = paid(20, t0);
     expect(fresh, "a connected, well-tuned Depot pays").toBeGreaterThan(0);
     const cooledTo = levelOf(h, id)!;
-    expect(cooledTo, "and the tick has already been cooling it").toBeLessThan(TUNING.maxYield);
+    expect(cooledTo, "and the tick has already been cooling it").toBeLessThan(FULL_YIELD);
     const [cooled] = paid(20, t1);
     expect(cooled, "the cooled Depot pays less than the fresh one").toBeLessThan(fresh);
     expect(cooled).toBeGreaterThan(0);
@@ -496,11 +537,11 @@ describe("L6 one live game, three rows", () => {
     expect(h.placeDepot(site.hx, site.hy)).toBe(true);
     await settle();
     const id = h.tuning!.depotId;
-    h.board.onClear(TUNING.targetScore, 1);
+    h.board.onClear(FULL_SCORE, 1);
     h.tuningFinish(false);
     await settle();
     const base = levelOf(h, id)!;
-    expect(base).toBe(TUNING.maxYield);
+    expect(base).toBe(FULL_YIELD);
 
     let t = performance.now();
     // Normal freezes it…

@@ -83,9 +83,12 @@ let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 /** The captured rAF callback — frames run only when the test pumps them. */
 let rafCb: ((t: number) => void) | null = null;
+// STALE: other widgets register rAF callbacks too now, so a single captured slot lost the game's
+// loop; every callback registered since the last pump is run.
+let rafQueue: ((t: number) => void)[] = [];
 const pump = async (t: number) => {
-  const cb = rafCb; rafCb = null;
-  if (cb) cb(t);
+  const cbs = rafQueue; rafQueue = []; rafCb = null;
+  for (const cb of cbs) cb(t);
   await flush(2);
 };
 
@@ -102,9 +105,10 @@ beforeEach(() => {
     observe() {} unobserve() {} disconnect() {}
   };
   (globalThis as Record<string, unknown>).OffscreenCanvas = undefined;
-  rafCb = null;
+  rafCb = null; rafQueue = [];
   window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
     rafCb = cb as (t: number) => void;
+    rafQueue.push(cb as (t: number) => void);
     return 7;
   }) as never;
   window.cancelAnimationFrame = (() => { rafCb = null; }) as never;
@@ -161,11 +165,14 @@ describe("#302 preload wiring", () => {
 
     // The art lands: the bar completes, the overlay lifts, the clocks start.
     releaseImages();
-    await flush();
+    // STALE: the boot has more async hops before its first frame is armed now; give it a few pumps.
+    await flush(60);
     await pump(3000);
+    await pump(3100);
     expect(hook().artLoad).toMatchObject({ ready: true, done: 12, total: 12 });
     expect(hook().clocksLive).toBe(true);
-    expect(root.querySelector("#iso-loading.iso-loading-out")).not.toBeNull();
+    // the overlay is lifting (fading out) or, after the extra pumps, already gone
+    expect(root.querySelector("#iso-loading:not(.iso-loading-out)")).toBeNull();
   });
 
   it("tracks 11 steps with rail off and still reveals", async () => {

@@ -40,7 +40,8 @@ describe("BM-2 session rules", () => {
     expect(sabotagedScore(100, target, 300000)).toBe(100);
   });
   it("accepts old saves and sanitises malformed deadlines", () => {
-    expect(readBlackMarket()).toEqual({ frostUntil: 0, redTapeUntil: 0, readyAt: 0 });
+    // STALE (PERK-1 #610): the state also carries the manager's frost / girders bonuses (default 0).
+    expect(readBlackMarket()).toEqual({ frostUntil: 0, redTapeUntil: 0, readyAt: 0, frostBonus: 0, girdersBonus: 0 });
     expect(readBlackMarket({ frostUntil: NaN, redTapeUntil: -1, readyAt: Infinity })).toEqual(readBlackMarket());
   });
 });

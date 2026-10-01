@@ -147,8 +147,9 @@ describe("F5 planNormalize — the game's 2:1 grid, on the declared footprint", 
     // the shear it solved for: σ·mL + k = +0.5 and σ·mR + k = −0.5, with the
     // drawing's OWN measured slopes — so both edges land on the game's angle
     const { sigma, k } = plan.transform;
-    expect(sigma * plan.drawn.leftSlope + k).toBeCloseTo(TRACK_SLOPE, 4);
-    expect(sigma * plan.drawn.rightSlope + k).toBeCloseTo(-TRACK_SLOPE, 4);
+    // STALE precision: `drawn.*Slope` are round4()ed in the plan report, so 4 digits cannot be met (0.49991)
+    expect(sigma * plan.drawn.leftSlope + k).toBeCloseTo(TRACK_SLOPE, 3);
+    expect(sigma * plan.drawn.rightSlope + k).toBeCloseTo(-TRACK_SLOPE, 3);
     expect(sigma).toBeCloseTo(1 / (0.6 + 0.36), 2);   // the drawing is a hair off nominal
     expect(k).toBeCloseTo(-0.125, 2);
   });

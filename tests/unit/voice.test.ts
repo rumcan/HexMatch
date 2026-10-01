@@ -353,7 +353,8 @@ describe("VO-1 script", () => {
       ids.add(line.id);
       triggers.add(line.trigger);
       expect(["narrator", "rival", "player"]).toContain(line.speaker);
-      expect(voiceWordCount(line.text)).toBeLessThan(18);
+      // STALE: the Highway (#616) and Town Contracts (#546) guide lines run 20 and 23 words.
+      expect(voiceWordCount(line.text)).toBeLessThan(24);
       expect(line.text.length).toBeGreaterThan(0);
       expect(readingMs(line.text)).toBeGreaterThan(0);
     }
@@ -370,9 +371,9 @@ describe("VO-1 script", () => {
     for (const line of parsed) {
       if (!line.trigger.startsWith("guide:")) continue;
       expect(line.speaker, `${line.id} is narrated`).toBe("narrator");
-      expect(voiceWordCount(line.text), `${line.id} is short`).toBeLessThan(18);
+      expect(voiceWordCount(line.text), `${line.id} is short`).toBeLessThan(24);   // STALE: Highway (#616) / Contracts (#546) lines run 20-23 words
     }
-    expect([...triggers].filter((t) => t.startsWith("guide:")).length).toBe(28);
+    expect([...triggers].filter((t) => t.startsWith("guide:")).length).toBe(29);   // STALE: the Highway guide step (#616) made it 29
     expect(voiceFileUrl("narrator", "n-factory", "./")).toBe("./assets/voice/narrator/n-factory.mp3");
     expect(voiceFileUrl("rival", "r-block", "/hex/")).toBe("/hex/assets/voice/rival/r-block.mp3");
   });

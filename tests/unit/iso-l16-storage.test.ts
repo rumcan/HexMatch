@@ -128,17 +128,21 @@ const settle = async () => { for (let i = 0; i < 12; i++) await new Promise((r) 
 let root: HTMLDivElement;
 let dispose: (() => void) | undefined;
 
+// 2026-09-30 (baseline-green ticket): seed 1337 no longer offers a south corridor off a grain
+// industry (the map moved: MAP-2 #559, #535); re-swept, this seed does.
+const SEED = 5;
+
 beforeEach(() => {
   stubCanvas();
   stubImage();
   // L1f (#237): the address bar says which loop this harness plays — the
   // RETIRED one, the loop it was written against. `?loop=old` is the release's
   // escape hatch; a test that wants the new loop says so (`{ newLoop: true }`).
-  window.history.replaceState(null, "", "/?seed=1337&loop=old");
+  window.history.replaceState(null, "", `/?seed=${SEED}&loop=old`);
   localStorage.removeItem(SAVE_KEY);
   localStorage.setItem("hexmatch:rival-skill", "normal");
   localStorage.setItem("hexmatch:tutorial", "never");
-  setRng(mulberry32(1337));
+  setRng(mulberry32(SEED));
   (globalThis as Record<string, unknown>).ResizeObserver = class {
     observe() {} unobserve() {} disconnect() {}
   };
@@ -170,7 +174,7 @@ async function boot(opts: { newLoop?: boolean } = {}) {
 async function reload(opts: { newLoop?: boolean } = {}) {
   dispose?.();
   dispose = undefined;
-  setRng(mulberry32(1337));
+  setRng(mulberry32(SEED));
   return boot(opts);
 }
 
@@ -202,7 +206,7 @@ function southSite(grid: Grid, cargo?: Cargo, skipIds: number[] = []): Site | nu
 /** The PLAYER's corridor: own Factory at the far end, own Depot, own road. */
 function playerCorridor(h: StorageHook, cargo?: Cargo): Site {
   const s = southSite(h.grid, cargo);
-  expect(s, `seed 1337 has a south corridor${cargo ? ` off a ${cargo} industry` : ""}`).toBeTruthy();
+  expect(s, `seed ${SEED} has a south corridor${cargo ? ` off a ${cargo} industry` : ""}`).toBeTruthy();
   h.eco.factories.push({ owner: "you", ownerId: 1, tx: s!.hx, ty: s!.fy, id: 0, townId: null });
   h.eco.harvesters.push({ id: 800, owner: "you", ownerId: 1, tx: s!.hx, ty: s!.hy });
   for (let y = s!.hy + 1; y <= s!.fy; y++) buildTile(h.track, "road", s!.hx, y, 1);
@@ -214,7 +218,7 @@ function playerCorridor(h: StorageHook, cargo?: Cargo): Site {
  *  own track only), exactly the fixture `iso-l1d-rival-clock.test.ts` uses. */
 function rivalCorridor(h: StorageHook, cargo?: Cargo): Site {
   const s = southSite(h.grid, cargo);
-  expect(s, `seed 1337 has a south corridor${cargo ? ` off a ${cargo} industry` : ""}`).toBeTruthy();
+  expect(s, `seed ${SEED} has a south corridor${cargo ? ` off a ${cargo} industry` : ""}`).toBeTruthy();
   h.eco.factories.push({ owner: "ai", ownerId: 2, tx: s!.hx, ty: s!.fy, id: 0, townId: null });
   h.eco.harvesters.push({ id: 900, owner: "ai", ownerId: 2, tx: s!.hx, ty: s!.hy });
   for (let y = s!.hy + 1; y <= s!.fy; y++) buildTile(h.track, "dirt", s!.hx, y, 2);
@@ -403,23 +407,28 @@ describe("L16 (#231) income stops at the cap — and the upgrade raises it", () 
     // A purse far above the cap (dev mode's floor shape) still pays a price
     // through the real placement path: the second Depot pays its type's mix.
     const second = southSite(h.grid, "wood", [first.ind.id])!;
-    expect(second, "seed 1337 has a second corridor off a forest").toBeTruthy();
+    expect(second, `seed ${SEED} has a second corridor off a forest`).toBeTruthy();
     const mix = DEPOT_TREE.wood.cost;
     h.purse.stone = 500;                   // far over the cap, and the mix's cargo
     // …and the rest of the mix (every Depot needs one of each cargo now).
     for (const [c, n] of Object.entries(mix)) if (c !== "stone") (h.purse as Record<string, number>)[c] = Math.max((h.purse as Record<string, number>)[c] ?? 0, n ?? 0);
+    const moneyBefore = h.moneys[0];
     expect(h.placeDepot(second.hx, second.hy)).toBe(true);
     await settle();
     h.tuningFinish(true);
-    expect(h.purse.stone, "the over-cap purse paid the mix in full").toBe(500 - (mix.stone ?? 0));
+    // STALE (ECON-1 #421): builds are paid in MONEY now, not cargo, so the over-cap
+    // purse is never spend-blocked and the Depot is paid in $; the cargo stays put.
+    expect(h.moneys[0], "the over-cap seat paid the Depot in money").toBeLessThan(moneyBefore);
+    expect(h.purse.stone, "no cargo is spent on a build any more").toBe(500);
     expect(h.purse.stone).toBeGreaterThan(cap);
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
 describe("L16 (#231) the UI shows amount / cap and a full state", () => {
-  const chipEls = () => [...root.querySelectorAll<HTMLElement>("#iso-res .chip")];
-  const chipNums = () => [...root.querySelectorAll<HTMLElement>("#iso-res .chip-n")];
+  // STALE (#550): ECON-1 (#421) put a MONEY chip first in the bar, so the cargo chips are the rest.
+  const chipEls = () => [...root.querySelectorAll<HTMLElement>("#iso-res .chip:not(.chip-money)")];
+  const chipNums = () => [...root.querySelectorAll<HTMLElement>("#iso-res .chip:not(.chip-money) .chip-n")];
 
   it("counts toward the cap and flags the cargo sitting at it", async () => {
     const h = await boot({ newLoop: true });

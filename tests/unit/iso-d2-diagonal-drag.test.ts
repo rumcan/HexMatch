@@ -373,7 +373,8 @@ describe("D2 live pointer / R / overlay contract", () => {
     expect(h.money).toBe(0);
   });
 
-  it.each(["road", "street", "highway", "ramp"] as const)("the %s toolbar selection, debug preview and pointer price agree", async (tier) => {
+  // STALE (#454): the Ramp button is hidden from the toolbar (the tool still exists in code).
+  it.each(["road", "street", "highway"] as const)("the %s toolbar selection, debug preview and pointer price agree", async (tier) => {
     const h = await boot();
     const button = root.querySelector<HTMLButtonElement>(`[data-tool="${tier}"]`)!;
     expect(button).not.toBeNull();

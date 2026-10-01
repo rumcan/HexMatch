@@ -31,13 +31,14 @@ describe("#166 HUD icons", () => {
     expect(html).toContain('alt="Wood"');
     expect(html).toContain('alt="Stone"');
     expect(html).toContain('alt="Oil"');
-    expect(html).toMatch(/<b>1<\/b>/);
+    expect(html).toMatch(/<b>3<\/b>/);   // STALE: prices x3 (2026-09 balancing pass)
     expect(html).not.toMatch(EMOJI);
   });
 
   it("depotButtonMarkup keeps the setup copy and names Oil with a gem", () => {
     expect(depotButtonMarkup(1)).toMatch(/free setup/);
-    expect(depotButtonMarkup(1)).toContain('alt="Oil"');
+    // STALE (ECON-1 #421): the button quotes the price in $, not gem chips.
+    expect(depotButtonMarkup(1)).toContain('cost-chip money');
     expect(depotButtonMarkup(0)).toMatch(/on industry/);
     expect(depotButtonMarkup(0)).not.toMatch(EMOJI);
   });
@@ -50,7 +51,7 @@ describe("#166 HUD icons", () => {
     expect(locked).toMatch(/by industry/);
     // With the rung gate off (owner call, 2026-09) every Depot costs one of each cargo but gold.
     if (DEPOT_RUNG_GATE) expect(locked, "the starter rungs cost no Oil").not.toContain('alt="Oil"');
-    else expect(locked).toContain('alt="Oil"');
+    else expect(locked).toContain('cost-chip money');   // STALE (ECON-1 #421): quoted in $
     expect(depotButtonMarkup(1, { newLoop: true, tier: 0 }), "the allowance keeps its line")
       .toMatch(/free setup · then from /);
 
@@ -62,7 +63,8 @@ describe("#166 HUD icons", () => {
 
     // The shipped loop is untouched: no tier, no new-loop wording.
     expect(depotButtonMarkup(1, { newLoop: false, tier: 2 })).toBe(depotButtonMarkup(1));
-    expect(depotButtonMarkup(1)).toContain('alt="Oil"');
+    // STALE (ECON-1 #421): the button quotes the price in $, not gem chips.
+    expect(depotButtonMarkup(1)).toContain('cost-chip money');
   });
 
   it("chrome SVGs are currentColor strokes, no Unicode glyphs", () => {

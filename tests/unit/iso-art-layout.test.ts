@@ -75,7 +75,7 @@ describe("T2 real town buildings", () => {
     expect(centre.file).toBe("houses/ttd/church.png");
     expect(manifest.sprites.town_center.footprint).toEqual([1, 1]);
     // every variant is a packed TTD house file on its own 1×1 tile
-    expect(TOWN_HOUSE_VARIANTS).toHaveLength(43);
+    expect(TOWN_HOUSE_VARIANTS).toHaveLength(25);   // STALE: PP-12 packed 43; the variant list was later curated down to 25
     for (const name of TOWN_HOUSE_VARIANTS) {
       expect(name).toMatch(/^town_/);
       expect(cell(name).file, `${name} must be a file cell`).toMatch(/^houses\/ttd\/.*\.png$/);

@@ -831,7 +831,7 @@ describe("MP-05 an intent and its result, over the pair", () => {
     expect(received).toEqual(["build"]);
     expect(got.length).toBe(1);
     // The tile arrives at the GUEST as its own (owner byte 1 after the mirror).
-    expect(got[0].tiles).toContainEqual({ i: 9 * MAP_W + 9, dirt: 16, road: 0, owner: 1, upgraded: 0 });
+    expect(got[0].tiles).toContainEqual({ i: 9 * MAP_W + 9, dirt: 16, road: 0, owner: 1, upgraded: 0, tier: 0 });   // STALE: tiles carry a diagonal `tier` byte now (D-series)
     h.dispose();
     g.dispose();
   });

@@ -23,8 +23,9 @@ vi.mock("../../src/net/transport", async (importOriginal) => {
     createRoom: vi.fn(),
     joinRoomByCode: vi.fn(),
     quickMatch: vi.fn(),
-    listRejoinableRooms: vi.fn(),
-    readActiveMatch: vi.fn(),
+    // STALE: the rejoin offer (#164) awaits these; an undefined result threw an unhandled rejection that failed the whole run.
+    listRejoinableRooms: vi.fn(async () => []),
+    readActiveMatch: vi.fn(async () => null),
     writeActiveMatch: vi.fn(),
     promptLogin: vi.fn(async () => ({ success: false })),
     isOfflineMockRealtime: vi.fn(() => false),
@@ -416,7 +417,7 @@ describe("PROG-1 scenario list", () => {
     expect(card("Highlands").textContent).toMatch(/campaign contract/i);
     // the open card starts its scenario
     await act(async () => { card("River Valley").click(); });
-    expect(choices).toEqual([{ mode: "scenario", scenario: "river-valley", portrait: "vex" }]);
+    expect(choices).toEqual([{ mode: "scenario", scenario: "river-valley", portrait: "anne" }]);   // STALE (CAST-1 #554): the managers roster changed; the default starter is Anne
   });
 
   it("opens won scenarios with their best lines on the card", async () => {

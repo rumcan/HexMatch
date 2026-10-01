@@ -52,10 +52,12 @@ describe("continuous coastline", () => {
   });
 
   it.each([
-    [42, "a95bfd3d67e097123424adc7b1c8da3c6a475a1e50b021ce2a317b6737938939"],
-    [1337, "e2cd07b21c5167c8d317fd3361d2aea26e05c75719ec3e9438fdc3a4ac9fc510"],
-  ] as const)("preserves v14 save placement for seed %i", (seed, hash) => {
-    // Re-captured for snapshot v14, when every resource became a 4×4 lot (the
+    [42, "0aec1ec9f6bf1404e44cfb73445a6c8ff67f1fc19cfbda87a933bfe84ca603bb"],
+    [1337, "30b5384c1994434c5d0063689f7a9efc65c447f67ff8dba0f85365cf1513cc27"],
+  ] as const)("preserves v17 save placement for seed %i", (seed, hash) => {
+    // Re-captured 2026-09-30 for snapshot v17 (MAP-2 #559 level-ground industries, TOWN-3 #561 names, #535
+    // apron and the later map work all moved the placement; the version was bumped along the way).
+    // Earlier: re-captured for snapshot v14, when every resource became a 4×4 lot (the
     // v10 pins came from main 42db9b9). Save loading regenerates these objects,
     // so changing them would move saved buildings — bump SNAPSHOT_VERSION when
     // they have to change again.

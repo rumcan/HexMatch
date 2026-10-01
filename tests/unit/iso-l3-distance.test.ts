@@ -391,8 +391,19 @@ function buildCorridor(h: DistanceHook, id: number, factoryId: number, c: Corrid
   for (let y = c.hy + 1; y <= c.fy; y++) buildTile(h.track, "dirt", c.hx, y, 1);
 }
 
+// 2026-09-30 (baseline-green ticket): seed 1337 no longer offers a farm corridor
+// with a free 2x2 lot (the map moved: MAP-2 #559 level-ground industries, #535
+// elevation around industries). Re-swept: seed 5 offers a near farm + far
+// forest pair, so the two corridor tests pin it instead.
+const CORRIDOR_SEED = 5;
+function useCorridorSeed() {
+  window.history.replaceState(null, "", `/?seed=${CORRIDOR_SEED}&loop=old`);
+  setRng(mulberry32(CORRIDOR_SEED));
+}
+
 describe("L3 (#217) the clock pays near faster than far", () => {
   it("ticks two identical depots 2:1 — near at ×1.0, far at ×0.5", async () => {
+    useCorridorSeed();
     const h = await boot({ newLoop: true });
     expect(h.newLoop).toBe(true);
     // Farm and forest both print 1.0, so the depots are identical but for the
@@ -400,7 +411,7 @@ describe("L3 (#217) the clock pays near faster than far", () => {
     expect(INDUSTRY_BY_KEY["farm"].output).toBe(1.0);
     expect(INDUSTRY_BY_KEY["forest"].output).toBe(1.0);
     const pair = pickPair(findCorridors(h, 5, "farm"), findCorridors(h, 24, "forest"));
-    expect(pair, "seed 1337 offers a near farm + far forest corridor pair").toBeTruthy();
+    expect(pair, `seed ${CORRIDOR_SEED} offers a near farm + far forest corridor pair`).toBeTruthy();
     const { near, far } = pair!;
     buildCorridor(h, 1, 0, near);
     buildCorridor(h, 2, 1, far);
@@ -453,9 +464,10 @@ describe("L3 (#217) the clock pays near faster than far", () => {
   });
 
   it("recomputes on network change: cut the road, lose the route; mend it, get it back", async () => {
+    useCorridorSeed();
     const h = await boot({ newLoop: true });
     const corridors = findCorridors(h, 5, "farm");
-    expect(corridors.length, "seed 1337 offers a farm corridor").toBeGreaterThan(0);
+    expect(corridors.length, `seed ${CORRIDOR_SEED} offers a farm corridor`).toBeGreaterThan(0);
     const c = corridors[0];
     buildCorridor(h, 1, 0, c);
     h.rescore();

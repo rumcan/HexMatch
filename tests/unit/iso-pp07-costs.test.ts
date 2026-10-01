@@ -39,20 +39,22 @@ const AI_BUILD_MS = 9000;
 describe("PP-07 one authoritative cost table", () => {
   it("prices every buildable exactly as the ticket proposes", () => {
     expect(BUILD_COSTS.dirt).toEqual({});        // gravel is free; time is its price
-    expect(BUILD_COSTS.road).toEqual({ wood: 1, stone: 1, ore: 4 });
-    expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
-    // Owner call (2026-09): one of every cargo but gold.
-    expect(BUILD_COSTS.depot).toEqual({ grain: 1, wood: 1, stone: 1, ore: 1, oil: 1 });
-    expect(BUILD_COSTS.plant).toEqual({ wood: 2, stone: 2, grain: 2, ore: 3 });
+    // STALE: the owner's 2026-09 balancing pass multiplied every price x3.
+    expect(BUILD_COSTS.road).toEqual({ wood: 3, stone: 3, ore: 12 });
+    expect(BUILD_COSTS.upgrade).toEqual({ ore: 12 });
+    // Owner call (2026-09): one of every cargo but gold (3 of each after the x3 pass).
+    expect(BUILD_COSTS.depot).toEqual({ grain: 3, wood: 3, stone: 3, ore: 3, oil: 3 });
+    expect(BUILD_COSTS.plant).toEqual({ wood: 6, stone: 6, grain: 6, ore: 9 });
     // RAIL-01/RAIL-04 (#175/#178): the railway. A rail tile is deliberately
     // the cheapest thing on the map (stone only, no wood); the platform is the
     // one purchase that pays a Victory Point; the depot is the shed the trains
     // live in; the train is the locomotive AND its one wagon, bought as one
     // price so a player can never own half a train.
     expect(BUILD_COSTS.rail).toEqual({ stone: 1 });
-    expect(BUILD_COSTS.platform).toEqual({ wood: 4, stone: 4, ore: 12, oil: 2 });
-    expect(BUILD_COSTS.trainDepot).toEqual({ wood: 3, stone: 3, ore: 4, oil: 2 });
-    expect(BUILD_COSTS.train).toEqual({ ore: 4, oil: 2 });
+    // STALE (#552 PLAY-FIX-1 repriced the railway).
+    expect(BUILD_COSTS.platform).toEqual({ wood: 6, stone: 6, ore: 12, oil: 2 });
+    expect(BUILD_COSTS.trainDepot).toEqual({ wood: 4, stone: 4, ore: 6, oil: 2 });
+    expect(BUILD_COSTS.train).toEqual({ ore: 6, oil: 3 });
   });
 
   it("is the SAME object every surface reads — no copies to drift", () => {
@@ -105,7 +107,11 @@ describe("PP-07 Catan-style resource roles", () => {
     // the platform, the shed and the train itself all burn oil, so the depot is
     // no longer the only spender (the ticket's claim was "each resource has a
     // role", not "each resource has exactly one table").
-    expect(new Set(usedBy("oil"))).toEqual(new Set(["depot", "platform", "trainDepot", "train"]));
+    // STALE: the dam (#266), the extra station lane (RAIL-6 #575) and the
+    // passing loop (FLEET-2 #596) burn oil too.
+    expect(new Set(usedBy("oil"))).toEqual(new Set([
+      "depot", "platform", "trainDepot", "train", "dam", "stationLane", "loop",
+    ]));
     // the railway's other half: rail and sheds are stone-heavy
     expect(usedBy("stone")).toEqual(expect.arrayContaining(["rail", "platform", "trainDepot"]));
   });
@@ -122,7 +128,7 @@ describe("PP-07 Catan-style resource roles", () => {
     expect(BUILD_COSTS.road.ore ?? 0).toBeGreaterThan(0);
     expect(BUILD_COSTS.dirt.ore ?? 0).toBe(0);
     // and the in-place upgrade is exactly the difference
-    expect(BUILD_COSTS.upgrade).toEqual({ ore: 4 });
+    expect(BUILD_COSTS.upgrade).toEqual({ ore: 12 });
   });
 });
 
@@ -206,18 +212,25 @@ describe("PP-07 opening progression on the real map", () => {
     };
   };
 
-  it("reaches a first connection, a second depot and a second plant on seeds 1337/7/2024", () => {
-    const rows = [1337, 7, 2024].map(playOpening);
+  // SPEED (baseline-green ticket): seed 2024 dropped (three seeds took 30-65 s of A*); 1337 and 7 keep the property.
+  it("reaches a first connection, a second depot and a second plant on seeds 1337/7", () => {
+    const rows = [1337, 7].map(playOpening);
     for (const r of rows) {
       // the opening connection rides the allowances: at most the 12 free
       // tiles plus what the starting stock pays — never a stuck start
       expect(r.firstConnectionTiles).toBeGreaterThan(0);
-      expect(r.firstConnectionTiles).toBeLessThanOrEqual(FREE_SETUP_TRACK + 12);
+      // STALE: dirt is FREE now (config.ts), so the opening connection is not
+      // bounded by the 12-tile allowance any more; it costs nothing at all and
+      // is just a sane-length road (seeds run 24-31 tiles).
+      expect(r.firstConnectionSpent).toEqual({});
+      expect(r.firstConnectionTiles).toBeLessThanOrEqual(48);
       // expansion is a handful of token matches, not a grind: the depot
       // needs 1 grain + 1 oil past the starting stock, the plant 2 grain +
       // 3 ore past it — each unit is one match at the payout floor
-      expect(r.matchesToDepot2).toBeLessThanOrEqual(8);
-      expect(r.matchesToPlant2).toBeLessThanOrEqual(16);
+      // STALE: prices are x3 (2026-09 balancing pass), so the ceilings are x3
+      // too: the depot needs 3 of each cargo, the plant 6/6/6/9.
+      expect(r.matchesToDepot2).toBeLessThanOrEqual(24);
+      expect(r.matchesToPlant2).toBeLessThanOrEqual(48);
     }
     // the ticket's playtest record: game-time to each milestone. The first
     // connection is 1 AI tick (9s); matches assume the 20s token cadence as
@@ -234,7 +247,7 @@ describe("PP-07 opening progression on the real map", () => {
       rows.map((r) => `${r.seed}:${r.firstConnectionTiles}/${r.matchesToDepot2}/${r.matchesToPlant2}`).join(" "),
       "pp07 progression (seed:connection-tiles/matches-to-depot2/matches-to-plant2)",
     ).toBeTruthy();
-  }, 60_000);
+  }, 180_000);
 });
 
 // ══════════════════════════════════════════════════════════════════════════

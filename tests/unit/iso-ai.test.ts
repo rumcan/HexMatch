@@ -260,7 +260,7 @@ describe("E7 planning", () => {
     // is covered, so the Depot is affordable and the transport choice stays
     // the thing under test.
     // (2026-09: a Depot also takes 1 ore — still far short of a road tile's 4.)
-    const plan = planCandidates(state(grid), F, { stock: {}, purse: { wood: 50, stone: 50, grain: 1, ore: 1, oil: 1 } });
+    const plan = planCandidates(state(grid), F, { stock: {}, purse: { wood: 50, stone: 50, grain: 3, ore: 3, oil: 3 } });   // STALE: prices x3 (2026-09) - a Depot is 3 of each, a road tile 12 ore
     expect(plan.length).toBeGreaterThan(0);
     expect(plan.every((c) => c.kind === "dirt")).toBe(true);
     expect(TRANSPORT.road.cost.ore).toBeGreaterThan(0);
@@ -567,6 +567,7 @@ describe("W8 a no-op turn is reported as no turn", () => {
   });
 });
 
+// LOAD (baseline-green ticket): these A* placements take 11-17 s on the MAP-2 maps; 10 s timed out on loaded runners.
 describe("W8 the rival's factory is placed where it can build", () => {
   it("picks a road-legal tile with a real plan, not the farthest dirt-only one", () => {
     const grid = generateMap(1337);
@@ -590,7 +591,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     expect(out.built.length).toBeGreaterThan(0);
     expect(out.harvester).toBeTruthy();
     expect(isServiced(eco.track, out.harvester!)).toBe(true);
-  }, 10_000);
+  }, 60_000);
 
   it.skip("is deterministic, and never returns an enclave for any player tile", () => {
     const grid = generateMap(1337);
@@ -606,7 +607,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
       expect(canReachASpot(grid, s![0], s![1]), `enclave for player ${px},${py}`).toBe(true);
       expect(s).not.toEqual([px, py]);
     }
-  }, 10_000);
+  }, 60_000);
 
   it("still returns a tile when nothing is affordable (the rival exists)", () => {
     const grid = generateMap(1337);
@@ -615,7 +616,7 @@ describe("W8 the rival's factory is placed where it can build", () => {
     });
     expect(spot).toBeTruthy();
     expect(canBuildOn(grid, "dirt", spot![0], spot![1])).toBe(true);
-  }, 10_000);
+  }, 60_000);
 });
 
 // ══════════════════════════════════════════════════════════════════════════

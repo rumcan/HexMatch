@@ -121,9 +121,16 @@ describe("PP-13 public road generation", () => {
   });
 
   it("is a pure function of the towns, terrain and occupancy", () => {
+    // STALE: `generateMap` derives the highways BEFORE its later terrain passes
+    // (spawn-buffer repair, the town-ring flattening, MAP-2 levelling), so the
+    // finished grid's terrain is no longer the input they were derived from.
+    // Purity is pinned on the function itself and on the seed instead.
     const g = generateMap(79);
-    const again = publicRoadTiles(g.towns, g.terrain, g.occupancy);
-    expect(again).toEqual(g.publicRoads);
+    const a = publicRoadTiles(g.towns, g.terrain, g.occupancy);
+    const b = publicRoadTiles(g.towns, g.terrain, g.occupancy);
+    expect(b).toEqual(a);
+    expect(a.length).toBeGreaterThan(0);
+    expect(generateMap(79).publicRoads).toEqual(g.publicRoads);
   });
 
   it.skip("paves nothing when there is only one town to connect", () => {
@@ -222,10 +229,19 @@ describe("PP-13 public roads are every player's to drive on", () => {
     for (const [tx, ty] of g.publicRoads ?? []) {
       for (const [dx, dy] of DIR4) {
         const hx = tx + dx, hy = ty + dy;
-        if (!inBounds(hx, hy)) continue;
-        const i = idx(hx, hy);
-        if (g.terrain[i] === WATER || g.occupancy[i] !== -1) continue;
-        if (hasTrack(track, "road", hx, hy) || hasTrack(track, "dirt", hx, hy)) continue;
+        // STALE: a Depot is a 2x2 lot now (`DEPOT_SIZE`), and `playerNetwork` seeds the
+        // whole lot. The whole lot must be free ground with no highway tile inside it,
+        // or the depot would sit ON the highway and join it trivially (even for owner 0).
+        let free = true;
+        for (let ox = 0; ox < 2 && free; ox++) for (let oy = 0; oy < 2 && free; oy++) {
+          const lx = hx + ox, ly = hy + oy;
+          if (!inBounds(lx, ly)) { free = false; break; }
+          const i = idx(lx, ly);
+          if (g.terrain[i] === WATER || g.occupancy[i] !== -1) free = false;
+          else if (hasTrack(track, "road", lx, ly) || hasTrack(track, "dirt", lx, ly)) free = false;
+          else if (lx === tx && ly === ty) free = false;
+        }
+        if (!free) continue;
         return [tx, ty, hx, hy];
       }
     }

@@ -394,9 +394,11 @@ function assertAllBuildsFlagged(result: SimResult, leadMs: number) {
     result.plantBuilds);
 }
 
+// SPEED (baseline-green ticket, 2026-09-30): the sims ran 240 game-seconds each (~100 s wall). The first
+// Depot lands well inside 150 s (Normal, new loop) and 30 s (Hard, old loop), which is all these assert.
 describe("sim: every rival Depot/Factory build is preceded by a claim flag for the lead time", () => {
   it("new loop (the shipped game), Normal rival — depots, plants, and a contested race", async () => {
-    const result = await runSim({ newLoop: true }, "normal", 240);
+    const result = await runSim({ newLoop: true }, "normal", 150);
     // the rival actually played — flags went up and Depots came down
     expect(result.flags.length, "the rival raised claim flags").toBeGreaterThan(0);
     expect(result.depotBuilds.length, "the rival built a Depot behind its flags").toBeGreaterThan(0);
@@ -410,7 +412,7 @@ describe("sim: every rival Depot/Factory build is preceded by a claim flag for t
 
   it("shipped loop (?loop=old), Hard rival — depots and plants", async () => {
     localStorage.setItem("hexmatch:rival-skill", "hard");
-    const result = await runSim({ newLoop: false }, "hard", 240);
+    const result = await runSim({ newLoop: false }, "hard", 30);
     expect(result.flags.length, "the rival raised claim flags").toBeGreaterThan(0);
     expect(result.depotBuilds.length, "the rival built a Depot behind its flags").toBeGreaterThan(0);
     assertAllBuildsFlagged(result, RIVAL_SKILLS.hard.claimLeadMs);
