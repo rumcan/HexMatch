@@ -133,6 +133,12 @@ test.describe("PERF-01 performance mode", () => {
   });
 
   test("settings sheet: the switch sits beside Miniature and suppresses it", async ({ page }) => {
+    // E2E-GREEN-1 (#666): this test crosses the whole graphics surface — the sheet, four
+    // switch presses, seven `slowExpect` polls (30 s each) and a full-canvas `getImageData`
+    // readback, every hop riding the software-GL frame queue. On CI the 120 s per-test budget
+    // ran out inside a `terrainState` evaluate (perf-mode.spec.ts:181) and, in another run,
+    // inside a switch click (:180). `slow()` triples the budget; the assertions are unchanged.
+    test.slow();
     await bootIso(page);
     await openSettings(page);
 

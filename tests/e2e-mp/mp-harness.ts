@@ -56,6 +56,20 @@ export const MP_DEPARTURE_MS = MP_GRACE_MS * 3;
  *  open a new one; the room only has to hold the seat while it does. */
 export const MP_REATTACH_MS = 240_000;
 
+/** E2E-GREEN-1 (#666): ceiling for the OPENING MIRROR — the host's Factory and
+ *  Depot standing in the guest's world (and the guest's standing in the host's),
+ *  which is what `playSetup` waits on before it can hand the seat to the match.
+ *
+ *  It is a room round trip between two software-rasterized clients: the host
+ *  publishes its opening (the Factory forces a delta; the Depot rides the 200 ms
+ *  heartbeat), and the guest has to be running well enough to apply it — and to
+ *  answer the `readState` evaluate the poll makes. On the loaded CI runner that
+ *  can take far longer than the 60 s this used to allow, which is the room's
+ *  RECONNECT floor (`MP_GRACE_MS`), not a cross-client readiness budget — the
+ *  failure that took mp-lobby:21 and mp-leave:92 down was this poll, at 60 s.
+ *  `PW_MP_MIRROR_MS` overrides it, like the other budgets. */
+export const MP_MIRROR_MS: number = Number(process.env.PW_MP_MIRROR_MS ?? 0) || 180_000;
+
 /**
  * Press one control, the way a player does.
  *
@@ -273,7 +287,7 @@ export async function playSetup(pair: Pair): Promise<void> {
     await expect.poll(async () => {
       const state = await readState(side);
       return ["you", "ai"].every((o) => state.factories.some((f) => f[0] === o) && state.harvesters.some((h) => h[0] === o));
-    }, { message: `${side.name} holds both openings`, timeout: 60_000 }).toBe(true);
+    }, { message: `${side.name} holds both openings`, timeout: MP_MIRROR_MS }).toBe(true);
   }
   for (const side of [pair.host, pair.guest]) await side.page.evaluate(finishSetup);
   await Promise.all([expectInPlay(pair.host), expectInPlay(pair.guest)]);
@@ -312,7 +326,7 @@ async function expectMirrored(side: Side, what: string): Promise<void> {
   await expect.poll(async () => {
     const state = await readState(side);
     return state.factories.some((f) => f[0] === "ai") && state.harvesters.some((h) => h[0] === "ai");
-  }, { message: `${side.name} mirrors ${what}`, timeout: 60_000 }).toBe(true);
+  }, { message: `${side.name} mirrors ${what}`, timeout: MP_MIRROR_MS }).toBe(true);
 }
 
 /** One seat's live state, read in the page. */
