@@ -172,7 +172,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     }
   };
 
-  // Q/E turn 90 degrees about the screen-centre ground point, eased; ?yaw=<deg> pins it.
+  // [ and ] turn 90 degrees about the screen-centre ground point, eased; ?yaw=<deg> pins it.
   let yawTarget = fixedYaw != null ? (Number(fixedYaw) * Math.PI) / 180 : 0;
   let yaw = yawTarget;
   let lastT = 0;
@@ -180,8 +180,8 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     if (fixedYaw != null || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-    if (e.key === "q" || e.key === "Q") yawTarget -= Math.PI / 2;
-    else if (e.key === "e" || e.key === "E") yawTarget += Math.PI / 2;
+    if (e.key === "[") yawTarget -= Math.PI / 2;
+    else if (e.key === "]") yawTarget += Math.PI / 2;
   };
   window.addEventListener("keydown", onKey);
 

@@ -24,22 +24,40 @@ async function run(browser, name, extra) {
   }, null, { timeout: 120000 });
   await page.waitForTimeout(1500);
   // stage 2: put a Factory and a crowd of Depots on the map so real models have instances
-  const pan = await page.evaluate(() => {
+  await page.evaluate(() => {
     const h = window.__iso;
     outer: for (const t of h.grid.towns) for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) {
       const tx = t.tx + dx, ty = t.ty + dy;
       if (tx < 0 || ty < 0 || tx >= h.grid.w || ty >= h.grid.h) continue;
       if (h.placementPlan("factory", tx, ty).valid && h.placeFactory(tx, ty)) break outer;
     }
-    const spots = [];
+  });
+  const cands = await page.evaluate(() => {
+    const h = window.__iso, c = [];
     for (const ind of h.grid.industries) for (let dy = 0; dy <= 4; dy++) for (let dx = -2; dx <= ind.w + 1; dx++) {
       const tx = ind.tx + dx, ty = ind.ty + ind.h + dy;
-      if (tx < 0 || ty < 0 || tx >= h.grid.w || ty >= h.grid.h) continue;
-      if (h.tileProbe("dirt", tx, ty).harvester.ok && h.placeDepot(tx, ty)) spots.push({ tx, ty });
+      if (tx >= 0 && ty >= 0 && tx < h.grid.w && ty < h.grid.h && h.tileProbe("dirt", tx, ty).harvester.ok) c.push({ tx, ty });
     }
-    return spots[0] ?? null;
+    return c;
   });
-  console.log(name, "first depot", JSON.stringify(pan));
+  // a Depot opens a tuning session over the map: skip the briefing, abandon it, then place the next
+  const dismiss = async () => {
+    const win = page.locator("#iso-session");
+    for (let i = 0; i < 4 && (await win.isVisible()); i++) {
+      const skip = win.getByRole("button", { name: /Skip/ });
+      if (await skip.count() && await skip.first().isVisible()) await skip.first().click();
+      const ab = win.locator(".tp-abandon");
+      if (await ab.count() && await ab.first().isVisible()) await ab.first().click();
+      await page.waitForTimeout(300);
+    }
+  };
+  let pan = null, placed = 0;
+  for (const c of cands) {
+    if (placed >= 20) break;
+    if (await page.evaluate((c) => window.__iso.placeDepot(c.tx, c.ty), c)) { placed++; pan ??= c; await dismiss(); }
+  }
+  if (await page.locator("#iso-session").isVisible()) throw new Error("tuning session still covers the map");
+  console.log(name, "depots placed", placed, JSON.stringify(pan));
   const town = pan ?? await page.evaluate(() => { const t = window.__iso.grid.towns[0]; return { tx: t.tx, ty: t.ty }; });
   const rows = [];
   for (const zoom of [0.5, 1, 2]) {
@@ -69,7 +87,8 @@ async function run(browser, name, extra) {
       return { fps: Math.round((frames * 1000) / ms * 10) / 10, worstMs: Math.round(worst), stats: h.threeStats?.() ?? null, zoom: h.camera.zoom };
     }, { town, secs: SECS });
     rows.push({ variant: name, want: zoom, ...r });
-    if (zoom === 1) await page.screenshot({ path: `tools/perf/three-spike-${name}.png` });
+    await page.evaluate((t) => window.__iso.centerOn(t.tx + 0.5, t.ty + 1), town); await page.waitForTimeout(800);
+    await page.screenshot({ path: `tools/perf/three-spike-${name}-z${zoom}.png` });
   }
   await ctx.close();
   return rows;
