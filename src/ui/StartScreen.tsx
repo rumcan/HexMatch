@@ -356,6 +356,8 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   } | null>(null);
   /** What the rejoin screen's Abandon/Dismiss returns to. */
   const [rejoinNext, setRejoinNext] = useState<"choose" | "matchmaking">("choose");
+  /** Green baseline (2026-10-01): where Not now / Abandon land: the screen the offer interrupted. */
+  const [rejoinHome, setRejoinHome] = useState<"choose" | "multiplayer">("choose");
 
   /**
    * #164: ask the platform for a match this player was dropped from. The
@@ -379,13 +381,19 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   // first thing they see is the choice to walk back into it. Only offered
   // from the neutral ground ("choose") — never over a flow already running.
   useEffect(() => {
-    if (initial !== "choose") return;
+    // Green baseline (2026-10-01): the front door is the main menu now, and a returning player reaches this
+    // screen through its Play OR its Multiplayer tab (`initial` "choose" / "multiplayer"). The offer was only
+    // wired to "choose", so a player kicked mid-match who went straight to Multiplayer (the natural door)
+    // was never told their seat was being held. Offered from either neutral landing; `s === initial` keeps
+    // it from hijacking a flow the player has already started.
+    if (initial !== "choose" && initial !== "multiplayer") return;
     let live = true;
     void findRejoinable().then((found) => {
       if (!live || !found) return;
       setRejoinable(found);
       setRejoinNext("choose");
-      setState((s) => (s === "choose" ? "rejoin" : s));
+      setRejoinHome(initial);
+      setState((s) => (s === initial ? "rejoin" : s));
     });
     return () => { live = false; };
   }, [findRejoinable, initial]);
@@ -784,8 +792,8 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
       void beginMatch();
       return;
     }
-    setState("choose");
-  }, [beginMatch, busy, rejoinNext, rejoinable, withLogin]);
+    setState(rejoinHome);
+  }, [beginMatch, busy, rejoinHome, rejoinNext, rejoinable, withLogin]);
 
   const backToChoose = useCallback(() => {
     releaseRoom();
@@ -1484,7 +1492,7 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         <p className="rejoin-room">Room <b>{rejoinable.summary.roomCode}</b>{ranked ? " · ranked" : ""}</p>
         {error ? <p className="lobby-error">{error}</p> : null}
         <div className="lobby-actions">
-          <button disabled={busy} onClick={() => { setRejoinable(null); setState("choose"); }}>{dismissLabel}</button>
+          <button disabled={busy} onClick={() => { setRejoinable(null); setState(rejoinHome); }}>{dismissLabel}</button>
           <button className="danger" disabled={busy} onClick={() => void abandonRejoinable()}>
             {busy ? "Working…" : "Abandon"}{ranked ? " (counts as a loss)" : ""}
           </button>
