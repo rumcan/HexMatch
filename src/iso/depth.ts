@@ -367,6 +367,13 @@ export function turnTilePoint(u: number, v: number, k: number): [number, number]
   }
 }
 
+/** The flat world point the sprite's anchor pixel lands on for a footprint at (tx,ty) of fw x fh (see drawOrigin). */
+export function footprintPin(def: Pick<SpriteDef, "center">, tx: number, ty: number, fw: number, fh: number): [number, number] {
+  const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
+  if (def.center) return [sx - (fw - fh) * (HW / 2), sy + TILE_H - (fw + fh) * (HH / 2)];
+  return [sx, sy + TILE_H];
+}
+
 /**
  * Re-seat a placed sprite for a turned view. The sprite art never turns (a billboard): only its ANCHOR does. The
  * returned `draw` keeps every downstream user of wx/wy honest (worldToScreen turns a point, so wx/wy hold the
@@ -375,7 +382,17 @@ export function turnTilePoint(u: number, v: number, k: number): [number, number]
  */
 export function turnPlaced(p: Placed, yaw: number, k: number): { draw: Placed; sort: Placed } {
   const ax = p.def.anchor[0], ay = p.def.anchor[1], elev = p.elev ?? 0;
-  const [tx, ty] = turnWorld(p.wx + ax, p.wy + elev + ay, yaw);
+  let [tx, ty] = turnWorld(p.wx + ax, p.wy + elev + ay, yaw);
+  if (!isMoving(p) && k !== 0) {
+    // LIVE-3D (owner: buildings drift across their lot while turning): the anchor pixel sits on the footprint's SOUTH
+    // vertex (or its centre for def.center), and the south vertex of a TURNED footprint is a different point of the
+    // lot. Pin the anchor to that point of the turned footprint, so the billboard stays inside its own tiles.
+    const [pw, ph] = p.def.footprint;
+    const [a, b, w2, h2] = turnFootprint(p.tx, p.ty, pw, ph, k);
+    const [px, py] = footprintPin(p.def, a, b, w2, h2);
+    const [qx, qy] = turnWorld(p.wx + ax, p.wy + elev + ay, k * Math.PI / 2);
+    tx += px - qx; ty += py - qy;
+  }
   const ux = tx - ax, uy = ty - ay - elev;
   const [ix, iy] = turnWorld(ux, uy, -yaw);
   const draw: Placed = { ...p, wx: ix, wy: iy, ux, uy };

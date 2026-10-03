@@ -37,7 +37,7 @@
 // byte moves.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H } from "../game/config";
-import { getViewYaw, turnWorld, type Camera } from "./camera";
+import { getViewYaw, getViewYawTarget, turnWorld, type Camera } from "./camera";
 import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH, roadWidth as widthOf, sidewalkOffset,
@@ -1344,7 +1344,8 @@ export class RoadCache {
     makeSurface: (w: number, h: number) => Surface | null,
   ): CacheEntry | null {
     // FLOW-1: the markings ride the raster, so their revision rides the key.
-    const key = `${this.styleVersion}:${flowMarkingsRev()}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${cx},${cy}`;
+    const vq = (((Math.round(getViewYawTarget() / (Math.PI / 2)) % 4) + 4) % 4);   // LIVE-3D: the hill lift is baked per view quarter
+    const key = `${this.styleVersion}:${flowMarkingsRev()}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${vq}:${cx},${cy}`;
     const hit = this.entries.get(key);
     if (hit) {
       this.hits++;
@@ -1363,10 +1364,10 @@ export class RoadCache {
     // it is baked into the raster exactly like the rail's detail tier — no
     // per-frame work, and the flat path keeps the identity draper and the tile
     // range it has always evaluated.
-    const elev = draperFor(world.grid);
+    const elev = draperFor(world.grid, vq);
     const lift = elevationLiftPx(world.grid);
     const range = tilesForRect(
-      px, py, px + ROAD_CHUNK_W + GUTTER * 2, py + ROAD_CHUNK_H + GUTTER * 2, lift,
+      px - (vq ? 2 * lift : 0), py, px + ROAD_CHUNK_W + GUTTER * 2 + (vq ? 2 * lift : 0), py + ROAD_CHUNK_H + GUTTER * 2, lift,
     );
     // In the sprite road mode the atlas cells draw the roads, so this raster
     // carries the railway and nothing else.

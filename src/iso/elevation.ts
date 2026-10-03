@@ -355,22 +355,41 @@ export function drapePath(
  * The draper for a map: the real one when elevation is on, `FLAT_DRAPER` when
  * it is not. Built once per grid and cached beside the lattice.
  */
-const drapers = new WeakMap<Grid, Draper>();
-export function draperFor(grid: Grid | null | undefined): Draper {
+const drapers = new WeakMap<Grid, (Draper | undefined)[]>();
+/**
+ * LIVE-3D: `q` is the view's quarter turn. The hill lift must stay SCREEN-vertical under a turned view (terrain, sprites,
+ * cars and the tile highlight all lift on screen), but a baked raster is turned as a flat bitmap, which would turn the
+ * lift with it and slide every road sideways on a slope. So the ground-space lift vector is the inverse quarter turn of
+ * (-k, -k): after the raster is turned, the lift is vertical again. q = 0 is exactly the old draper.
+ */
+export function draperFor(grid: Grid | null | undefined, q = 0): Draper {
   if (!grid || !elevationField(grid)) return FLAT_DRAPER;
-  const hit = drapers.get(grid);
+  q &= 3;
+  const slot = drapers.get(grid) ?? [];
+  drapers.set(grid, slot);
+  const hit = slot[q];
   if (hit) return hit;
   const point = (u: number, v: number): GroundPoint => {
     const k = surfaceHeight(grid, u, v) * LIFT_GROUND_PER_LEVEL;
-    return [u - k, v - k];
+    return liftShift(u, v, k, q);
   };
   const draper: Draper = {
     point,
     path: (points) => drapePath(points, point),
     active: true,
   };
-  drapers.set(grid, draper);
+  slot[q] = draper;
   return draper;
+}
+
+/** The ground point (u,v) lifted by k ground units on screen-vertical, for a view turned q quarters (see draperFor). */
+export function liftShift(u: number, v: number, k: number, q: number): GroundPoint {
+  switch (q & 3) {
+    case 1: return [u + k, v - k];
+    case 2: return [u + k, v + k];
+    case 3: return [u - k, v + k];
+    default: return [u - k, v - k];
+  }
 }
 
 /** Drop a cached draper with its lattice. */
