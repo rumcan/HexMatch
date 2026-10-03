@@ -30,7 +30,8 @@ const sprites = JSON.parse(fs.readFileSync("assets/buildings/manifest.json", "ut
 const spriteMap = sprites.sprites ?? sprites;
 
 // Models with two plain renders (the pilots): the one the shipped sprite matches (pixel-compared).
-const TURN_OVERRIDE = { factory: 0, town_flats: 0, town_small_house_1x1_1: 1, terrace_2x1_plain: 1, terrace_2x1_yard: 1 };   // the terraces: Hunyuan models come long on Z, the 2x1 sprite is long on X
+// DEPOT-FACING: the shipped _se sprite is render_t0, whose yard opens SW (a duplicate of _sw); the yard opens SE at turn 1, so the model uses 1 (re-render the sprite at --turn 1 too).
+const TURN_OVERRIDE = { truck_depot_bottom_entrance_se: 1, factory: 0, town_flats: 0, town_small_house_1x1_1: 1, terrace_2x1_plain: 1, terrace_2x1_yard: 1 };   // the terraces: Hunyuan models come long on Z, the 2x1 sprite is long on X
 const turnOf = (name) => {
   if (name in TURN_OVERRIDE) return TURN_OVERRIDE[name];
   const t = fs.readdirSync(path.join(SRC, name)).map((f) => /^render_t(\d)@2x\.png$/.exec(f)).filter(Boolean).map((m) => Number(m[1]));

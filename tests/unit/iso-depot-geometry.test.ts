@@ -114,3 +114,33 @@ describe("truck depot geometry", () => {
     expect(new Set(Object.values(DEPOT_SPRITES)).size).toBe(4);
   });
 });
+
+// DEPOT-FACING: the facing is the edge the YARD opens onto, so the art a facing draws must open that same side, or the
+// lorry (which stops on the lot tile beside the entrance) parks inside the garage. This reads the shipped PNGs: the
+// tan asphalt mass per tile quadrant of the lot's diamond says which edge the yard is on.
+describe("truck depot art opens the side its facing says", () => {
+  const yardSide = async (sprite: string): Promise<string> => {
+    const sharp = (await import("sharp")).default;
+    const { data, info } = await sharp(`assets/buildings/${sprite}@1x.png`).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const W = info.width, H = info.height, cx = W / 2, cy = H - W / 4 - 4;
+    const q = { N: 0, E: 0, S: 0, W: 0 };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2];
+      if (data[i + 3] < 200) continue;
+      if (!(r > 120 && r < 210 && g > 100 && b > 80 && r - b > 10 && r - b < 60 && Math.abs(r - g) < 35)) continue;
+      const dx = (x - cx) / (W / 4), dy = (y - cy) / (W / 8), u = (dy + dx) / 2, v = (dy - dx) / 2;
+      q[u < 0 && v < 0 ? "N" : u >= 0 && v < 0 ? "E" : u < 0 ? "W" : "S"]++;
+    }
+    const edges: Record<string, number> = { ne: q.N + q.E, se: q.E + q.S, sw: q.S + q.W, nw: q.N + q.W };
+    return Object.entries(edges).sort((a, b) => b[1] - a[1])[0][0];
+  };
+  for (const f of ["ne", "sw", "nw"] as const) {
+    it(`facing ${f} draws art whose yard opens ${f}`, async () => {
+      expect(await yardSide(DEPOT_SPRITES[f])).toBe(f);
+    });
+  }
+  // KNOWN ART BUG: _se is a duplicate of _sw (render_t0, yard SW). Re-render it at --turn 1, then drop `.fails`.
+  it.fails("facing se draws art whose yard opens se", async () => {
+    expect(await yardSide(DEPOT_SPRITES.se)).toBe("se");
+  });
+});

@@ -330,7 +330,7 @@
   "h": 0.3538
  },
  "truck_depot_bottom_entrance_se": {
-  "turn": 0,
+  "turn": 1,
   "ex": 0.9932,
   "ez": 1,
   "h": 0.3715
