@@ -104,6 +104,7 @@ jobs:
         if: failure()
         with:
           name: playwright-report-${{ matrix.shard }}
+          retention-days: 3
           path: playwright-report/
 
   # #132: the desktop MULTIPLAYER e2e — two browser contexts, one real room,
@@ -139,6 +140,7 @@ jobs:
         if: failure()
         with:
           name: playwright-multiplayer-report-${{ matrix.shard }}
+          retention-days: 3
           path: |
             playwright-report-mp/
             test-results-mp/

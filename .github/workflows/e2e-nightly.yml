@@ -26,6 +26,7 @@ jobs:
         if: failure()
         with:
           name: playwright-report-nightly
+          retention-days: 3
           path: playwright-report/
       - name: open/update tracking issue on failure
         if: failure()
