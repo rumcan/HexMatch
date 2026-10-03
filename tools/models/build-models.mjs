@@ -162,6 +162,20 @@ function trimBack(doc, cutX) {
 // LIVE-3D (owner 2026-10-03): the two tallest city blocks drew nearly three tiles high, far out of scale with the
 // rest of the town: their HEIGHT is halved (plan untouched, so the footprint still matches the tile footprint).
 const HEIGHT_SCALE = { town_offices_tall: 0.5, town_flats_grey: 0.5 };
+// 3D-FIX-3 (#662): the PLAN a model is fitted to when it is next rebuilt from its Meshy source
+// (tools/art-src/meshy/<name>/model.glb, git-ignored). The runtime scales a model uniformly so its
+// plan fills the tile footprint it stands on, so a footprint change needs no rebuild — but the NEXT
+// rebuild must bake the new plan (triangle budget and texture size both follow `footprintArea`).
+//   town_hotel: the cream-banded 5-storey brick hotel was authored as a 2×2 and is now a TRUE 1×2
+//     (owner: "too large"). Plan fitted to 1×2, height proportional (h 1.2486 → 1.149 tiles at the
+//     1×2 fit), and the 60% MODEL_SCALE stopgap 3D-FIX-1 added is gone.
+// ART THE LEAD MUST RE-RENDER (agents may not edit images):
+//   assets/buildings/town_hotel@{0.5x,1x,2x}.png — still the 2×2 drawing (116×130 at 1×), so it
+//   overhangs its new 1×2 lot by about half a tile on each flank. Until it is re-rendered the
+//   overhang is the accepted, clearly-marked fallback: the footprint (placement, occupancy, the 3D
+//   model's lot) is 1×2 everywhere, only the PNG is still twice as wide as the ground it stands on.
+const PLAN_FIT = { town_hotel: [1, 2] };
+void PLAN_FIT;
 const rows = [];
 const names = fs.readdirSync(SRC).filter((n) => fs.existsSync(path.join(SRC, n, "model.glb"))).sort();
 // Vehicles and rail cars ("moving" art): squared to the grid with the LONG axis on +X (render.html renderVehicle),

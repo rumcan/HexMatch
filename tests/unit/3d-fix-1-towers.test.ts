@@ -7,25 +7,29 @@ import { MeshoptDecoder } from "meshoptimizer";
 
 // 3D-FIX-1: tall buildings — shrink the hotel-class tower, solid base under the glass towers
 // This test checks both acceptance criteria:
-// 1) The big hotel building (town_hotel) is scaled to ~60% via MODEL_SCALE
+// 1) The big hotel building (town_hotel) no longer towers over its block.
+//    SUPERSEDED BY 3D-FIX-3 (#662): the owner did not want a 60% stopgap, they wanted the hotel
+//    to BE a true 1×2 building. Its footprint moved (assets/buildings/manifest.json) and the
+//    runtime fits the model's plan to it, so the stopgap is gone — see the height check below.
 // 2) The two glass tower GLBs stand solid on the ground (lowest 20% covers >=80% of plan)
 // The geometry test must fail on the original files (before fix-stilts.mjs) and pass after.
 
 describe("3D-FIX-1: tall buildings", () => {
-  it("identifies the big hotel and scales it to ~60% (MODEL_SCALE)", async () => {
+  it("the hotel-class tower no longer towers over its block (no MODEL_SCALE stopgap left)", async () => {
     // The 5-storey cream-stone-banded red-brick building with terracotta roof terrace
-    // and striped canopy is town_hotel. It is the tallest 2×2 hotel/offices-class
+    // and striped canopy is town_hotel. It WAS the tallest 2×2 hotel/offices-class
     // building in tier-3 towns:
-    //   town_hotel       h=1.2486 (tallest)
-    //   town_house_c     h=1.0498
-    //   town_offices_tall h=0.7777 (halved in build-models)
-    //   town_flats_grey   h=0.5906 (halved)
-    // We scale it at runtime via MODEL_SCALE (HEIGHT_SCALE in build-models.mjs is only a record).
+    //   town_hotel         h=1.2486 (tallest)
+    //   town_house_c       h=1.0498
+    //   town_offices_tall  h=0.7777 (halved in build-models)
+    //   town_flats_grey    h=0.5906 (halved)
+    //
+    // 3D-FIX-1 scaled it to 60% at runtime. 3D-FIX-3 (#662) makes it a TRUE 1×2 instead, so the
+    // stopgap is gone: the runtime fits the model's plan to the footprint it stands on
+    // (`s = min((w*0.92)/ex, (h*0.92)/ez)`), which is what the height check below pins.
     const src = fs.readFileSync("src/iso/three-layer.ts", "utf8");
-    // Check that MODEL_SCALE is exported and contains town_hotel at ~0.6
     expect(src).toMatch(/export\s+const\s+MODEL_SCALE/);
-    expect(src).toMatch(/town_hotel/);
-    // Try to import the actual table for a precise numeric check
+    expect(src).toMatch(/MODEL_SCALE\[mo!\.name\]/);
     let scale: Record<string, number> | null = null;
     try {
       const mod = await import("../../src/iso/three-layer.ts");
@@ -39,11 +43,30 @@ describe("3D-FIX-1: tall buildings", () => {
       }
     }
     expect(scale, "MODEL_SCALE should be importable or parsable").not.toBeNull();
-    expect(scale!["town_hotel"], "town_hotel should be scaled").toBeCloseTo(0.6, 1);
-    // Also ensure the runtime uses MODEL_SCALE (not just MODEL_SIZE)
-    expect(src).toMatch(/MODEL_SCALE\[mo!\.name\]/);
-    // store_2x4 should still be scaled (existing fix)
+    // 3D-FIX-3: no stopgap left for the hotel — the footprint does the work.
+    expect(scale!["town_hotel"], "town_hotel must not be runtime-scaled any more").toBeUndefined();
+    // store_2x4 keeps its scale (an unrelated, still-standing fix).
     expect(scale!["store_2x4"]).toBeCloseTo(0.6, 1);
+
+    // The height it now stands at: the model's plan fitted to the 1×2 lot (both facings a
+    // non-square footprint allows, 0° and 180°). It must be no TALLER than the 60% stopgap it
+    // replaces (2×2 lot → s = 2*0.92/1 = 1.84, ×0.6 = 1.104 → h = 1.2486 × 1.104 = 1.378).
+    const models = JSON.parse(fs.readFileSync("public/models/manifest.json", "utf8"));
+    const mi = models["town_hotel"];
+    expect(mi, "town_hotel should have a 3D model").toBeTruthy();
+    const sprites = JSON.parse(fs.readFileSync("assets/buildings/manifest.json", "utf8")).sprites;
+    const [fw, fh] = sprites["town_hotel"].footprint;
+    expect([fw, fh]).toEqual([1, 2]);
+    for (const rot of [0, 2]) {
+      const ex = rot & 1 ? mi.ez : mi.ex, ez = rot & 1 ? mi.ex : mi.ez;
+      const s = Math.min((fw * 0.92) / ex, (fh * 0.92) / ez);
+      const height = mi.h * s;
+      expect(height, `town_hotel at rot ${rot} stands ${height.toFixed(3)} tiles high`)
+        .toBeLessThanOrEqual(1.378);
+      // …and its plan still fills the lot it stands on.
+      expect(ex * s).toBeLessThanOrEqual(fw * 0.92 + 1e-6);
+      expect(ez * s).toBeLessThanOrEqual(fh * 0.92 + 1e-6);
+    }
   });
 
   it("glass towers stand solid on the ground (lowest 20% covers >=80% of plan)", async () => {
