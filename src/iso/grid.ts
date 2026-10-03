@@ -13,6 +13,9 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { fillCoastalHoles } from "./coastline";
 import { deriveTownNames } from "./town-names";
+// TOWN-2 (#653): the town street-plan option's NAME. Type-only: match-settings
+// is the protocol's import-free leaf, so this pulls nothing game-side in.
+import type { TownLayout } from "../net/match-settings";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
@@ -96,6 +99,28 @@ export interface Town {
    * is absent.
    */
   name?: string;
+  /**
+   * TOWN-2 (#653): house tiles standing on an ORGANIC avenue's frontage, as
+   * tile indices (`idx(x, y)`). An organic town paints these as 1×1 wedge
+   * lots — the slim lots a diagonal street leaves on a rectangular lattice —
+   * so no block or long building is ever drawn over the avenue's edge
+   * (`townBuildings`, organic path). Absent on grid-plan towns (and on towns
+   * without an avenue); regenerated from the seed with the rest of the map,
+   * so nothing here travels on a save or the MP wire.
+   */
+  organicWedges?: number[];
+  /**
+   * TOWN-2 (#653): the organic town's 45° AVENUE links, one per pair of
+   * diagonal-neighbour avenue tiles, as `(ax, ay, bx, by)`. The town's road
+   * TILES ride `roads` as always; this is the extra diagonal connectivity
+   * between them, stamped onto the track at boot by `seedTownDiagonals`
+   * (track.ts) right after `seedTownRoads` has paved the endpoints — the same
+   * boot-stamp pattern, for the same reason: the map stores the INTENT, the
+   * game applies it, and no player-built rule (`roadDiagonalRefusal`, which
+   * refuses diagonals onto town tiles) stands between them. Absent on
+   * grid-plan towns; deterministic from the seed.
+   */
+  organicDiag?: [number, number, number, number][];
 }
 
 export interface Grid {
@@ -205,6 +230,16 @@ export interface MapGenOptions {
    * byte-identical; MAP-1 turns it on for new games.
    */
   rings?: boolean;
+  /**
+   * TOWN-2 (#653): the town street plan. `"grid"` (the default, and what every
+   * map generated before TOWN-2 used) lays each town as a full rectangle of
+   * 2×2 blocks on the 3-tile lattice. `"organic"` keeps the lattice for the
+   * town's core, then drops outer blocks by a seeded noisy radius (an
+   * irregular outline), carves one or two 45° avenues through the town centre
+   * and merges more block pairs into 2×4 / 4×2 / 4×4 plots. Absent reads as
+   * `"grid"`, so every existing seed stays byte-identical.
+   */
+  layout?: TownLayout;
   /**
    * FTUE-1 (#464): a map PRESET — the scenario's shape on top of the seed
    * (Starter Island). Absent (every default map) changes nothing: the preset
@@ -1258,6 +1293,17 @@ export function townLayout(
   cx: number, cy: number, span: number,
   terrain: Uint8Array, occ: Int16Array,
   houseAllowed: (tx: number, ty: number) => boolean = () => true,
+  /**
+   * TOWN-2 (#653): lay each lane over the FULL built extent, not just the
+   * seeded box. The box edge can cut a block column in half — `span` 9 puts
+   * the westmost origin column exactly on `cx - span`, whose street lane at
+   * `cx - span - 1` then fell OUTSIDE this loop and never got laid, leaving
+   * the edge block's lots without frontage. The grid plan keeps the old
+   * bounds (every existing seed stays byte-identical); organic towns pass
+   * this flag, because their notch bites sit the outline's blocks right on
+   * that edge far more often.
+   */
+  fullLaneExtent = false,
 ): { houses: [number, number][]; roads: [number, number][] } {
   const free = (tx: number, ty: number): boolean => {
     if (!inBounds(tx, ty)) return false;
@@ -1382,13 +1428,17 @@ export function townLayout(
   const exitCol = nearestLane(cx - span, cx + span, cx);
   const exitRow = nearestLane(cy - span, cy + span, cy);
 
-  for (let lx = cx - span; lx <= cx + span; lx++) {
+  const colLo = fullLaneExtent ? Math.min(cx - span, hx0 - 1) : cx - span;
+  const colHi = fullLaneExtent ? Math.max(cx + span, hx1 + 1) : cx + span;
+  const rowLo = fullLaneExtent ? Math.min(cy - span, hy0 - 1) : cy - span;
+  const rowHi = fullLaneExtent ? Math.max(cy + span, hy1 + 1) : cy + span;
+  for (let lx = colLo; lx <= colHi; lx++) {
     if (!onLane(lx, cx) || lx < hx0 - 1 || lx > hx1 + 1) continue;
     const line: [number, number][] = [];
     for (let ty = hy0 - 1; ty <= hy1 + 1; ty++) line.push([lx, ty]);
     layLane(line, lx === exitCol);
   }
-  for (let ly = cy - span; ly <= cy + span; ly++) {
+  for (let ly = rowLo; ly <= rowHi; ly++) {
     if (!onLane(ly, cy) || ly < hy0 - 1 || ly > hy1 + 1) continue;
     const line: [number, number][] = [];
     for (let tx = hx0 - 1; tx <= hx1 + 1; tx++) line.push([tx, ly]);
@@ -1569,6 +1619,629 @@ export function mergeTownBlocks(
     roads: roads.filter(([x, y]) => !moved.has(idx(x, y))),
   };
 }
+
+// ── TOWN-2 (#653): ORGANIC TOWNS ────────────────────────────────────────────
+//
+// Owner playtest (2026-10-03): "There should be bigger plots and diagonal
+// roads. More interesting towns and cities. Not perfect squares." A new map
+// option, `layout: "organic"`, keeps the 3-tile lattice for a town's CORE and
+// then does three seeded things to it:
+//
+//   1. IRREGULAR OUTLINE — the town's block extent is not a rectangle. The
+//      blocks outside the core are dropped by a noisy radius drawn per octant
+//      (`organicBlockMask`): cut corners, a missing quarter, a lobe. The
+//      centre block and its four cross-lane blocks are never dropped, so a
+//      town always has its heart, and a reachability repair keeps the rest in
+//      one piece.
+//   2. DIAGONAL AVENUE(S) — one (sometimes two) 45° streets carved across the
+//      town through its centre (`organicTownLayout`). The line runs through
+//      the lane tiles BESIDE the centre block — the centre stays a 2×2 block
+//      at the town origin (`townCentreSprite`) — replacing the lattice tiles
+//      on that line with one continuous street. Consecutive avenue tiles are
+//      diagonal neighbours, so the avenue also carries DIAGONAL ROAD LINKS
+//      (`Town.organicDiag`, stamped at boot by `seedTownDiagonals`), the
+//      existing #440 support. Lots flanking the avenue are the existing 1×1
+//      wedge fill (`Town.organicWedges`).
+//   3. BIGGER PLOTS — the generator merges more block pairs than the `shapes`
+//      option does, and sometimes a whole 4×4 of blocks, into one plot: the
+//      former street segments between them become house ground (exactly
+//      `mergeTownBlocks`'s mechanic, taken further). The art places a 2×4 /
+//      4×2 long building per 2-block super and a whole big building per 4×4
+//      (`townBuildings`' shapes path, which the organic option shares).
+//
+// Everything stays buildable and routable: every house lot touches a street
+// (the lattice's lanes trim to the built frontage, as they always have), the
+// streets stay one connected grid (lanes span the built extent and all cross),
+// and the ring of public roads to neighbouring towns attaches to the lanes
+// exactly as before (`publicRoadTilesOf` reads `town.roads`, avenue included).
+//
+// Deterministic: a pure function of the centre, span, terrain, occupancy and
+// the seeded stream — no trigonometry anywhere (an octant is an integer
+// dot-product max), so every engine computes the same town from the same
+// seed. OFF by default: `placeTowns` draws nothing here unless the option is
+// on, so option-OFF seeds stay byte-identical.
+
+/** TOWN-2: the four corners an organic outline's bites are drawn at, as
+ * sign vectors into block space (no `atan2`, whose last-ulp results may
+ * differ between JS engines and would split a room's maps). */
+const ORGANIC_CORNERS: readonly (readonly [number, number])[] = [
+  [-1, -1], [1, -1], [-1, 1], [1, 1],
+];
+
+/** TOWN-2: the seeded share of eligible block pairs an organic town merges
+ * into one 2×4 / 4×2 plot — well above `mergeTownBlocks`'s 0.25: the owner
+ * asked for BIGGER plots. Adjacent merges stack into whole superblocks (the
+ * lane between two stacked plots stays street, so every lot keeps its
+ * frontage), which the art fills with a long building per plot. */
+export const ORGANIC_PAIR_CHANCE = 0.5;
+
+/**
+ * TOWN-2: which BLOCKS of a town's lattice an organic outline keeps.
+ *
+ * Block space is anchored on the town centre: block (0, 0) is the centre's
+ * own 2×2 (its top-left tile IS the town origin, where `townCentreSprite`
+ * stands), and block (bx, by) spans tiles `[cx + 3bx, cx + 3bx + 2]`. The
+ * full block grid is kept, then two seeded things bite it:
+ *
+ *   • each CORNER may lose a 1×1 or 2×2 bite (cut corners, a missing
+ *     quarter);
+ *   • one or two NOTCHES are cut into the middle of random edges — a run of
+ *     1–2 blocks wide, 1–2 blocks deep, always inset from the corners so a
+ *     notch leaves the block columns either side of it standing. A notch is
+ *     what "not a perfect square" MEANS for the acceptance measure: it is a
+ *     hole inside the town's final bounding box, which a pure corner cut is
+ *     not (a corner cut only shrinks the box).
+ *
+ * A reachability pass then drops anything a bite cut off (the kept set must
+ * be one 4-connected piece around the centre, whose five blocks — the centre
+ * and its four cross-lane neighbours — are never dropped, so every organic
+ * town keeps its heart and `TOWN_HOUSES_MIN` is reachable on free ground).
+ *
+ * The bites open onto the unbuilt fringe of the town box (a notch or corner
+ * bite has air on one side by construction), so what they leave behind is
+ * open ground inside the fence — which `openOrganicCourts` keeps open (or
+ * fills) once the lanes and the ring road have had their say about what is
+ * actually fenced in.
+ *
+ * Deterministic: integer arithmetic and a handful of draws in a fixed order.
+ * Draws: 4 corner depths + 2×4 per notch.
+ */
+export function organicBlockMask(
+  span: number, rng: () => number,
+): (bx: number, by: number) => boolean {
+  const minB = Math.floor(-span / TOWN_BLOCK);
+  const maxB = Math.floor(span / TOWN_BLOCK);
+  const key = (bx: number, by: number) => (bx + 16) * 64 + (by + 16);
+  const kept = new Set<number>();
+  for (let bx = minB; bx <= maxB; bx++) {
+    for (let by = minB; by <= maxB; by++) kept.add(key(bx, by));
+  }
+  const core = (bx: number, by: number): boolean =>
+    (bx === 0 && by === 0) || Math.abs(bx) + Math.abs(by) === 1;
+  // Corner bites.
+  for (const [sx, sy] of ORGANIC_CORNERS) {
+    const r = rng();
+    const depth = r < 0.35 ? 0 : r < 0.7 ? 1 : 2;
+    const cx = sx === -1 ? minB : maxB;
+    const cy = sy === -1 ? minB : maxB;
+    for (let i = 0; i < depth; i++) {
+      for (let j = 0; j < depth; j++) {
+        if (!core(cx + sx * i, cy + sy * j)) kept.delete(key(cx + sx * i, cy + sy * j));
+      }
+    }
+  }
+  // Edge notches: three 2-wide bites into the middle of distinct edges, 2–3
+  // blocks deep. `span` gives 4–7 blocks per side, so the anchor is drawn
+  // inside [minB + 1, maxB − w] to keep the notch off the corners (the
+  // corner bites own those) and off the box edge, which is what makes a
+  // notch a HOLE in the town's final bounding box rather than a smaller box.
+  const notches = 3;
+  let edge = Math.floor(rng() * 4);                     // N E S W
+  for (let n = 0; n < notches; n++) {
+    edge = (edge + 1 + Math.floor(rng() * 3)) % 4;      // a DIFFERENT edge each time
+    const width = 2;                                    // 2 blocks
+    const depth = rng() < 0.5 ? 2 : 3;                  // 2–3 blocks
+    const lo = minB + 1;
+    const hi = maxB - width;
+    if (hi < lo) continue;
+    const a = lo + Math.floor(rng() * (hi - lo + 1));   // anchor along the edge
+    for (let d = 0; d < depth; d++) {
+      for (let w = 0; w < width; w++) {
+        let bx: number, by: number;
+        if (edge === 0) { bx = a + w; by = minB + d; }
+        else if (edge === 1) { bx = maxB - d; by = a + w; }
+        else if (edge === 2) { bx = a + w; by = maxB - d; }
+        else { bx = minB + d; by = a + w; }
+        if (!core(bx, by)) kept.delete(key(bx, by));
+      }
+    }
+  }
+  /** The connected piece around the centre, with anything cut off removed. */
+  const repair = () => {
+    const seen = new Set<number>([key(0, 0)]);
+    const stack = [key(0, 0)];
+    while (stack.length) {
+      const k = stack.pop()!;
+      const bx = Math.floor(k / 64) - 16, by = (k % 64) - 16;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nk = key(bx + dx, by + dy);
+        if (kept.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+      }
+    }
+    for (const k of [...kept]) if (!seen.has(k)) kept.delete(k);
+  };
+  repair();
+  return (bx, by) => kept.has(key(bx, by));
+}
+
+/** TOWN-2: what `organicTownLayout` returns — the carved layout of one
+ * organic town, plus the two derived lists its art and its boot stamp read. */
+export interface OrganicTownPlan {
+  houses: [number, number][];
+  roads: [number, number][];
+  /** House-tile indices fronting an avenue (1×1 wedge lots at paint time). */
+  wedges: number[];
+  /** The avenue's diagonal links, `(ax, ay, bx, by)` per consecutive pair. */
+  diagLinks: [number, number, number, number][];
+}
+
+/**
+ * TOWN-2: carve the AVENUES and the BIGGER PLOTS into a laid street grid.
+ *
+ * Runs after `townLayout` (whose house lots already respect the organic
+ * outline) and before the occupancy stamp, so every downstream check — house
+ * minimum, reachability, enclaves, the stamp itself — sees the final layout,
+ * exactly as the `shapes` option's merges do.
+ *
+ * The avenue: a 45° line through the town's middle, on the lane tiles BESIDE
+ * the centre block (offsets ±2 blocks on the "\" axis, ∓1/+3 on the "/" —
+ * the closest a lattice line gets without crossing the centre 2×2, which
+ * `townCentreSprite` must keep). Every tile on the line — house, lane or
+ * free land dropped by the outline — becomes street, so the avenue reads as
+ * one continuous cut; a gap the ground leaves (water, an industry) splits it
+ * and only the longest piece is kept. Consecutive tiles are diagonal
+ * neighbours: one diagonal road link each (#440's storage), collected in
+ * `diagLinks` for the boot stamp. A second avenue, drawn half the time,
+ * crosses the first around the plaza from the other axis.
+ *
+ * Wedge lots: every remaining house orthogonally adjacent to an avenue tile
+ * is reported in `wedges` — the art keeps those to 1×1 lots, the way a
+ * diagonal street slices the rectangular blocks beside it.
+ *
+ * The plots: eligible block pairs merge at `ORGANIC_PAIR_CHANCE` (the same
+ * mechanic as `mergeTownBlocks` — the street segment between two full blocks
+ * becomes house ground), and a pair that can extend both ways may take one
+ * more draw and merge a whole 4×4 of blocks at `ORGANIC_QUAD_CHANCE`. Blocks
+ * the avenue fronts and the centre block's own group never merge, so the
+ * plaza and the avenue's wedge lots stay lot-sized.
+ *
+ * Draws: one per avenue (slope, offset, second?) and one per eligible merge
+ * origin — all from the caller's seeded stream, in a fixed order.
+ */
+export function organicTownLayout(
+  cx: number, cy: number, span: number,
+  houses: [number, number][], roads: [number, number][],
+  rng: () => number,
+  terrain: Uint8Array, occ: Int16Array,
+): OrganicTownPlan {
+  const free = (tx: number, ty: number): boolean =>
+    inBounds(tx, ty) && terrain[idx(tx, ty)] !== WATER && occ[idx(tx, ty)] === -1;
+
+  // ── the diagonal avenue(s) ────────────────────────────────────────────
+  const houseSet = new Set(houses.map(([x, y]) => idx(x, y)));
+  const roadSet = new Set(roads.map(([x, y]) => idx(x, y)));
+  const avenue = new Set<number>();
+  const diagLinks: [number, number, number, number][] = [];
+
+  /** The best continuous run of pappable tiles on a candidate avenue line,
+   * or null when the lattice puts nothing there. Pure: commits nothing. */
+  const planAvenue = (slope: 1 | -1, offset: number): [number, number][] | null => {
+    // The line, x ascending. slope 1: x − y = (cx − cy) + offset.
+    // slope −1: x + y = (cx + cy) + offset.
+    const line: [number, number][] = [];
+    for (let x = cx - span - 1; x <= cx + span + 1; x++) {
+      const y = slope === 1 ? x - (cx - cy + offset) : (cx + cy + offset) - x;
+      line.push([x, y]);
+    }
+    // The lattice tiles on the line set the run's extent — the avenue spans
+    // the town it cuts, and not past it.
+    let first = -1, last = -1;
+    for (let i = 0; i < line.length; i++) {
+      const [x, y] = line[i];
+      if (houseSet.has(idx(x, y)) || roadSet.has(idx(x, y))) {
+        if (first === -1) first = i;
+        last = i;
+      }
+    }
+    if (first === -1) return null;
+    // One continuous piece: walk the extent, split at tiles the ground
+    // refuses (water, an industry), keep the longest piece.
+    const okAt = (i: number): boolean => {
+      const [x, y] = line[i];
+      return houseSet.has(idx(x, y)) || roadSet.has(idx(x, y)) || free(x, y);
+    };
+    let bestS = -1, bestE = -1, s = first;
+    for (let i = first; i <= last + 1; i++) {
+      if (i <= last && okAt(i)) continue;
+      if (bestS === -1 || i - s > bestE - bestS + 1) { bestS = s; bestE = i - 1; }
+      s = i + 1;
+    }
+    if (bestS === -1 || bestE - bestS + 1 < 2) return null;
+    const run: [number, number][] = [];
+    for (let i = bestS; i <= bestE; i++) run.push(line[i]);
+    return run;
+  };
+  /** Pave a planned piece: lots yield to the street, lanes and free land
+   * join it, and consecutive tiles gain their diagonal road links. */
+  const commitAvenue = (run: [number, number][]): void => {
+    for (const [x, y] of run) {
+      const k = idx(x, y);
+      houseSet.delete(k);
+      roadSet.add(k);
+      avenue.add(k);
+    }
+    for (let i = 1; i < run.length; i++) {
+      diagLinks.push([run[i - 1][0], run[i - 1][1], run[i][0], run[i][1]]);
+    }
+  };
+
+  const slope1: 1 | -1 = rng() < 0.5 ? 1 : -1;
+  const offset1 = slope1 === 1 ? (rng() < 0.5 ? -2 : 2) : (rng() < 0.5 ? -1 : 3);
+  // Both sides of the centre block are planned; the longer avenue wins, the
+  // drawn side wins a tie — one continuous cut, however the coast bites.
+  const offsetAlt = slope1 === 1 ? (offset1 === -2 ? 2 : -2) : (offset1 === -1 ? 3 : -1);
+  const run1 = planAvenue(slope1, offset1);
+  const runAlt = planAvenue(slope1, offsetAlt);
+  const altLonger = runAlt !== null && (run1 === null || runAlt.length > run1.length);
+  const firstRun = altLonger ? runAlt : run1;
+  if (firstRun) commitAvenue(firstRun);
+  // The second avenue (half the time) crosses the first around the plaza:
+  // the other axis, offset to the side the first avenue was drawn on.
+  if (rng() < 0.5) {
+    const slope2: 1 | -1 = slope1 === 1 ? -1 : 1;
+    const offset2 = altLonger
+      ? (slope1 === 1 ? (offsetAlt === -2 ? -1 : 3) : (offsetAlt === -1 ? -2 : 2))
+      : (slope1 === 1 ? (offset1 === -2 ? -1 : 3) : (offset1 === -1 ? -2 : 2));
+    const run2 = planAvenue(slope2, offset2);
+    if (run2) commitAvenue(run2);
+  }
+
+  // ── the wedge lots: houses fronting an avenue ─────────────────────────
+  // The centre block is exempt: `townCentreSprite` draws its whole 2×2, so
+  // its frontage tiles are the building's, not wedge lots.
+  const inCentreBlock = (x: number, y: number): boolean =>
+    x >= cx && x <= cx + TOWN_BLOCK - 2 && y >= cy && y <= cy + TOWN_BLOCK - 2;
+  const wedges: number[] = [];
+  for (const [hx, hy] of houses) {
+    const k = idx(hx, hy);
+    if (!houseSet.has(k)) continue;                  // yielded to the avenue
+    if (inCentreBlock(hx, hy)) continue;             // the centre draws whole
+    if (([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([dx, dy]) => avenue.has(idx(hx + dx, hy + dy)))) {
+      wedges.push(k);
+    }
+  }
+  const wedgeSet = new Set(wedges);
+  /** Does (x, y) touch an avenue tile? (Merged seams must not.) */
+  const frontsAvenue = (x: number, y: number): boolean =>
+    ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([dx, dy]) => avenue.has(idx(x + dx, y + dy)));
+
+  // ── the bigger plots ──────────────────────────────────────────────────
+  const BLOCK = TOWN_BLOCK - 1;
+  const blockOrigin = (v: number, centre: number) =>
+    centre + Math.floor((v - centre) / TOWN_BLOCK) * TOWN_BLOCK;
+  const origins: [number, number][] = [];
+  {
+    const seen = new Set<number>();
+    for (const [hx, hy] of houses) {
+      const k = idx(hx, hy);
+      if (!houseSet.has(k)) continue;
+      const ox = blockOrigin(hx, cx), oy = blockOrigin(hy, cy);
+      const ok = idx(ox, oy);
+      if (seen.has(ok)) continue;
+      seen.add(ok);
+      origins.push([ox, oy]);
+    }
+    origins.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+  }
+  /** Every tile of the block at (ox, oy) is house ground of this town. */
+  const fullBlock = (ox: number, oy: number): boolean => {
+    for (let dy = 0; dy < BLOCK; dy++) {
+      for (let dx = 0; dx < BLOCK; dx++) if (!houseSet.has(idx(ox + dx, oy + dy))) return false;
+    }
+    return true;
+  };
+  const blockHasWedge = (ox: number, oy: number): boolean => {
+    for (let dy = 0; dy < BLOCK; dy++) {
+      for (let dx = 0; dx < BLOCK; dx++) if (wedgeSet.has(idx(ox + dx, oy + dy))) return true;
+    }
+    return false;
+  };
+  const seamOk = (tiles: readonly [number, number][]): boolean =>
+    tiles.every(([x, y]) => roadSet.has(idx(x, y)) && !frontsAvenue(x, y));
+
+  const consumed = new Set<number>();
+  const seams: [number, number][] = [];
+  /** One feasible merge at (ox, oy), for the loop and the fallback alike. */
+  const feasible = (ox: number, oy: number): { seam: [number, number][]; dir: "h" | "v" } | null => {
+    const ex = ox + TOWN_BLOCK, sy = oy + TOWN_BLOCK;
+    const seamV: [number, number][] = [[ox + BLOCK, oy], [ox + BLOCK, oy + 1]];
+    const seamH: [number, number][] = [[ox, oy + BLOCK], [ox + 1, oy + BLOCK]];
+    if (fullBlock(ex, oy) && !blockHasWedge(ex, oy) && seamOk(seamV)) return { seam: seamV, dir: "h" };
+    if (fullBlock(ox, sy) && !blockHasWedge(ox, sy) && seamOk(seamH)) return { seam: seamH, dir: "v" };
+    return null;
+  };
+  for (const [ox, oy] of origins) {
+    if (consumed.has(idx(ox, oy))) continue;
+    if (!fullBlock(ox, oy) || blockHasWedge(ox, oy)) continue;
+    // The centre block keeps its plaza: a merge spans the anchor block and
+    // its east/south neighbour, so those anchored on (0,0)'s row/column
+    // would take the centre into a plot.
+    const b0 = Math.floor((ox - cx) / TOWN_BLOCK), c0 = Math.floor((oy - cy) / TOWN_BLOCK);
+    if (b0 >= -1 && b0 <= 0 && c0 >= -1 && c0 <= 0) continue;
+    const ex = ox + TOWN_BLOCK, sy = oy + TOWN_BLOCK;
+    const canE = fullBlock(ex, oy) && !blockHasWedge(ex, oy)
+      && seamOk([[ox + BLOCK, oy], [ox + BLOCK, oy + 1]]);
+    const canS = fullBlock(ox, sy) && !blockHasWedge(ox, sy)
+      && seamOk([[ox, oy + BLOCK], [ox + 1, oy + BLOCK]]);
+    if (!canE && !canS) continue;
+    const roll = rng();
+    // Pair merges only, at ORGANIC_PAIR_CHANCE. A 2×2-of-blocks "quad" was
+    // tried and deliberately dropped: a full 5×5 house mass leaves interior
+    // lots that touch no street, and keeping a lane through the middle is
+    // exactly what two stacked pair merges already give — the art path then
+    // draws a long building on each floor of the stack, which is the
+    // "bigger plot, one large building" the ticket asks for, twice over.
+    // The partner block is consumed-checked too: without that, an E-merge
+    // and an S-merge can each take a corner block and weave a 2×2-of-blocks
+    // mass after all, with its middle lots fronting nothing.
+    if (canE && !consumed.has(idx(ex, oy)) && roll < ORGANIC_PAIR_CHANCE) {
+      consumed.add(idx(ox, oy)); consumed.add(idx(ex, oy));
+      seams.push(...[[ox + BLOCK, oy], [ox + BLOCK, oy + 1]] as [number, number][]);
+      continue;
+    }
+    if (canS && !consumed.has(idx(ox, sy)) && roll < ORGANIC_PAIR_CHANCE) {
+      consumed.add(idx(ox, oy)); consumed.add(idx(ox, sy));
+      seams.push(...[[ox, oy + BLOCK], [ox + 1, oy + BLOCK]] as [number, number][]);
+    }
+  }
+  // The one-plot floor: a tiny or much-carved town can leave every seeded
+  // roll under the chance — the owner asked for bigger plots, so the first
+  // eligible pair still merges (no draw: the fallback is deterministic).
+  if (!seams.length) {
+    for (const [ox, oy] of origins) {
+      if (consumed.has(idx(ox, oy))) continue;
+      if (!fullBlock(ox, oy) || blockHasWedge(ox, oy)) continue;
+      const b0 = Math.floor((ox - cx) / TOWN_BLOCK), c0 = Math.floor((oy - cy) / TOWN_BLOCK);
+      if (b0 >= -1 && b0 <= 0 && c0 >= -1 && c0 <= 0) continue;
+      const f = feasible(ox, oy);
+      if (!f) continue;
+      const ex = ox + TOWN_BLOCK, sy = oy + TOWN_BLOCK;
+      consumed.add(idx(ox, oy));
+      consumed.add(f.dir === "h" ? idx(ex, oy) : idx(ox, sy));
+      seams.push(...f.seam);
+      break;
+    }
+  }
+
+  // ── assemble: the sets are final, emit them in a fixed order ──────────
+  if ((globalThis as any).__t2log) {
+    for (const [sx, sy] of seams) {
+      if ((globalThis as any).__t2watch?.has(idx(sx, sy))) (globalThis as any).__t2log(`SEAM (${sx},${sy})`);
+    }
+  }
+  const moved = new Set(seams.map(([x, y]) => idx(x, y)));
+  const outHouses: [number, number][] = [];
+  for (const [x, y] of houses) if (houseSet.has(idx(x, y))) outHouses.push([x, y]);
+  for (const [x, y] of seams) outHouses.push([x, y]);
+  const outRoads: [number, number][] = [];
+  {
+    const emitted = new Set<number>();
+    for (const [x, y] of roads) {
+      const k = idx(x, y);
+      if (roadSet.has(k) && !moved.has(k)) { outRoads.push([x, y]); emitted.add(k); }
+    }
+    for (const k of avenue) {
+      if (moved.has(k) || emitted.has(k)) continue;
+      outRoads.push([k % MAP_W, (k / MAP_W) | 0]);
+    }
+  }
+  return { houses: outHouses, roads: outRoads, wedges, diagLinks };
+}
+
+/**
+ * TOWN-2: open the garden courts an organic outline can leave fenced in.
+ *
+ * A dropped block is a 3×3 hole in the street fence. When the hole opens
+ * onto the country around the town — every bite the mask takes does — its
+ * tiles stay free land. But a hole can end up fenced anyway: a lane the
+ * neighbouring block's frontage kept laid, or (with the `rings` option) the
+ * ring road running across its open side. A hole the fence encloses is a
+ * pocket of free land nothing can reach — precisely the enclave the
+ * generator's reachability checks refuse, so the whole town would be
+ * rejected and organic maps would place nothing.
+ *
+ * The resolution is a GATE: remove one fence ROAD tile beside the pocket
+ * whose removal opens the pocket to the outside free land, doesn't cut its
+ * own street piece in two, strands no house, and isn't part of the organic
+ * avenue. The pocket stays a garden; the fence has a gap in it, like a lane
+ * that never got paved.
+ *
+ * Two-phase on purpose: every pocket is resolved on paper FIRST, and the
+ * changes apply only if ALL of them found a gate. A pocket no gate can open
+ * (one fenced in by houses on every side) reports `false` and the caller
+ * throws the candidate away — a sealed free tile is exactly what the
+ * generator's enclave checks refuse, and the town is re-drawn from another
+ * centre. (`generateMap` runs this a second time after the ring's late
+ * re-run, which would otherwise re-pave the first pass's gates; the same
+ * fence then yields the same first-fit gates, so pass two always succeeds
+ * where pass one did.)
+ *
+ * Deterministic: pockets in index order, gate candidates in index order,
+ * first fit. `keep` lists road tiles a gate may never take — the organic
+ * avenue's, so the diagonal street survives every gate whole.
+ */
+export function openOrganicCourts(
+  houses: [number, number][], roads: [number, number][],
+  terrain: Uint8Array, occ: Int16Array,
+  keep?: Set<number>,
+): { houses: [number, number][]; roads: [number, number][]; opened: boolean } {
+  const noChange = { houses, roads, opened: true };
+  if (!houses.length) return noChange;
+  const houseSet = new Set(houses.map(([x, y]) => idx(x, y)));
+  const roadSet = new Set(roads.map(([x, y]) => idx(x, y)));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of houses) {
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  const isFree = (x: number, y: number): boolean =>
+    inBounds(x, y) && terrain[idx(x, y)] !== WATER && occ[idx(x, y)] === -1
+    && !houseSet.has(idx(x, y)) && !roadSet.has(idx(x, y));
+  const DIR4 = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+
+  /** The free country around the town, flooded from a band outside the box. */
+  const outside = new Set<number>();
+  {
+    const stack: number[] = [];
+    const seedOutside = (x: number, y: number) => {
+      const i = idx(x, y);
+      if (isFree(x, y) && !outside.has(i)) { outside.add(i); stack.push(i); }
+    };
+    for (let x = x0 - 2; x <= x1 + 2; x++) { seedOutside(x, y0 - 2); seedOutside(x, y1 + 2); }
+    for (let y = y0 - 2; y <= y1 + 2; y++) { seedOutside(x0 - 2, y); seedOutside(x1 + 2, y); }
+    while (stack.length) {
+      const cur = stack.pop()!;
+      const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+      for (const [dx, dy] of DIR4) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < x0 - 2 || nx > x1 + 2 || ny < y0 - 2 || ny > y1 + 2) continue;
+        const ni = idx(nx, ny);
+        if (outside.has(ni) || !isFree(nx, ny)) continue;
+        outside.add(ni);
+        stack.push(ni);
+      }
+    }
+  }
+  // Sealed pockets: free tiles inside the box the outside flood never reached.
+  const pockets: number[][] = [];
+  {
+    const seen = new Set<number>();
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = idx(x, y);
+        if (seen.has(i) || outside.has(i) || !isFree(x, y)) continue;
+        const comp: number[] = [];
+        const stack = [i];
+        seen.add(i);
+        while (stack.length) {
+          const cur = stack.pop()!;
+          comp.push(cur);
+          const px = cur % MAP_W, py = (cur / MAP_W) | 0;
+          for (const [dx, dy] of DIR4) {
+            const ni = idx(px + dx, py + dy);
+            if (seen.has(ni) || outside.has(ni) || !isFree(px + dx, py + dy)) continue;
+            seen.add(ni);
+            stack.push(ni);
+          }
+        }
+        pockets.push(comp.sort((a, b) => a - b));
+      }
+    }
+  }
+  pockets.sort((a, b) => a[0] - b[0]);
+  if (!pockets.length) return noChange;
+
+  // Phase one: pick every pocket's gate on paper (a local copy of the road
+  // set, so one pocket's gate doesn't hide another pocket's candidates).
+  const paperRoads = new Set<number>(roadSet);
+  const gates: number[] = [];
+  for (const pocket of pockets) {
+    const pocketSet = new Set(pocket);
+    let gated = false;
+    for (const g of [...paperRoads].sort((a, b) => a - b)) {
+      if (keep?.has(g)) continue;              // the avenue keeps its tiles
+      const gx = g % MAP_W, gy = (g / MAP_W) | 0;
+      if (!DIR4.some(([dx, dy]) => pocketSet.has(idx(gx + dx, gy + dy)))) continue;
+      // (a) the pocket flood, across the gate, reaches the outside
+      let opens = false;
+      {
+        const seen = new Set<number>(pocket);
+        const stack = [...pocket, g];
+        while (stack.length && !opens) {
+          const cur = stack.pop()!;
+          const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+          for (const [dx, dy] of DIR4) {
+            const ni = idx(x + dx, y + dy);
+            if (seen.has(ni)) continue;
+            if (outside.has(ni)) { opens = true; break; }
+            if (ni === g || pocketSet.has(ni)
+              || (isFree(x + dx, y + dy) && !houseSet.has(ni) && !paperRoads.has(ni))) {
+              seen.add(ni);
+              stack.push(ni);
+            }
+          }
+        }
+      }
+      if (!opens) continue;
+      // (b) the gate is no cut of its own street piece
+      {
+        const comp = new Set<number>([g]);
+        const compStack = [g];
+        while (compStack.length) {
+          const cur = compStack.pop()!;
+          const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+          for (const [dx, dy] of DIR4) {
+            const ni = idx(x + dx, y + dy);
+            if (ni !== g && paperRoads.has(ni) && !comp.has(ni)) { comp.add(ni); compStack.push(ni); }
+          }
+        }
+        let start = -1;
+        for (const [dx, dy] of DIR4) {
+          const ni = idx(gx + dx, gy + dy);
+          if (ni !== g && comp.has(ni)) { start = ni; break; }
+        }
+        if (start !== -1) {
+          const seen = new Set<number>([start]);
+          const stack = [start];
+          while (stack.length) {
+            const cur = stack.pop()!;
+            const x = cur % MAP_W, y = (cur / MAP_W) | 0;
+            for (const [dx, dy] of DIR4) {
+              const ni = idx(x + dx, y + dy);
+              if (ni === g || !comp.has(ni) || seen.has(ni)) continue;
+              seen.add(ni);
+              stack.push(ni);
+            }
+          }
+          if (seen.size !== comp.size - 1) continue;
+        }
+      }
+      // (c) the gate strands no house: a lot beside it must still touch
+      // another street tile
+      const housesOk = DIR4.every(([dx, dy]) => {
+        const hx = gx + dx, hy = gy + dy;
+        if (!houseSet.has(idx(hx, hy))) return true;
+        return DIR4.some(([dx2, dy2]) => {
+          const ni = idx(hx + dx2, hy + dy2);
+          return paperRoads.has(ni) && ni !== g;
+        });
+      });
+      if (!housesOk) continue;
+      gates.push(g);
+      paperRoads.delete(g);
+      gated = true;
+      break;
+    }
+    if (!gated) return { houses, roads, opened: false };   // unresolvable
+  }
+  // Phase two: apply.
+  return {
+    houses,
+    roads: roads.filter(([x, y]) => !gates.includes(idx(x, y))),
+    opened: true,
+  };
+}
+
 
 /** TOWN-GRID: one piece of town art and the tile its footprint starts on. */
 export interface TownBuilding { sprite: string; tx: number; ty: number }
@@ -1765,6 +2438,15 @@ export interface TownBuildingsOptions {
    */
   shapes?: boolean;
   /**
+   * TOWN-2 (#653): the town is an ORGANIC one. Its merged plots (2×4 / 4×2 /
+   * 4×4) draw from the same long-building path the `shapes` option uses —
+   * so a town can hold both options' art — and its avenue-frontage wedge
+   * lots (`Town.organicWedges`) are kept to 1×1 fill: no block or long
+   * building is ever drawn over the diagonal street's edge. Absent keeps
+   * exactly today's layout.
+   */
+  organic?: boolean;
+  /**
    * MAP-2 (#559): can the renderer actually DRAW this sprite? The game passes
    * the atlas (`atlas.has`), because the scenery TREE defs land in a load of
    * their own, after the first sync — until then a lot must fall back to a
@@ -1914,9 +2596,11 @@ function townBuildingsLaid(
 ): TownBuilding[] {
   const tier = opts.tier ?? TOWN_TIER_LEGACY;
   const village = tier === 0;
-  // F4: the shapes path — long buildings on merged blocks. Villages keep the
-  // small-homes look, and a town without the option keeps today's layout.
-  if (opts.shapes === true && !village) return townBuildingsShapes(t, footprintOf, opts);
+  // F4: the shapes path — long buildings on merged blocks. TOWN-2: an
+  // organic town takes the same path (its bigger plots hold the same long
+  // buildings). Villages keep the small-homes look, and a town with neither
+  // option keeps today's layout.
+  if ((opts.shapes === true || opts.organic === true) && !village) return townBuildingsShapes(t, footprintOf, opts);
   const BLOCK = TOWN_BLOCK - 1;                 // tiles per block, per axis
   void villageBlockPool;
   // A VILLAGE keeps its own small 1×1 homes.
@@ -2062,6 +2746,13 @@ function townBuildingsShapes(
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
   const used = new Set<number>();
   const out: TownBuilding[] = [];
+  // TOWN-2 (#653): an organic town's avenue-frontage lots stay 1×1 wedges —
+  // neither a block pick nor a long building may cover one, so the diagonal
+  // street keeps its sliced-lot edge. Absent (every shapes-option town)
+  // reads as an empty set: nothing changes there.
+  const wedges = new Set<number>(t.organicWedges ?? []);
+  const touchesWedge = (tiles: readonly [number, number][]): boolean =>
+    tiles.some(([x, y]) => wedges.has(idx(x, y)));
 
   const span = (ox: number, oy: number, fw: number, fh: number): [number, number][] => {
     const tiles: [number, number][] = [];
@@ -2112,14 +2803,18 @@ function townBuildingsShapes(
     if (superOrigin.has(idx(ox, oy))) continue;
     const rx = ox + TOWN_BLOCK;
     if (fullBlock(ox, oy) && fullBlock(rx, oy)
-      && houses.has(idx(ox + BLOCK, oy)) && houses.has(idx(ox + BLOCK, oy + 1))) {
+      && houses.has(idx(ox + BLOCK, oy)) && houses.has(idx(ox + BLOCK, oy + 1))
+      // TOWN-2: an avenue-frontage lot takes the whole candidate out — the
+      // wedge stays a wedge, the plot stays lot-sized.
+      && !touchesWedge(span(ox, oy, 2 * BLOCK + 1, BLOCK))) {
       supers.push({ ox, oy, w: 2 * BLOCK + 1, h: BLOCK, dir: "h" });
       superOrigin.add(idx(ox, oy)); superOrigin.add(idx(rx, oy));
       continue;
     }
     const by = oy + TOWN_BLOCK;
     if (fullBlock(ox, oy) && fullBlock(ox, by)
-      && houses.has(idx(ox, oy + BLOCK)) && houses.has(idx(ox + 1, oy + BLOCK))) {
+      && houses.has(idx(ox, oy + BLOCK)) && houses.has(idx(ox + 1, oy + BLOCK))
+      && !touchesWedge(span(ox, oy, BLOCK, 2 * BLOCK + 1))) {
       supers.push({ ox, oy, w: BLOCK, h: 2 * BLOCK + 1, dir: "v" });
       superOrigin.add(idx(ox, oy)); superOrigin.add(idx(ox, by));
     }
@@ -2147,7 +2842,8 @@ function townBuildingsShapes(
       for (let k = 0; k < offs.length; k++) {
         const [dx, dy] = offs[(first + k) % offs.length];
         const tiles = span(s.ox + dx, s.oy + dy, fw, fh);
-        if (tiles.every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)))) {
+        if (tiles.every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)))
+          && !touchesWedge(tiles)) {
           place(pick, s.ox + dx, s.oy + dy);
           break;
         }
@@ -2172,7 +2868,8 @@ function townBuildingsShapes(
     const pick = pickTownVariant(ox, oy, blockPool);
     const [fw, fh] = footprintOf(pick);
     const fits = (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK
-      && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
+      && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)))
+      && !touchesWedge(span(ox, oy, fw, fh));
     // CITY-1 (#652): a housing block passes on its tall/terrace pick and
     // draws ordinary houses tile by tile instead. The MERGED superblocks
     // above keep their long #273 buildings either way — those are the whole
@@ -2519,46 +3216,64 @@ export function publicRoadTiles(
   // 4-adjacent to existing network (other than predecessor / target), which is
   // what creates the double-width strip when two highways leave the same side
   // of a town from adjacent ring tiles.
-  const inTree = [0];
-  const rest = comps.map((_, i) => i).slice(1);
   const out: [number, number][] = [];
   const added = new Set<number>();
   const highwaySet = new Set<number>();
-  const networkSet = new Set<number>(comps[0]);
-
-  while (rest.length) {
-    let bestI = -1;
-    let bestPath: [number, number][] = [];
-    let bestLen = Infinity;
-    for (let i = 0; i < rest.length; i++) {
-      const compIdx = rest[i];
-      const path = linkFromNetwork(networkSet, comps[compIdx], highwaySet, paved);
-      if (!path.length) continue;
-      // path length is number of tiles; shorter is better, tie-break by comp index
-      const len = path.length;
-      if (len < bestLen || (len === bestLen && compIdx < (rest[bestI] ?? Infinity))) {
-        bestLen = len;
-        bestI = i;
-        bestPath = path;
+  const grow = (root: number): void => {
+    const inTree = [root];
+    const rest = comps.map((_, i) => i).filter((i) => i !== root);
+    const networkSet = new Set<number>(comps[root]);
+    while (rest.length) {
+      let bestI = -1;
+      let bestPath: [number, number][] = [];
+      let bestLen = Infinity;
+      for (let i = 0; i < rest.length; i++) {
+        const compIdx = rest[i];
+        const path = linkFromNetwork(networkSet, comps[compIdx], highwaySet, paved);
+        if (!path.length) continue;
+        // path length is number of tiles; shorter is better, tie-break by comp index
+        const len = path.length;
+        if (len < bestLen || (len === bestLen && compIdx < (rest[bestI] ?? Infinity))) {
+          bestLen = len;
+          bestI = i;
+          bestPath = path;
+        }
       }
+      if (bestI === -1) {
+        // No reachable outside component (walled off) — stop, same as before
+        break;
+      }
+      const compIdx = rest[bestI];
+      for (const [tx, ty] of bestPath) {
+        const id = idx(tx, ty);
+        if (paved.has(id) || added.has(id)) continue;
+        added.add(id);
+        highwaySet.add(id);
+        networkSet.add(id);
+        out.push([tx, ty]);
+      }
+      // The newly connected component's own tiles become part of the network
+      for (const id of comps[compIdx]) networkSet.add(id);
+      inTree.push(compIdx);
+      rest.splice(bestI, 1);
     }
-    if (bestI === -1) {
-      // No reachable outside component (walled off) — stop, same as before
-      break;
+  };
+  // TOWN-2 (#653): grow from component 0, exactly as always — but if that
+  // links NOTHING (component 0 can be a stranded one-tile lane fragment on a
+  // promontory, which an organic outline's coastal variance produces far
+  // more of), regrow from the largest component before giving up. Only a
+  // map that would otherwise pave NO highway takes the retry, so every
+  // existing seed's public roads stay byte-identical.
+  grow(0);
+  if (!out.length && comps.length > 1) {
+    let biggest = 1;
+    for (let i = 1; i < comps.length; i++) {
+      if (comps[i].length > comps[biggest].length) biggest = i;
     }
-    const compIdx = rest[bestI];
-    for (const [tx, ty] of bestPath) {
-      const id = idx(tx, ty);
-      if (paved.has(id) || added.has(id)) continue;
-      added.add(id);
-      highwaySet.add(id);
-      networkSet.add(id);
-      out.push([tx, ty]);
-    }
-    // The newly connected component's own tiles become part of the network
-    for (const id of comps[compIdx]) networkSet.add(id);
-    inTree.push(compIdx);
-    rest.splice(bestI, 1);
+    added.clear();
+    highwaySet.clear();
+    out.length = 0;
+    grow(biggest);
   }
   return out;
 }
@@ -2577,6 +3292,11 @@ export interface TownGenOptions {
    * quadrants). Absent, centres sample the whole map as always.
    */
   regions?: Array<{ x0: number; y0: number; x1: number; y1: number }>;
+  /**
+   * TOWN-2 (#653): the town street plan. Absent reads as `"grid"` — every
+   * map generated before the option existed, byte for byte.
+   */
+  layout?: TownLayout;
 }
 
 function placeTowns(
@@ -2710,6 +3430,11 @@ function placeTowns(
   };
 
   const wantTowns = preset?.towns ?? want;
+  // TOWN-2 (#653): the organic extras of the town that finally places —
+  // reset per town, so a rejected candidate's carving never leaks into the
+  // next one's `Town` record.
+  let organicWedges: number[] | null = null;
+  let organicDiag: [number, number, number, number][] | null = null;
   // FTUE-1 (#464): a preset's towns sit at the cluster centre (± jitter) —
   // "1 town, 4 industries close by" means the town is the neighbourhood's
   // heart, not a settlement the seed happened to park near the ring.
@@ -2743,22 +3468,64 @@ function placeTowns(
         // nor streets can overlap an industry or an earlier town (both are
         // already stamped in `occ`).
         const span = TOWN_SPAN_MIN + Math.floor(rng() * (TOWN_SPAN_MAX - TOWN_SPAN_MIN + 1));
+        // TOWN-2 (#653): the organic outline first — 8 octant radius draws —
+        // so its blocks can gate the house lots `townLayout` lays. An
+        // option-OFF town draws nothing here and stays byte-identical.
+        const organic = gen.layout === "organic";
+        const outline = organic ? organicBlockMask(span, rng) : null;
         let { houses, roads } = townLayout(
           cx, cy, span, terrain, occ,
           // Houses keep the industry buffer; streets do not, exactly as the
           // ring-and-fill layout behaved — a street may run up to an
-          // industry's edge, a house may not.
-          (hx, hy) => industrySep(hx, hy) >= TOWN_INDUSTRY_SEP,
+          // industry's edge, a house may not. An organic town's houses also
+          // keep only the blocks its noisy outline kept.
+          (hx, hy) => {
+            if (industrySep(hx, hy) < TOWN_INDUSTRY_SEP) return false;
+            return !outline
+              || outline(Math.floor((hx - cx) / TOWN_BLOCK), Math.floor((hy - cy) / TOWN_BLOCK));
+          },
+          organic,
         );
+        // TOWN-2 (#653): carve the avenues and merge the bigger plots. Runs
+        // before every downstream check (house minimum, reachability,
+        // enclaves, the occupancy stamp), so they all see the final layout —
+        // the same contract the shapes option's merges keep. An organic town
+        // does NOT also run `mergeTownBlocks`: the organic pass merges the
+        // same pairs (and 4×4s) itself, and two merge passes would fight over
+        // the same streets. The `shapes` FACTORY footprint is independent of
+        // this and still applies.
+        if (organic) {
+          const plan = organicTownLayout(cx, cy, span, houses, roads, rng, terrain, occ);
+          houses = plan.houses;
+          roads = plan.roads;
+          organicWedges = plan.wedges;
+          organicDiag = plan.diagLinks;
+        } else if (shapes) ({ houses, roads } = mergeTownBlocks(cx, cy, houses, roads, rng));
         // F4 (#275): the shapes option merges some block pairs along a street
         // so the long town buildings have ground to stand on. Runs only with
         // the option on — an option-OFF town draws nothing from the stream
         // here and stays byte-identical. The merged tiles are house ground,
         // so every later check (house minimum, reachability, enclaves, the
         // occupancy stamp) sees the final layout.
-        if (shapes) ({ houses, roads } = mergeTownBlocks(cx, cy, houses, roads, rng));
         // #296: the ring road (no RNG draw, so it never shifts later towns).
         if (rings) roads = addTownRing(houses, roads, terrain, occ);
+        // TOWN-2 (#653): open the courts the organic outline can leave
+        // fenced in — a sealed pocket of free land is the enclave the checks
+        // below refuse, and the ring road fences every bite that is not on
+        // the new box edge. The avenue's tiles are protected: a gate through
+        // the diagonal street would break it mid-run. A pocket no gate can
+        // open throws the whole candidate away; the next centre tries again.
+        if (organic) {
+          const avenueTiles = new Set<number>();
+          for (const [ax, ay, bx, by] of organicDiag ?? []) {
+            avenueTiles.add(idx(ax, ay));
+            avenueTiles.add(idx(bx, by));
+          }
+          const opened = openOrganicCourts(houses, roads, terrain, occ, avenueTiles);
+          if (!opened.opened) continue;
+          houses = opened.houses;
+          roads = opened.roads;
+        }
         if (houses.length < TOWN_HOUSES_MIN) continue;
 
         // Reachability check: the PROPOSED TOWN tiles must not strand any
@@ -2789,7 +3556,15 @@ function placeTowns(
         // ring road both treat them as occupied, so towns never overlap.
         for (const [hx, hy] of houses) occ[idx(hx, hy)] = TOWN_OCC;
         for (const [rx, ry] of roads) occ[idx(rx, ry)] = TOWN_OCC;
-        towns.push({ id: towns.length, tx: cx, ty: cy, houses, roads });
+        towns.push({
+          id: towns.length, tx: cx, ty: cy, houses, roads,
+          // TOWN-2 (#653): only an organic town carries the avenue's wedge
+          // lots and diagonal links; absent fields keep grid towns (and the
+          // JSON of every seed-pinned snapshot) exactly as they were.
+          ...(organicWedges ? { organicWedges, organicDiag: organicDiag! } : {}),
+        });
+        organicWedges = null;
+        organicDiag = null;
         placed = true;
       }
       if (placed) break;
@@ -3155,6 +3930,9 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
       townCount: opts.townCount,
       connected: opts.archipelago === true ? false : undefined,
       regions: opts.archipelago === true ? archipelagoRegions() : undefined,
+      // TOWN-2 (#653): the street plan rides the map options. Absent ("grid")
+      // regenerates every pre-TOWN-2 seed byte for byte.
+      layout: opts.layout === "organic" ? "organic" : "grid",
     });
   // TOWN-3 (#561): name the towns from the seed alone, on a private RNG
   // stream (see `town-names.ts`) — drawn AFTER placement so the number and
@@ -3263,6 +4041,30 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
       const before = new Set(town.roads.map(([x, y]) => idx(x, y)));
       town.roads = addTownRing(town.houses, town.roads, terrain, occ);
       for (const [x, y] of town.roads) if (!before.has(idx(x, y))) occ[idx(x, y)] = TOWN_OCC;
+    }
+  }
+  // TOWN-2 (#653): re-open the organic courts — the ring's late re-run would
+  // otherwise re-pave the gates the first pass cut, and an industry the PP-14
+  // repair moved can fence a new pocket in. Court houses stamp TOWN_OCC like
+  // any other house; a re-cut gate's tile goes back to free land.
+  if (opts.layout === "organic") {
+    for (const town of towns) {
+      const beforeRoads = new Set(town.roads.map(([x, y]) => idx(x, y)));
+      const avenueTiles = new Set<number>();
+      for (const [ax, ay, bx, by] of town.organicDiag ?? []) {
+        avenueTiles.add(idx(ax, ay));
+        avenueTiles.add(idx(bx, by));
+      }
+      const fixed = openOrganicCourts(town.houses, town.roads, terrain, occ, avenueTiles);
+      town.houses = fixed.houses;
+      town.roads = fixed.roads;
+      const nowRoads = new Set(town.roads.map(([x, y]) => idx(x, y)));
+      for (const [gx, gy] of town.roads) {
+        if (!beforeRoads.has(idx(gx, gy))) occ[idx(gx, gy)] = TOWN_OCC;
+      }
+      for (const k of beforeRoads) {
+        if (!nowRoads.has(k)) occ[k] = -1;
+      }
     }
   }
   // Elevation is intentionally computed after all map placement. Thus every
