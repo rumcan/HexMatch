@@ -554,10 +554,11 @@ export function composeRouteOverlay(
 }
 
 function tileCentre(cam: Camera, grid: Grid | null, tx: number, ty: number): [number, number] {
-  const [wx, wy] = grid
-    ? elevatedWorld(grid, tx + 0.5, ty + 0.5)
-    : [(tx - ty) * HW, (tx + ty) * HH + HH];
-  return worldToScreen(cam, wx, wy);
+  // LIVE-3D: turn the FLAT centre, then lift on screen (the hill lift is screen-vertical under a view turn)
+  const fw = (tx - ty) * HW, fy = (tx + ty) * HH + HH;
+  const lift = grid ? fy - elevatedWorld(grid, tx + 0.5, ty + 0.5)[1] : 0;
+  const [sx, sy] = worldToScreen(cam, fw, fy);
+  return [sx, sy - lift * cam.zoom];
 }
 
 function strokePolyline(

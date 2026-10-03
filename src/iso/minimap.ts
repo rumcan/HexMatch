@@ -212,8 +212,10 @@ export interface MinimapRect { x: number; y: number; w: number; h: number }
 
 /** The main canvas' view, as a rectangle on the minimap. */
 export function viewportRect(l: MinimapLayout, cam: Camera): MinimapRect {
-  const [x0, y0] = screenToWorld(cam, 0, 0);
-  const [x1, y1] = screenToWorld(cam, cam.vw, cam.vh);
+  // LIVE-3D: a turned view is a turned quad on the (unturned) map; its bounding box is the rectangle drawn.
+  const q = [screenToWorld(cam, 0, 0), screenToWorld(cam, cam.vw, 0), screenToWorld(cam, 0, cam.vh), screenToWorld(cam, cam.vw, cam.vh)];
+  const x0 = Math.min(...q.map((c) => c[0])), x1 = Math.max(...q.map((c) => c[0]));
+  const y0 = Math.min(...q.map((c) => c[1])), y1 = Math.max(...q.map((c) => c[1]));
   const [x, y] = worldToMinimap(l, x0, y0);
   return { x, y, w: (x1 - x0) * l.s, h: (y1 - y0) * l.s };
 }

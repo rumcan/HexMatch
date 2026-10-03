@@ -30,9 +30,9 @@
 // view of the same list, not a second opinion.
 // ══════════════════════════════════════════════════════════════════════════
 import { tileToScreen } from "../game/config";
-import { worldToScreen, type Camera } from "./camera";
+import { getViewYaw, worldToScreen, type Camera } from "./camera";
 import type { Atlas } from "./atlas";
-import { place, type DrawItem } from "./depth";
+import { place, turnPlaced, yawQuarter, type DrawItem } from "./depth";
 import type { Grid } from "./grid";
 import { LEVEL_PX, cornerHeight, elevationActive } from "./elevation";
 
@@ -516,7 +516,9 @@ export class PlacementOverlay {
     const lift = this.grid && elevationActive(this.grid)
       ? cornerHeight(this.grid, c[0], c[1]) * LEVEL_PX
       : 0;
-    return worldToScreen(cam, wx, wy - lift);
+    // LIVE-3D: the hill lift is screen-vertical, so it is taken off AFTER the view turn (terrain shader does the same)
+    const [sx, sy] = worldToScreen(cam, wx, wy);
+    return [sx, sy - lift * cam.zoom];
   }
 
   private paintReach(
@@ -691,7 +693,10 @@ export class PlacementOverlay {
       if (!placed) continue;
       const art = this.ghostArt(atlas, entry.sprite, z, ghost.valid, makeSurface);
       if (!art) continue;
-      const [sx, sy] = worldToScreen(cam, placed.wx, placed.wy);
+      // LIVE-3D: a turned view moves the sprite's ANCHOR, not its art (same helper as the structures pass)
+      const yaw = getViewYaw();
+      const seat = yaw === 0 ? placed : turnPlaced(placed, yaw, yawQuarter(yaw)).draw;
+      const [sx, sy] = worldToScreen(cam, seat.wx, seat.wy);
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
       ctx.drawImage(

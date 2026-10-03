@@ -4502,7 +4502,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const contested = contestedIndustries(eco);
     const contestedT = contestedTowns(eco);
     const sword = (name: string) => `⚔ ${name}${contestClock ? ` · ${contestClock}` : ""}`;
+    // OWNER ROUND 2: the dark name chip on every resource site (QUARRY, FOREST, FARM ...) is gone: the building art says
+    // what it is, and the chip sat on top of the model. Flip to true to bring the chips back. Towns, plants and depots keep theirs.
+    const SHOW_SITE_CHIPS = false;
     for (const ind of grid.industries) {
+      if (!SHOW_SITE_CHIPS && !contested.has(ind.id)) continue;   // a site someone won a battle over keeps its sword chip
       const def = INDUSTRY_BY_KEY[ind.type];
       const hot = contested.has(ind.id);
       entries.push({
