@@ -1633,6 +1633,192 @@ export function townCentreSprite(tier: number): string {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// CIVIC-1 (#654) — the CIVIC BUILDINGS of a town.
+//
+// The owner's playtest: "we also need more variation in buildings — where are
+// the hospitals and schools and stadiums?" One table declares the lot: what a
+// town of a given tier and size gets, how big a plot it needs, and what it
+// draws UNTIL the lead has supplied the art.
+//
+// The art is a separate delivery: `assets/buildings/<sprite>.png` (plus
+// `<sprite>_r.png` when `rotate` is set) and a row in
+// `assets/buildings/manifest.json`. Until then every entry falls back to an
+// EXISTING sprite of the SAME footprint, so nothing throws and nothing is
+// missing from the draw list — a town reads as a town with one or two extra
+// big blocks where the hospital and the school will go.
+//
+// Rules the table obeys (tests/unit/civic-1-buildings.test.ts pins them):
+//
+//   • `footprint` is the AUTHORED footprint. It is the authority while the art
+//     is missing and is what `townBuildings` reserves; once the art lands the
+//     manifest takes over (see `civicArt`), so re-authoring a building
+//     re-flows its lot exactly like every other per-building sprite.
+//   • `fallback` has EXACTLY that footprint in the per-building manifest, so a
+//     town's layout cannot change when the real art arrives.
+//   • `minTier` is the lowest tier that gets one (0 village … 3 metropolis).
+//     A LEGACY town (`TOWN_TIER_LEGACY`, i.e. no tier — MP seats, story
+//     chapters, every caller that does not opt in) gets NONE: that path is
+//     pinned byte-for-byte by tests/unit/iso-l17-town-growth.test.ts.
+//   • `perHouses` — one per this many house tiles of the town; `unique`
+//     overrides it with "at most one per town, whatever the size".
+//   • the list is in PLACEMENT ORDER: the biggest, scarcest plots are taken
+//     first (a stadium cannot fit where a diner already stands).
+// ══════════════════════════════════════════════════════════════════════════
+
+export interface CivicBuildingDef {
+  /** The sprite the lead must supply: `assets/buildings/<sprite>.png`. */
+  sprite: string;
+  /** The name a label / the inspector shows ("Hospital"). */
+  name: string;
+  /** The plot it needs, `[w, h]` in tiles. */
+  footprint: [number, number];
+  /** Lowest town tier that gets one (0 = village … 3 = metropolis). */
+  minTier: number;
+  /** One per this many house tiles (ignored when `unique`). */
+  perHouses: number;
+  /** At most one per town, whatever its size. */
+  unique: boolean;
+  /** What it draws until its own art lands — SAME footprint, existing art. */
+  fallback: string;
+  /**
+   * The lead also ships the drawing turned onto the other axis
+   * (`<sprite>_r` on `[h, w]`), and so does the fallback's own art. Lets a
+   * 2×4 stadium stand in a 4×2 plot when that is the plot a town has.
+   */
+  rotate?: boolean;
+}
+
+/**
+ * CIVIC-1 (#654): the civic buildings, in placement order.
+ *
+ * Per-tier picture (`minTier`):
+ *
+ *   0 village     — a post office (a village is pinned to 1×1 homes around
+ *                   the church, so a 2×2 park waits for tier 1);
+ *   1 town        — + school, park, fire station, diner;
+ *   2 city        — + hospital, library, police station;
+ *   3 metropolis  — + stadium, station.
+ */
+export const CIVIC_BUILDINGS: readonly CivicBuildingDef[] = [
+  {
+    sprite: "town_stadium", name: "Stadium", footprint: [2, 4],
+    minTier: 3, perHouses: 120, unique: true, fallback: "store_2x4", rotate: true,
+  },
+  {
+    sprite: "town_hospital", name: "Hospital", footprint: [2, 2],
+    minTier: 2, perHouses: 120, unique: true, fallback: "town_flats_grey",
+  },
+  {
+    sprite: "town_school", name: "School", footprint: [2, 2],
+    minTier: 1, perHouses: 80, unique: false, fallback: "town_flats",
+  },
+  {
+    sprite: "town_library", name: "Library", footprint: [2, 2],
+    minTier: 2, perHouses: 100, unique: false, fallback: "town_cinema",
+  },
+  {
+    sprite: "town_station", name: "Station", footprint: [2, 2],
+    minTier: 3, perHouses: 120, unique: false, fallback: "town_hotel",
+  },
+  {
+    sprite: "town_park", name: "Park", footprint: [2, 2],
+    minTier: 1, perHouses: 60, unique: false, fallback: "trees",
+  },
+  {
+    sprite: "town_fire_station", name: "Fire Station", footprint: [1, 2],
+    minTier: 1, perHouses: 80, unique: false, fallback: "depot_1x2",
+  },
+  {
+    sprite: "town_police", name: "Police Station", footprint: [1, 2],
+    minTier: 2, perHouses: 100, unique: false, fallback: "depot_1x2",
+  },
+  {
+    sprite: "town_diner", name: "Diner", footprint: [1, 1],
+    minTier: 1, perHouses: 90, unique: false, fallback: TOWN_LAWN,
+  },
+  {
+    sprite: "town_post_office", name: "Post Office", footprint: [1, 1],
+    minTier: 0, perHouses: 70, unique: false, fallback: "town_fountain_1x1",
+  },
+];
+
+/**
+ * CIVIC-1 (#654): the share of its own house tiles a town may spend on civic
+ * buildings. A town is mostly HOMES — without a ceiling, a small village of
+ * ten blocks would come out as ten civic buildings and one house. The table is
+ * walked in priority order, so the ceiling bites on the tail (a second
+ * library) and never on the landmarks (the stadium, the hospital, the school).
+ */
+export const CIVIC_MAX_SHARE = 0.45;
+
+/** CIVIC-1 (#654): the civic def a sprite belongs to (itself or its `_r`). */
+export function civicBuildingOf(sprite: string): CivicBuildingDef | null {
+  for (const def of CIVIC_BUILDINGS) {
+    if (def.sprite === sprite) return def;
+    if (def.rotate && `${def.sprite}_r` === sprite) return def;
+  }
+  return null;
+}
+
+/** CIVIC-1 (#654): the name a civic sprite shows ("Hospital"), or null. */
+export function civicName(sprite: string): string | null {
+  const def = civicBuildingOf(sprite);
+  if (!def) return null;
+  return def.name;
+}
+
+/**
+ * CIVIC-1 (#654): how many of one civic building a town this size gets.
+ * `unique` is one per town; the rest are one per `perHouses` house tiles, and
+ * never none at all — a town that qualifies for a school has a school.
+ */
+export function civicCount(def: CivicBuildingDef, houses: number): number {
+  if (def.unique) return 1;
+  return Math.max(1, Math.floor(houses / Math.max(1, def.perHouses)));
+}
+
+/**
+ * CIVIC-1 (#654): what one civic building DRAWS, and the plot it takes —
+ * or `null` when it must not be drawn yet.
+ *
+ *   • its OWN art when that art exists: the per-building manifest declares a
+ *     footprint for it AND, when the caller knows the live atlas
+ *     (`spriteKnown` — the game's `atlas.has`), the atlas can blit it;
+ *   • otherwise its FALLBACK, an ordinary installed sprite, which is the
+ *     stand-in the lead sees until the real drawing lands. The fallback's
+ *     footprint comes from the same `footprintOf` every other town cell uses,
+ *     so a civic lot degrades with the rest of the art (before the per-building
+ *     layers land, every town cell measures 1×1) instead of reserving tiles
+ *     it cannot draw on. The test suite pins the fallback's manifest
+ *     footprint to the TABLE footprint, so the layout does not move when the
+ *     art arrives.
+ *   • `null` when neither can be drawn yet: the caller leaves the plot alone
+ *     and the re-sync after the art load places the building. The renderer's
+ *     missing-sprite path (`place` in depth.ts draws nothing) is therefore
+ *     never reached from a civic lot — a missing drawing is never a hole.
+ */
+export function civicArt(
+  def: CivicBuildingDef,
+  footprintOf: (sprite: string) => [number, number],
+  spriteKnown?: (sprite: string) => boolean,
+  rotated = false,
+): { sprite: string; footprint: [number, number] } | null {
+  if (rotated && def.rotate !== true) return null;
+  const own = rotated ? `${def.sprite}_r` : def.sprite;
+  // Has the drawing landed? The live atlas decides when the caller has one
+  // (the game passes `atlas.has`, so a layer that has not loaded yet counts
+  // as missing); a pure caller — the tests, the CLI — asks the per-building
+  // manifest, which is the footprint authority everywhere else in the game.
+  const installed = spriteKnown ? spriteKnown(own) : buildingFootprint(own) !== null;
+  if (installed) return { sprite: own, footprint: footprintOf(own) };
+  const fallback = rotated ? `${def.fallback}_r` : def.fallback;
+  // Neither drawing nor stand-in can be blitted yet: leave the plot alone
+  // rather than reserving ground a hole would appear on.
+  if (spriteKnown && !spriteKnown(fallback)) return null;
+  return { sprite: fallback, footprint: footprintOf(fallback) };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // MON-1 (#367) — the RUN Bits store catalogue.
 //
 // ONE place every unlockable is declared. The platform (RUN) is the ledger of

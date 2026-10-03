@@ -20,6 +20,7 @@ import {
   TOWN_HOME_VARIANTS, TOWN_HOME_BLOCK_IN, TOWN_GREEN_LOT_IN,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
+  CIVIC_BUILDINGS, CIVIC_MAX_SHARE, civicArt, civicCount,
 } from "./config";
 
 export const GRASS = 0;
@@ -1801,6 +1802,111 @@ export function townBuildings(
   return res;
 }
 
+/**
+ * CIVIC-1 (#654): the CIVIC BUILDINGS of a town — the hospital, the school,
+ * the stadium and the rest of `CIVIC_BUILDINGS` (src/iso/config.ts).
+ *
+ * Runs after the centre and before the ordinary blocks, so a civic lot claims
+ * its plot first (a 2×2 block pick simply falls back to single lots when part
+ * of it is taken) and every tile it leaves over is still filled by
+ * `fillSingles` — the "every house tile is built on" guarantee is untouched.
+ *
+ * How a lot is chosen. Every house tile is a candidate origin, walked
+ * row-major; a candidate stands when its WHOLE footprint is this town's house
+ * ground and nothing else has claimed any of it. That single rule carries all
+ * the invariants a town's art is pinned on: a footprint never reaches a street
+ * (a street tile is not a house), never leaves the town (a tile outside the
+ * house list is not one either), and never overlaps another building (the
+ * claimed set). It is also what lets one building take a plot another cannot:
+ * the 2×4 stadium only ever lands on the 5×2 superblocks `mergeTownBlocks`
+ * joined (the `shapes` option, ON for every new game), because a plain 2×2
+ * block lattice has no 2×4 run of houses.
+ *
+ * The town centre is respected by construction: it is placed before this pass
+ * and its tiles are claimed, so no civic building can be laid over it.
+ *
+ * Deterministic: the candidate list is built from the town's own house tiles
+ * in a fixed order and the walk starts at a hash of the town centre salted per
+ * civic kind (`hashPick`), so two kinds never reach for the same corner and a
+ * re-render, another client and a restored save all lay the same town.
+ */
+function layCivicBuildings(
+  t: Town,
+  tier: number,
+  footprintOf: (sprite: string) => [number, number],
+  spriteKnown: ((sprite: string) => boolean) | undefined,
+  houses: Set<number>,
+  used: Set<number>,
+  place: (sprite: string, ox: number, oy: number) => void,
+): void {
+  // A LEGACY town (no tier — an MP seat, a story chapter, every caller that
+  // does not opt in) keeps today's look byte for byte: the civic table rides
+  // the tier system, which is the new loop's (L17 #245). A tier above the top
+  // draws the metropolis.
+  if (tier < 0 || !houses.size) return;
+
+  // Row-major over the town's own house tiles — the fixed order every other
+  // town pass walks.
+  const tiles = [...houses].sort((a, b) => a - b);
+  const fits = (ox: number, oy: number, w: number, h: number): boolean => {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
+        const x = ox + dx, y = oy + dy;
+        if (!inBounds(x, y)) return false;
+        const i = idx(x, y);
+        if (!houses.has(i) || used.has(i)) return false;
+      }
+    }
+    return true;
+  };
+  // A town stays mostly homes: the ceiling on the ground civic buildings may
+  // take (CIVIC_MAX_SHARE), spent in the table's own priority order.
+  let spent = 0;
+  const budget = Math.floor(houses.size * CIVIC_MAX_SHARE);
+
+  for (let slot = 0; slot < CIVIC_BUILDINGS.length; slot++) {
+    const def = CIVIC_BUILDINGS[slot];
+    if (tier < def.minTier) continue;
+    const own = civicArt(def, footprintOf, spriteKnown, false);
+    // `rotate`: the same drawing turned onto the other axis (2×4 ↔ 4×2), so a
+    // stadium takes whichever of the two plots this town's merges produced.
+    const turned = def.rotate ? civicArt(def, footprintOf, spriteKnown, true) : null;
+    if (!own && !turned) continue;             // nothing to draw yet — skip it
+
+    // Every plot this building could stand on, in row-major order, the plain
+    // orientation first and the turned one only where that is what fits.
+    const plots: { x: number; y: number; sprite: string; w: number; h: number }[] = [];
+    for (const i of tiles) {
+      if (used.has(i)) continue;
+      const x = i % MAP_W, y = (i / MAP_W) | 0;
+      if (own && fits(x, y, own.footprint[0], own.footprint[1])) {
+        plots.push({ x, y, sprite: own.sprite, w: own.footprint[0], h: own.footprint[1] });
+      } else if (turned && fits(x, y, turned.footprint[0], turned.footprint[1])) {
+        plots.push({ x, y, sprite: turned.sprite, w: turned.footprint[0], h: turned.footprint[1] });
+      }
+    }
+    if (!plots.length) continue;
+
+    // Walked cyclically from a hashed start: deterministic, and it spreads a
+    // town's civic buildings instead of stacking them in the first row. A plot
+    // a taller neighbour has since taken fails `fits` and is skipped.
+    const want = civicCount(def, houses.size);
+    const start = hashPick(t.tx + slot * 31, t.ty + slot * 17, plots.length);
+    let placed = 0;
+    for (let k = 0; k < plots.length && placed < want; k++) {
+      const p = plots[(start + k) % plots.length];
+      if (!fits(p.x, p.y, p.w, p.h)) continue;
+      const area = p.w * p.h;
+      // This building would take the town past its civic ground: stop here —
+      // every other plot of it is the same size — and let the next kind try.
+      if (spent + area > budget) break;
+      place(p.sprite, p.x, p.y);
+      spent += area;
+      placed++;
+    }
+  }
+}
+
 function townBuildingsLaid(
   t: Town,
   footprintOf: (sprite: string) => [number, number],
@@ -1878,6 +1984,10 @@ function townBuildingsLaid(
     const list = blockTiles.get(key);
     if (list) list.push([hx, hy]); else blockTiles.set(key, [[hx, hy]]);
   }
+  // CIVIC-1 (#654): the hospital, the school, the stadium — laid before the
+  // ordinary blocks so a civic lot claims its plot first. A block whose part
+  // is taken simply falls back to single lots, so nothing is left bare.
+  layCivicBuildings(t, tier, footprintOf, opts.spriteKnown, houses, used, place);
   // Row-major over the block origins: a fixed order, so the output is stable.
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
 
@@ -1987,6 +2097,9 @@ function townBuildingsShapes(
     const list = blockTiles.get(key);
     if (list) list.push([hx, hy]); else blockTiles.set(key, [[hx, hy]]);
   }
+  // CIVIC-1 (#654): the civic lots, before the superblocks claim theirs — the
+  // 2×4 stadium takes one merged plot, the long town buildings the rest.
+  layCivicBuildings(t, tier, footprintOf, opts.spriteKnown, houses, used, place);
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
   const fullBlock = (ox: number, oy: number): boolean =>
     span(ox, oy, BLOCK, BLOCK).every(([x, y]) => houses.has(idx(x, y)));
