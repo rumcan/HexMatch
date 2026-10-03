@@ -1,10 +1,17 @@
 // LIVE-3D spike (owner, 2026-10-03): instanced 3D buildings over the 2D game, behind `?three=1`.
 // FRAME RATE FIRST: no per-frame allocation, instance matrices only rebuilt when the world changes.
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { HW, HH } from "../game/config";
 
+// LIVE-3D stage 2: front-facing yaw (radians) per sprite name, default 0; the lead tunes these.
+const MODEL_YAW: Record<string, number> = {};
+// the owner names a model after the building class; several sprites (e.g. the four depot facings) share one GLB
+const modelNameOf = (sprite: string): string => (sprite.startsWith("truck_depot") ? "depot_1x2" : sprite);
+
 export interface ThreeItem { sprite: string; tx: number; ty: number; w: number; h: number }
-export interface ThreeStats { fps: number; drawCalls: number; triangles: number; instances: number }
+export interface ThreeStats { fps: number; drawCalls: number; triangles: number; instances: number; textures: number }
 interface Cam { x: number; y: number; zoom: number; vw: number; vh: number }
 
 const K = 34;            // screen px per unit of building height at zoom 1
@@ -25,6 +32,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   const q = new URLSearchParams(search);
   const tris = Number(q.get("tris") ?? 0) | 0;
   const fixedYaw = q.get("yaw");
+  const noModels = tris > 0 || q.get("models") === "0";   // stress mode and ?models=0 keep the boxes
   const canvas = document.createElement("canvas");
   canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3";
   host.insertBefore(canvas, before);
@@ -55,42 +63,112 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     : new THREE.BoxGeometry(1, 1, 1);
   geo.translate(0, 0.5, 0);
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  interface Group { mesh: any; cap: number }
-  const groups = new Map<string, Group>();
+  interface Pool { mesh: any; cap: number }
+  interface Model { parts: { geo: any; mat: any }[]; longX: boolean }
+  const boxPool = new Map<string, Pool>();
+  const partPools = new Map<string, Pool[]>();
+  const models = new Map<string, Model | "loading" | "missing">();
+  const lists = new Map<string, ThreeItem[]>();
   const m4 = new THREE.Matrix4(), pos = new THREE.Vector3(), scl = new THREE.Vector3(), quat = new THREE.Quaternion();
-  const tint = new THREE.Color();
+  const up = new THREE.Vector3(0, 1, 0), tint = new THREE.Color();
   let instances = 0;
 
   const hashOf = (s: string): number => { let h = 7; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h >>> 0; };
 
+  // LIVE-3D stage 2: models load lazily, one GLB per sprite name, cached; the box stays until (unless) one lands.
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  const base = (import.meta as any).env?.BASE_URL ?? "/";
+  const loadModel = (sprite: string) => {
+    if (models.has(sprite)) return;
+    models.set(sprite, "loading");
+    loader.load(`${base}models/${sprite}.glb`, (gltf: any) => {
+      gltf.scene.updateMatrixWorld(true);
+      const parts: { geo: any; mat: any }[] = [];
+      const bb = new THREE.Box3();
+      gltf.scene.traverse((o: any) => {
+        if (!o.isMesh) return;
+        const g = o.geometry.clone();
+        g.applyMatrix4(o.matrixWorld);          // bake the pipeline's normalise node into the vertices
+        g.computeBoundingBox(); bb.union(g.boundingBox);
+        const src = o.material;
+        const mat = new THREE.MeshLambertMaterial({ map: src.map ?? null, color: src.map ? 0xffffff : (src.color ?? 0xcccccc) });
+        parts.push({ geo: g, mat });
+      });
+      if (!parts.length) { models.set(sprite, "missing"); return; }
+      models.set(sprite, { parts, longX: bb.max.x - bb.min.x >= bb.max.z - bb.min.z });
+      for (const s of lists.keys()) if (modelNameOf(s) === sprite) fill(s);
+    }, undefined, () => models.set(sprite, "missing"));
+  };
+
+  const poolFor = (map: Map<string, Pool>, key: string, geoOf: any, matOf: any, n: number, colored: boolean): Pool => {
+    let p = map.get(key);
+    if (!p || p.cap < n) {
+      if (p) { scene.remove(p.mesh); p.mesh.dispose(); }
+      const cap = Math.max(16, n * 2);
+      const mesh = new THREE.InstancedMesh(geoOf, matOf, cap);
+      mesh.frustumCulled = false;       // one mesh per model: culling it whole buys nothing
+      if (colored) { tint.setHSL((hashOf(key) % 360) / 360, 0.3, 0.72); for (let i = 0; i < cap; i++) mesh.setColorAt(i, tint); }
+      p = { mesh, cap }; map.set(key, p); scene.add(mesh);
+    }
+    return p;
+  };
+
+  /** Rebuild one sprite's instance matrices (only when the world or its model changed). */
+  const fill = (sprite: string) => {
+    const list = lists.get(sprite) ?? [];
+    const model = models.get(modelNameOf(sprite));
+    const ready = model && model !== "loading" && model !== "missing" ? model : null;
+    const box = boxPool.get(sprite);
+    if (box) box.mesh.count = 0;
+    for (const p of partPools.get(sprite) ?? []) p.mesh.count = 0;
+    if (!list.length) return;
+    if (ready) {
+      const pools = partPools.get(sprite) ?? [];
+      partPools.set(sprite, pools);
+      const yawBase = MODEL_YAW[sprite] ?? 0;
+      ready.parts.forEach((part, k) => {
+        const mapK = new Map<string, Pool>(); if (pools[k]) mapK.set(`${sprite}#${k}`, pools[k]);
+        const p = poolFor(mapK, `${sprite}#${k}`, part.geo, part.mat, list.length, false);
+        pools[k] = p;
+        for (let i = 0; i < list.length; i++) {
+          const it = list[i];
+          // pipeline normalises the largest horizontal extent to 1; turn a model whose long side disagrees with the lot
+          const turn = it.w !== it.h && (it.w > it.h) !== ready.longX ? Math.PI / 2 : 0;
+          const s = Math.max(it.w, it.h) * 0.96;
+          pos.set(it.tx + it.w / 2, 0, it.ty + it.h / 2);
+          quat.setFromAxisAngle(up, yawBase + turn);
+          scl.set(s, s, s);
+          m4.compose(pos, quat, scl);
+          p.mesh.setMatrixAt(i, m4);
+        }
+        p.mesh.count = list.length;
+        p.mesh.instanceMatrix.needsUpdate = true;
+      });
+      return;
+    }
+    const p = poolFor(boxPool, sprite, geo, mat, list.length, true);
+    const hgt = 1 + (hashOf(sprite) % 100) / 100;     // 1..2 tiles
+    quat.identity();
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      pos.set(it.tx + it.w / 2, 0, it.ty + it.h / 2);
+      scl.set(it.w * 0.92, hgt, it.h * 0.92);
+      m4.compose(pos, quat, scl);
+      p.mesh.setMatrixAt(i, m4);
+    }
+    p.mesh.count = list.length;
+    p.mesh.instanceMatrix.needsUpdate = true;
+    if (p.mesh.instanceColor) p.mesh.instanceColor.needsUpdate = true;
+  };
+
   const setItems = (items: ThreeItem[]) => {
-    const by = new Map<string, ThreeItem[]>();
-    for (const it of items) { let a = by.get(it.sprite); if (!a) by.set(it.sprite, a = []); a.push(it); }
-    instances = 0;
-    for (const g of groups.values()) g.mesh.count = 0;
-    for (const [sprite, list] of by) {
-      let g = groups.get(sprite);
-      if (!g || g.cap < list.length) {
-        if (g) { scene.remove(g.mesh); g.mesh.dispose(); }
-        const cap = Math.max(16, list.length * 2);
-        const mesh = new THREE.InstancedMesh(geo, mat, cap);
-        mesh.frustumCulled = false;       // spike: one mesh per sprite, culling it whole buys nothing
-        tint.setHSL((hashOf(sprite) % 360) / 360, 0.3, 0.72);
-        for (let i = 0; i < cap; i++) mesh.setColorAt(i, tint);
-        g = { mesh, cap }; groups.set(sprite, g); scene.add(mesh);
-      }
-      const hgt = 1 + (hashOf(sprite) % 100) / 100;     // 1..2 tiles
-      for (let i = 0; i < list.length; i++) {
-        const it = list[i];
-        pos.set(it.tx + it.w / 2, 0, it.ty + it.h / 2);
-        scl.set(it.w * 0.92, hgt, it.h * 0.92);
-        m4.compose(pos, quat, scl);
-        g.mesh.setMatrixAt(i, m4);
-      }
-      g.mesh.count = list.length;
-      g.mesh.instanceMatrix.needsUpdate = true;
-      if (g.mesh.instanceColor) g.mesh.instanceColor.needsUpdate = true;
-      instances += list.length;
+    for (const l of lists.values()) l.length = 0;
+    for (const it of items) { let a = lists.get(it.sprite); if (!a) lists.set(it.sprite, a = []); a.push(it); }
+    instances = items.length;
+    for (const sprite of lists.keys()) {
+      if (lists.get(sprite)!.length && !noModels) loadModel(modelNameOf(sprite));
+      fill(sprite);
     }
   };
 
@@ -155,7 +233,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     }
     const fps = n > 1 && newest > oldest ? ((n - 1) * 1000) / (newest - oldest) : 0;
     const r = renderer.info.render;
-    return { fps: Math.round(fps * 10) / 10, drawCalls: r.calls, triangles: r.triangles, instances };
+    return { fps: Math.round(fps * 10) / 10, drawCalls: r.calls, triangles: r.triangles, instances, textures: renderer.info.memory.textures };
   };
 
   return {
