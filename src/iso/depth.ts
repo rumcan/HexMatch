@@ -408,3 +408,62 @@ export function turnPlaced(p: Placed, yaw: number, k: number): { draw: Placed; s
   }
   return { draw, sort };
 }
+
+// ── LIVE-3D: the turned seat, memoised (3D-FIX-2) ─────────────────────────────
+/**
+ * One memoised "where does this sprite's top-left land under a turned view" slot.
+ *
+ * The placement overlay re-places its ghost on EVERY frame (`place()` + the
+ * turn), so a hovering player would allocate two objects and walk the whole
+ * anchor maths sixty times a second for a sprite that has not moved. The memo
+ * holds one slot per (sprite, tile) — the ghost's own list, a handful long —
+ * keyed additionally on the view quarter, so a still camera allocates nothing
+ * at all and a turn rebuilds once.
+ */
+export interface SeatSlot { sprite: string; tx: number; ty: number; wx: number; wy: number; live: boolean }
+
+export interface SeatMemo { yaw: number; k: number; slots: SeatSlot[] }
+
+export const createSeatMemo = (): SeatMemo => ({ yaw: 0, k: -1, slots: [] });
+
+/**
+ * The memoised seat of the sprite on tile (tx,ty) at this view quarter, or
+ * null when it has to be computed. The cheap half of `seatTurned`: no lookup
+ * here allocates, so a hovering player can call it every frame.
+ */
+export function seatFind(
+  memo: SeatMemo, sprite: string, tx: number, ty: number, yaw: number, k: number,
+): SeatSlot | null {
+  if (memo.yaw !== yaw || memo.k !== k) return null;
+  for (let i = 0; i < memo.slots.length; i++) {
+    const s = memo.slots[i];
+    if (s.live && s.sprite === sprite && s.tx === tx && s.ty === ty) return s;
+  }
+  return null;
+}
+
+/**
+ * The WORLD top-left a `Placed` is drawn at under a view turned `yaw` (nearest
+ * quarter `k`) — exactly `turnPlaced(p, yaw, k).draw`, memoised.
+ *
+ * Returns a REUSED slot: read `wx`/`wy` straight away, never store it. The
+ * slot's own `wx`/`wy` are the answer; `live` is bookkeeping.
+ */
+export function seatTurned(memo: SeatMemo, p: Placed, yaw: number, k: number): SeatSlot {
+  if (memo.yaw !== yaw || memo.k !== k) {
+    // A new view quarter invalidates every seat (the anchor turns with it).
+    memo.yaw = yaw; memo.k = k;
+    for (let i = 0; i < memo.slots.length; i++) memo.slots[i].live = false;
+  } else {
+    const hit = seatFind(memo, p.sprite, p.tx, p.ty, yaw, k);
+    if (hit) return hit;
+  }
+  let slot: SeatSlot | null = null;
+  for (let i = 0; i < memo.slots.length; i++) if (!memo.slots[i].live) { slot = memo.slots[i]; break; }
+  if (!slot) { slot = { sprite: "", tx: 0, ty: 0, wx: 0, wy: 0, live: false }; memo.slots.push(slot); }
+  const seat = turnPlaced(p, yaw, k).draw;
+  slot.sprite = p.sprite; slot.tx = p.tx; slot.ty = p.ty;
+  slot.wx = seat.wx; slot.wy = seat.wy;
+  slot.live = true;
+  return slot;
+}
