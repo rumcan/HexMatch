@@ -26,11 +26,15 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 import {
-  MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions, type MapOptions,
+  MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions,
+  readTownLayout, defaultTownLayout, type MapOptions, type TownLayout,
 } from "../net/match-settings";
 
-export { MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions };
-export type { MapOptions };
+export {
+  MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions,
+  readTownLayout, defaultTownLayout,
+};
+export type { MapOptions, TownLayout };
 
 const KEYS = ["rivers", "elevation", "shapes", "rings", "diag"] as const;
 
@@ -63,4 +67,50 @@ export function resolveMapOptions(src: MapOptionSources): MapOptions {
     if (typeof e === "boolean") base[k] = e;
   }
   return base;
+}
+
+/**
+ * TOWN-2 (#653): the town street plan a boot generates with, over the same
+ * chain of custody as the booleans (most specific wins):
+ *
+ *   1. an explicit option (`opts.layout`) — tests and debug boots;
+ *   2. a URL param (`?layout=grid|organic`) — for a NEW game only, exactly
+ *      like `?shapes=`: a save never re-terrains under a URL;
+ *   3. a resumed save's recorded layout — a record without the key predates
+ *      TOWN-2 and was generated "grid", so it resumes "grid";
+ *   4. a networked room's `MatchSettings.map.layout` — the HOST's record (a
+ *      guest's URL cannot split the seats); a room without a map uses the
+ *      new-game default;
+ *   5. a story contract / scenario — OFF ("grid") unless the chapter says
+ *      otherwise, the same rule its booleans play;
+ *   6. otherwise `defaultTownLayout()` — "organic" for a new game, "grid"
+ *      under the unit-test runner so the seed-pinned suites keep their maps.
+ *
+ * Nothing here reads `KEYS`: the layout is not a boolean and never rides the
+ * `?rivers=0|1` loop — it has its own names and its own param.
+ */
+export function resolveTownLayout(
+  src: MapOptionSources,
+  runnerDefault: TownLayout = defaultTownLayout(),
+): TownLayout {
+  // A resumed save is the map's own record: it wins over the URL, and an
+  // absent key reads as the pre-TOWN-2 plan.
+  if (src.save) return readTownLayout(src.save.map && (src.save.map as Record<string, unknown>).layout) ?? "grid";
+  if (src.room) {
+    return readTownLayout(src.room.map?.layout) ?? runnerDefault;
+  }
+  if (src.story || src.scenario) {
+    const tuned = (src.story ?? src.scenario) as { mapOptions?: Partial<MapOptions> } | null | undefined;
+    return readTownLayout(tuned?.mapOptions?.layout) ?? "grid";
+  }
+  const e = src.explicit?.layout;
+  if (typeof e === "string") {
+    const explicit = readTownLayout(e);
+    if (explicit) return explicit;
+  }
+  let q: string | null = null;
+  try { q = new URLSearchParams(src.search ?? "").get("layout"); } catch { q = null; }
+  const fromUrl = readTownLayout(q);
+  if (fromUrl) return fromUrl;
+  return runnerDefault;
 }
