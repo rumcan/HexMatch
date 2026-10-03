@@ -58,7 +58,7 @@ async function run(browser, name, extra) {
   }
   if (await page.locator("#iso-session").isVisible()) throw new Error("tuning session still covers the map");
   console.log(name, "depots placed", placed, JSON.stringify(pan));
-  const town = pan ?? await page.evaluate(() => { const t = window.__iso.grid.towns[0]; return { tx: t.tx, ty: t.ty }; });
+  const town = await page.evaluate(() => { const t = window.__iso.grid.towns[0]; return { tx: t.tx + 4, ty: t.ty + 4 }; });
   const rows = [];
   for (const zoom of [0.5, 1, 2]) {
     // wheel over the map until the camera sits on the wanted zoom step
@@ -87,8 +87,10 @@ async function run(browser, name, extra) {
       return { fps: Math.round((frames * 1000) / ms * 10) / 10, worstMs: Math.round(worst), stats: h.threeStats?.() ?? null, zoom: h.camera.zoom };
     }, { town, secs: SECS });
     rows.push({ variant: name, want: zoom, ...r });
-    await page.evaluate((t) => window.__iso.centerOn(t.tx + 0.5, t.ty + 1), town); await page.waitForTimeout(800);
+    await page.evaluate((t) => window.__iso.centerOn(t.tx, t.ty), town); await page.waitForTimeout(800);
     await page.screenshot({ path: `tools/perf/three-spike-${name}-z${zoom}.png` });
+    await page.evaluate((t) => window.__iso.centerOn(t.tx + 0.5, t.ty + 1), pan); await page.waitForTimeout(800);
+    await page.screenshot({ path: `tools/perf/three-spike-${name}-z${zoom}-industry.png` });
   }
   await ctx.close();
   return rows;
@@ -96,7 +98,7 @@ async function run(browser, name, extra) {
 
 const browser = await chromium.launch({ args: ["--use-angle=default", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"] });
 console.log("variant | zoom | fps | worstFrameMs | three.fps | drawCalls | triangles | instances | textures");
-for (const [name, extra] of variants) {
+for (const [name, extra] of variants.filter(([n]) => !process.env.ONLY || process.env.ONLY.split(",").includes(n))) {
   for (const r of await run(browser, name, extra)) {
     const s = r.stats;
     console.log([r.variant, r.want + "/" + r.zoom, r.fps, r.worstMs, s?.fps ?? "-", s?.drawCalls ?? "-", s?.triangles ?? "-", s?.instances ?? "-", s?.textures ?? "-"].join(" | "));

@@ -2892,8 +2892,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   if (threeLayer) {
     setHideExtra((e) => {
       const k = (e.ref as { kind?: string } | undefined)?.kind;
-      return k === "town" || k === "harvester" || k === "factory";
+      return (k === "town" || k === "harvester" || k === "factory") && threeLayer.drawsSprite(e.sprite);
     });
+    // the 2D sprites a ready 3D model replaces disappear as models land: re-sync once they do
+    threeLayer.onModels = () => syncWorld();
   }
   const stage = ui.mapHost;
   // GFX-01: the tilt-shift composite. It mounts its own canvas above the
