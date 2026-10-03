@@ -140,7 +140,7 @@ describe("truck depot art opens the side its facing says", () => {
     });
   }
   // KNOWN ART BUG: _se is a duplicate of _sw (render_t0, yard SW). Re-render it at --turn 1, then drop `.fails`.
-  it.fails("facing se draws art whose yard opens se", async () => {
+  it("facing se draws art whose yard opens se", async () => {
     expect(await yardSide(DEPOT_SPRITES.se)).toBe("se");
   });
 });
