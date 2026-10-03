@@ -2520,6 +2520,10 @@ function layCivicBuildings(
   houses: Set<number>,
   used: Set<number>,
   place: (sprite: string, ox: number, oy: number) => void,
+  /** TOWN-2 (#653): an organic town's avenue-frontage wedge lots — a civic
+   * building never covers one, exactly like no other block art. Absent (the
+   * grid plan) changes nothing. */
+  wedges?: ReadonlySet<number>,
 ): void {
   // A LEGACY town (no tier — an MP seat, a story chapter, every caller that
   // does not opt in) keeps today's look byte for byte: the civic table rides
@@ -2537,6 +2541,7 @@ function layCivicBuildings(
         if (!inBounds(x, y)) return false;
         const i = idx(x, y);
         if (!houses.has(i) || used.has(i)) return false;
+        if (wedges?.has(i)) return false;   // TOWN-2: the avenue's wedge lots
       }
     }
     return true;
@@ -2790,7 +2795,7 @@ function townBuildingsShapes(
   }
   // CIVIC-1 (#654): the civic lots, before the superblocks claim theirs — the
   // 2×4 stadium takes one merged plot, the long town buildings the rest.
-  layCivicBuildings(t, tier, footprintOf, opts.spriteKnown, houses, used, place);
+  layCivicBuildings(t, tier, footprintOf, opts.spriteKnown, houses, used, place, wedges);
   const origins = [...blocks.values()].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
   const fullBlock = (ox: number, oy: number): boolean =>
     span(ox, oy, BLOCK, BLOCK).every(([x, y]) => houses.has(idx(x, y)));
