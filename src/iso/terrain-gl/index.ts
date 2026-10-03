@@ -61,6 +61,8 @@ export interface TerrainCamera {
   x: number; y: number;
   zoom: 0.5 | 1 | 2;
   vw: number; vh: number;
+  /** LIVE-3D: view yaw in radians about tile (0,0); omitted/0 = the game's own view. */
+  yaw?: number;
 }
 
 /**
@@ -169,7 +171,7 @@ const PLACEHOLDER: Record<TextureSlot, [number, number, number]> = {
 };
 
 const UNIFORMS = [
-  "uCam", "uZoom", "uView", "uField", "uCodes", "uLawn", "uNoise", "uGround", "uGrassArr", "uMeadowArr",
+  "uCam", "uZoom", "uView", "uYaw", "uField", "uCodes", "uLawn", "uNoise", "uGround", "uGrassArr", "uMeadowArr",
   "uDirtArr", "uRockArr", "uSandArr", "uDetail", "uWaterN", "uMapSize", "uCornerSize", "uSeedOff",
   "uDetailAmt", "uWaterAnim", "uVariantAmt", "uTime", "uGrid", "uTilesPerRepeat", "uLumA",
   "uGrade", "uLight", "uSun",
@@ -852,6 +854,7 @@ class TerrainRendererImpl implements TerrainRenderer {
     gl.uniform2f(st.u.uCam, cam.x, cam.y);
     gl.uniform1f(st.u.uZoom, zoom);
     gl.uniform2f(st.u.uView, this.vw, this.vh);
+    gl.uniform2f(st.u.uYaw, Math.cos(cam.yaw ?? 0), Math.sin(cam.yaw ?? 0));
     gl.uniform2f(st.u.uMapSize, map.w, map.h);
     gl.uniform2f(st.u.uSeedOff, this.seedOff[0], this.seedOff[1]);
     gl.uniform1f(st.u.uDetailAmt, detailAmt);

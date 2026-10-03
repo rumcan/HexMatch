@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { HW, HH } from "../game/config";
+import { getViewYaw, getViewYawTarget, setViewYawTarget } from "./camera";
 
 // LIVE-3D stage 3 (Meshy): tools/models/build-models.mjs bakes each model square to the grid exactly as the
 // sprite renderer did and writes public/models/manifest.json: per model the sprite's front `turn` (quarter
@@ -39,7 +40,7 @@ export const threeWanted = (s: string = typeof location !== "undefined" ? locati
 export interface ThreeLayer {
   canvas: HTMLCanvasElement;
   setItems(items: ThreeItem[]): void;
-  update(cam: Cam, nowMs: number): void;
+  update(cam: Cam): void;
   stats(): ThreeStats;
   /** True when the 3D layer draws this sprite (a ready model, or box mode), so the 2D sprite must hide. */
   drawsSprite(sprite: string): boolean;
@@ -82,7 +83,6 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   const P = camera.projectionMatrix;
   const view = camera.matrixWorldInverse;
   const viewInv = camera.matrixWorld;
-  const tmpA = new THREE.Matrix4(), tmpB = new THREE.Matrix4(), tmpC = new THREE.Matrix4();
 
   const geo: any = tris > 0
     ? new THREE.IcosahedronGeometry(0.5, Math.max(0, Math.round(Math.sqrt(tris / 20)) - 1))   // 20*(d+1)^2 triangles
@@ -151,7 +151,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   // Screen culling at instance granularity (InstancedMesh culls only as a whole): the buildings the camera
   // cannot see are left out of the instance buffers, rebuilt only when the camera has moved a fifth of the
   // view or zoomed. Off while the 3D view is yawed (the screen test below is the unrotated projection).
-  let cullOn = false, cX = 0, cY = 0, cZ = 1, cW = 0, cH = 0;
+  let cullOn = false, cX = 0, cY = 0, cZ = 1, cW = 0, cH = 0, cYaw = 0, cCos = 1, cSin = 0;
   const scratch: ThreeItem[] = [];
   const cullList = (all: ThreeItem[]): ThreeItem[] => {
     if (!cullOn) return all;
@@ -159,7 +159,8 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     const mx = cW * 0.25 + 300 * cZ, my = cH * 0.25 + 450 * cZ;
     for (let i = 0; i < all.length; i++) {
       const it = all[i];
-      const gx = it.tx + it.w / 2, gz = it.ty + it.h / 2;
+      const ax = it.tx + it.w / 2, az = it.ty + it.h / 2;
+      const gx = ax * cCos + az * cSin, gz = -ax * cSin + az * cCos;   // the view turn (camera.ts)
       const sx = (gx - gz) * HW * cZ + cX, sy = (gx + gz) * HH * cZ + cY;
       if (sx > -mx && sx < cW + mx && sy > -my && sy < cH + my) scratch.push(it);
     }
@@ -300,7 +301,8 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
       if (it.alpha !== undefined && it.alpha < 0.5) continue;           // ambient cars fade at the town gates: pop instead
       const X = it.fx + 0.5, Z = it.fy + 0.5;
       if (cullOn) {
-        const sx = (X - Z) * HW * cZ + cX, sy = (X + Z) * HH * cZ + cY;
+        const gx = X * cCos + Z * cSin, gz = -X * cSin + Z * cCos;
+        const sx = (gx - gz) * HW * cZ + cX, sy = (gx + gz) * HH * cZ + cY;
         if (sx < -200 || sx > cW + 200 || sy < -200 || sy > cH + 200) continue;
       }
       const mdl = models.get(st.model) as Model;
@@ -332,43 +334,34 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     }
   };
 
-  // [ and ] turn 90 degrees about the screen-centre ground point, eased; ?yaw=<deg> pins it.
-  let yawTarget = fixedYaw != null ? (Number(fixedYaw) * Math.PI) / 180 : 0;
-  let yaw = yawTarget;
-  let lastT = 0;
+  // [ and ] turn the WHOLE view 90 degrees about the screen-centre ground point, eased; ?yaw=<deg> pins it.
+  // The yaw itself lives in camera.ts (the game loop eases it and re-pivots the camera), so picking, labels and
+  // the 2D painters follow; this layer just reads it.
+  if (fixedYaw != null) setViewYawTarget((Number(fixedYaw) * Math.PI) / 180);
   const onKey = (e: KeyboardEvent) => {
     if (fixedYaw != null || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-    if (e.key === "[") yawTarget -= Math.PI / 2;
-    else if (e.key === "]") yawTarget += Math.PI / 2;
+    if (e.key === "[") setViewYawTarget(getViewYawTarget() - Math.PI / 2);
+    else if (e.key === "]") setViewYawTarget(getViewYawTarget() + Math.PI / 2);
   };
   window.addEventListener("keydown", onKey);
 
   let cw = 0, ch = 0;
-  const update = (cam: Cam, nowMs: number) => {
-    const dt = lastT ? Math.min(0.1, (nowMs - lastT) / 1000) : 0.016;
-    lastT = nowMs;
-    if (yaw !== yawTarget) {
-      yaw += (yawTarget - yaw) * Math.min(1, dt * 10);
-      if (Math.abs(yawTarget - yaw) < 1e-3) yaw = yawTarget;
-    }
-    if (yaw === 0 && yawTarget === 0) {
-      if (!cullOn || cam.zoom !== cZ || cam.vw !== cW || cam.vh !== cH || Math.abs(cam.x - cX) > cam.vw * 0.2 || Math.abs(cam.y - cY) > cam.vh * 0.2) {
-        cullOn = true; cX = cam.x; cY = cam.y; cZ = cam.zoom; cW = cam.vw; cH = cam.vh;
+  const update = (cam: Cam) => {
+    const yaw = getViewYaw();
+    if (yaw === getViewYawTarget()) {
+      // settled: cull to the (rotated) view, rebuilt when the camera moved a fifth of the view, zoomed or turned
+      if (!cullOn || cam.zoom !== cZ || cam.vw !== cW || cam.vh !== cH || yaw !== cYaw || Math.abs(cam.x - cX) > cam.vw * 0.2 || Math.abs(cam.y - cY) > cam.vh * 0.2) {
+        cullOn = true; cX = cam.x; cY = cam.y; cZ = cam.zoom; cW = cam.vw; cH = cam.vh; cYaw = yaw; cCos = Math.cos(yaw); cSin = Math.sin(yaw);
         refillAll();
       }
-    } else if (cullOn) { cullOn = false; refillAll(); }
+    } else if (cullOn) { cullOn = false; refillAll(); }   // mid-turn: draw everything, the cull rect would lag
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (w !== cw || h !== ch) { cw = w; ch = h; renderer.setSize(w, h, false); }
     const z = cam.zoom, vw = cam.vw, vh = cam.vh;
-    // ground point under the screen centre (tile units, fractional)
-    const wx = (vw / 2 - cam.x) / z, wy = (vh / 2 - cam.y) / z;
-    const px = (wx / HW + wy / HH) / 2, pz = (wy / HH - wx / HW) / 2;
-    tmpA.makeTranslation(px, 0, pz);
-    tmpB.makeRotationY(yaw);
-    tmpC.makeTranslation(-px, 0, -pz);
-    view.copy(tmpA).multiply(tmpB).multiply(tmpC);
+    // the view turn is a rotation about tile (0,0); the camera offset already pivots it on the screen centre
+    view.makeRotationY(yaw);
     viewInv.copy(view).invert();
     const sx = (2 / vw) * z * HW, sy = (2 / vh) * z * HH, sh = (2 / vh) * z * K;
     // clip.x = sx*(x-z) + (2cx/vw - 1); clip.y = -sy*(x+z) + sh*y + (1 - 2cy/vh); clip.z = (-(x+z) + .5y)/DEPTH

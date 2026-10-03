@@ -19,6 +19,7 @@ in float aShade;
 uniform vec2  uCam;    // device-pixel translation (cam.x, cam.y)
 uniform float uZoom;   // 0.5 | 1 | 2
 uniform vec2  uView;   // canvas size in device px
+uniform vec2  uYaw;    // LIVE-3D (?three=1): (cos, sin) of the view yaw about tile (0,0); (1,0) = the game's own view
 
 out vec2  vWorld;
 out vec2  vTile;
@@ -30,7 +31,16 @@ void main() {
   vShade = aShade;
   // Exactly the game's camera: screen = world * zoom + cam. The viewport is
   // the whole canvas, so this lands pixel-exact under the 2D overlay.
-  vec2 s = aPos * uZoom + uCam;
+  vec2 w = aPos;
+  if (uYaw.y != 0.0 || uYaw.x != 1.0) {
+    // LIVE-3D: the same linear map as camera.ts viewMatrix (a quarter turn of the TILE lattice, in world px),
+    // applied to the flat tile position; the hill lift stays screen-vertical.
+    vec2 flat = vec2((aTile.x - aTile.y) * 32.0, (aTile.x + aTile.y) * 16.0);
+    float lift = flat.y - aPos.y;
+    w = vec2(uYaw.x * flat.x + 2.0 * uYaw.y * flat.y, -0.5 * uYaw.y * flat.x + uYaw.x * flat.y);
+    w.y -= lift;
+  }
+  vec2 s = w * uZoom + uCam;
   gl_Position = vec4(s.x / uView.x * 2.0 - 1.0, 1.0 - s.y / uView.y * 2.0, 0.0, 1.0);
 }
 `;

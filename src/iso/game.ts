@@ -107,7 +107,7 @@ import {
 } from "./protest";
 import { loadGroundTextures } from "./ground";
 import {
-  createCamera, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
+  createCamera, tickViewYaw, getViewYaw, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
   bootZoomFor, tapSlop, HH, HW, visibleTileRange, screenToTileAt,
   type Camera, type GestureState,
@@ -16742,6 +16742,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
 
+      // LIVE-3D: ease the view turn and keep the screen-centre ground point fixed (camera.ts)
+      if (threeLayer) { const turned = tickViewYaw(cam, dt); if (turned) commitCamera(turned); }
       // TRAFFIC-01: trucks and ambient cars share the vehicles list — one
       // depth-sorted pass draws both, and culling treats them identically.
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
@@ -16758,10 +16760,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // its per-rect grade drew boxes round the cars and trains. The world
       // stays in plain daylight; only the `?light=` screenshot pin still grades.
       if (lightingPin != null) pushMatchLighting(dt);
-      terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
+      terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh, yaw: getViewYaw() }, t);
       renderer!.render(t, items, ghost);
       threeLayer?.updateVehicles(world.vehicles ?? [], threeLift);
-      threeLayer?.update(cam, t);
+      threeLayer?.update(cam);
       mini.paint();
       // #461: camera ease back to Depot after tuning.
       tickCameraAnim(t);
