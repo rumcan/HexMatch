@@ -287,7 +287,16 @@ test.describe("iso game boots on the default route", () => {
     // (poll: the layers fill asynchronously once the atlas loads). The terrain is a WebGL canvas
     // now (unreadable through a 2D context), so pixels are read from the 2D layers: the structures
     // layer draws the industries and towns, the terrain layer is the fallback ground.
+    //
+    // E2E-GREEN-1 (#666): this probe used to get a flat 15 s, and on the software-GL runner that
+    // was gone in two or three `getImageData` calls (each one waits on the frame queue — see
+    // `PIXEL_POLL_MS` above) taken before the PNG layers had finished installing. It now gates on
+    // the game's own readiness flag first — `__iso.artLoad.ready`, the loading screen's "every
+    // requested sprite settled" flag (LOAD-01) — and then runs the SAME pixel assertion for this
+    // file's readback budget. Nothing about what the probe proves changed.
     await expect.poll(async () => page.evaluate(() => {
+      const h = (window as any).__iso;
+      if (!h?.artLoad?.ready) return false;
       return Array.from(document.querySelectorAll("canvas.iso-layer:not(.iso-terrain-gl)")).some((el) => {
         const c = el as HTMLCanvasElement;
         const ctx = c.getContext("2d")!;
@@ -299,7 +308,7 @@ test.describe("iso game boots on the default route", () => {
         }
         return opaque > 100 && coloured > 100;
       });
-    }), { timeout: 15000 }).toBe(true);
+    }), { timeout: PIXEL_POLL_MS }).toBe(true);
     const stats = await page.evaluate(() => ({
       industries: (window as any).__iso.grid.industries.length,
       seed: (window as any).__iso.grid.seed,
