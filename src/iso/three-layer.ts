@@ -11,7 +11,7 @@ import { HW, HH } from "../game/config";
 // sprite, which is the same model turned 90 degrees); no hand-tuned yaw is needed. MODEL_YAW is an extra
 // per-sprite correction in radians if one ever looks wrong.
 const MODEL_YAW: Record<string, number> = {};
-interface ModelInfo { turn: number; ex: number; ez: number; h: number }
+interface ModelInfo { turn: number; ex: number; ez: number; h: number; moving?: boolean; lengthM?: number }
 type Manifest = Record<string, ModelInfo>;
 /** Sprite name -> model name (+ extra quarter turns); null = no model (the box stays). */
 const modelOf = (sprite: string, mf: Manifest | null): { name: string; extra: number } | null => {
@@ -23,13 +23,15 @@ const modelOf = (sprite: string, mf: Manifest | null): { name: string; extra: nu
   return null;
 };
 
-export interface ThreeItem { sprite: string; tx: number; ty: number; w: number; h: number }
-export interface ThreeStats { fps: number; drawCalls: number; triangles: number; instances: number; textures: number }
+export interface ThreeItem { sprite: string; tx: number; ty: number; w: number; h: number; lift?: number }   // lift: terrain elevation in px at zoom 1
+export interface ThreeStats { fps: number; drawCalls: number; triangles: number; instances: number; textures: number; vehicles: number }
 interface Cam { x: number; y: number; zoom: number; vw: number; vh: number }
 
 // screen px per tile-unit of height at zoom 1: 12 m tile, 30 degree elevation, as tools/meshy/render.html
 const K = (128 * Math.cos(Math.PI / 6)) / (2 * Math.SQRT2);   // 39.19
 const DEPTH = 2048;
+// Terrain elevation (E3, depth.ts): 2D sprites ride up the hill by surfaceHeight * LEVEL_PX; ThreeItem.lift carries it.
+// This was the "buildings sit a little low" bug: the 3D layer stood every model on level 0 (8 px per level).
 
 export const threeWanted = (s: string = typeof location !== "undefined" ? location.search : ""): boolean =>
   new URLSearchParams(s).get("three") === "1";
@@ -41,6 +43,10 @@ export interface ThreeLayer {
   stats(): ThreeStats;
   /** True when the 3D layer draws this sprite (a ready model, or box mode), so the 2D sprite must hide. */
   drawsSprite(sprite: string): boolean;
+  /** True when this vehicle sprite is drawn as a ready 3D model (so the 2D sprite hides). */
+  drawsVehicle(sprite: string): boolean;
+  /** Per frame: instance the moving vehicles from the composed draw items (sprite name = model + heading; fx/fy = tile). */
+  updateVehicles(items: readonly { sprite: string; fx?: number; fy?: number; alpha?: number }[], liftOf: (u: number, v: number) => number): void;
   /** Called (debounced) when more models become ready, so the game can re-sync what 2D still draws. */
   onModels: (() => void) | null;
   dispose(): void;
@@ -50,7 +56,8 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   const q = new URLSearchParams(search);
   const tris = Number(q.get("tris") ?? 0) | 0;
   const fixedYaw = q.get("yaw");
-  const noModels = tris > 0 || q.get("models") === "0";   // stress mode and ?models=0 keep the boxes
+  const noBoxes = q.get("models") === "none";   // debug: hide the 2D buildings and draw nothing (empty-scene reference shot)
+  const noModels = tris > 0 || q.get("models") === "0" || noBoxes;   // stress mode and ?models=0 keep the boxes
   const canvas = document.createElement("canvas");
   canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3";
   host.insertBefore(canvas, before);
@@ -184,7 +191,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
           const rot = (mi.turn + mo!.extra) & 3;
           const ex = rot & 1 ? mi.ez : mi.ex, ez = rot & 1 ? mi.ex : mi.ez;
           const s = Math.min((it.w * 0.92) / ex, (it.h * 0.92) / ez);
-          pos.set(it.tx + it.w / 2, 0, it.ty + it.h / 2);
+          pos.set(it.tx + it.w / 2, (it.lift ?? 0) / K, it.ty + it.h / 2);
           quat.setFromAxisAngle(up, yawBase + (rot * Math.PI) / 2);
           scl.set(s, s, s);
           m4.compose(pos, quat, scl);
@@ -195,13 +202,13 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
       });
       return;
     }
-    if (!noModels) return;     // no model (yet): the 2D sprite stays; boxes are only the ?models=0 / ?tris= stress modes
+    if (!noModels || noBoxes) return;     // no model (yet): the 2D sprite stays; boxes are only the ?models=0 / ?tris= stress modes
     const p = poolFor(boxPool, sprite, geo, mat, list.length, true);
     const hgt = 1 + (hashOf(sprite) % 100) / 100;     // 1..2 tiles
     quat.identity();
     for (let i = 0; i < list.length; i++) {
       const it = list[i];
-      pos.set(it.tx + it.w / 2, 0, it.ty + it.h / 2);
+      pos.set(it.tx + it.w / 2, (it.lift ?? 0) / K, it.ty + it.h / 2);
       scl.set(it.w * 0.92, hgt, it.h * 0.92);
       m4.compose(pos, quat, scl);
       p.mesh.setMatrixAt(i, m4);
@@ -227,6 +234,103 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   if (!noModels) {
     fetch(`${base}models/manifest.json`).then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) { manifest = m; refillAll(); } }).catch(() => {});
   }
+
+  // ── vehicles (LIVE-3D step 2) ─────────────────────────────────────────────
+  // The sims already compose per-frame draw items (carItems / truckItems / trainItems, in game.ts
+  // composeVehicles): a sprite name that encodes model + heading, and the fractional tile fx/fy. We read those,
+  // so every selection rule (livery per owner, wagon per cargo, heading octant) stays the sim's. Nothing is
+  // allocated per frame: one InstancedMesh per model part, preallocated, `count` set each frame.
+  const HEADING_DEG: Record<string, number> = { se: 0, e: 45, ne: 90, n: 135, nw: 180, w: -135, sw: -90, s: -45 };
+  // ambient cars -> the three Meshy sedans / the lorry (the game's CAR_MODELS: sedan, sedan2, pickup, bus, van)
+  const CAR_MODEL_OF: Record<string, { model: string; lengthM?: number }> = {
+    sedan: { model: "car_sedan_1" }, sedan2: { model: "car_sedan_2" }, pickup: { model: "car_sedan_3" },
+    bus: { model: "vehicle_truck", lengthM: 9 }, van: { model: "vehicle_truck", lengthM: 5.5 },
+  };
+  const SEDANS = ["car_sedan_1", "car_sedan_2", "car_sedan_3"];
+  const WAGON_KIND: Record<string, string> = { grain: "box", ore: "box", gold: "box", wood: "flat", stone: "flat", oil: "tank" };
+  interface VState { model: string; lengthM?: number; count: number; pools: Pool[]; ready: boolean }
+  interface VSpec { st: VState; yaw: number }
+  const vStates = new Map<string, VState>();
+  const vSpecs = new Map<string, VSpec | null>();
+  const stateOf = (model: string, lengthM?: number): VState => {
+    let st = vStates.get(`${model}|${lengthM ?? ""}`);
+    if (!st) { st = { model, lengthM, count: 0, pools: [], ready: false }; vStates.set(`${model}|${lengthM ?? ""}`, st); }
+    return st;
+  };
+  const specOf = (sprite: string): VSpec | null => {
+    let sp = vSpecs.get(sprite);
+    if (sp !== undefined) return sp;
+    sp = null;
+    let m: RegExpExecArray | null;
+    const V = "(ne|nw|se|sw|n|e|s|w)";
+    let model = "", view = "", lengthM: number | undefined;
+    if ((m = new RegExp(`^truck_(red|blue|goods)_${V}$`).exec(sprite))) { model = m[1] === "blue" ? "vehicle_truck_blue" : "vehicle_truck"; view = m[2]; }
+    else if ((m = new RegExp(`^car_(sedan2|sedan|pickup|bus|van)_${V}$`).exec(sprite))) { const c = CAR_MODEL_OF[m[1]]; model = c.model; lengthM = c.lengthM; view = m[2]; }
+    else if ((m = new RegExp(`^car(\\d+)_${V}$`).exec(sprite))) { model = SEDANS[(Number(m[1]) - 1) % 3]; view = m[2]; }
+    else if ((m = new RegExp(`^car-(loco|tender|box|flat|tank)_${V}$`).exec(sprite))) { model = `rail_${m[1]}`; view = m[2]; }
+    else if ((m = new RegExp(`^wagon_([a-z]+)_${V}(_loaded)?$`).exec(sprite)) && WAGON_KIND[m[1]]) { model = `rail_${WAGON_KIND[m[1]]}`; view = m[2]; }
+    if (model) sp = { st: stateOf(model, lengthM), yaw: (HEADING_DEG[view] * Math.PI) / 180 };
+    vSpecs.set(sprite, sp);
+    return sp;
+  };
+  const vReady = (st: VState): boolean => {
+    if (st.ready) return true;
+    const mdl = models.get(st.model);
+    if (mdl && mdl !== "loading" && mdl !== "missing") { st.ready = true; return true; }
+    return false;
+  };
+  const drawsVehicle = (sprite: string): boolean => {
+    if (noModels) return false;
+    const sp = specOf(sprite);
+    return !!sp && vReady(sp.st);
+  };
+  const vehicleCount = (): number => { let n = 0; for (const st of vStates.values()) n += st.count; return n; };
+  const vq = new THREE.Quaternion();
+  interface VItem { sprite: string; fx?: number; fy?: number; alpha?: number }
+  const updateVehicles = (items: readonly VItem[], liftOf: (u: number, v: number) => number) => {
+    if (noModels || !manifest) return;
+    for (const st of vStates.values()) st.count = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.fx === undefined || it.fy === undefined) continue;
+      const sp = specOf(it.sprite);
+      if (!sp) continue;
+      const st = sp.st;
+      if (!st.ready) { loadModel(st.model); if (!vReady(st)) continue; }
+      if (it.alpha !== undefined && it.alpha < 0.5) continue;           // ambient cars fade at the town gates: pop instead
+      const X = it.fx + 0.5, Z = it.fy + 0.5;
+      if (cullOn) {
+        const sx = (X - Z) * HW * cZ + cX, sy = (X + Z) * HH * cZ + cY;
+        if (sx < -200 || sx > cW + 200 || sy < -200 || sy > cH + 200) continue;
+      }
+      const mdl = models.get(st.model) as Model;
+      const mi = manifest[st.model];
+      if (!mi) continue;
+      const slot = st.count++;
+      if (st.pools.length === 0 || st.pools[0].cap <= slot) {
+        for (let k = 0; k < mdl.parts.length; k++) {
+          const old = st.pools[k];
+          if (old) { scene.remove(old.mesh); old.mesh.dispose(); }
+          const cap = Math.max(32, (old ? old.cap : 0) * 2);
+          const mesh = new THREE.InstancedMesh(mdl.parts[k].geo, mdl.parts[k].mat, cap);
+          mesh.frustumCulled = false;
+          mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+          st.pools[k] = { mesh, cap }; scene.add(mesh);
+        }
+      }
+      const s = (st.lengthM ?? mi.lengthM ?? 5) / 12;
+      pos.set(X, liftOf(X, Z) / K, Z);
+      vq.setFromAxisAngle(up, sp.yaw);
+      scl.set(s, s, s);
+      m4.compose(pos, vq, scl);
+      for (let k = 0; k < st.pools.length; k++) st.pools[k].mesh.setMatrixAt(slot, m4);
+    }
+    for (const st of vStates.values()) for (let k = 0; k < st.pools.length; k++) {
+      const mesh = st.pools[k].mesh;
+      mesh.count = st.count;
+      if (st.count > 0) mesh.instanceMatrix.needsUpdate = true;
+    }
+  };
 
   // [ and ] turn 90 degrees about the screen-centre ground point, eased; ?yaw=<deg> pins it.
   let yawTarget = fixedYaw != null ? (Number(fixedYaw) * Math.PI) / 180 : 0;
@@ -295,11 +399,11 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     }
     const fps = n > 1 && newest > oldest ? ((n - 1) * 1000) / (newest - oldest) : 0;
     const r = renderer.info.render;
-    return { fps: Math.round(fps * 10) / 10, drawCalls: r.calls, triangles: r.triangles, instances, textures: renderer.info.memory.textures };
+    return { fps: Math.round(fps * 10) / 10, drawCalls: r.calls, triangles: r.triangles, instances, textures: renderer.info.memory.textures, vehicles: vehicleCount() };
   };
 
   const api: ThreeLayer = {
-    canvas, setItems, update, stats, drawsSprite, onModels: null,
+    canvas, setItems, update, stats, drawsSprite, drawsVehicle, updateVehicles, onModels: null,
     dispose() {
       cancelAnimationFrame(rafId);
       window.clearTimeout(notifyTimer);

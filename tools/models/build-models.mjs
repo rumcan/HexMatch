@@ -30,7 +30,7 @@ const sprites = JSON.parse(fs.readFileSync("assets/buildings/manifest.json", "ut
 const spriteMap = sprites.sprites ?? sprites;
 
 // Models with two plain renders (the pilots): the one the shipped sprite matches (pixel-compared).
-const TURN_OVERRIDE = { factory: 0, town_flats: 0, town_small_house_1x1_1: 1 };
+const TURN_OVERRIDE = { factory: 0, town_flats: 0, town_small_house_1x1_1: 1, terrace_2x1_plain: 1, terrace_2x1_yard: 1 };   // the terraces: Hunyuan models come long on Z, the 2x1 sprite is long on X
 const turnOf = (name) => {
   if (name in TURN_OVERRIDE) return TURN_OVERRIDE[name];
   const t = fs.readdirSync(path.join(SRC, name)).map((f) => /^render_t(\d)@2x\.png$/.exec(f)).filter(Boolean).map((m) => Number(m[1]));
@@ -91,7 +91,7 @@ const squareToGrid = (doc) => {
 };
 
 /** meshopt simplifyWithAttributes on the welded mesh: UV (and normal) are part of the error, seams stay seams. */
-function simplifyPrim(prim, targetTris) {
+function simplifyPrim(prim, targetTris, permissive = false) {
   const posA = prim.getAttribute("POSITION"), uvA = prim.getAttribute("TEXCOORD_0"), nA = prim.getAttribute("NORMAL"), idxA = prim.getIndices();
   if (!posA || !uvA || !idxA || idxA.getCount() / 3 <= targetTris) return;
   const n = posA.getCount(), v = [0, 0, 0];
@@ -102,52 +102,90 @@ function simplifyPrim(prim, targetTris) {
   }
   const pos = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { posA.getElement(i, v); pos.set(v, i * 3); }
-  const [out] = MeshoptSimplifier.simplifyWithAttributes(new Uint32Array(idxA.getArray()), pos, 3, attr, stride, nA ? [1, 1, 0.5, 0.5, 0.5] : [1, 1], null, targetTris * 3, 1, []);
+  const [out] = MeshoptSimplifier.simplifyWithAttributes(new Uint32Array(idxA.getArray()), pos, 3, attr, stride, nA ? [1, 1, 0.5, 0.5, 0.5] : [1, 1], null, targetTris * 3, 1, permissive ? ["Permissive"] : []);
   prim.setIndices(idxA.clone().setArray(new Uint32Array(out)));
   compactPrimitive(prim);
 }
 
 const rows = [];
 const names = fs.readdirSync(SRC).filter((n) => fs.existsSync(path.join(SRC, n, "model.glb"))).sort();
-// vehicles / rail pieces are out of scope for now
-const SKIP = /^(car_|rail_|vehicle_)/;
+// Vehicles and rail cars ("moving" art): squared to the grid with the LONG axis on +X (render.html renderVehicle),
+// normalised to length 1; the runtime scales by lengthM / 12 (one tile = 12 m) and turns by the heading.
+const MOVING = /^(car_|rail_|vehicle_)/;
+// metres, from the sprite manifests' notes (truck 7 m, loco 10.3 m ...); the three sedans have no sprite yet
+const LENGTH_M = { vehicle_truck: 7, rail_loco: 10.3, rail_tender: 4.7, rail_box: 7.2, rail_tank: 6.7, rail_flat: 6.2, car_sedan_1: 4.8, car_sedan_2: 4.8, car_sedan_3: 4.8 };
+// models whose front came out at the back (render.mjs --flip): set after checking against the 2D sprites
+const FLIP = {};
+// one model, two paints: vehicle_truck_blue is the red lorry's red paint turned to hue 215 (render.mjs --livery)
+const LIVERIES = [{ name: "vehicle_truck", outName: "vehicle_truck_blue", hue: 215 }];
+const rgbToHsv = (r, g, b) => { const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; let h = 0; if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx / 255]; };
+const hsvToRgb = (h, s, v) => { const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c; const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x]; return [(r + m) * 255, (g + m) * 255, (b + m) * 255]; };
+async function repaintTextures(doc, hue) {
+  for (const t of doc.getRoot().listTextures()) {
+    const { data, info } = await sharp(Buffer.from(t.getImage())).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    for (let i = 0; i < data.length; i += 4) {
+      if (!data[i + 3]) continue;
+      const [h, sat, v] = rgbToHsv(data[i], data[i + 1], data[i + 2]);
+      if (Math.min(h, 360 - h) > 18 || sat < 0.38 || v < 0.12) continue;
+      const [r, g, b] = hsvToRgb(hue, Math.min(1, sat * 0.9), Math.min(1, v * 1.05));
+      data[i] = r; data[i + 1] = g; data[i + 2] = b;
+    }
+    t.setImage(new Uint8Array(await sharp(data, { raw: info }).webp({ quality: 78 }).toBuffer())).setMimeType("image/webp");
+  }
+}
+const jobs = [];
 for (const name of names) {
-  if (SKIP.test(name) || (only.length && !only.includes(name))) continue;
+  if (only.length && !only.includes(name)) continue;
+  jobs.push({ name, outName: name, hue: null });
+  for (const l of LIVERIES) if (l.name === name) jobs.push(l);
+}
+for (const { name, outName, hue } of jobs) {
   const src = path.join(SRC, name, "model.glb");
-  const out = path.join(OUT, `${name}.glb`);
-  if (!FORCE && manifest[name] && fs.existsSync(out) && fs.statSync(out).mtimeMs > fs.statSync(src).mtimeMs) {
-    rows.push([name, "up to date", "", Math.round(fs.statSync(out).size / 1024)]);
+  const out = path.join(OUT, `${outName}.glb`);
+  const moving = MOVING.test(name);
+  if (!FORCE && manifest[outName] && fs.existsSync(out) && fs.statSync(out).mtimeMs > fs.statSync(src).mtimeMs) {
+    rows.push([outName, "up to date", "", Math.round(fs.statSync(out).size / 1024)]);
     continue;
   }
   const doc = await io.read(src);
   const before = triCount(doc);
-  const yaw = squareToGrid(doc);
-  const target = targetTris(name);
+  let yaw = squareToGrid(doc);
+  const target = moving ? 4000 : targetTris(name);
   // Keep the UV seams: weld only vertices whose position, UV and normal all match, then simplify with
   // the attribute-aware path (no Permissive flag). Meshy atlases are cut into tiny UV islands, so the
   // simplifier stops at ~65-75% of the triangles; we ACCEPT that count instead of smearing the texture.
   await doc.transform(weld());
   let fallback = "";
   for (const mesh of doc.getRoot().listMeshes()) for (const p of mesh.listPrimitives()) {
-    try { simplifyPrim(p, Math.round(target * (p.getIndices().getCount() / 3 / before))); } catch (e) { fallback = " (simplify failed: unsimplified)"; }
+    try { simplifyPrim(p, Math.round(target * (p.getIndices().getCount() / 3 / before)), moving); } catch (e) { fallback = " (simplify failed: unsimplified)"; }
   }
   for (const mesh of doc.getRoot().listMeshes()) for (const p of mesh.listPrimitives()) { p.setAttribute("NORMAL", null); p.setAttribute("TANGENT", null); }   // recomputed at runtime (smaller files)
   const area = footprintArea(name);
-  const tex = TEX_ARG ? Number(TEX_ARG) : area >= 4 ? 1024 : 512;
+  const tex = TEX_ARG ? Number(TEX_ARG) : !moving && area >= 4 ? 1024 : 512;
   await doc.transform(
     dedup(),
     textureCompress({ encoder: sharp, targetFormat: "webp", resize: [tex, tex], quality: 78 }),
     prune(),
   );
+  if (hue != null) await repaintTextures(doc, hue);
   // exact extents of the squared (yawed) model; three's rotation.y = a: x' = x cos a + z sin a, z' = -x sin a + z cos a
-  const c = Math.cos(yaw), s = Math.sin(yaw);
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
-  eachVertex(doc, (x, y, z) => {
-    const rx = x * c + z * s, rz = -x * s + z * c;
-    if (rx < x0) x0 = rx; if (rx > x1) x1 = rx; if (rz < z0) z0 = rz; if (rz > z1) z1 = rz;
-    if (y < y0) y0 = y; if (y > y1) y1 = y;
-  }, false);
-  const k = 1 / (Math.max(x1 - x0, z1 - z0) || 1);
+  let x0, x1, y0, y1, z0, z1;
+  const measure = () => {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    x0 = y0 = z0 = Infinity; x1 = y1 = z1 = -Infinity;
+    eachVertex(doc, (x, y, z) => {
+      const rx = x * c + z * s, rz = -x * s + z * c;
+      if (rx < x0) x0 = rx; if (rx > x1) x1 = rx; if (rz < z0) z0 = rz; if (rz > z1) z1 = rz;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }, false);
+  };
+  measure();
+  if (moving) {   // long axis onto +X, then the optional front flip (render.html renderVehicle)
+    if (z1 - z0 > x1 - x0) { yaw += Math.PI / 2; }
+    if (FLIP[name]) yaw += Math.PI;
+    measure();
+  }
+  const k = 1 / (moving ? (x1 - x0) : (Math.max(x1 - x0, z1 - z0) || 1));
   const scene = doc.getRoot().listScenes()[0];
   const wrap = doc.createNode("normalize")
     .setRotation([0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)])
@@ -158,9 +196,9 @@ for (const name of names) {
   await doc.transform(meshopt({ encoder: MeshoptEncoder, level: "high" }));
   await io.write(out, doc);
   const r4 = (n) => Math.round(n * 1e4) / 1e4;
-  manifest[name] = { turn: turnOf(name), ex: r4((x1 - x0) * k), ez: r4((z1 - z0) * k), h: r4((y1 - y0) * k) };
+  manifest[outName] = { turn: moving ? 0 : turnOf(name), ex: r4((x1 - x0) * k), ez: r4((z1 - z0) * k), h: r4((y1 - y0) * k), ...(moving ? { moving: true, lengthM: LENGTH_M[name] ?? 5 } : {}) };
   const kb = Math.round(fs.statSync(out).size / 1024);
-  rows.push([name, `${before} -> ${triCount(doc)}`, `t${manifest[name].turn} ${manifest[name].ex}x${manifest[name].ez}x${manifest[name].h}`, kb + (kb > 600 ? "  OVER 600 KB" : "") + fallback]);
+  rows.push([outName, `${before} -> ${triCount(doc)}`, `t${manifest[outName].turn} ${manifest[outName].ex}x${manifest[outName].ez}x${manifest[outName].h}`, kb + (kb > 600 ? "  OVER 600 KB" : "") + fallback]);
 }
 fs.writeFileSync(MANIFEST, JSON.stringify(manifest, null, 1));
 console.log("name | tris before -> after | turn ex x ez x h | KB");

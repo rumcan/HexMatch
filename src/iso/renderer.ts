@@ -363,6 +363,7 @@ export function buildDrawList(
   // tile with the same generous pad the extras get.
   if (opts.vehicles !== false && world.vehicles) {
     for (const v of world.vehicles) {
+      if (hideVehicle && hideVehicle(v)) continue;   // LIVE-3D: drawn by the three layer
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       out.push(v);
     }
@@ -373,6 +374,9 @@ export function buildDrawList(
 /** LIVE-3D spike (`?three=1`): extras this predicate accepts are not drawn as 2D sprites. */
 let hideExtra: ((e: DrawItem) => boolean) | null = null;
 export const setHideExtra = (f: ((e: DrawItem) => boolean) | null): void => { hideExtra = f; };
+let hideVehicle: ((e: DrawItem) => boolean) | null = null;
+/** LIVE-3D (`?three=1`): moving sprites (cars, lorries, trains) this predicate accepts are drawn in 3D instead. */
+export const setHideVehicle = (f: ((e: DrawItem) => boolean) | null): void => { hideVehicle = f; };
 
 /** Culling pad: largest footprint plus the tallest sprite expressed in tiles. */
 export function cullPad(atlas: Atlas): number {

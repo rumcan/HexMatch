@@ -1,9 +1,10 @@
 // LIVE-3D spike perf: node tools/perf/three-spike.mjs  (dev server: npx vite --port 5179 --strictPort)
 // Runs 2D baseline, ?three=1 (boxes) and ?three=1&tris=3000 at 3 zooms while panning across a town.
 import { chromium } from "@playwright/test";
+import fs from "node:fs";
 const BASE = process.env.BASE ?? "http://localhost:5179";
 const SECS = Number(process.env.SECS ?? 4);
-const variants = [["2d", ""], ["three-boxes", "&three=1&models=0"], ["three-models", "&three=1"], ["three-3000tri", "&three=1&tris=3000"]];
+const variants = [["2d", ""], ["three-boxes", "&three=1&models=0"], ["three-models", "&three=1"], ["empty", "&three=1&models=none"], ["three-3000tri", "&three=1&tris=3000"]];
 
 async function run(browser, name, extra) {
   const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -57,6 +58,8 @@ async function run(browser, name, extra) {
     if (await page.evaluate((c) => window.__iso.placeDepot(c.tx, c.ty), c)) { placed++; pan ??= c; await dismiss(); }
   }
   if (await page.locator("#iso-session").isVisible()) throw new Error("tuning session still covers the map");
+  await page.evaluate(() => window.__iso.setTraffic(64));
+  await page.waitForTimeout(6000);
   console.log(name, "depots placed", placed, JSON.stringify(pan));
   const town = await page.evaluate(() => { const t = window.__iso.grid.towns[0]; return { tx: t.tx + 4, ty: t.ty + 4 }; });
   const rows = [];
@@ -89,19 +92,24 @@ async function run(browser, name, extra) {
     rows.push({ variant: name, want: zoom, ...r });
     await page.evaluate((t) => window.__iso.centerOn(t.tx, t.ty), town); await page.waitForTimeout(800);
     await page.screenshot({ path: `tools/perf/three-spike-${name}-z${zoom}.png` });
+    if (name === "empty") fs.writeFileSync(`tools/perf/three-spike-items-z${zoom}.json`, JSON.stringify(await page.evaluate(() => ({ cam: { ...window.__iso.camera }, items: window.__iso.townDrawItems }))));
     await page.evaluate((t) => window.__iso.centerOn(t.tx + 0.5, t.ty + 1), pan); await page.waitForTimeout(800);
     await page.screenshot({ path: `tools/perf/three-spike-${name}-z${zoom}-industry.png` });
+    if (name === "empty") fs.writeFileSync(`tools/perf/three-spike-items-z${zoom}-industry.json`, JSON.stringify(await page.evaluate(() => ({
+      cam: { ...window.__iso.camera },
+      items: [...window.__iso.grid.industries.map((i) => ({ sprite: i.type, tx: i.tx, ty: i.ty })), ...window.__iso.harvesters.map((h) => ({ sprite: "truck_depot", tx: h.tx, ty: h.ty }))],
+    }))));
   }
   await ctx.close();
   return rows;
 }
 
 const browser = await chromium.launch({ args: ["--use-angle=default", "--ignore-gpu-blocklist", "--enable-gpu-rasterization"] });
-console.log("variant | zoom | fps | worstFrameMs | three.fps | drawCalls | triangles | instances | textures");
+console.log("variant | zoom | fps | worstFrameMs | three.fps | drawCalls | triangles | instances | textures | vehicles");
 for (const [name, extra] of variants.filter(([n]) => !process.env.ONLY || process.env.ONLY.split(",").includes(n))) {
   for (const r of await run(browser, name, extra)) {
     const s = r.stats;
-    console.log([r.variant, r.want + "/" + r.zoom, r.fps, r.worstMs, s?.fps ?? "-", s?.drawCalls ?? "-", s?.triangles ?? "-", s?.instances ?? "-", s?.textures ?? "-"].join(" | "));
+    console.log([r.variant, r.want + "/" + r.zoom, r.fps, r.worstMs, s?.fps ?? "-", s?.drawCalls ?? "-", s?.triangles ?? "-", s?.instances ?? "-", s?.textures ?? "-", s?.vehicles ?? "-"].join(" | "));
   }
 }
 await browser.close();

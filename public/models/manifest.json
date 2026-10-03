@@ -352,5 +352,97 @@
   "ex": 1,
   "ez": 0.9999,
   "h": 0.0781
+ },
+ "car_sedan_1": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.42,
+  "h": 0.3169,
+  "moving": true,
+  "lengthM": 4.8
+ },
+ "car_sedan_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4122,
+  "h": 0.3164,
+  "moving": true,
+  "lengthM": 4.8
+ },
+ "car_sedan_3": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4108,
+  "h": 0.3256,
+  "moving": true,
+  "lengthM": 4.8
+ },
+ "rail_box": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.3116,
+  "h": 0.4477,
+  "moving": true,
+  "lengthM": 7.2
+ },
+ "rail_flat": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.3673,
+  "h": 0.2955,
+  "moving": true,
+  "lengthM": 6.2
+ },
+ "rail_loco": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.2742,
+  "h": 0.3923,
+  "moving": true,
+  "lengthM": 10.3
+ },
+ "rail_tank": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.3664,
+  "h": 0.5147,
+  "moving": true,
+  "lengthM": 6.7
+ },
+ "rail_tender": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4587,
+  "h": 0.5421,
+  "moving": true,
+  "lengthM": 4.7
+ },
+ "vehicle_truck": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4299,
+  "h": 0.4412,
+  "moving": true,
+  "lengthM": 7
+ },
+ "vehicle_truck_blue": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4299,
+  "h": 0.4412,
+  "moving": true,
+  "lengthM": 7
+ },
+ "terrace_2x1_plain": {
+  "turn": 1,
+  "ex": 0.3519,
+  "ez": 1,
+  "h": 0.4885
+ },
+ "terrace_2x1_yard": {
+  "turn": 1,
+  "ex": 0.6426,
+  "ez": 1,
+  "h": 0.4317
  }
 }
