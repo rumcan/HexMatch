@@ -4534,6 +4534,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let contestClock = "";
   /** B7: the contested-site set + clock the tags last printed (frame-loop key). */
   let contestKey = "";
+  /**
+   * RES-LABELS-1: the one resource site whose name chip may be on the map
+   * right now: the site under the pointer, else the site whose card is open
+   * ("selected"). Resource sites no longer wear a PERMANENT name chip — the
+   * dark "QUARRY" tag that reduplicated the hover readout — so a site's name
+   * appears at most once, and only while hovered or selected. Towns, plants
+   * and depots keep their permanent tags. Null means no industry chip at all.
+   */
+  const focusIndustryId = (): number | null => {
+    if (hover) {
+      const occ = hover.tx >= 0 && hover.ty >= 0 && hover.tx < MAP_W && hover.ty < MAP_H
+        ? grid.occupancy[tIdx(hover.tx, hover.ty)] : -1;
+      if (occ >= 0 && grid.industries[occ]) return grid.industries[occ].id;
+    }
+    if (battleCardKey.startsWith("industry:")) {
+      const id = Number(battleCardKey.slice("industry:".length));
+      if (Number.isInteger(id) && grid.industries[id]) return id;
+    }
+    return null;
+  };
   const syncLabels = () => {
     const entries: LabelEntry[] = [];
     // B7 (#252): a site someone has WON a battle over wears ⚔ (and, while the
@@ -4541,11 +4561,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const contested = contestedIndustries(eco);
     const contestedT = contestedTowns(eco);
     const sword = (name: string) => `⚔ ${name}${contestClock ? ` · ${contestClock}` : ""}`;
-    // OWNER ROUND 2: the dark name chip on every resource site (QUARRY, FOREST, FARM ...) is gone: the building art says
-    // what it is, and the chip sat on top of the model. Flip to true to bring the chips back. Towns, plants and depots keep theirs.
-    const SHOW_SITE_CHIPS = false;
+    // RES-LABELS-1: no permanent name chip on resource sites; only the hovered / selected site wears one,
+    // and a site someone won a battle over keeps its sword chip.
+    const focusInd = focusIndustryId();
     for (const ind of grid.industries) {
-      if (!SHOW_SITE_CHIPS && !contested.has(ind.id)) continue;   // a site someone won a battle over keeps its sword chip
+      if (ind.id !== focusInd && !contested.has(ind.id)) continue;
       const def = INDUSTRY_BY_KEY[ind.type];
       const hot = contested.has(ind.id);
       entries.push({
@@ -16846,7 +16866,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const contestTown = contestedTowns(eco);
       const cd = battleCooldownLeft(challengeState, t, me.id);
       contestClock = cd > 0 ? fmtBattleCooldown(cd) : "";
-      const ck = `${[...contestInd].join(",")}|${[...contestTown].join(",")}|${contestClock}`;
+      // RES-LABELS-1: the hovered / selected resource site rides the same key,
+      // so the pointer entering or leaving a site re-syncs the tags next frame.
+      const ck = `${[...contestInd].join(",")}|${[...contestTown].join(",")}|${contestClock}|${focusIndustryId() ?? ""}`;
       if (ck !== contestKey) { contestKey = ck; syncLabels(); }
       const colourOf = (id: string) => players.find((p) => p.id === id)?.colour ?? "#e0d2b0";
       const contestMarkers: MinimapMarker[] = [
