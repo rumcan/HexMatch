@@ -84,7 +84,9 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   host.insertBefore(canvas, before);
   let renderer: any;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false, powerPreference: "high-performance" });
+    // Owner (2026-10-03): "is there a type of anti alias we can turn on". MSAA on the 3D layer (the buildings and
+    // vehicles are the jagged edges); `?aa=0` switches it off if the frame rate ever needs the fill back.
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: q.get("aa") !== "0", powerPreference: "high-performance" });
   } catch { canvas.remove(); return null; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x000000, 0);
