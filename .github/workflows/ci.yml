@@ -62,9 +62,15 @@ jobs:
   # E13: Playwright never ran in CI. Desktop chromium on every PR; full
   # viewport matrix is the nightly workflow so G4/G5 mobile coverage is
   # not dropped. Iso layout assertions run on every project.
+  # Green baseline (2026-10-03): one runner took ~30 min and hit its timeout;
+  # three shards each run a third of the desktop specs.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     permissions:
       contents: read
       pull-requests: write
@@ -79,7 +85,7 @@ jobs:
       - name: run e2e (post failures to the PR on error)
         run: |
           set -o pipefail
-          npx playwright test --project=desktop-chromium 2>&1 | tee /tmp/pw.log || {
+          npx playwright test --project=desktop-chromium --shard=${{ matrix.shard }}/3 2>&1 | tee /tmp/pw.log || {
             echo "PLAYWRIGHT_FAILED"
             if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
               grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw.log \
@@ -97,7 +103,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report/
 
   # #132: the desktop MULTIPLAYER e2e — two browser contexts, one real room,
@@ -112,6 +118,12 @@ jobs:
   e2e-multiplayer:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Green baseline (2026-10-03): the departure specs wait out a 60 s grace,
+    # so one runner needed > 60 min; each shard gets its own runner and room.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -120,13 +132,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e:mp
+      - run: npm run test:e2e:mp -- --shard=${{ matrix.shard }}/3
       # The traces/videos/consoles a failed two-client run needs, and the
       # report. `test-results-mp/` is where `retain-on-failure` writes them.
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-multiplayer-report
+          name: playwright-multiplayer-report-${{ matrix.shard }}
           path: |
             playwright-report-mp/
             test-results-mp/
