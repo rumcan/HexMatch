@@ -13,9 +13,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - name: default unit suite (#458)
-        run: npm test
-        timeout-minutes: 10
       - name: atlas matches cells (G7)
         run: |
           # slice-atlas reads tools/opengfx-sprites.json, a gitignored build
@@ -28,6 +25,26 @@ jobs:
           # encoder (sharp on Windows vs Linux) with identical pixels, so they
           # are not byte-compared.
           git diff --exit-code -- assets/iso-atlas/ ':(exclude)assets/iso-atlas/groups/*.png'
+
+  # Green-baseline ticket (2026-10-01): the default unit suite (#458) alone needs ~25 CPU-minutes of test time
+  # and timed out at 10 min on a 2-4 core runner (it was slow, not hung: vitest exits cleanly). Split it across
+  # three runners with vitest's --shard instead of raising the timeout; each shard runs well under 10 min.
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: default unit suite (#458) shard ${{ matrix.shard }}/3
+        run: npm test -- --shard=${{ matrix.shard }}/3
+        timeout-minutes: 10
 
   # Import-only smoke tests on the platform that exposed the CLI path bug.
   windows-tools:
@@ -45,9 +62,15 @@ jobs:
   # E13: Playwright never ran in CI. Desktop chromium on every PR; full
   # viewport matrix is the nightly workflow so G4/G5 mobile coverage is
   # not dropped. Iso layout assertions run on every project.
+  # Green baseline (2026-10-03): one runner took ~30 min and hit its timeout;
+  # three shards each run a third of the desktop specs.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read
       pull-requests: write
@@ -62,7 +85,7 @@ jobs:
       - name: run e2e (post failures to the PR on error)
         run: |
           set -o pipefail
-          npx playwright test --project=desktop-chromium 2>&1 | tee /tmp/pw.log || {
+          npx playwright test --project=desktop-chromium --shard=${{ matrix.shard }}/6 2>&1 | tee /tmp/pw.log || {
             echo "PLAYWRIGHT_FAILED"
             if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
               grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw.log \
@@ -80,7 +103,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report/
 
   # #132: the desktop MULTIPLAYER e2e — two browser contexts, one real room,
@@ -95,6 +118,12 @@ jobs:
   e2e-multiplayer:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Green baseline (2026-10-03): the departure specs wait out a 60 s grace,
+    # so one runner needed > 60 min; each shard gets its own runner and room.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -103,13 +132,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e:mp
+      - run: npm run test:e2e:mp -- --shard=${{ matrix.shard }}/6
       # The traces/videos/consoles a failed two-client run needs, and the
       # report. `test-results-mp/` is where `retain-on-failure` writes them.
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-multiplayer-report
+          name: playwright-multiplayer-report-${{ matrix.shard }}
           path: |
             playwright-report-mp/
             test-results-mp/

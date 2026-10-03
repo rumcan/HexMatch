@@ -34,13 +34,17 @@ async function matchedPair(browser: Browser) {
   return pair;
 }
 
+// Green baseline (2026-10-01): the bank has charged 3:1 since L17 (#245, `BANK_RATE` in src/iso/bank.ts); this spec
+// still said 4:1. Stale expectation after a deliberate rebalance, not a regression.
+const BANK_RATE = 3;
+
 test("a guest's Exchange reaches the host and both purses move at the bank's rate", async ({ browser }, testInfo) => {
   const pair = await matchedPair(browser);
   const { host, guest } = pair;
   try {
     // L11 (#226): the offer board is gone; the BANK is the one exchange left,
     // and it may not skip a rung of L5's tree. This pair trades rung-0 stock
-    // (4 Wood → 1 Grain), so the gate lets it through on both seats. The host
+    // (3 Wood → 1 Grain), so the gate lets it through on both seats. The host
     // funds its AUTHORITATIVE copy of the guest's bag first — `setRivalRes`
     // writes the very object the guest's intent is settled against.
     await host.page.evaluate(setPurse, { cargo: "wood", amount: 12 });
@@ -59,9 +63,9 @@ test("a guest's Exchange reaches the host and both purses move at the bank's rat
     await bankExchange(guest, "wood", "grain");
 
     // The host validates it against the GUEST seat's own record and applies
-    // the rate there: 4 Wood → 1 Grain, and nothing else.
+    // the rate there: 3 Wood → 1 Grain, and nothing else.
     await expect.poll(async () => (await readState(host)).rivalPurse.wood,
-      { message: "the host's view of the guest's wood" }).toBe(guestWood - 4);
+      { message: "the host's view of the guest's wood" }).toBe(guestWood - BANK_RATE);
     await expect.poll(async () => (await readState(host)).rivalPurse.grain,
       { message: "the host's view of the guest's grain" }).toBe(guestGrain + 1);
     // The HOST's own bag is untouched by the guest's exchange.
@@ -70,7 +74,7 @@ test("a guest's Exchange reaches the host and both purses move at the bank's rat
     expect(after.purse.grain, "the host's own grain").toBe(hostGrain);
 
     // …and the guest's own purse follows that answer, to the digit.
-    await expectPurse(guest, "wood", guestWood - 4);
+    await expectPurse(guest, "wood", guestWood - BANK_RATE);
     await expectPurse(guest, "grain", guestGrain + 1);
 
     // Both worlds agree about the guest's bag: the host's copy is the guest's.
@@ -84,7 +88,7 @@ test("a guest's Exchange reaches the host and both purses move at the bank's rat
   }
 });
 
-test("a guest's Reset re-rolls its own board and spares the host's board", async ({ browser }, testInfo) => {
+test("a guest's Reset re-rolls its seat's board on the host and spares the host's own board", async ({ browser }, testInfo) => {
   const pair = await matchedPair(browser);
   const { host, guest } = pair;
   try {
@@ -99,16 +103,20 @@ test("a guest's Reset re-rolls its own board and spares the host's board", async
     // The guest presses ♻ Reset — the shipped button, not a test hook.
     await clickReset(guest);
 
-    // The guest's own board is re-dealt, and the guest is told so…
-    await expect.poll(async () => (await readState(guest)).boardSig, {
-      message: "the guest's own board is a fresh neutral one",
-    }).not.toBe(beforeGuest.boardSig);
-    await expectToast(guest, /Processing Plant collapsed\. Fresh neutral board\./);
+    // Green baseline (2026-10-01): since L15 (#230) boards are off the wire and MP-05 keeps a guest's
+    // local board inert ("guests never mutate their local board"), so the guest's OWN copy no longer
+    // re-deals and no "Fresh neutral board" toast reaches it. The reset is a typed intent the HOST
+    // runs on the guest seat's AUTHORITATIVE board (`rivalPlant`), so that is where it shows: the
+    // guest is told its request went out, and the host's copy of the guest's board is re-dealt.
+    await expectToast(guest, /Requesting Processing Plant reset/);
+    await expect.poll(async () => (await readState(host)).rivalBoardSig, {
+      message: "the host's authoritative copy of the guest's board is re-dealt",
+    }).not.toBe(beforeHost.rivalBoardSig);
 
-    // …and the host's own board never moved. This is the independence claim:
-    // a board-local action on one seat may not deal the other seat's tiles, and
-    // a delta that carried the wrong board would fail exactly here.
+    // …and the host's own board never moved. This is the independence claim: a board-local action
+    // on one seat may not deal the other seat's tiles.
     expect((await readState(host)).boardSig, "the host's own board is untouched").toBe(beforeHost.boardSig);
+    expect((await readState(guest)).boardSig, "the guest's local board stays inert (MP-05)").toBe(beforeGuest.boardSig);
   } finally {
     await attachLogs(testInfo, host, guest);
     await host.ctx.close();
@@ -149,16 +157,18 @@ test("two seats clicking one tile at the same instant settle on a single depot",
 
     // …and it belongs to the seat that won, by the host's own return value;
     // the other seat sees the same depot under the mirrored owner.
-    const [hostTile, guestTile] = await Promise.all([
-      host.page.evaluate(tileOccupants, site!),
-      guest.page.evaluate(tileOccupants, site!),
-    ]);
+    const hostTile = await host.page.evaluate(tileOccupants, site!);
     expect(hostTile.depots, "the winner holds the tile on the host's side").toEqual([hostPlaced ? "you" : "ai"]);
-    expect(guestTile.depots, "and on the guest's side, mirrored").toEqual([hostPlaced ? "ai" : "you"]);
+    // Green baseline (2026-10-01): the guest learns of the depot through the host's NEXT delta, which on a
+    // loaded runner lands after the host's own world shows it, so this is a poll, not a one-shot read
+    // (the assertion itself is unchanged).
+    await expect.poll(async () => (await guest.page.evaluate(tileOccupants, site!)).depots, {
+      message: "and on the guest's side, mirrored",
+    }).toEqual([hostPlaced ? "ai" : "you"]);
 
     // One depot total, on both seats: the race did not double-book the tile.
     expect((await readState(host)).harvesters.length, "exactly one depot was added").toBe(before + 1);
-    expect((await readState(guest)).harvesters.length, "and the guest agrees").toBe(before + 1);
+    await expect.poll(async () => (await readState(guest)).harvesters.length, { message: "and the guest agrees" }).toBe(before + 1);
   } finally {
     await attachLogs(testInfo, host, guest);
     await host.ctx.close();

@@ -164,7 +164,13 @@ test("(b) an abandoned RANKED match credits the survivor: the win is filed and t
       .toMatch(/Your rating/);
     const settled = (await leftSheet(host))!;
     expect(settled.ratingUp, "the credited win moved the rating UP").toBe(true);
-    expect(settled.text, "the sheet says the match was filed as a win").toContain("filed as a win");
+    // Green baseline (2026-10-01): the sheet has two honest wordings of the same fact. When the verdict opens it
+    // the body reads "…the match is filed as a win."; when the roster event's sheet is already standing (the
+    // race this test's comments describe) that sheet is only settled with the rating row and keeps its own
+    // ranked copy, "…the room files this match in your favour." Either way the survivor is told the match
+    // was filed for them, and the rating row above proves it was credited.
+    expect(settled.text, "the sheet says the match was filed in the survivor's favour")
+      .toMatch(/filed as a win|files this match in your favour/);
     expect(settled.doors, "the verdict folds the doors down to the exit").toEqual([
       expect.stringMatching(/^Leave/),
     ]);

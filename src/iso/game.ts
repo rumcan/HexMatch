@@ -365,7 +365,7 @@ import {
   createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer, railTileRefusal,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
-  railStructureItems, trainItems, autoTrains, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
+  railStructureItems, trainItems, autoTrains, trainSpawnHint, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
   rotateView, trainOccupies, trainLevel, planRivalTrainUpgrade, trainUpgradeCheck, setTrainLevel, trainLoadFactorOf, TRAIN_LEVELS, trainUpgradePrice, trainBasedAt, railPanelRows, trainBuyRefusal, railComponents, resaleValue, demolishStructure, PLATFORM_VP,
   footprintFor, depotExit, RAIL_VIEWS, trainTile, ownerRailTiles as ownerRailTilesOf,
   // RAIL-6 (#575): the station upgrade — one shared rule set for the click,
@@ -4261,7 +4261,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     apply: () => syncWorld(),
     // The camera eases to the town; `flyCameraTo` snaps under reduced motion
     // and cancels on a pointer-down of its own, so this is safe to ask for.
-    camera: (tx, ty) => flyCameraTo(tx, ty),
+    // CAM-1: the camera moves only for the player's OWN town growth. A rival's
+    // tier-up used to fly the view to the rival's town (owner: the camera must
+    // never move on anything but the player's own input).
+    camera: (tx, ty) => { if (growthSeat?.id === me.id) flyCameraTo(tx, ty); },
     feed: (text) => { if (growthSeat?.id === me.id) ui.feed(text, me.name); },
     // SFX-1 (#463): the tier-up beat — the recorded `city-upgrade` sample,
     // falling back to its synth recipe while the file is missing or loading.
@@ -16237,6 +16240,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   };
 
   /** Plan the depot lorries, or the empty list when the debug gate is off. */
+  let lastSpawnHint: string | null = null;
   /** The rail signature `autoTrains` last ran against (see the frame). */
   let autoTrainSig = "";
   function plannedLorries(): Truck[] {
@@ -16722,6 +16726,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
             rescoreNow();
             if (!hadTrain && rail.trains.some((t) => t.ownerId === me.i + 1)) notePlayerTrain();
           }
+          // FLEET-3: two platforms and no train used to be silent. Say what is
+          // missing, once per distinct reason (never a repeat on every edit).
+          const spawnHint = trainSpawnHint(rail, me.i + 1, grid);
+          if (spawnHint && spawnHint !== lastSpawnHint) toast(spawnHint, "info");
+          lastSpawnHint = spawnHint;
         }
       }
       // #302: trains and deliveries are sim too — a resumed game must not roll
@@ -17596,6 +17605,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     centerOn: (tx: number, ty: number) => {
       commitCamera(centerOnTile(cam, tx, ty));
+    },
+    /** CAM-1: camera position, and a rival-seat town growth (must not move it). */
+    cameraXY: () => ({ x: cam.x, y: cam.y }),
+    growTownAs: (townId: number, seat: "you" | "rival") => {
+      const t = grid.towns[Math.floor(townId)];
+      if (!t) return false;
+      growTownArt(t, performance.now(), seat === "you" ? me : rival);
+      return true;
     },
     /** Story test twin of the player's first successful Oil harvest. */
     firstOilHarvest: () => onFirstOilHarvest(),

@@ -29,5 +29,11 @@ export default defineConfig({
     // Slow simulations live in test:slow, not the default npm test gate.
     pool: "threads",
     maxWorkers: 3,
+    // Green-baseline ticket (2026-10-01): CI's unit step timed out at 10 min on main. It was NOT hung (vitest
+    // exits cleanly, no open handles; 182 of 252 files had finished when the timer fired) - the suite is simply
+    // heavy, and every booted game logs stack traces (the decal loader's ERR_INVALID_URL, canvas "Not
+    // implemented") that vitest has to ship from the worker to the reporter: ~410k log lines, which cost ~30%
+    // wall time locally (580 s noisy vs 413 s quiet). Console output is now kept only for tests that FAIL.
+    silent: "passed-only",
   },
 });
