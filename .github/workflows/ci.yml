@@ -66,7 +66,12 @@ jobs:
   # three shards each run a third of the desktop specs.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # E2E-GREEN-1 (#666): the suite now retries once on CI (`playwright.config.ts`),
+    # so the cap has to fit a failing spec's second attempt on top of the shard's
+    # normal wall clock (shard 3 — the tutorial file — is the long pole at ~17 min).
+    # 45 min stays under the old worst case plus two 6-minute `test.slow()` retries
+    # while still bounding a hung runner.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -125,6 +130,12 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
+    # E2E-GREEN-1 (#666): the same failure-excerpt comment the browser job posts,
+    # so a red MP shard can be read without downloading an artifact that may be
+    # older than the retention window (this job's report is ~120 MB).
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -133,7 +144,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e:mp -- --shard=${{ matrix.shard }}/6
+      - name: run multiplayer e2e (post failures to the PR on error)
+        run: |
+          set -o pipefail
+          npm run test:e2e:mp -- --shard=${{ matrix.shard }}/6 2>&1 | tee /tmp/pw-mp.log || {
+            echo "PLAYWRIGHT_MP_FAILED"
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw-mp.log \
+                | grep -av "npm warn" | tail -n 120 > /tmp/pw-mp-fail.txt || true
+              jq -Rs --arg id "pw-mp-${{ github.run_id }}-${{ matrix.shard }}" \
+                '{body: ("### e2e-multiplayer failure (run " + $id + ")\n```\n" + . + "\n```")}' \
+                /tmp/pw-mp-fail.txt > /tmp/pw-mp-body.json
+              curl -sf -X POST -H "Authorization: Bearer ${{ github.token }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+                -d @/tmp/pw-mp-body.json || echo "(could not post comment)"
+            fi
+            exit 1
+          }
       # The traces/videos/consoles a failed two-client run needs, and the
       # report. `test-results-mp/` is where `retain-on-failure` writes them.
       - uses: actions/upload-artifact@v4

@@ -9,6 +9,13 @@ export default defineConfig({
   timeout: 30000,
   fullyParallel: false,
   workers: 1,
+  // E2E-GREEN-1 (#666): this suite is the one that runs on the software-GL CI
+  // runner, where a spec that passes can still lose a race with the frame queue
+  // (a boot rasterizes ~1.4M device pixels before the first assertion). One
+  // retry on CI, never locally: a genuinely broken spec still fails both
+  // attempts and is then quarantined with an issue + a `docs/known-test-failures.md`
+  // row (AGENTS.md §6), so a retry can only hide a flake, not a regression.
+  retries: process.env.CI ? 1 : 0,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: `http://localhost:4173${BASE}`,

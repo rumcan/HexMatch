@@ -248,6 +248,12 @@ test("TUT-03 a real drawer tab advances the drawer section", async ({ page }) =>
 });
 
 test("TUT-03 a dismissed guide stays dismissed, and the menu is the door back in", async ({ page }) => {
+  // E2E-GREEN-1 (#666): this test boots the real game TWICE — the dismiss, then the fresh
+  // game that must not re-open the guide — and each boot can spend its whole `bootBudget()`
+  // (60 s on the software-GL runner). That does not fit the project's 120 s per-test budget,
+  // and on CI the second boot's `waitForFunction` was what ran out (iso-tutorial.spec.ts:75 via
+  // :260). `slow()` triples that budget; every step and assertion stays exactly as written.
+  test.slow();
   await pickDifficulty(page);
   await boot(page);
   await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
@@ -275,6 +281,10 @@ test("TUT-03 a dismissed guide stays dismissed, and the menu is the door back in
 });
 
 test("TUT-03 a finished section is marked, and the mark survives a reload", async ({ page }) => {
+  // E2E-GREEN-1 (#666): the same two-boot shape as the tests above (the fresh game, then the
+  // plain boot that must not re-open the guide). It has not timed out yet, but it runs within
+  // seconds of the 120 s budget on CI, so it gets the same room the other two-boot tests get.
+  test.slow();
   await pickDifficulty(page);
   await boot(page);
   await expect(page.locator(GUIDE)).toBeVisible({ timeout: bootBudget() });
@@ -303,6 +313,11 @@ test("TUT-03 a finished section is marked, and the mark survives a reload", asyn
 });
 
 test("TUT-03 ?guide=0 and the legacy ?tutorial=0 keep the guide out of the way", async ({ page }) => {
+  // E2E-GREEN-1 (#666): three boots in one test (`&guide=0`, `&tutorial=0`, then a plain
+  // boot that must show the guide again). Three × `bootBudget()` (60 s on the software-GL
+  // runner) cannot fit the project's 120 s budget — on CI the third `page.goto` was aborted
+  // by the test timeout. `slow()` triples the budget; the assertions are untouched.
+  test.slow();
   await pickDifficulty(page);
   await boot(page, "&guide=0");
   await expect(page.locator(GUIDE)).toBeHidden();
