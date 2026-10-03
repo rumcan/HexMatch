@@ -354,6 +354,7 @@ export function buildDrawList(
   }
   if (world.extra) {
     for (const e of world.extra) {
+      if (hideExtra && hideExtra(e)) continue;   // LIVE-3D spike: drawn by the three layer instead
       if (e.tx < r.x0 - 4 || e.tx > r.x1 + 4 || e.ty < r.y0 - 4 || e.ty > r.y1 + 4) continue;
       out.push(e);
     }
@@ -368,6 +369,10 @@ export function buildDrawList(
   }
   return out;
 }
+
+/** LIVE-3D spike (`?three=1`): extras this predicate accepts are not drawn as 2D sprites. */
+let hideExtra: ((e: DrawItem) => boolean) | null = null;
+export const setHideExtra = (f: ((e: DrawItem) => boolean) | null): void => { hideExtra = f; };
 
 /** Culling pad: largest footprint plus the tallest sprite expressed in tiles. */
 export function cullPad(atlas: Atlas): number {

@@ -125,7 +125,8 @@ import {
   type LevelPlan,
 } from "./level-ground";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
-import { IsoRenderer, composeRouteOverlay, paintClaimFlags, paintLaneInvite, type ClaimFlagView, type LaneInviteView, type World, type RouteOverlayPath } from "./renderer";
+import { IsoRenderer, composeRouteOverlay, paintClaimFlags, paintLaneInvite, type ClaimFlagView, type LaneInviteView, type World, type RouteOverlayPath, setHideExtra } from "./renderer";
+import { mountThreeLayer, threeWanted, type ThreeLayer } from "./three-layer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
 import { BRIDGE_REFUSAL_TEXT } from "./bridges";
@@ -2886,6 +2887,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Terrain-GL (opt-in, docs/TERRAIN_GL.md): the WebGL2 ground mounts under
   // the 2D stack; null = no WebGL2 / not asked for, and the 2D ground stays.
   const terrainGl: TerrainGl | null = terrainGlWanted() ? mountTerrainGl(ui.mapHost, grid, seed) : null;
+  // LIVE-3D spike: `?three=1` mounts the instanced 3D building layer under the overlay canvas.
+  const threeLayer: ThreeLayer | null = threeWanted() ? mountThreeLayer(ui.mapHost, canvases.overlay) : null;
+  if (threeLayer) {
+    setHideExtra((e) => {
+      const k = (e.ref as { kind?: string } | undefined)?.kind;
+      return k === "town" || k === "harvester" || k === "factory";
+    });
+  }
   const stage = ui.mapHost;
   // GFX-01: the tilt-shift composite. It mounts its own canvas above the
   // three layers and stays `display: none` until the setting says otherwise,
@@ -4447,6 +4456,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // too: hover routes, score breakdowns, inspector components, drag previews.
     netVersion++;
     syncLabels();
+    if (threeLayer) {
+      // LIVE-3D spike: one box per town building / depot / plant, rebuilt only when the world syncs.
+      threeLayer.setItems((world.extra ?? []).flatMap((e) => {
+        const k = (e.ref as { kind?: string } | undefined)?.kind;
+        if (k !== "town" && k !== "harvester" && k !== "factory") return [];
+        const [w, h] = footprintOf(e.sprite);
+        return [{ sprite: e.sprite, tx: e.tx, ty: e.ty, w, h }];
+      }));
+    }
     renderer?.setWorld(world);
   };
 
@@ -16732,6 +16750,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (lightingPin != null) pushMatchLighting(dt);
       terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
       renderer!.render(t, items, ghost);
+      threeLayer?.update(cam, t);
       mini.paint();
       // #461: camera ease back to Depot after tuning.
       tickCameraAnim(t);
@@ -17064,6 +17083,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * exposed so a probe can check what a grown town actually draws: the
      * base blocks, the tier centre, and the tier-2+ GROWN districts.
      */
+    /** LIVE-3D spike: fps (5 s rAF average), draw calls, triangles, instances; null without ?three=1. */
+    threeStats: () => threeLayer?.stats() ?? null,
     get townDrawItems() {
       return (world.extra ?? [])
         .filter((e) => (e.ref as { kind?: unknown } | undefined)?.kind === "town")
@@ -18364,6 +18385,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     cancelAnimationFrame(raf);
     ro.disconnect();
     terrainGl?.dispose();
+    if (threeLayer) { setHideExtra(null); threeLayer.dispose(); }
     root.classList.remove("iso-game");
     root.innerHTML = "";
   };
