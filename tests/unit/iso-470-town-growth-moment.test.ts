@@ -575,3 +575,24 @@ describe("#470 in play — the draw items during and after construction", () => 
     h.finishTownGrowth();
   }, 90000);
 });
+
+describe("CAM-1 the camera never moves for a rival's town growth", () => {
+  it("a rival tier-up leaves the camera alone; the player's own still flies to the town", async () => {
+    const restore = stubMotion(true); // snap, so the check needs no animation clock
+    try {
+      const h = await boot() as Hook470 & {
+        cameraXY: () => { x: number; y: number };
+        centerOn: (tx: number, ty: number) => void;
+        growTownAs: (id: number, seat: "you" | "rival") => boolean;
+      };
+      h.centerOn(2, 2);
+      const before = h.cameraXY();
+      expect(h.growTownAs(0, "rival")).toBe(true);
+      await settle();
+      expect(h.cameraXY()).toEqual(before);
+      h.growTownAs(0, "you");
+      await settle();
+      expect(h.cameraXY()).not.toEqual(before);
+    } finally { restore(); }
+  }, 90000);
+});

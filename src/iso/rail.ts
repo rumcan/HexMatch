@@ -3930,6 +3930,30 @@ export function autoTrains(state: RailState, ownerId: number, grid?: Grid): bool
   return changed;
 }
 
+/**
+ * FLEET-3 (owner: "the train did not spawn when I connected 2 platforms"): the
+ * auto-train rule (`autoTrains`) silently needs an INDUSTRY platform and a
+ * PLANT platform on one drivable network, each with a free lane. This says
+ * which of those is missing (null = nothing missing, or the owner has fewer
+ * than two platforms / already runs a train), so the game can tell the player.
+ */
+export function trainSpawnHint(state: RailState, ownerId: number, grid?: Grid): string | null {
+  const plats = structuresOf(state, ownerId, "platform");
+  if (plats.length < 2 || state.trains.some((t) => t.ownerId === ownerId)) return null;
+  const sources = plats.filter((p) => p.anchor?.kind === "industry");
+  const dests = plats.filter((p) => p.anchor?.kind === "plant");
+  if (!sources.length) return "No train yet: one platform must be built at an industry (the pickup).";
+  if (!dests.length) return "No train yet: one platform must be built at your plant (the drop-off).";
+  const comp = railComponents(state, ownerId);
+  const compOf = (s: RailStructure): number => comp.get(tIdx(...stopTile(s))) ?? 0;
+  const joined = sources.some((s) => dests.some((d) => compOf(s) !== 0 && compOf(s) === compOf(d)));
+  if (!joined) return "No train yet: connect the industry platform to the plant platform with rail.";
+  const driven = sources.some((s) => dests.some((d) => compOf(s) === compOf(d)
+    && !!railPath(state, ownerId, [stopTile(s)], new Set([tIdx(...stopTile(d))]), -1, grid)));
+  if (!driven) return "No train yet: the rail between the platforms has a turn a train cannot take.";
+  return "No train yet: the stations have no free lane, or a lane's switch is not laid.";
+}
+
 /** Send a train home: `returning` first, and it stays there until re-assigned. */
 export function recallTrain(state: RailState, train: Train, grid?: Grid): boolean {
   if (train.status === "stored") return false;
