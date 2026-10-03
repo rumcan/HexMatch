@@ -293,7 +293,7 @@ const flatPick = (wx: number, wy: number): [number, number] => [
  * On a flat map (or a map with no height bytes) this is exactly `flatPick`:
  * no lattice, no window, byte-identical to the renderer's stage-1 pick.
  */
-export function pickTile(grid: Grid | null | undefined, wx: number, wy: number): [number, number] {
+export function pickTile(grid: Grid | null | undefined, wx: number, wy: number, yaw = 0): [number, number] {
   const f = grid ? elevationField(grid) : null;
   if (!f) return flatPick(wx, wy);
   const [fx, fy] = flatPick(wx, wy);
@@ -301,14 +301,19 @@ export function pickTile(grid: Grid | null | undefined, wx: number, wy: number):
   // ~2 tiles "in front"; the window is padded a tile each way and the
   // flatPick(wx, wy+lift) test filters the rest out.
   const reach = Math.ceil(MAX_LIFT_PX / HH) + 2;
-  let bx = fx, by = fy, bk = fx + fy;
-  for (let ty = fy - 1; ty <= fy + reach; ty++) {
+  // LIVE-3D: under a view turn the hill lift is still screen-vertical, which in the unturned world the caller
+  // hands us is the direction (-2 sin, cos); and "in front" is the turned depth (c-s)*tx + (c+s)*ty.
+  const yc = Math.cos(yaw), ys = Math.sin(yaw);
+  const key = yaw === 0 ? (x: number, y: number) => x + y : (x: number, y: number) => (yc - ys) * x + (yc + ys) * y;
+  let bx = fx, by = fy, bk = key(fx, fy);
+  const lo = yaw === 0 ? 1 : reach;   // a turned view lifts toward any side
+  for (let ty = fy - lo; ty <= fy + reach; ty++) {
     if (ty < 0 || ty >= f.h) continue;
-    for (let tx = fx - 1; tx <= fx + reach; tx++) {
+    for (let tx = fx - lo; tx <= fx + reach; tx++) {
       if (tx < 0 || tx >= f.w) continue;
       const lift = tileSurfaceHeight(grid!, tx, ty) * LEVEL_PX;
-      const [px, py] = flatPick(wx, wy + lift);
-      if (px === tx && py === ty && tx + ty > bk) { bx = tx; by = ty; bk = tx + ty; }
+      const [px, py] = yaw === 0 ? flatPick(wx, wy + lift) : flatPick(wx - 2 * ys * lift, wy + yc * lift);
+      if (px === tx && py === ty && key(tx, ty) > bk) { bx = tx; by = ty; bk = key(tx, ty); }
     }
   }
   return [bx, by];

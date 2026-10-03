@@ -17098,6 +17098,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      */
     /** LIVE-3D spike: fps (5 s rAF average), draw calls, triangles, instances; null without ?three=1. */
     threeStats: () => threeLayer?.stats() ?? null,
+    // LIVE-3D: the view yaw (radians) and the tile the game would pick under a screen pixel at that yaw
+    viewYaw: () => getViewYaw(),
+    tileAtScreen: (sx: number, sy: number) => { const p = renderer!.pick(sx, sy, { sprites: false }); return [p.tx, p.ty] as [number, number]; },
     get townDrawItems() {
       return (world.extra ?? [])
         .filter((e) => (e.ref as { kind?: unknown } | undefined)?.kind === "town")

@@ -37,7 +37,7 @@
 // byte moves.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H } from "../game/config";
-import type { Camera } from "./camera";
+import { getViewYaw, turnWorld, type Camera } from "./camera";
 import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH, roadWidth as widthOf, sidewalkOffset,
@@ -1439,11 +1439,19 @@ export class RoadCache {
     makeSurface: (w: number, h: number) => Surface | null,
   ): number {
     const z = cam.zoom;
-    // Viewport in projected world pixels.
-    const wx0 = -cam.x / z, wy0 = -cam.y / z;
-    const wx1 = (cam.vw - cam.x) / z, wy1 = (cam.vh - cam.y) / z;
+    // LIVE-3D: under a view turn the chunk bitmaps (flat ground) are laid down through the same linear map the
+    // terrain uses, so roads and track stay glued to the turned ground. yaw 0 keeps the exact old path.
+    const yaw = getViewYaw();
+    // Viewport in projected (UNTURNED) world pixels: the turned view's four corners, taken back.
+    let wx0 = -cam.x / z, wy0 = -cam.y / z, wx1 = (cam.vw - cam.x) / z, wy1 = (cam.vh - cam.y) / z;
+    if (yaw !== 0) {
+      const pts = [[wx0, wy0], [wx1, wy0], [wx0, wy1], [wx1, wy1]].map(([x, y]) => turnWorld(x, y, -yaw));
+      wx0 = Math.min(...pts.map((q) => q[0])); wx1 = Math.max(...pts.map((q) => q[0]));
+      wy0 = Math.min(...pts.map((q) => q[1])); wy1 = Math.max(...pts.map((q) => q[1]));
+    }
     const cx0 = Math.floor(wx0 / ROAD_CHUNK_W), cx1 = Math.floor(wx1 / ROAD_CHUNK_W);
     const cy0 = Math.floor(wy0 / ROAD_CHUNK_H), cy1 = Math.floor(wy1 / ROAD_CHUNK_H);
+    const yc = Math.cos(yaw), ys = Math.sin(yaw);
 
     let blits = 0;
     for (let cy = cy0; cy <= cy1; cy++) {
@@ -1452,11 +1460,19 @@ export class RoadCache {
         if (!e?.surface) continue;
         const sx = Math.round(GUTTER * z), sy = Math.round(GUTTER * z);
         const sw = Math.round(ROAD_CHUNK_W * z), sh = Math.round(ROAD_CHUNK_H * z);
-        ctx.drawImage(
-          e.surface as unknown as CanvasImageSource,
-          sx, sy, sw, sh,
-          Math.round(e.ox * z + cam.x), Math.round(e.oy * z + cam.y), sw, sh,
-        );
+        if (yaw === 0) {
+          ctx.drawImage(
+            e.surface as unknown as CanvasImageSource,
+            sx, sy, sw, sh,
+            Math.round(e.ox * z + cam.x), Math.round(e.oy * z + cam.y), sw, sh,
+          );
+        } else {
+          const ox = e.ox * z, oy = e.oy * z;   // chunk origin in unturned device px; M = [[c, 2s], [-s/2, c]]
+          ctx.save();
+          ctx.setTransform(yc, -0.5 * ys, 2 * ys, yc, cam.x + yc * ox + 2 * ys * oy, cam.y - 0.5 * ys * ox + yc * oy);
+          ctx.drawImage(e.surface as unknown as CanvasImageSource, sx, sy, sw, sh, 0, 0, sw, sh);
+          ctx.restore();
+        }
         blits++;
       }
     }

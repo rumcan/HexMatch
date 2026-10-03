@@ -18,6 +18,7 @@
 // the flat pick whenever it hits.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_H, tileToScreen } from "../game/config";
+import { turnWorld } from "./camera";
 import type { Grid } from "./grid";
 import { LEVEL_PX, elevationActive, surfaceHeight, worldToGround } from "./elevation";
 import type { Atlas, SpriteDef } from "./atlas";
@@ -74,6 +75,9 @@ export interface Placed extends DrawItem {
    * instead of staying on the flat projection underneath it.
    */
   elev?: number;
+  /** LIVE-3D: the TURNED world top-left (raw, before the camera) when the view is yawed; wx/wy then hold its inverse turn. */
+  ux?: number;
+  uy?: number;
 }
 
 /**
@@ -326,15 +330,64 @@ export function depthSort(items: Placed[]): SortResult {
  * camera-removed) coordinates of the cursor. Returns the first opaque hit.
  */
 export function pickSprite(
-  atlas: Atlas, order: Placed[], wx: number, wy: number,
+  atlas: Atlas, order: Placed[], wx: number, wy: number,   // wx/wy: TURNED raw world when the view is yawed (Placed.ux/uy)
 ): Placed | null {
   for (let i = order.length - 1; i >= 0; i--) {
     const p = order[i];
     if (isMoving(p)) continue;   // RV-01: a moving truck is never clickable
     if (p.decor) continue;       // SCENERY: a tree is never clickable either
-    const lx = wx - p.wx, ly = wy - p.wy;
+    const lx = wx - (p.ux ?? p.wx), ly = wy - (p.uy ?? p.wy);
     if (lx < 0 || ly < 0 || lx >= p.w || ly >= p.h) continue;
     if (atlas.opaqueAt(p.sprite, Math.floor(lx), Math.floor(ly))) return p;
   }
   return null;
+}
+
+// ── LIVE-3D: the view turn for the 2D sprites that remain ────────────────────
+/** Quarter-turn index (0..3) nearest a yaw in radians. */
+export const yawQuarter = (yaw: number): number => (((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4);
+
+/** A tile footprint's image under k quarter turns of the tile lattice about (0,0): [tx', ty', fw', fh']. */
+export function turnFootprint(tx: number, ty: number, fw: number, fh: number, k: number): [number, number, number, number] {
+  switch (k & 3) {
+    case 1: return [ty, -tx - fw, fh, fw];
+    case 2: return [-tx - fw, -ty - fh, fw, fh];
+    case 3: return [-ty - fh, tx, fh, fw];
+    default: return [tx, ty, fw, fh];
+  }
+}
+
+/** A fractional tile point under k quarter turns (the same lattice turn). */
+export function turnTilePoint(u: number, v: number, k: number): [number, number] {
+  switch (k & 3) {
+    case 1: return [v, -u];
+    case 2: return [-u, -v];
+    case 3: return [-v, u];
+    default: return [u, v];
+  }
+}
+
+/**
+ * Re-seat a placed sprite for a turned view. The sprite art never turns (a billboard): only its ANCHOR does. The
+ * returned `draw` keeps every downstream user of wx/wy honest (worldToScreen turns a point, so wx/wy hold the
+ * inverse turn of the true turned top-left, stored raw in ux/uy); `sort` is the same sprite described in the
+ * turned lattice (footprint, key, screen box) so depthSort orders it as the player now sees it.
+ */
+export function turnPlaced(p: Placed, yaw: number, k: number): { draw: Placed; sort: Placed } {
+  const ax = p.def.anchor[0], ay = p.def.anchor[1], elev = p.elev ?? 0;
+  const [tx, ty] = turnWorld(p.wx + ax, p.wy + elev + ay, yaw);
+  const ux = tx - ax, uy = ty - ay - elev;
+  const [ix, iy] = turnWorld(ux, uy, -yaw);
+  const draw: Placed = { ...p, wx: ix, wy: iy, ux, uy };
+  const [fw, fh] = p.def.footprint;
+  let sort: Placed;
+  if (isMoving(p)) {
+    const [nx, ny] = turnTilePoint(p.fx! + 0.5, p.fy! + 0.5, k);
+    const fx = nx - 0.5, fy = ny - 0.5;
+    sort = { ...draw, wx: ux, wy: uy, tx: Math.round(fx), ty: Math.round(fy), key: Math.round(fx + fw - 1) + Math.round(fy + fh - 1) + 0.5 + (p.lift ?? 0) };
+  } else {
+    const [a, b, w2, h2] = turnFootprint(p.tx, p.ty, fw, fh, k);
+    sort = { ...draw, wx: ux, wy: uy, tx: a, ty: b, def: { ...p.def, footprint: [w2, h2] }, key: (a + w2 - 1) + (b + h2 - 1) + (p.lift ?? 0) };
+  }
+  return { draw, sort };
 }

@@ -35,9 +35,9 @@ void main() {
   if (uYaw.y != 0.0 || uYaw.x != 1.0) {
     // LIVE-3D: the same linear map as camera.ts viewMatrix (a quarter turn of the TILE lattice, in world px),
     // applied to the flat tile position; the hill lift stays screen-vertical.
-    vec2 flat = vec2((aTile.x - aTile.y) * 32.0, (aTile.x + aTile.y) * 16.0);
-    float lift = flat.y - aPos.y;
-    w = vec2(uYaw.x * flat.x + 2.0 * uYaw.y * flat.y, -0.5 * uYaw.y * flat.x + uYaw.x * flat.y);
+    vec2 fp = vec2((aTile.x - aTile.y) * 32.0, (aTile.x + aTile.y) * 16.0);
+    float lift = fp.y - aPos.y;
+    w = vec2(uYaw.x * fp.x + 2.0 * uYaw.y * fp.y, -0.5 * uYaw.y * fp.x + uYaw.x * fp.y);
     w.y -= lift;
   }
   vec2 s = w * uZoom + uCam;
@@ -407,7 +407,7 @@ void main() {
     // MAP-2 (#559): THE OPEN SEA. The signed-distance field saturates eight
     // tiles off the coast, so every depth ramp above has flattened by there
     // and the whole ocean beyond was ONE abyss colour to the map edge — the
-    // report's "the sea extends a few tiles, then a flat colour". Two very
+    // report's "the sea extends a few tiles, then a fp colour". Two very
     // long swells (24 tiles, then 9) ride a slow tide and fade in past the
     // shelf, so the deep water keeps reading as water out to the map edge:
     // calm, consistent, and the same at every zoom, in every quality,

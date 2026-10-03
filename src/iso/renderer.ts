@@ -39,9 +39,9 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
 import type { Camera } from "./camera";
-import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
+import { visibleTileRange, screenToWorld, worldToScreen, getViewYaw } from "./camera";
 import type { Atlas } from "./atlas";
-import { depthSort, isMoving, place, pickSprite, type DrawItem, type Placed } from "./depth";
+import { depthSort, isMoving, place, pickSprite, turnPlaced, yawQuarter, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, townGroundBytes, type Grid } from "./grid";
 import {
   FALLBACK, GROUND_TEX_SIZE, PERF_FLAT, createGroundPatterns, makeMatrix, oceanMatrix,
@@ -932,6 +932,9 @@ export class IsoRenderer {
   private roadMode: RoadRenderMode = "textured";
   private roadStyle: RoadStyle = DEFAULT_ROAD_STYLE;
   private roadCache = new RoadCache();
+  private turnedFor: Placed[] | null = null;
+  private turnedYaw = 0;
+  private turnedStatic: { draw: Placed; sort: Placed }[] = [];
   private roadBlits = 0;
   // ── placement overlay ───────────────────────────────────────────────────
   /** Vector by default; `sprites` is the baked-cell rollback (see the type). */
@@ -1946,7 +1949,24 @@ export class IsoRenderer {
       if (p) placed.push(p);
     }
     this.hadVehicles = (this.world.vehicles?.length ?? 0) > 0;
-    const sorted = depthSort(placed);
+    // LIVE-3D: a turned view re-seats each remaining 2D sprite (billboards keep their art, their anchor turns) and
+    // sorts them in the turned lattice. The static half is cached per (list, yaw) so a still turned view stays cheap.
+    const yaw = getViewYaw();
+    let sorted;
+    if (yaw === 0) sorted = depthSort(placed);
+    else {
+      const k = yawQuarter(yaw);
+      if (this.turnedFor !== this.staticPlaced || this.turnedYaw !== yaw) {
+        this.turnedFor = this.staticPlaced; this.turnedYaw = yaw;
+        this.turnedStatic = this.staticPlaced.map((q) => turnPlaced(q, yaw, k));
+      }
+      const pairs = [...this.turnedStatic];
+      for (let i = this.staticPlaced.length; i < placed.length; i++) pairs.push(turnPlaced(placed[i], yaw, k));
+      const back = new Map<Placed, Placed>();
+      for (const q of pairs) back.set(q.sort, q.draw);
+      const ss = depthSort(pairs.map((q) => q.sort));
+      sorted = { order: ss.order.map((q) => back.get(q)!), cycles: ss.cycles };
+    }
     const { order } = sorted;
     this.lastOrder = order;
     this.lastCycles = sorted.cycles;
@@ -2384,13 +2404,15 @@ export class IsoRenderer {
     tx: number; ty: number; sprite: Placed | null; ref: unknown;
   } {
     const [wx, wy] = screenToWorld(this.cam, screenX, screenY);
+    // LIVE-3D: sprites are billboards at their turned anchors, so they are hit in the TURNED raw world.
+    const rawX = (screenX - this.cam.x) / this.cam.zoom, rawY = (screenY - this.cam.y) / this.cam.zoom;
     // E3 (#269): stage 1 resolves the tile the cursor SEES — height included, so
     // a raised tile in front of a lower one is the one picked. `pickTile` is the
     // exact flat pick on a flat map, so the option-off path is unchanged.
-    const flat = pickTile(this.world.grid, wx, wy);
+    const flat = pickTile(this.world.grid, wx, wy, getViewYaw());
     if (opts.sprites === false) return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
     if (!this.lastOrder.length) this.drawStructures(0);
-    const hit = pickSprite(this.atlas, this.lastOrder, wx, wy);
+    const hit = pickSprite(this.atlas, this.lastOrder, rawX, rawY);
     if (hit) return { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref };
     return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
   }
