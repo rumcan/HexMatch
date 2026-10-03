@@ -66,7 +66,12 @@ jobs:
   # three shards each run a third of the desktop specs.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # E2E-GREEN-1 (#666): the suite now retries once on CI (`playwright.config.ts`),
+    # so the cap has to fit a failing spec's second attempt on top of the shard's
+    # normal wall clock (shard 3 — the tutorial file — is the long pole at ~17 min).
+    # 45 min stays under the old worst case plus two 6-minute `test.slow()` retries
+    # while still bounding a hung runner.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
