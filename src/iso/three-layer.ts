@@ -141,9 +141,27 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     return p;
   };
 
+  // Screen culling at instance granularity (InstancedMesh culls only as a whole): the buildings the camera
+  // cannot see are left out of the instance buffers, rebuilt only when the camera has moved a fifth of the
+  // view or zoomed. Off while the 3D view is yawed (the screen test below is the unrotated projection).
+  let cullOn = false, cX = 0, cY = 0, cZ = 1, cW = 0, cH = 0;
+  const scratch: ThreeItem[] = [];
+  const cullList = (all: ThreeItem[]): ThreeItem[] => {
+    if (!cullOn) return all;
+    scratch.length = 0;
+    const mx = cW * 0.25 + 300 * cZ, my = cH * 0.25 + 450 * cZ;
+    for (let i = 0; i < all.length; i++) {
+      const it = all[i];
+      const gx = it.tx + it.w / 2, gz = it.ty + it.h / 2;
+      const sx = (gx - gz) * HW * cZ + cX, sy = (gx + gz) * HH * cZ + cY;
+      if (sx > -mx && sx < cW + mx && sy > -my && sy < cH + my) scratch.push(it);
+    }
+    return scratch;
+  };
+
   /** Rebuild one sprite's instance matrices (only when the world or its model changed). */
   const fill = (sprite: string) => {
-    const list = lists.get(sprite) ?? [];
+    const list = cullList(lists.get(sprite) ?? []);
     const mo = modelOf(sprite, manifest);
     const model = mo ? models.get(mo.name) : undefined;
     const ready = mo && model && model !== "loading" && model !== "missing" ? model : null;
@@ -231,6 +249,12 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
       yaw += (yawTarget - yaw) * Math.min(1, dt * 10);
       if (Math.abs(yawTarget - yaw) < 1e-3) yaw = yawTarget;
     }
+    if (yaw === 0 && yawTarget === 0) {
+      if (!cullOn || cam.zoom !== cZ || cam.vw !== cW || cam.vh !== cH || Math.abs(cam.x - cX) > cam.vw * 0.2 || Math.abs(cam.y - cY) > cam.vh * 0.2) {
+        cullOn = true; cX = cam.x; cY = cam.y; cZ = cam.zoom; cW = cam.vw; cH = cam.vh;
+        refillAll();
+      }
+    } else if (cullOn) { cullOn = false; refillAll(); }
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (w !== cw || h !== ch) { cw = w; ch = h; renderer.setSize(w, h, false); }
     const z = cam.zoom, vw = cam.vw, vh = cam.vh;

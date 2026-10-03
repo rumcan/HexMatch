@@ -12,14 +12,14 @@ import path from "node:path";
 import sharp from "sharp";
 import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
-import { weld, textureCompress, prune, dedup, meshopt } from "@gltf-transform/functions";
+import { weld, textureCompress, prune, dedup, meshopt, compactPrimitive } from "@gltf-transform/functions";
 import { MeshoptEncoder, MeshoptSimplifier, MeshoptDecoder } from "meshoptimizer";
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const SRC = opt("--src", "C:/Work Admin/PERSONAL/Repos/HexMatch/tools/art-src/meshy");
 const TRIS_ARG = opt("--tris", null);
-const TEX = Number(opt("--tex", 512));
+const TEX_ARG = opt("--tex", null);
 const FORCE = args.includes("--force");
 const only = args.filter((a, i) => !a.startsWith("--") && !["--src", "--tris", "--tex"].includes(args[i - 1]));
 const OUT = path.resolve("public/models");
@@ -37,12 +37,12 @@ const turnOf = (name) => {
   return t.length ? t[0] : 0;
 };
 // Size-based triangle target from the sprite's footprint area.
-const targetTris = (name) => {
-  if (TRIS_ARG) return Number(TRIS_ARG);
+const footprintArea = (name) => {
   const fp = spriteMap[name]?.footprint ?? spriteMap[`${name}_r`]?.footprint;
-  const area = fp ? fp[0] * fp[1] : 1;
-  return area >= 8 ? 6000 : area >= 6 ? 5000 : area >= 4 ? 4000 : area >= 2 ? 3000 : 2500;
+  return fp ? fp[0] * fp[1] : 1;
 };
+// Asked-for count; the seam-respecting simplifier usually stops higher (see simplifyPrim), which we accept.
+const targetTris = (name) => (TRIS_ARG ? Number(TRIS_ARG) : footprintArea(name) >= 4 ? 10000 : 6000);
 
 await Promise.all([MeshoptEncoder.ready, MeshoptSimplifier.ready, MeshoptDecoder.ready]);
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS)
@@ -90,57 +90,21 @@ const squareToGrid = (doc) => {
   return best.a;
 };
 
-/**
- * Meshy atlases are cut into tiny UV islands, so the vertex buffer is ~3x the real vertex count and
- * meshopt (which treats every UV seam as a border) stalls near 65% of the triangles. Instead: merge
- * vertices by POSITION, simplify that clean mesh, then give every surviving corner the UV of an original
- * triangle that sits next to it (preferring one that shares a neighbour with the output triangle).
- */
-function decimate(doc, prim, targetTris) {
-  const posA = prim.getAttribute("POSITION"), uvA = prim.getAttribute("TEXCOORD_0"), idxA = prim.getIndices();
+/** meshopt simplifyWithAttributes on the welded mesh: UV (and normal) are part of the error, seams stay seams. */
+function simplifyPrim(prim, targetTris) {
+  const posA = prim.getAttribute("POSITION"), uvA = prim.getAttribute("TEXCOORD_0"), nA = prim.getAttribute("NORMAL"), idxA = prim.getIndices();
   if (!posA || !uvA || !idxA || idxA.getCount() / 3 <= targetTris) return;
-  const pos = posA.getArray(), uv = uvA.getArray(), idx = idxA.getArray();
-  const n = posA.getCount(), tc = idx.length / 3;
-  const key = new Map(), cid = new Uint32Array(n), rep = [];
+  const n = posA.getCount(), v = [0, 0, 0];
+  const stride = nA ? 5 : 2, attr = new Float32Array(n * stride);
   for (let i = 0; i < n; i++) {
-    const k = `${Math.round(pos[3 * i] * 1e5)},${Math.round(pos[3 * i + 1] * 1e5)},${Math.round(pos[3 * i + 2] * 1e5)}`;
-    let c = key.get(k);
-    if (c === undefined) { c = rep.length; key.set(k, c); rep.push(i); }
-    cid[i] = c;
+    uvA.getElement(i, v); attr[i * stride] = v[0]; attr[i * stride + 1] = v[1];
+    if (nA) { nA.getElement(i, v); attr[i * stride + 2] = v[0]; attr[i * stride + 3] = v[1]; attr[i * stride + 4] = v[2]; }
   }
-  const idx2 = new Uint32Array(idx.length);
-  for (let i = 0; i < idx.length; i++) idx2[i] = rep[cid[idx[i]]];
-  const [out, serr] = MeshoptSimplifier.simplify(idx2, pos, 3, targetTris * 3, 1, ["Permissive"]);   // Permissive: the Meshy meshes have non-manifold edges that otherwise freeze the simplifier
-  if (process.env.DBG) console.log("decimate", rep.length, "canon verts;", tc, "->", out.length / 3, "target", targetTris, "err", serr);
-  // canonical vertex -> incident original triangles
-  const inc = Array.from({ length: rep.length }, () => []);
-  for (let t = 0; t < tc; t++) for (let j = 0; j < 3; j++) inc[cid[idx[3 * t + j]]].push(t);
-  const m = out.length;
-  const np = new Float32Array(m * 3), nu = new Float32Array(m * 2);
-  for (let t = 0; t < m / 3; t++) {
-    const cs = [cid[out[3 * t]], cid[out[3 * t + 1]], cid[out[3 * t + 2]]];
-    for (let j = 0; j < 3; j++) {
-      const c = cs[j], o1 = cs[(j + 1) % 3], o2 = cs[(j + 2) % 3];
-      let pick = -1, fallback = -1;
-      for (const ot of inc[c]) {
-        let wedge = -1, hit = 0;
-        for (let q = 0; q < 3; q++) {
-          const v = idx[3 * ot + q], cc = cid[v];
-          if (cc === c) wedge = v; else if (cc === o1 || cc === o2) hit++;
-        }
-        if (fallback < 0) fallback = wedge;
-        if (hit > 0) { pick = wedge; break; }
-      }
-      const w = pick >= 0 ? pick : fallback;
-      const o = 3 * t + j;
-      np[3 * o] = pos[3 * w]; np[3 * o + 1] = pos[3 * w + 1]; np[3 * o + 2] = pos[3 * w + 2];
-      nu[2 * o] = uv[2 * w]; nu[2 * o + 1] = uv[2 * w + 1];
-    }
-  }
-  const buf = posA.getBuffer();
-  prim.setAttribute("POSITION", doc.createAccessor().setType("VEC3").setArray(np).setBuffer(buf));
-  prim.setAttribute("TEXCOORD_0", doc.createAccessor().setType("VEC2").setArray(nu).setBuffer(buf));
-  prim.setIndices(null);
+  const pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { posA.getElement(i, v); pos.set(v, i * 3); }
+  const [out] = MeshoptSimplifier.simplifyWithAttributes(new Uint32Array(idxA.getArray()), pos, 3, attr, stride, nA ? [1, 1, 0.5, 0.5, 0.5] : [1, 1], null, targetTris * 3, 1, []);
+  prim.setIndices(idxA.clone().setArray(new Uint32Array(out)));
+  compactPrimitive(prim);
 }
 
 const rows = [];
@@ -159,16 +123,20 @@ for (const name of names) {
   const before = triCount(doc);
   const yaw = squareToGrid(doc);
   const target = targetTris(name);
-  // Meshy meshes carry per-face normals, so nothing welds and the simplifier finds no collapsible edge.
-  // Drop them (and tangents): the runtime recomputes smooth normals.
+  // Keep the UV seams: weld only vertices whose position, UV and normal all match, then simplify with
+  // the attribute-aware path (no Permissive flag). Meshy atlases are cut into tiny UV islands, so the
+  // simplifier stops at ~65-75% of the triangles; we ACCEPT that count instead of smearing the texture.
+  await doc.transform(weld());
+  let fallback = "";
   for (const mesh of doc.getRoot().listMeshes()) for (const p of mesh.listPrimitives()) {
-    p.setAttribute("NORMAL", null); p.setAttribute("TANGENT", null);
+    try { simplifyPrim(p, Math.round(target * (p.getIndices().getCount() / 3 / before))); } catch (e) { fallback = " (simplify failed: unsimplified)"; }
   }
-  for (const mesh of doc.getRoot().listMeshes()) for (const p of mesh.listPrimitives()) decimate(doc, p, Math.round(target * (p.getIndices().getCount() / 3 / before)));
+  for (const mesh of doc.getRoot().listMeshes()) for (const p of mesh.listPrimitives()) { p.setAttribute("NORMAL", null); p.setAttribute("TANGENT", null); }   // recomputed at runtime (smaller files)
+  const area = footprintArea(name);
+  const tex = TEX_ARG ? Number(TEX_ARG) : area >= 4 ? 1024 : 512;
   await doc.transform(
-    weld(),
     dedup(),
-    textureCompress({ encoder: sharp, targetFormat: "webp", resize: [TEX, TEX], quality: 80 }),
+    textureCompress({ encoder: sharp, targetFormat: "webp", resize: [tex, tex], quality: 78 }),
     prune(),
   );
   // exact extents of the squared (yawed) model; three's rotation.y = a: x' = x cos a + z sin a, z' = -x sin a + z cos a
@@ -187,12 +155,12 @@ for (const name of names) {
     .setTranslation([-((x0 + x1) / 2) * k, -y0 * k, -((z0 + z1) / 2) * k]);
   for (const child of scene.listChildren()) { scene.removeChild(child); wrap.addChild(child); }
   scene.addChild(wrap);
-  await doc.transform(meshopt({ encoder: MeshoptEncoder, level: "medium" }));
+  await doc.transform(meshopt({ encoder: MeshoptEncoder, level: "high" }));
   await io.write(out, doc);
   const r4 = (n) => Math.round(n * 1e4) / 1e4;
   manifest[name] = { turn: turnOf(name), ex: r4((x1 - x0) * k), ez: r4((z1 - z0) * k), h: r4((y1 - y0) * k) };
   const kb = Math.round(fs.statSync(out).size / 1024);
-  rows.push([name, `${before} -> ${triCount(doc)}`, `t${manifest[name].turn} ${manifest[name].ex}x${manifest[name].ez}x${manifest[name].h}`, kb + (kb > 300 ? "  OVER 300 KB" : "")]);
+  rows.push([name, `${before} -> ${triCount(doc)}`, `t${manifest[name].turn} ${manifest[name].ex}x${manifest[name].ez}x${manifest[name].h}`, kb + (kb > 600 ? "  OVER 600 KB" : "") + fallback]);
 }
 fs.writeFileSync(MANIFEST, JSON.stringify(manifest, null, 1));
 console.log("name | tris before -> after | turn ex x ez x h | KB");
