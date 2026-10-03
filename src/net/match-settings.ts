@@ -49,6 +49,47 @@
 // ── MAP-1 (#412): map features a room generates with ────────────────────
 // Declared HERE (this file is the protocol's import-free leaf); the game
 // reads them through iso/map-options.ts, which re-exports these.
+/**
+ * TOWN-2 (#653): which street plan a map's towns are generated with.
+ *
+ *   "grid"    — every town is a rectangle of 2×2 blocks on the 3-tile street
+ *               lattice (`townLayout` in `iso/grid.ts`). This is every map
+ *               generated before TOWN-2, every save that predates it, and
+ *               every map generated under the unit-test runner.
+ *   "organic" — the same lattice for the town's core, then a seeded irregular
+ *               outline, one or two 45° avenues and merged long plots.
+ *
+ * Declared here, beside `MapOptions`, for the same reason the rest of the map
+ * record lives here: this module is the protocol's import-free leaf, so the
+ * room bundle and the game read ONE definition.
+ */
+export type TownLayout = "grid" | "organic";
+
+/** TOWN-2: the two names `layout` may carry, for the wire/save readers. */
+export const TOWN_LAYOUTS: readonly TownLayout[] = ["grid", "organic"];
+
+/** Read a stored / wire town layout; anything else → null (the caller's
+ *  default applies). Only the two known names are accepted, so a hand-edited
+ *  save can never hand the generator a layout it does not implement. */
+export function readTownLayout(raw: unknown): TownLayout | null {
+  return typeof raw === "string" && (TOWN_LAYOUTS as readonly string[]).includes(raw)
+    ? (raw as TownLayout)
+    : null;
+}
+
+/**
+ * TOWN-2: the town layout a NEW game generates with — organic in a shipped or
+ * dev build, grid under the unit-test runner. That is the `defaultMapOptions()`
+ * rule one function down, and it is why every seed-pinned suite keeps the
+ * rectangular towns it was written against: nothing here has to know which
+ * tests exist, only that the runner's maps do not move.
+ */
+export function defaultTownLayout(): TownLayout {
+  let mode: string | undefined;
+  try { mode = import.meta.env?.MODE; } catch { mode = undefined; }
+  return mode === "test" ? "grid" : "organic";
+}
+
 export interface MapOptions {
   rivers: boolean;
   elevation: boolean;
@@ -66,6 +107,19 @@ export interface MapOptions {
    * nothing and a save that changes it keeps every tile it had.
    */
   diag: boolean;
+  /**
+   * TOWN-2 (#653): the town street plan. OPTIONAL, and deliberately absent
+   * from `MAP_OPTIONS_ON` / `MAP_OPTIONS_OFF` / `MAP_KEYS`:
+   *
+   *   • a record with no key was written before TOWN-2, and reads "grid" —
+   *     the plan that map was actually generated with, so a resumed save never
+   *     re-shapes its towns under the player;
+   *   • a NEW game's default is `defaultTownLayout()` (organic outside the
+   *     unit-test runner), applied by the boot rather than stored in the
+   *     frozen constants, so the option records every reader pins keep the
+   *     exact five-key shape they have always had.
+   */
+  layout?: TownLayout;
 }
 export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false, rings: false, diag: false });
 export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true, rings: true, diag: true });
@@ -90,12 +144,25 @@ export function readMapOptions(raw: unknown): MapOptions | null {
     if (typeof o[k] !== "boolean") return null;
     out[k] = o[k] as boolean;
   }
+  // TOWN-2 (#653): the town layout rides the same record, with the same
+  // strictness as the booleans — an unknown name drops the whole record
+  // (the boot then plays the defaults) rather than quietly regenerating a
+  // different street plan under a save. A MISSING key is left missing, so a
+  // pre-TOWN-2 record keeps its exact shape; every reader resolves it.
+  if (o.layout !== undefined) {
+    const layout = readTownLayout(o.layout);
+    if (!layout) return null;
+    out.layout = layout;
+  }
   return out;
 }
 /** Equality; an absent value means the defaults (see `MatchSettings.map`). */
 export function mapOptionsEqual(a: MapOptions | null | undefined, b: MapOptions | null | undefined): boolean {
   const x = a ?? defaultMapOptions(), y = b ?? defaultMapOptions();
-  return MAP_KEYS.every((k) => x[k] === y[k]);
+  // TOWN-2: an absent layout is the pre-TOWN-2 plan ("grid") on BOTH sides, so
+  // a record written before the option existed still equals one written after
+  // it that never asked for organic towns.
+  return MAP_KEYS.every((k) => x[k] === y[k]) && (x.layout ?? "grid") === (y.layout ?? "grid");
 }
 
 export const AI_SKILL_KEYS = ["easy", "normal", "hard"] as const;

@@ -25,7 +25,7 @@ import { totalStorageRent, storageRentLabel } from "./storage-rent";
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.
 // ══════════════════════════════════════════════════════════════════════════
-import { resolveMapOptions, type MapOptions } from "./map-options";
+import { resolveMapOptions, resolveTownLayout, type MapOptions, type TownLayout } from "./map-options";
 import { mountTerrainGl, terrainGlWanted, type TerrainGl } from "./terrain-gl-adapter";
 import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
@@ -146,7 +146,7 @@ import {
 } from "./grid";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
-  demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads,
+  demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads, seedTownDiagonals,
   seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER, type RoadTierKey,
   highwayRouteTiers, planInterchange, buildInterchange, tierTileCost, setRoadTier, ROAD_TIER, ROAD_TIER_KEYS, addCost, roadDragRefusalText,
@@ -775,6 +775,16 @@ export interface IsoGameOptions {
    */
   diag?: boolean;
   /**
+   * TOWN-2 (#653): force the town street plan — `"organic"` (irregular
+   * outlines, 45° avenues, bigger plots) or `"grid"` (every pre-TOWN-2 map).
+   * Absent, it is read from `?layout=grid|organic` over the same chain as the
+   * other map options: a new game generates organic, a resumed save keeps the
+   * plan it was saved from (a save without the key predates TOWN-2 and stays
+   * grid), and in a room the host's record wins. A story contract and the
+   * Starter Island keep their tuned (grid) towns.
+   */
+  layout?: TownLayout;
+  /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
    * carries — and is otherwise OFF in every mode. The new loop is
@@ -1055,7 +1065,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MAP-1 (#412): a URL that names a map feature asks for a FRESH map with it —
   // don't resume a save onto a different terrain (the save is still written).
   const searchNow = (() => { try { return location.search; } catch { return ""; } })();
-  const mapParamsInUrl = /[?&](rivers|elevation|shapes|rings)=/.test(searchNow);
+  const mapParamsInUrl = /[?&](rivers|elevation|shapes|rings|layout)=/.test(searchNow);
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
@@ -1105,7 +1115,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // from `mapParamsInUrl` above: it re-terrains nothing, so a `?diag=0` boot
   // keeps the save in front of it instead of throwing the map away to honour it.
   // FTUE-1 (#464): …except the Starter Island, which is tuned terrain (its
-  // own map options, recorded on the save like any other game's).
+  // own map options, recorded on the save like any other game's). TOWN-2
+  // (#653): its towns stay grid-plan for the same reason — the guide walks
+  // the island's tuned streets.
   const mapOptions: MapOptions = opts.tutorialSection || starterIsland
     ? { rivers: false, elevation: true, shapes: true, rings: true, diag: true }
     : resolveMapOptions({
@@ -1116,12 +1128,30 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       story: storyOn ? (storyChapter ?? {}) : null,
       scenario: scenarioOn ? (scenarioDef ?? {}) : null,
     });
+  // TOWN-2 (#653): the town street plan, over the same chain of custody as
+  // the booleans (explicit → URL → save → room → story/scenario → the
+  // new-game default, which is organic outside the unit-test runner). The
+  // resolved value is written BACK into `mapOptions` so the save this game
+  // writes records the plan its map was generated under — a saved organic
+  // town reloads as the organic town it is, and a pre-TOWN-2 save (no key)
+  // keeps regenerating grid.
+  const townLayout = resolveTownLayout({
+    explicit: { layout: opts.layout },
+    search: searchNow,
+    save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
+    room: isMp() ? settings : null,
+    story: storyOn ? (storyChapter ?? {}) : null,
+    scenario: scenarioOn ? (scenarioDef ?? {}) : null,
+  });
+  mapOptions.layout = townLayout;
+  const organicTowns = townLayout === "organic";
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
   const grid: Grid = opts.tutorialSection ? tutorialMap(opts.tutorialSection)
     : starterIsland
     ? starterIslandGrid()
     : generateMap(seed, {
       rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings,
+      layout: townLayout,
       ...(scenarioDef?.gen ?? {}),
     });
   // #456: the seed-derived heights, kept as the baseline the edited-heights
@@ -1203,6 +1233,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // track.road), so the first frame already shows settled towns with roads.
   // Neutral ownership: the town roads are never part of a player's network.
   seedTownRoads(track, grid);
+  // TOWN-2 (#653): an organic town's 45° avenue links, after the endpoints
+  // are paved. A no-op on grid-plan maps.
+  seedTownDiagonals(track, grid);
   // ROADS-2 (#393): on new maps a town's own streets are STREETS (slow,
   // kerbed) — freight through a town centre costs speed. Rides with the
   // town-roads map option (#296 \`rings\`), so older maps and saves keep Road.
@@ -4374,6 +4407,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       const grown = tier >= 2 ? grownTownHouses(t, grid, townGrownRings(tier), isBuilt) : [];
       const laid = townBuildings(t, footprintOf, {
         tier, grid, blocked: isBuilt, shapes: shapesOn,
+        // TOWN-2 (#653): organic towns draw from the long-building path and
+        // keep their avenue-frontage wedge lots to 1×1 fill.
+        organic: organicTowns,
         // MAP-2 (#559): the tree defs arrive with the scenery load, so a lot
         // may only draw one the atlas can actually blit yet.
         spriteKnown: (s) => atlasRef?.has(s) === true,
