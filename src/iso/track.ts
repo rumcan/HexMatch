@@ -384,6 +384,32 @@ export function seedTownRoads(t: Track, grid: Grid): void {
 }
 
 /**
+ * TOWN-2 (#653): stamp an organic town's 45° AVENUE links (`Town.organicDiag`)
+ * onto a fresh track.
+ *
+ * Call this AFTER `seedTownRoads` — an endpoint must be paved for the link to
+ * read (`roadDiagLinked` requires presence at both ends). This is the same
+ * boot-stamp pattern as `seedTownRoads` itself: the map stores the intent,
+ * the game applies it, and deliberately NOT through `buildRoadDiagonal` —
+ * that validates a PLAYER drag (and `roadDiagonalRefusal` refuses any
+ * diagonal onto a town tile, which every avenue endpoint is). The generator
+ * has already guaranteed what the player rules exist to protect: the two
+ * endpoints are diagonal neighbours on the town's own street, their common
+ * corners hold no crossing link (the avenue's links are one chain, never an
+ * X), and the ground under both is the town's.
+ *
+ * Grid-plan towns carry no `organicDiag`, so this is a no-op on every map
+ * generated before TOWN-2 — byte-identical boots there.
+ */
+export function seedTownDiagonals(t: Track, grid: Grid): void {
+  for (const town of grid.towns) {
+    for (const [ax, ay, bx, by] of town.organicDiag ?? []) {
+      stampRoadDiagonal(t, ax, ay, bx, by);
+    }
+  }
+}
+
+/**
  * PP-13/RV-03: the owner id the map's PUBLIC ROADS carry.
  *
  * Players are 1 and 2 (player index + 1) and a town's own furniture used to be
