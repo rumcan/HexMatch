@@ -17,6 +17,7 @@ import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
   buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN, TOWN_TREE_VARIANTS,
+  TOWN_HOME_VARIANTS, TOWN_HOME_BLOCK_IN, TOWN_GREEN_LOT_IN,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
 } from "./config";
@@ -1811,23 +1812,24 @@ function townBuildingsLaid(
   // small-homes look, and a town without the option keeps today's layout.
   if (opts.shapes === true && !village) return townBuildingsShapes(t, footprintOf, opts);
   const BLOCK = TOWN_BLOCK - 1;                 // tiles per block, per axis
-  const full = TOWN_HOUSE_VARIANTS.filter((v) => {
-    const [fw, fh] = footprintOf(v);
-    return fw === 1 && fh === 1;
-  });
-  void full; void villageBlockPool;
-  // Owner (2026-09-26): a VILLAGE keeps its small 1×1 homes. From the first
-  // upgrade on there are NO 1×1 buildings: a single house tile is an open lot
-  // — a tree, a park or a lawn (`lotArtAt`), the owner's MAP-2 direction
-  // (#559) that a town's grass gaps should carry trees rather than sit bare.
+  void villageBlockPool;
+  // A VILLAGE keeps its own small 1×1 homes.
+  //
+  // Owner (2026-09-26) had every tier above it draw NO 1×1 building at all:
+  // a single house tile was an open lot — a tree, a park or a lawn
+  // (`lotArtAt`, the MAP-2 #559 direction). CITY-1 (#652, owner playtest
+  // 2026-10-03) takes that back for the upgraded tiers: an ordinary house
+  // belongs on a town lot, and the greenery is now the sprinkle between them
+  // (`townLotFiller`). LEGACY towns are untouched.
   const villageHomes: readonly string[] = TOWN_VILLAGE_VARIANTS.filter((v) => {
     const [fw, fh] = footprintOf(v);
     return fw === 1 && fh === 1 && buildingFootprint(v) !== null;
   });
   const homeArt = village && villageHomes.length ? villageHomes : null;
-  /** The sprite a leftover single lot draws: a home (village), else a lot. */
+  const fill = townLotFiller(tier, footprintOf, opts.spriteKnown);
+  /** The sprite a single lot draws: a village home, else a house or a lot. */
   const singleArt = (x: number, y: number): string =>
-    homeArt ? pickTownVariant(x, y, homeArt) : lotArtAt(x, y, footprintOf, opts.spriteKnown);
+    homeArt ? pickTownVariant(x, y, homeArt) : fill.art(x, y);
   // Whole blocks: 2×2-or-larger art only (a village places no block art).
   const blockArt: readonly string[] = village
     ? []
@@ -1898,10 +1900,16 @@ function townBuildingsLaid(
       && (fw > 1 || fh > 1)
       && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
+    // CITY-1 (#652): …except on a HOUSING block, which gives its tall pick up
+    // so its four tiles can each draw an ordinary house. That is what puts
+    // normal houses back among the towers of an upgraded town; the tiles are
+    // filled by `fillSingles` below exactly like any other free lot.
+    const homesHere = fill.homes.length > 0 && townHomesBlockAt(ox, oy);
     // Open lots, one per free tile of the block: a small home in a village,
-    // else a tree / park / lawn (`singleArt`). Runs after a whole-block pick
-    // too, so a merged block's seam tiles are drawn instead of left bare.
-    if (wholeBlock) place(pick, ox, oy);
+    // an ordinary house in an upgraded town, else a tree / park / lawn
+    // (`singleArt`). Runs after a whole-block pick too, so a merged block's
+    // seam tiles are drawn instead of left bare.
+    if (wholeBlock && !homesHere) place(pick, ox, oy);
     fillSingles(blockTiles.get(idx(ox, oy)) ?? []);
   }
 
@@ -1934,14 +1942,11 @@ function townBuildingsShapes(
 ): TownBuilding[] {
   const tier = opts.tier ?? TOWN_TIER_LEGACY;
   const BLOCK = TOWN_BLOCK - 1;
-  const full = TOWN_HOUSE_VARIANTS.filter((v) => {
-    const [fw, fh] = footprintOf(v);
-    return fw === 1 && fh === 1;
-  });
-  void full;
-  // Owner (2026-09-26): NO 1×1 buildings — a leftover single tile is an open
-  // lot. MAP-2 (#559): and an open lot draws a TREE, a park or a lawn
-  // (`lotArtAt`), so the new districts' strips do not read as bare grass.
+  // A leftover single tile is a LOT. MAP-2 (#559) plants it with a tree, a
+  // park or a lawn (`lotArtAt`) so the new districts' strips do not read as
+  // bare grass; CITY-1 (#652) gives it an ordinary house instead on every
+  // upgraded tier, keeping one lot in `TOWN_GREEN_LOT_IN` green.
+  const fill = townLotFiller(tier, footprintOf, opts.spriteKnown);
 
   const houses = new Set<number>();
   for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
@@ -1958,12 +1963,12 @@ function townBuildingsShapes(
     out.push({ sprite, tx: ox, ty: oy });
     for (const [x, y] of span(ox, oy, fw, fh)) used.add(idx(x, y));
   };
-  /** An open lot on every free house tile of the list, one per tile. */
+  /** A house or an open lot on every free house tile of the list. */
   const fillSingles = (tiles: [number, number][]) => {
     for (const [x, y] of tiles) {
       const i = idx(x, y);
       if (!houses.has(i) || used.has(i)) continue;
-      place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
+      place(fill.art(x, y), x, y);
     }
   };
 
@@ -2055,7 +2060,11 @@ function townBuildingsShapes(
     const [fw, fh] = footprintOf(pick);
     const fits = (fw > 1 || fh > 1) && fw <= BLOCK && fh <= BLOCK
       && span(ox, oy, fw, fh).every(([x, y]) => houses.has(idx(x, y)) && !used.has(idx(x, y)));
-    if (fits) place(pick, ox, oy);
+    // CITY-1 (#652): a housing block passes on its tall/terrace pick and
+    // draws ordinary houses tile by tile instead. The MERGED superblocks
+    // above keep their long #273 buildings either way — those are the whole
+    // point of the shapes option.
+    if (fits && !(fill.homes.length > 0 && townHomesBlockAt(ox, oy))) place(pick, ox, oy);
     fillSingles(blockTiles.get(idx(ox, oy)) ?? []);
   }
 
@@ -2087,6 +2096,75 @@ function lotArtAt(
   return buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : parks[0];
 }
 
+/**
+ * CITY-1 (#652): the ORDINARY HOMES this atlas can stand on a single lot.
+ *
+ * Filtered like every other pool here — the art must be in the building
+ * manifest AND, when the caller passes the atlas question, be something the
+ * renderer can actually blit yet. An unshipped or not-yet-loaded name simply
+ * drops out, so the worst case is the lot the town drew before this ticket
+ * (a tree, a park or a lawn) rather than a hole in the map.
+ */
+function townHomePool(
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): string[] {
+  return TOWN_HOME_VARIANTS.filter((v) => {
+    if (buildingFootprint(v) === null) return false;
+    if (known && !known(v)) return false;
+    try { const [fw, fh] = footprintOf(v); return fw === 1 && fh === 1; } catch { return false; }
+  });
+}
+
+/**
+ * CITY-1 (#652): one block in `TOWN_HOME_BLOCK_IN` is a HOUSING block — its
+ * tiles draw ordinary homes instead of the one tall building that fits.
+ *
+ * Keyed on the block (or, in the grown ring, the quad) origin with the same
+ * spatial hash every other town pick uses, salted so it does not correlate
+ * with the sprite pick itself. Pure: a town's housing blocks are the same on
+ * every client, every re-sync and every reload of a save.
+ */
+const townHomesBlockAt = (ox: number, oy: number): boolean =>
+  TOWN_HOME_BLOCK_IN > 0 && hashPick(ox + 0x6b, oy + 0x29, TOWN_HOME_BLOCK_IN) === 0;
+
+/**
+ * CITY-1 (#652): what a FREE SINGLE LOT draws, per tier.
+ *
+ * Up to this ticket the answer was always `lotArtAt` — a tree, a park or a
+ * lawn — for every tier above the village, which is how an upgraded city
+ * ended up as towers in a field of grass. Now an upgraded town (tier 1+)
+ * fills its lots with the ordinary house pool, and keeps one lot in
+ * `TOWN_GREEN_LOT_IN` green so the mix still has gardens in it.
+ *
+ * Tiers that must not move keep the old answer exactly:
+ *   • LEGACY (`TOWN_TIER_LEGACY`) — every map, room and test that asks for no
+ *     tier at all gets byte-for-byte what it got before;
+ *   • VILLAGE (0) — its own small-homes list is applied by the caller.
+ *
+ * Returns the pool as well as the painter: an empty pool (no home art in
+ * this atlas yet) is the caller's signal to leave the tall-building layout
+ * alone, so a half-loaded atlas never produces a town of empty blocks.
+ */
+function townLotFiller(
+  tier: number,
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): { homes: readonly string[]; art: (x: number, y: number) => string } {
+  const homes = tier >= 1 ? townHomePool(footprintOf, known) : [];
+  return {
+    homes,
+    art: (x: number, y: number): string => {
+      if (!homes.length) return lotArtAt(x, y, footprintOf, known);
+      // The green sprinkle (MAP-2 #559 still holds: a town has trees in it).
+      if (TOWN_GREEN_LOT_IN > 0 && hashPick(x + 0x3d, y + 0x11, TOWN_GREEN_LOT_IN) === 0) {
+        return lotArtAt(x, y, footprintOf, known);
+      }
+      return pickTownVariant(x, y, homes);
+    },
+  };
+}
+
 /** The town trees the atlas can draw as a 1×1 lot (MAP-2, #559). */
 function townTreePool(
   footprintOf: (sprite: string) => [number, number],
@@ -2108,7 +2186,15 @@ function townTreePool(
  * Packing: the biggest block building that fits a 2×2 quad first (that is
  * what makes a district read as a city), then a 1×2/2×1 terrace for the
  * 1-wide strips the quads leave over (MAP-2 #559 — the strips used to be
- * lawn), then a single open lot (a tree, a park or a lawn).
+ * lawn), then a single lot.
+ *
+ * CITY-1 (#652) changed what that last step means, and added a step before
+ * it. A single lot is now an ordinary HOUSE (one in `TOWN_GREEN_LOT_IN`
+ * stays green), and one quad in `TOWN_HOME_BLOCK_IN` skips both the tower
+ * and the terrace so its tiles come out as houses — the owner's "the
+ * upgraded city needs normal houses still". A district is therefore a mix of
+ * towers, terraces and streets of houses with gardens between them, instead
+ * of towers in a lawn.
  */
 function layGrownRing(
   t: Town,
@@ -2132,16 +2218,32 @@ function layGrownRing(
     const [fw, fh] = footprintOf(v);
     return (fw === 2 && fh === 1) || (fw === 1 && fh === 2);
   });
+  const fill = townLotFiller(tier, footprintOf, opts.spriteKnown);
   // Row-major, so the greedy packing is deterministic.
   for (const [x, y] of [...ring].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]))) {
     const i = idx(x, y);
     if (used.has(i)) continue;
+    // CITY-1 (#652): a housing quad takes neither the tower nor the terrace;
+    // its tiles fall through to the ordinary houses below. The tiles it
+    // leaves are picked up by this very loop (row-major), so nothing is
+    // skipped and the quads that follow simply re-pack around it.
+    const homesHere = fill.homes.length > 0 && townHomesBlockAt(x, y);
     const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
-    if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
+    const quadFree = quad.every((q) => ringSet.has(q) && !used.has(q));
+    // A housing quad draws all FOUR of its tiles at once rather than letting
+    // the next quad re-pack a tower around the one house it dropped: a
+    // district wants streets of houses, not a house marooned between towers.
+    if (quadFree && homesHere) {
+      for (const [hx, hy] of [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]] as const) {
+        place(fill.art(hx, hy), hx, hy);
+      }
+      continue;
+    }
+    if (ring2.length && !homesHere && quadFree) {
       place(pickTownVariant(x, y, ring2), x, y);
       continue;
     }
-    if (strips.length) {
+    if (strips.length && !homesHere) {
       const pick = strips[hashPick(x + 3, y + 5, strips.length)];
       const [fw, fh] = footprintOf(pick);
       const tiles: [number, number][] = [];
@@ -2151,7 +2253,7 @@ function layGrownRing(
         continue;
       }
     }
-    place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
+    place(fill.art(x, y), x, y);
   }
 }
 

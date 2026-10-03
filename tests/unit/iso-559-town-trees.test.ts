@@ -85,14 +85,21 @@ describe("MAP-2 (#559) trees in towns", () => {
   });
 
   it("plants the open lots with trees, parks and lawn — not one flat field", () => {
+    // CITY-1 (#652) changed what an OPEN LOT is. A single tile of an upgraded
+    // town now takes an ordinary house, and only the lots this ticket's green
+    // sprinkle keeps (one in `TOWN_GREEN_LOT_IN`) stay open — so "the lots"
+    // here are the tiles that drew open-lot art, not every 1×1 item on the
+    // map. The mix WITHIN them is still #559's: trees lead, then parks, then
+    // lawn. That the rest of the town is built on is city-1-fill.test.ts.
     for (const seed of SEEDS) {
       const grid = generateMap(seed, ALL_ON);
       const town = grid.towns[0];
       setTownLevel(town, 3);
       const laid = townBuildings(town, footprintOf, { tier: 3, grid, shapes: true });
-      const lots = laid.filter((b) => footprintOf(b.sprite)[0] === 1 && footprintOf(b.sprite)[1] === 1);
+      const isPark = (s: string) => s.startsWith("park_") || s.startsWith("town_fountain");
+      const lots = laid.filter((b) => TREE_LOTS.has(b.sprite) || isPark(b.sprite) || b.sprite === TOWN_LAWN);
       const trees = lots.filter((b) => TREE_LOTS.has(b.sprite));
-      const parks = lots.filter((b) => b.sprite.startsWith("park_") || b.sprite.startsWith("town_fountain"));
+      const parks = lots.filter((b) => isPark(b.sprite));
       expect(trees.length).toBeGreaterThan(0);
       expect(lots.length).toBeGreaterThan(3);
       // Trees are the majority of the lots (the mix is 55/15/30), and a lot is

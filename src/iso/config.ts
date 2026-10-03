@@ -1406,6 +1406,74 @@ export const TOWN_HOUSE_VARIANTS = [ "town_office_1460",
 ] as const;
 
 /**
+ * CITY-1 (#652): the ORDINARY HOUSE POOL — the normal, single-tile town
+ * buildings an upgraded town is still made of.
+ *
+ * Owner playtest (2026-10-03): *"The second version of the upgraded city
+ * needs normal houses still. It is very empty too. Those empty spaces should
+ * have some normal town buildings."* A tier 1+ town drew NO 1×1 building at
+ * all (the 2026-09-26 direction above): every full block took a 2×2 tower and
+ * every leftover tile became a lawn, a park or a tree, so a city came out as
+ * towers in a field of grass with not one ordinary house in it.
+ *
+ * This is that pool: houses, cottages, townhouses, shops and small flats,
+ * each authored 1×1 in `assets/buildings/manifest.json`. It is deliberately
+ * its OWN list rather than "the 1×1 entries of `TOWN_HOUSE_VARIANTS`":
+ *
+ *   • the fountain is a park, not a home (it stays in `TOWN_PARK_VARIANTS`),
+ *     and a town made half of fountains is not what the owner asked for;
+ *   • it can carry the 1×1 art that never made the main list
+ *     (`town_offices_1423`, the two `town_house_modern`s,
+ *     `town_cottage_old_small_2`), which widens the mix for free;
+ *   • `TOWN_HOUSE_VARIANTS` keeps picking exactly what it picks today, so no
+ *     block, village or LEGACY town moves a single sprite.
+ *
+ * `townHomePool` (grid.ts) filters it by footprint and by what the atlas can
+ * actually draw, so an unshipped name costs a lot its house, never the town
+ * its art: the lot falls back to `lotArtAt` exactly as before.
+ */
+export const TOWN_HOME_VARIANTS = [
+  "town_small_house_1x1_1", "town_small_flat_1x1_1", "town_small_flat_1x1_2",
+  "town_cottage_old_small", "town_cottage_old_small_a", "town_cottage_old_small_2",
+  "town_cottage_tall", "town_house_pool", "town_house_modern", "town_house_modern_2",
+  "town_townhouse_3", "town_townhouse_garden_2", "town_townhouse_garden_3",
+  "town_flats_2", "town_flats_4", "town_flats_townhouse_tall",
+  "town_shops_modern", "town_shops_offices", "town_shops_offices_2",
+  "town_office_1460", "town_offices_1423",
+] as const;
+
+/**
+ * CITY-1 (#652): one in N whole blocks of an upgraded town draws ORDINARY
+ * HOUSES instead of one tall building.
+ *
+ * Filling the leftover tiles alone would not have answered the playtest. A
+ * town's blocks are 2×2 and a 2×2 tower fits one exactly, so every unclipped
+ * block took a tower and the ordinary houses could only ever appear on the
+ * scraps at the coast. This is the knob that puts them back INTO the town:
+ * the block's four tiles each draw their own 1×1 home, so streets of houses
+ * run between the towers instead of around them.
+ *
+ * 3 = a third of the blocks are houses — enough that a city reads as a city
+ * with neighbourhoods rather than a business park, while the towers, banks,
+ * cinemas and the long #273 shapes still dominate. Keyed on the block origin
+ * (`hashPick`), so it is deterministic per town and per seed. 0 turns the
+ * whole behaviour off and restores tower-only blocks.
+ */
+export const TOWN_HOME_BLOCK_IN = 3;
+
+/**
+ * CITY-1 (#652): one in N single lots of an upgraded town stays GREEN — a
+ * tree, a park or a lawn (`lotArtAt`) — instead of taking a house.
+ *
+ * The ticket asks for ≥90% of a tier-3 town's lots to be occupied, not 100%:
+ * MAP-2 (#559) put trees on a town's open lots for a reason and a city with
+ * no garden in it looks as wrong as a city with no houses. This keeps a
+ * deterministic sprinkle of green between the houses — about 5% of a grown
+ * town's tiles, so occupancy lands in the mid-90s. 0 packs every lot solid.
+ */
+export const TOWN_GREEN_LOT_IN = 8;
+
+/**
  * F4 (#275): the NON-SQUARE town buildings (#273's art). They only ever draw
  * under the `shapes` map option, on blocks the generator merged for them
  * (`mergeTownBlocks` in grid.ts) — a plain 2×2 block cannot hold a 1×3 or a
