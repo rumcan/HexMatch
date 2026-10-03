@@ -2888,13 +2888,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // the 2D stack; null = no WebGL2 / not asked for, and the 2D ground stays.
   const terrainGl: TerrainGl | null = terrainGlWanted() ? mountTerrainGl(ui.mapHost, grid, seed) : null;
   // LIVE-3D spike: `?three=1` mounts the instanced 3D building layer under the overlay canvas.
+  // LIVE-3D: the railway structures the 3D layer draws (platform and train depot art, any view)
+  let lastThreeItems: { sprite: string; tx: number; ty: number; w: number; h: number; lift: number }[] = [];   // __iso.threeItems
+  const RAIL_3D = /^(platform|train-depot)_(ne|se|sw|nw)$/;
   const threeLayer: ThreeLayer | null = threeWanted() ? mountThreeLayer(ui.mapHost, canvases.overlay) : null;
   // terrain elevation in px at a ground point, for the 3D vehicles (depth.ts E3: moving sprites read the surface at their tile centre)
   const threeLift = (u: number, v: number): number => (elevationActive(grid) ? surfaceHeight(grid, u, v) * LEVEL_PX : 0);
   if (threeLayer) {
     setHideExtra((e) => {
       const k = (e.ref as { kind?: string } | undefined)?.kind;
-      return (k === "town" || k === "harvester" || k === "factory") && threeLayer.drawsSprite(e.sprite);
+      return (k === "town" || k === "harvester" || k === "factory" || (k === "rail" && RAIL_3D.test(e.sprite))) && threeLayer.drawsSprite(e.sprite);
     });
     // the 2D sprites a ready 3D model replaces disappear as models land: re-sync once they do
     threeLayer.onModels = () => syncWorld();
@@ -4463,14 +4466,15 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     syncLabels();
     if (threeLayer) {
       // LIVE-3D spike: one box per town building / depot / plant, rebuilt only when the world syncs.
-      threeLayer.setItems((world.extra ?? []).flatMap((e) => {
+      lastThreeItems = (world.extra ?? []).flatMap((e) => {
         const k = (e.ref as { kind?: string } | undefined)?.kind;
-        if (k !== "town" && k !== "harvester" && k !== "factory") return [];
+        if (k !== "town" && k !== "harvester" && k !== "factory" && !(k === "rail" && RAIL_3D.test(e.sprite))) return [];
         const [w, h] = footprintOf(e.sprite);
         // the 2D sprite rides up the hill with its base (depth.ts E3); the 3D model gets the same lift
         const lift = elevationActive(grid) ? surfaceHeight(grid, e.tx + w - 0.5, e.ty + h - 0.5) * LEVEL_PX : 0;
         return [{ sprite: e.sprite, tx: e.tx, ty: e.ty, w, h, lift }];
-      }));
+      });
+      threeLayer.setItems(lastThreeItems);
     }
     renderer?.setWorld(world);
   };
@@ -17100,6 +17104,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     threeStats: () => threeLayer?.stats() ?? null,
     // LIVE-3D: the view yaw (radians) and the tile the game would pick under a screen pixel at that yaw
     viewYaw: () => getViewYaw(),
+    get threeItems() { return lastThreeItems; },
     tileAtScreen: (sx: number, sy: number) => { const p = renderer!.pick(sx, sy, { sprites: false }); return [p.tx, p.ty] as [number, number]; },
     get townDrawItems() {
       return (world.extra ?? [])

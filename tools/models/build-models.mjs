@@ -37,8 +37,10 @@ const turnOf = (name) => {
   return t.length ? t[0] : 0;
 };
 // Size-based triangle target from the sprite's footprint area.
+// LIVE-3D: the railway art lives in assets/railway/manifest.json (platform_<view>, train-depot_<view>)
+const RAIL_FOOTPRINT = { platform: [4, 1], "train-depot": [2, 2] };
 const footprintArea = (name) => {
-  const fp = spriteMap[name]?.footprint ?? spriteMap[`${name}_r`]?.footprint;
+  const fp = spriteMap[name]?.footprint ?? spriteMap[`${name}_r`]?.footprint ?? RAIL_FOOTPRINT[name];
   return fp ? fp[0] * fp[1] : 1;
 };
 // Asked-for count; the seam-respecting simplifier usually stops higher (see simplifyPrim), which we accept.
@@ -144,7 +146,7 @@ const MOVING = /^(car_|rail_|vehicle_)/;
 // metres, from the sprite manifests' notes (truck 7 m, loco 10.3 m ...); the three sedans have no sprite yet
 const LENGTH_M = { vehicle_truck: 7, rail_loco: 10.3, rail_tender: 4.7, rail_box: 7.2, rail_tank: 6.7, rail_flat: 6.2, car_sedan_1: 4.8, car_sedan_2: 4.8, car_sedan_3: 4.8 };
 // models whose front came out at the back (render.mjs --flip): set after checking against the 2D sprites
-const FLIP = {};
+const FLIP = { vehicle_truck: true, rail_loco: true };   // LIVE-3D owner round 2: these two came out cab/boiler the wrong way round (drove in reverse)
 // one model, two paints: vehicle_truck_blue is the red lorry's red paint turned to hue 215 (render.mjs --livery)
 const LIVERIES = [{ name: "vehicle_truck", outName: "vehicle_truck_blue", hue: 215 }];
 const rgbToHsv = (r, g, b) => { const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; let h = 0; if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx / 255]; };

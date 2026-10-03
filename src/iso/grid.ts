@@ -2082,7 +2082,10 @@ function lotArtAt(
   const trees = townTreePool(footprintOf, known);
   const parks = parkPool(footprintOf);
   const roll = hashPick(x + 0x5b, y + 0x27, 100);
-  if (trees.length && roll < 55) return trees[hashPick(x, y, trees.length)];
+  // CITY-TREES (owner round 2): an open lot inside a town is ALL trees now (was 55% trees, 15% parks, 30% lawn), so
+  // no bare grass patch is left inside the street grid. Same per-tile hash, same draw-item road, same tile footprint:
+  // the count of draw items does not change (a lot already drew one lawn/park/tree sprite).
+  if (trees.length) return trees[hashPick(x, y, trees.length)];
   if (roll < 70) return parks[hashPick(x + 7, y + 13, parks.length)];
   return buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : parks[0];
 }

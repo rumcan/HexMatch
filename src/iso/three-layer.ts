@@ -18,10 +18,30 @@ type Manifest = Record<string, ModelInfo>;
 const modelOf = (sprite: string, mf: Manifest | null): { name: string; extra: number } | null => {
   if (!mf) return null;
   if (mf[sprite]) return { name: sprite, extra: 0 };
+  // LIVE-3D: the railway's platform (4x1 / 1x4 by view) and train depot (2x2). The platform model lies along X with
+  // its shed at the -X end; the art keeps the shed at the SOUTH end (+x for the 4x1 views ne/sw, +y for the 1x4
+  // views se/nw), so ne/sw turn it a half turn and se/nw a quarter (checked against the 2D art, all four views).
+  // The depot table is a first guess, see the report. `extra` is quarter turns on top of the model's own turn.
+  const rv = /^(platform|train-depot)_(ne|se|sw|nw)$/.exec(sprite);
+  if (rv && mf[rv[1]]) return { name: rv[1], extra: (rv[1] === "platform" ? { ne: 2, se: 1, sw: 2, nw: 1 } : { ne: 0, se: 1, sw: 2, nw: 3 } as Record<string, number>)[rv[2]] };
   if (sprite.endsWith("_r") && mf[sprite.slice(0, -2)]) return { name: sprite.slice(0, -2), extra: 1 };
   // terrace_2x1_yard / _plain have no model of their own: the 1x2 terrace turned
   if (sprite.startsWith("terrace_2x1") && mf.terrace_1x2) return { name: "terrace_1x2", extra: 1 };
   return null;
+};
+
+/**
+ * LIVE-3D (owner round 2): a town building's facing is a pure function of its tile (stable across reloads, yaw and
+ * host/guest). Square footprints take any quarter turn; a non-square footprint can only be flipped 180 degrees
+ * (the footprint and occupancy are never touched: the plan is turned about the footprint centre).
+ */
+const SPIN_ART = /^(town_|terrace_|shops_|store_)/;
+const NO_SPIN = /^(town_center|town_lawn|town_tree|town_park)/;
+export const spinOf = (sprite: string, tx: number, ty: number, w: number, h: number): number => {
+  if (!SPIN_ART.test(sprite) || NO_SPIN.test(sprite)) return 0;
+  let x = (Math.imul(tx + 1, 73856093) ^ Math.imul(ty + 1, 19349663)) >>> 0;
+  x = Math.imul(x ^ (x >>> 15), 2246822519) >>> 0; x ^= x >>> 13;
+  return w === h ? (x >>> 3) & 3 : ((x >>> 3) & 1) * 2;
 };
 
 export interface ThreeItem { sprite: string; tx: number; ty: number; w: number; h: number; lift?: number }   // lift: terrain elevation in px at zoom 1
@@ -189,7 +209,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
           const it = list[i];
           // as render.html: turn by the sprite's quarter turns, then fit the plan uniformly into the footprint (fill 0.92)
           const mi = manifest![mo!.name];
-          const rot = (mi.turn + mo!.extra) & 3;
+          const rot = (mi.turn + mo!.extra + spinOf(sprite, it.tx, it.ty, it.w, it.h)) & 3;
           const ex = rot & 1 ? mi.ez : mi.ex, ez = rot & 1 ? mi.ex : mi.ez;
           const s = Math.min((it.w * 0.92) / ex, (it.h * 0.92) / ez);
           pos.set(it.tx + it.w / 2, (it.lift ?? 0) / K, it.ty + it.h / 2);
