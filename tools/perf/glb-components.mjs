@@ -15,5 +15,5 @@ for (const mesh of doc.getRoot().listMeshes()) for (const prim of mesh.listPrimi
   for (let t = 0; t < ia.length; t += 3) { const r = find(ia[t]); let c = comp.get(r); if (!c) comp.set(r, c = { tris: 0, min: [1e9, 1e9, 1e9], max: [-1e9, -1e9, -1e9] }); c.tris++;
     for (let k = 0; k < 3; k++) { pos.getElement(ia[t + k], v); for (let a = 0; a < 3; a++) { c.min[a] = Math.min(c.min[a], v[a]); c.max[a] = Math.max(c.max[a], v[a]); } } }
   console.log("prim verts", n, "tris", ia.length / 3, "components", comp.size);
-  [...comp.values()].sort((a, b) => b.tris - a.tris).slice(0, 12).forEach((c) => console.log(c.tris, c.min.map((x) => x.toFixed(3)).join(","), "->", c.max.map((x) => x.toFixed(3)).join(",")));
+  [...comp.values()].sort((a, b) => b.tris - a.tris).slice(0, 400).filter((c) => c.tris > 150 || (c.max[1] - c.min[1] > 0.3)).forEach((c) => console.log(c.tris, c.min.map((x) => x.toFixed(3)).join(","), "->", c.max.map((x) => x.toFixed(3)).join(",")));
 }

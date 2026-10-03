@@ -12,6 +12,9 @@ import { getViewYaw, getViewYawTarget, setViewYawTarget } from "./camera";
 // sprite, which is the same model turned 90 degrees); no hand-tuned yaw is needed. MODEL_YAW is an extra
 // per-sprite correction in radians if one ever looks wrong.
 const MODEL_YAW: Record<string, number> = {};
+// LIVE-3D (owner 2026-10-03: the big cream-banded 5-storey brick building towered over its block): store_2x4 (and its _r)
+// is drawn at 60% in plan AND height, still centred on its lot.
+const MODEL_SIZE: Record<string, number> = { store_2x4: 0.6 };
 interface ModelInfo { turn: number; ex: number; ez: number; h: number; moving?: boolean; lengthM?: number }
 type Manifest = Record<string, ModelInfo>;
 /** Sprite name -> model name (+ extra quarter turns); null = no model (the box stays). */
@@ -213,7 +216,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
           const mi = manifest![mo!.name];
           const rot = (mi.turn + mo!.extra + spinOf(sprite, it.tx, it.ty, it.w, it.h)) & 3;
           const ex = rot & 1 ? mi.ez : mi.ex, ez = rot & 1 ? mi.ex : mi.ez;
-          const s = Math.min((it.w * 0.92) / ex, (it.h * 0.92) / ez);
+          const s = Math.min((it.w * 0.92) / ex, (it.h * 0.92) / ez) * (MODEL_SIZE[mo!.name] ?? 1);
           pos.set(it.tx + it.w / 2, (it.lift ?? 0) / K, it.ty + it.h / 2);
           quat.setFromAxisAngle(up, yawBase + (rot * Math.PI) / 2);
           scl.set(s, s, s);

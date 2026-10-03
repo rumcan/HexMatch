@@ -31,7 +31,7 @@ const spriteMap = sprites.sprites ?? sprites;
 
 // Models with two plain renders (the pilots): the one the shipped sprite matches (pixel-compared).
 // DEPOT-FACING: the shipped _se sprite is render_t0, whose yard opens SW (a duplicate of _sw); the yard opens SE at turn 1, so the model uses 1 (re-render the sprite at --turn 1 too).
-const TURN_OVERRIDE = { truck_depot_bottom_entrance_se: 1, factory: 0, town_flats: 0, town_small_house_1x1_1: 1, terrace_2x1_plain: 1, terrace_2x1_yard: 1 };   // the terraces: Hunyuan models come long on Z, the 2x1 sprite is long on X
+const TURN_OVERRIDE = { truck_depot_bottom_entrance_se: 1, factory: 0, town_flats: 0, town_small_house_1x1_1: 1, terrace_2x1_plain: 0, terrace_2x1_yard: 0 };   // the terraces: Hunyuan models come long on Z, the 2x1 sprite is long on X
 const turnOf = (name) => {
   if (name in TURN_OVERRIDE) return TURN_OVERRIDE[name];
   const t = fs.readdirSync(path.join(SRC, name)).map((f) => /^render_t(\d)@2x\.png$/.exec(f)).filter(Boolean).map((m) => Number(m[1]));
@@ -115,7 +115,30 @@ function simplifyPrim(prim, targetTris, permissive = false) {
 // behind the pane's outer face (source axis X, which these Hunyuan models come squared to) is dropped, and the
 // vertices of triangles that straddle the face are pinned onto it: the back becomes one flush wall. Value = the x of
 // the pane's outer face in SOURCE units (read off the pane's own component).
-const BACK_TRIM = { terrace_2x1_plain: -0.199, terrace_2x1_yard: -0.567 };
+const BACK_TRIM = {};   // superseded by TERRACE_FROM (the Hunyuan back pane was a blank wall)
+// LIVE-3D (owner 2026-10-03: the back of the terrace was a flat blank orange wall): the two terraces are now cut from the
+// Meshy town_townhouse_gardens_2 (the sprite was sliced from it), keeping only the slab of the model between z0 and z1
+// (source units; the house row spans z -0.29..0.33, the lawn lies below -0.29, the back patio above 0.33). Every side
+// keeps the real Meshy facade, windows on the back included.
+const TERRACE_FROM = {
+  terrace_2x1_plain: { from: "town_townhouse_gardens_2", z0: -0.40, z1: 0.42 },
+  terrace_2x1_yard: { from: "town_townhouse_gardens_2", z0: -0.62, z1: 0.42 },
+};
+function clipSlab(doc, z0, z1) {
+  let kept = 0;
+  for (const mesh of doc.getRoot().listMeshes()) for (const pr of mesh.listPrimitives()) {
+    const pa = pr.getAttribute("POSITION"), ia = pr.getIndices(), arr = ia.getArray(), keep = [], v = [0, 0, 0];
+    const z = (i) => { pa.getElement(i, v); return v[2]; };
+    for (let t = 0; t < arr.length; t += 3) {
+      const a = arr[t], b = arr[t + 1], c = arr[t + 2], cz = (z(a) + z(b) + z(c)) / 3;
+      if (cz >= z0 && cz <= z1) { keep.push(a, b, c); kept++; }
+    }
+    for (let i = 0; i < pa.getCount(); i++) { pa.getElement(i, v); if (v[2] < z0 || v[2] > z1) { v[2] = Math.min(z1, Math.max(z0, v[2])); pa.setElement(i, v); } }
+    pr.setIndices(ia.clone().setArray(new Uint32Array(keep)));
+    compactPrimitive(pr);
+  }
+  return ` clipped to z ${z0}..${z1} (${kept} tris)`;
+}
 function trimBack(doc, cutX) {
   let minY = Infinity;
   for (const node of doc.getRoot().listNodes()) { const m = node.getMesh(); if (!m) continue; for (const pr of m.listPrimitives()) { const pa = pr.getAttribute("POSITION"), v = [0, 0, 0]; for (let i = 0; i < pa.getCount(); i++) { pa.getElement(i, v); minY = Math.min(minY, v[1]); } } }
@@ -172,7 +195,7 @@ for (const name of names) {
   for (const l of LIVERIES) if (l.name === name) jobs.push(l);
 }
 for (const { name, outName, hue } of jobs) {
-  const src = path.join(SRC, name, "model.glb");
+  const src = path.join(SRC, TERRACE_FROM[name]?.from ?? name, "model.glb");
   const out = path.join(OUT, `${outName}.glb`);
   const moving = MOVING.test(name);
   if (!FORCE && manifest[outName] && fs.existsSync(out) && fs.statSync(out).mtimeMs > fs.statSync(src).mtimeMs) {
@@ -181,6 +204,7 @@ for (const { name, outName, hue } of jobs) {
   }
   const doc = await io.read(src);
   let trimNote = "";
+  if (TERRACE_FROM[name]) trimNote = clipSlab(doc, TERRACE_FROM[name].z0, TERRACE_FROM[name].z1);
   if (BACK_TRIM[name] != null) trimNote = " " + trimBack(doc, BACK_TRIM[name]);
   const before = triCount(doc);
   let yaw = squareToGrid(doc);

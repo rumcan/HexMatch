@@ -434,16 +434,16 @@
   "lengthM": 7
  },
  "terrace_2x1_plain": {
-  "turn": 1,
-  "ex": 0.3519,
-  "ez": 1,
-  "h": 0.4885
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4323,
+  "h": 0.4677
  },
  "terrace_2x1_yard": {
-  "turn": 1,
-  "ex": 0.6426,
-  "ez": 1,
-  "h": 0.4317
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.5483,
+  "h": 0.4677
  },
  "platform": {
   "turn": 0,

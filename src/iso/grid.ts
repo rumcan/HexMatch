@@ -1827,7 +1827,7 @@ function townBuildingsLaid(
   const homeArt = village && villageHomes.length ? villageHomes : null;
   /** The sprite a leftover single lot draws: a home (village), else a lot. */
   const singleArt = (x: number, y: number): string =>
-    homeArt ? pickTownVariant(x, y, homeArt) : lotArtAt(x, y, footprintOf, opts.spriteKnown);
+    homeArt ? pickTownVariant(x, y, homeArt) : lotArtAt(x, y, footprintOf, opts.spriteKnown, (opts.tier ?? TOWN_TIER_LEGACY) >= 2);
   // Whole blocks: 2×2-or-larger art only (a village places no block art).
   const blockArt: readonly string[] = village
     ? []
@@ -2074,11 +2074,22 @@ function townBuildingsShapes(
  * asked for trees on exactly those lots. The pick is per tile and pure, so a
  * re-sync, another client and a restored save all draw the same thing.
  */
+const CITY_HOME_VARIANTS = ["town_small_house_1x1_1", "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_cottage_old_small_a", "town_cottage_old_small"] as const;
 function lotArtAt(
   x: number, y: number,
   footprintOf: (sprite: string) => [number, number],
   known?: (sprite: string) => boolean,
+  grown = false,
 ): string {
+  // CITY-HOMES (owner, 2026-10-03): a grown city (tier 2+) lost its ordinary houses to the big blocks and sat in empty
+  // lawns. A free lot there is a normal 1x1 home four times in five (the rest stay trees), by the same per-tile hash.
+  if (grown && hashPick(x + 0x11, y + 0x31, 100) < 80) {
+    const homes = CITY_HOME_VARIANTS.filter((v) => {
+      if (known && !known(v)) return false;
+      try { const [fw, fh] = footprintOf(v); return fw === 1 && fh === 1; } catch { return false; }
+    });
+    if (homes.length) return homes[hashPick(x, y, homes.length)];
+  }
   const trees = townTreePool(footprintOf, known);
   const parks = parkPool(footprintOf);
   const roll = hashPick(x + 0x5b, y + 0x27, 100);
@@ -2140,7 +2151,8 @@ function layGrownRing(
     const i = idx(x, y);
     if (used.has(i)) continue;
     const quad = [idx(x, y), idx(x + 1, y), idx(x, y + 1), idx(x + 1, y + 1)];
-    if (ring2.length && quad.every((q) => ringSet.has(q) && !used.has(q))) {
+    // CITY-HOMES: only about half the quads take a big block, the rest fall through to terraces / homes, so the district mixes.
+    if (ring2.length && hashPick(x + 9, y + 4, 100) < 50 && quad.every((q) => ringSet.has(q) && !used.has(q))) {
       place(pickTownVariant(x, y, ring2), x, y);
       continue;
     }
@@ -2154,7 +2166,7 @@ function layGrownRing(
         continue;
       }
     }
-    place(lotArtAt(x, y, footprintOf, opts.spriteKnown), x, y);
+    place(lotArtAt(x, y, footprintOf, opts.spriteKnown, true), x, y);
   }
 }
 
