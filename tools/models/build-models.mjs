@@ -107,6 +107,35 @@ function simplifyPrim(prim, targetTris, permissive = false) {
   compactPrimitive(prim);
 }
 
+// LIVE-3D (owner 2026-10-03): the terrace models come with a flat BACK pane that stands inboard of the end walls and
+// roofs, so geometry hangs out behind it (no defined backside). Everything above the base whose triangle lies wholly
+// behind the pane's outer face (source axis X, which these Hunyuan models come squared to) is dropped, and the
+// vertices of triangles that straddle the face are pinned onto it: the back becomes one flush wall. Value = the x of
+// the pane's outer face in SOURCE units (read off the pane's own component).
+const BACK_TRIM = { terrace_2x1_plain: -0.199, terrace_2x1_yard: -0.567 };
+function trimBack(doc, cutX) {
+  let minY = Infinity;
+  for (const node of doc.getRoot().listNodes()) { const m = node.getMesh(); if (!m) continue; for (const pr of m.listPrimitives()) { const pa = pr.getAttribute("POSITION"), v = [0, 0, 0]; for (let i = 0; i < pa.getCount(); i++) { pa.getElement(i, v); minY = Math.min(minY, v[1]); } } }
+  const eps = 0.004; let dropped = 0, pinned = 0;
+  for (const mesh of doc.getRoot().listMeshes()) for (const pr of mesh.listPrimitives()) {
+    const pa = pr.getAttribute("POSITION"), ia = pr.getIndices(), arr = ia.getArray(), keep = [], v = [0, 0, 0];
+    const x = (i) => { pa.getElement(i, v); return v[0]; }, y = (i) => { pa.getElement(i, v); return v[1]; };
+    for (let t = 0; t < arr.length; t += 3) {
+      const a = arr[t], b = arr[t + 1], c = arr[t + 2], cy = (y(a) + y(b) + y(c)) / 3;
+      const behind = [a, b, c].filter((i) => x(i) < cutX - eps).length;
+      if (cy <= minY + 0.07) { keep.push(a, b, c); continue; }          // the base / yard layer is untouched
+      if (behind === 3) { dropped++; continue; }
+      keep.push(a, b, c);
+    }
+    for (let i = 0; i < pa.getCount(); i++) { pa.getElement(i, v); if (v[0] < cutX && v[1] > minY + 0.07) { v[0] = cutX; pa.setElement(i, v); pinned++; } }
+    pr.setIndices(ia.clone().setArray(new Uint32Array(keep)));
+    compactPrimitive(pr);
+  }
+  return `trimmed ${dropped} tris, pinned ${pinned} verts`;
+}
+// LIVE-3D (owner 2026-10-03): the two tallest city blocks drew nearly three tiles high, far out of scale with the
+// rest of the town: their HEIGHT is halved (plan untouched, so the footprint still matches the tile footprint).
+const HEIGHT_SCALE = { town_offices_tall: 0.5, town_flats_grey: 0.5 };
 const rows = [];
 const names = fs.readdirSync(SRC).filter((n) => fs.existsSync(path.join(SRC, n, "model.glb"))).sort();
 // Vehicles and rail cars ("moving" art): squared to the grid with the LONG axis on +X (render.html renderVehicle),
@@ -148,6 +177,8 @@ for (const { name, outName, hue } of jobs) {
     continue;
   }
   const doc = await io.read(src);
+  let trimNote = "";
+  if (BACK_TRIM[name] != null) trimNote = " " + trimBack(doc, BACK_TRIM[name]);
   const before = triCount(doc);
   let yaw = squareToGrid(doc);
   const target = moving ? 4000 : targetTris(name);
@@ -186,19 +217,20 @@ for (const { name, outName, hue } of jobs) {
     measure();
   }
   const k = 1 / (moving ? (x1 - x0) : (Math.max(x1 - x0, z1 - z0) || 1));
+  const hs = HEIGHT_SCALE[name] ?? 1;
   const scene = doc.getRoot().listScenes()[0];
   const wrap = doc.createNode("normalize")
     .setRotation([0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)])
-    .setScale([k, k, k])
-    .setTranslation([-((x0 + x1) / 2) * k, -y0 * k, -((z0 + z1) / 2) * k]);
+    .setScale([k, k * hs, k])
+    .setTranslation([-((x0 + x1) / 2) * k, -y0 * k * hs, -((z0 + z1) / 2) * k]);
   for (const child of scene.listChildren()) { scene.removeChild(child); wrap.addChild(child); }
   scene.addChild(wrap);
   await doc.transform(meshopt({ encoder: MeshoptEncoder, level: "high" }));
   await io.write(out, doc);
   const r4 = (n) => Math.round(n * 1e4) / 1e4;
-  manifest[outName] = { turn: moving ? 0 : turnOf(name), ex: r4((x1 - x0) * k), ez: r4((z1 - z0) * k), h: r4((y1 - y0) * k), ...(moving ? { moving: true, lengthM: LENGTH_M[name] ?? 5 } : {}) };
+  manifest[outName] = { turn: moving ? 0 : turnOf(name), ex: r4((x1 - x0) * k), ez: r4((z1 - z0) * k), h: r4((y1 - y0) * k * hs), ...(moving ? { moving: true, lengthM: LENGTH_M[name] ?? 5 } : {}) };
   const kb = Math.round(fs.statSync(out).size / 1024);
-  rows.push([outName, `${before} -> ${triCount(doc)}`, `t${manifest[outName].turn} ${manifest[outName].ex}x${manifest[outName].ez}x${manifest[outName].h}`, kb + (kb > 600 ? "  OVER 600 KB" : "") + fallback]);
+  rows.push([outName, `${before} -> ${triCount(doc)}`, `t${manifest[outName].turn} ${manifest[outName].ex}x${manifest[outName].ez}x${manifest[outName].h}`, kb + (kb > 600 ? "  OVER 600 KB" : "") + fallback + trimNote]);
 }
 fs.writeFileSync(MANIFEST, JSON.stringify(manifest, null, 1));
 console.log("name | tris before -> after | turn ex x ez x h | KB");

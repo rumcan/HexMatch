@@ -374,6 +374,11 @@ export function buildDrawList(
 /** LIVE-3D spike (`?three=1`): extras this predicate accepts are not drawn as 2D sprites. */
 let hideExtra: ((e: DrawItem) => boolean) | null = null;
 export const setHideExtra = (f: ((e: DrawItem) => boolean) | null): void => { hideExtra = f; };
+/**
+ * LIVE-3D (owner, 2026-10-03): clouds and their ground shadows are OFF ("not good enough yet"). One switch: flip to
+ * true to bring them back; nothing else was removed, and the graphics setting still gates them when this is on.
+ */
+export const CLOUDS_ENABLED = false;
 let hideVehicle: ((e: DrawItem) => boolean) | null = null;
 /** LIVE-3D (`?three=1`): moving sprites (cars, lorries, trains) this predicate accepts are drawn in 3D instead. */
 export const setHideVehicle = (f: ((e: DrawItem) => boolean) | null): void => { hideVehicle = f; };
@@ -984,7 +989,7 @@ export class IsoRenderer {
   /** The positions scratch `paintCloudLayer` writes into — one, forever. */
   private readonly cloudScratch = new Float32Array(CLOUD_COUNT * 2);
   /** The effective enable from the game (the Clouds setting, perf-gated). */
-  private cloudsOn = true;
+  private cloudsOn = CLOUDS_ENABLED;
   /** False while the OS asks to reduce motion: the sky freezes at t=0. */
   private cloudMotion = true;
   /**
@@ -1329,7 +1334,7 @@ export class IsoRenderer {
    * never persisted, never on the wire.
    */
   setCloudsEnabled(on: boolean): void {
-    this.cloudsOn = on;
+    this.cloudsOn = CLOUDS_ENABLED && on;
   }
 
   /** The effective enable, for `__iso.rendering()` and the settings layer. */
@@ -1943,6 +1948,7 @@ export class IsoRenderer {
     const placed = this.staticPlaced.slice();
     let itemCount = this.staticItemCount;
     for (const v of this.world.vehicles ?? []) {
+      if (hideVehicle && hideVehicle(v)) continue;   // LIVE-3D: the three layer draws this one (was drawn twice)
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       itemCount++;
       const p = place(this.atlas, v, this.world.grid);
