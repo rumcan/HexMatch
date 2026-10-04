@@ -265,12 +265,20 @@ export function tileLoop(tx: number, ty: number): BoundaryLoop {
 /** Screen-space bounding box of a set of loops, for gradients and clipping. */
 export function loopsBounds(
   cam: Camera, loops: readonly BoundaryLoop[],
+  /** 3D-FIX-2 (#661): the corner projection the outline is traced with (hill
+   *  lift included), so the fill gradient and the hatch span the drawn shape.
+   *  Absent, the flat turned corner. */
+  cornerAt?: (c: readonly [number, number]) => [number, number],
 ): { x0: number; y0: number; x1: number; y1: number } | null {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const loop of loops) {
-    for (const [cx, cy] of loop.corners) {
-      const [wx, wy] = tileToScreen(cx, cy);
-      const [sx, sy] = worldToScreen(cam, wx, wy);
+    for (const c of loop.corners) {
+      let sx: number, sy: number;
+      if (cornerAt) [sx, sy] = cornerAt(c);
+      else {
+        const [wx, wy] = tileToScreen(c[0], c[1]);
+        [sx, sy] = worldToScreen(cam, wx, wy);
+      }
       if (sx < x0) x0 = sx;
       if (sy < y0) y0 = sy;
       if (sx > x1) x1 = sx;
@@ -561,7 +569,7 @@ export class PlacementOverlay {
   ): void {
     const s = this.style;
     const z = cam.zoom;
-    const b = loopsBounds(cam, loops);
+    const b = loopsBounds(cam, loops, (c) => this.corner(cam, c));
     if (!b) return;
     ctx.save();
     ctx.beginPath();
@@ -672,7 +680,7 @@ export class PlacementOverlay {
       : [{ sprite: ghost.sprite, tx: ghost.tx, ty: ghost.ty }];
     // The light pool comes from the site loops, not the sprites, so it previews
     // even before any art has loaded.
-    const b = siteLoops.length ? loopsBounds(cam, siteLoops) : null;
+    const b = siteLoops.length ? loopsBounds(cam, siteLoops, (c) => this.corner(cam, c)) : null;
     if (b) {
       const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
       const r = Math.max(1, Math.max(b.x1 - b.x0, b.y1 - b.y0) * 0.62);
