@@ -1097,9 +1097,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     ? saveKeyFor(storyChapter.id)
     : scenarioDef ? scenarioSaveKey(scenarioDef.id) : saveKeyFor(null);
   const recentSave = savesOff || mapParamsInUrl ? null : loadRecentSave(Date.now(), saveKey);
-  // TOWN-4.1 (#677): an EXPLICIT size (tests, debug boots) outranks the save's
-  // record — and a save recorded at another size is another map, so it is not
-  // resumed under it (its bytes would not fit the track this boot builds).
+  // TOWN-4.1 (#677): an EXPLICIT size (tests, debug boots — and since
+  // TOWN-4.5 the Play screen's remembered map) outranks the save's record —
+  // and a save recorded at another size is another map, so it is not resumed
+  // under it (its bytes would not fit the track this boot builds).
   const explicitSize = readMapSize(opts.size);
   const foundSave = recentSave && explicitSize
     && (readMapSize((recentSave.map as { size?: unknown } | undefined)?.size) ?? "standard") !== explicitSize
@@ -1163,12 +1164,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     });
   // TOWN-2 (#653): the town street plan, over the same chain of custody as
   // the booleans (explicit → URL → save → room → story/scenario → the
-  // new-game default, which is organic outside the unit-test runner). The
-  // resolved value is written BACK into `mapOptions` so the save this game
-  // writes records the plan its map was generated under — a saved organic
-  // town reloads as the organic town it is, and a pre-TOWN-2 save (no key)
-  // keeps regenerating grid.
-  const townLayout = resolveTownLayout({
+  // new-game default, which is planned outside the unit-test runner —
+  // TOWN-4.5 #681). The resolved value is written BACK into `mapOptions` so
+  // the save this game writes records the plan its map was generated under.
+  // TOWN-4.5: the Starter Island and the tutorial lessons are FIXED grid-plan
+  // places — their maps ignore the layout entirely — so a FRESH one records
+  // "grid" (the honest plan), while a RESUMED one keeps its recorded layout
+  // via the save branch, like any other save.
+  const townLayout = (opts.tutorialSection || starterIsland) && !bootSave ? "grid" : resolveTownLayout({
     explicit: { layout: opts.layout },
     search: searchNow,
     save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
@@ -1179,7 +1182,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   mapOptions.layout = townLayout;
   // TOWN-4.1 (#677): the map SIZE, over the ticket's chain (explicit → a new
   // game's `?size=` → the save's record → the host's room record → story /
-  // scenario → the default — standard everywhere until TOWN-4.5). The Starter
+  // scenario → the default — large outside the unit-test runner since
+  // TOWN-4.5 #681, standard under it so the seed-pinned suites keep 144).
+  // The Starter
   // Island and the lessons are fixed places: standard, like the rest of their
   // hard-coded map record. Written back so the save records it, and SET here —
   // once, before generateMap / createTrack / any map-sized allocation below.

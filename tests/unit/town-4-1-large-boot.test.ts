@@ -303,3 +303,36 @@ describe("TOWN-4.1: a room plays the host's size — a guest's ?size= is ignored
     expect(guestHalt, "the guest never refused the host's state").not.toHaveBeenCalled();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOWN-4.5 (#681) — the menu's map lands in the save's record. `App.tsx`
+// forwards the Play screen's remembered size + town plan as the boot's
+// explicit map (`size`/`layout`); the boot resolves them, generates under
+// them, and the save records them — so a resumed game regenerates the map
+// its record names. (The dials themselves are browser work for the PR's
+// steps; what node CAN pin is that the forwarded choice is recorded.)
+// ══════════════════════════════════════════════════════════════════════════
+describe("TOWN-4.5: the forwarded map choice is recorded in the save", () => {
+  it("large + planned boots 216 and records both keys", async () => {
+    window.history.replaceState(null, "", "/?seed=1337&loop=old");
+    const h = await boot({ size: "large", layout: "planned" });
+    expect(h.mapSize).toEqual({ name: "large", w: 216, h: 216 });
+    expect(h.grid.towns.length).toBe(4);
+    for (let i = 0; i < 20 && h.loading; i++) await settle(4);
+    h.saveNow();
+    const saved = readSave() as SaveGamePayload;
+    expect(saved.map?.size).toBe("large");
+    expect(saved.map?.layout).toBe("planned");
+  });
+
+  it("standard + grid is recorded too — the dials are not large-or-nothing", async () => {
+    window.history.replaceState(null, "", "/?seed=1337&loop=old");
+    const h = await boot({ size: "standard", layout: "grid" });
+    expect(h.mapSize).toEqual({ name: "standard", w: 144, h: 144 });
+    for (let i = 0; i < 20 && h.loading; i++) await settle(4);
+    h.saveNow();
+    const saved = readSave() as SaveGamePayload;
+    expect(saved.map?.size).toBe("standard");
+    expect(saved.map?.layout).toBe("grid");
+  });
+});

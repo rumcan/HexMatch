@@ -230,5 +230,18 @@ c+++++++AADDii+iio
 - **TOWN-4.4 (#680)** — zoned fill: reveal districts 1–3 on the tier
   schedule, no new stubs (districts only grow along junctions), cul-de-sac
   circles already recorded, `plan.reserved` feeding the industry repair.
-- **TOWN-4.5** — the menu default switch.
+- **TOWN-4.5 (#681)** — SHIPPED: the menu default switch. New free-play
+  games boot large (216) + planned; every other boot path is unchanged
+  (story/scenarios/Starter Island/tutorial/grid under the runner, resumed
+  saves keep their record, old rooms resolve the pinned legacy map —
+  standard + organic). New rooms carry size + layout explicitly. The two
+  traffic ceilings shipped with it: `TOWN_AMBIENT_CAR_CAP` (ambient cars,
+  #687's slice) and `FLOW_TOWN_WEIGHT_CAP` (the flow background), both
+  pinned at the heaviest tier-3 grid town, so planned streets earn at least
+  a grid town's traffic income. Generation: the planned per-candidate
+  enclave flood now runs a same-verdict local check first (large+planned
+  ≈ 0.6–1.2 s, was up to ~5.5 s; all 36 size/layout/seed digests
+  byte-identical before/after). Gameplay guard: per-town factory sites,
+  harvester spots, starting reservations and the rival's real opening on
+  seeds 1/7/42/1337 (`tests/unit/town-4-5-defaults.test.ts`).
 - **TOWN-4.1 (#677)** — the 216×216 map: pass `size: "large"`.
