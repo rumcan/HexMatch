@@ -208,6 +208,8 @@ export type UiTool =
   | "select" | "dirt" | "road" | "harvester" | "plant" | "demolish"
   // ROADS-2 (#393): the paved tiers — the game arms "road" at that tier.
   | "street" | "highway" | "ramp" | "interchange"
+  // TOWN-4.2 (#678): the Avenue tier — arms "road" at avenueTier too.
+  | "avenue"
   // RAIL-04 (#178): the railway's tools. `rail` drags track, `platform` and
   // `raildepot` place one structure in the current heading (R turns it), and
   // `railway` holds the panel: the lines, the trains and the buy/recall/sell
@@ -2763,6 +2765,8 @@ export function createOriginalUi(
     { key: "street", label: "Street", sub: `${perkMarkup(ROAD_TIERS.street.cost, "road")} · ${ROAD_TIERS.street.blurb} · ×${ROAD_TIERS.street.throughput}` },
     { key: "road", label: "Road", sub: `${perkMarkup(TRANSPORT.road.cost, "road")} · ${roadRule}` },
     { key: "highway", label: "Highway", sub: `${perkMarkup(ROAD_TIERS.highway.cost, "road")} · ${ROAD_TIERS.highway.blurb} · ×${ROAD_TIERS.highway.throughput}` },
+    // TOWN-4.2 (#678): the two-tile one-way boulevard — straight drags only.
+    { key: "avenue", label: "Avenue", sub: `${perkMarkup(ROAD_TIERS.avenue.cost, "road")} · ${ROAD_TIERS.avenue.blurb} · ×${ROAD_TIERS.avenue.throughput}` },
     // ROADS-3 (#394): the only way on or off a Highway; a Road or Street
     // dragged ACROSS a Highway builds an overpass by itself.
     { key: "interchange", label: "Interchange", sub: "Diamond · 1 overpass + 4 ramps + new road · choose a straight Highway" },
@@ -2842,7 +2846,7 @@ export function createOriginalUi(
   // On a phone the Build sheet shows the groups flat (CSS).
   const TOOL_GROUPS: { id: string; label: string; icon: string; sub: string; keys: readonly string[] }[] = [
     { id: "roads", label: "Road Ways", icon: "road", sub: "Dirt road to highway, ramps and depots",
-      keys: ["dirt", "street", "road", "highway", "interchange", "ramp", "harvester"] },
+      keys: ["dirt", "street", "road", "highway", "avenue", "interchange", "ramp", "harvester"] },
     { id: "rails", label: "Rail Ways", icon: "rail", sub: "Track and platforms",
       keys: ["rail", "platform", "loop"] },
   ];

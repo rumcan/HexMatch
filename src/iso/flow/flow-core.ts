@@ -329,17 +329,34 @@ export function rebuildFlow(s: FlowState, input: FlowNetworkInput): void {
     s.cap[i] = Math.max(0.5, input.capacityOf(i));
   }
 
-  // Junctions with their arms.
+  // Junctions with their arms. TOWN-4.2 (#678): an arm is any PHYSICAL
+  // approach, so the OUT edges above are unioned with the reverse edges —
+  // one-way Avenue carriageways leave an approach only in the neighbour's
+  // out-list, and a T-junction's stub cell has out-degree 2 while its third
+  // approach arrives from the through-road. Deduped by approach direction.
+  const inEdges = new Map<number, number[]>();
+  for (const [src, list] of input.graph) {
+    for (const dst of list) {
+      const back = inEdges.get(dst);
+      if (back) back.push(src); else inEdges.set(dst, [src]);
+    }
+  }
   s.junctions.clear();
   s.townJunctions.clear();
   for (const [i, townId] of input.junctions) {
     if (i < 0 || i >= size) continue;
     const x = i % mapW, y = (i / mapW) | 0;
     const arms: [number, number][] = [];
-    for (const nb of input.graph.get(i) ?? []) {
-      const nx = nb % mapW, ny = (nb / mapW) | 0;
-      arms.push([Math.sign(nx - x), Math.sign(ny - y)]);
-    }
+    const seen = new Set<number>();
+    const addArm = (nx: number, ny: number) => {
+      const sx = Math.sign(nx - x), sy = Math.sign(ny - y);
+      const k = (sx + 2) * 8 + (sy + 2);
+      if (seen.has(k)) return;
+      seen.add(k);
+      arms.push([sx, sy]);
+    };
+    for (const nb of input.graph.get(i) ?? []) addArm(nb % mapW, (nb / mapW) | 0);
+    for (const nb of inEdges.get(i) ?? []) addArm(nb % mapW, (nb / mapW) | 0);
     if (arms.length < 3) continue;
     const j: FlowJunction = { i, x, y, townId, arms };
     s.junctions.set(i, j);

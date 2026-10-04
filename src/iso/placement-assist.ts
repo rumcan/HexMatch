@@ -163,6 +163,8 @@ export const RAIL_ASSIST: Readonly<Record<RailRefusal, AssistCopy>> = {
   "track-blocked": { reason: "Track side blocked", fix: "turn it (R) or move it" },
   "bridge-junction": { reason: "Bridge", fix: "a bridge stays straight — nothing joins its side" },
   "overpass-stop": { reason: "Overpass", fix: "place it beyond the deck" },
+  // TOWN-4.2 (#678): the assist's voice for the Avenue deck refusal.
+  "avenue-deck": { reason: "Avenue", fix: "cross it at grade — no overpass" },
   "too-steep": { reason: "Slope", fix: SLOPE_ASSIST.fix },
   "slope-diagonal": { reason: "Slope", fix: "no diagonal across a slope" },
   "not-flat": { reason: "Slope", fix: SLOPE_ASSIST.fix },

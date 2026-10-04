@@ -63,13 +63,13 @@
  * record lives here: this module is the protocol's import-free leaf, so the
  * room bundle and the game read ONE definition.
  */
-export type TownLayout = "grid" | "organic";
+export type TownLayout = "grid" | "organic" | "planned";
 
-/** TOWN-2: the two names `layout` may carry, for the wire/save readers. */
-export const TOWN_LAYOUTS: readonly TownLayout[] = ["grid", "organic"];
+/** TOWN-2 / TOWN-4.3: the names `layout` may carry, for the wire/save readers. */
+export const TOWN_LAYOUTS: readonly TownLayout[] = ["grid", "organic", "planned"];
 
 /** Read a stored / wire town layout; anything else → null (the caller's
- *  default applies). Only the two known names are accepted, so a hand-edited
+ *  default applies). Only the known names are accepted, so a hand-edited
  *  save can never hand the generator a layout it does not implement. */
 export function readTownLayout(raw: unknown): TownLayout | null {
   return typeof raw === "string" && (TOWN_LAYOUTS as readonly string[]).includes(raw)
