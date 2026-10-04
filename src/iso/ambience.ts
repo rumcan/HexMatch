@@ -115,16 +115,19 @@ export function selectOnScreen<T>(items: readonly T[], cap: number, rank: (item:
 }
 
 // ── density ───────────────────────────────────────────────────────────────
+/** The three things every density reader here asks a town for. */
+export interface TownTrafficShape {
+  houses?: readonly unknown[];
+  roads?: readonly unknown[];
+  level?: number;
+}
+
 /**
  * How busy one town should feel. Size (houses or streets, whichever is
  * larger) and the city-upgrade tier both raise it. An absent tier is the
  * legacy look and weighs 1, so an old map does not suddenly empty.
  */
-export function townTrafficWeight(town: {
-  houses?: readonly unknown[];
-  roads?: readonly unknown[];
-  level?: number;
-}): number {
+export function townTrafficWeight(town: TownTrafficShape): number {
   const size = Math.max(1, town.houses?.length ?? 0, town.roads?.length ?? 0);
   // Owner (2026-09-29): a city must look busy. ~3× the old volume, and each
   // tier counts for more (a level-1 city: ×1.4, level 2: ×1.9).
@@ -133,28 +136,69 @@ export function townTrafficWeight(town: {
 }
 
 /**
+ * TOWN-4.5 (#681): the most ambient traffic ONE town may ask for, in car
+ * units — the ceiling on `townTrafficWeight` wherever CARS are concerned.
+ *
+ * Why. A town's weight rises with its size, and the ambient car budget is the
+ * sum of the weights, so a bigger town used to mean more cars on the map —
+ * and more cars is more PCU in the traffic field, which is exactly what
+ * `traffic-income.ts` folds into a depot's income (`trafficFactorOf`). The
+ * planned towns of the TOWN-4 epic are several times the size of a grid town
+ * (epic target: ~30–40 tiles along the avenue × 20–28 across at tier 3), so
+ * "bigger towns must not slow lorries" needs a ceiling.
+ *
+ * The number is MEASURED, not tuned. On the standard 144 grid map, with every
+ * town at tier 3 (`level` 3, the top `TOWN_VISUAL_MAX` tier), over seeds
+ * 1…60 the heaviest town weighed 26.8454076850486 — seed 1's 169-house /
+ * 216-road capital, i.e. `(2 + √216 / 1.6) × (0.9 + 3 × 0.5)` in
+ * `townTrafficWeight`'s own terms (spelled out here so the pin is exact, not
+ * a rounded copy of itself). The other tier-3 towns came in at 19.50–26.85,
+ * villages at 6.7–10.1. Pinning the ceiling at that measured maximum means NO
+ * grid town is ever capped, so every boot that exists today (grid maps, story
+ * chapters, scenarios, the Starter Island, an old save) budgets exactly the
+ * cars it always did — while a planned town (or any future town bigger than
+ * today's biggest) can ask for no more than today's biggest grid town.
+ *
+ * The ceiling covers the CAR budget and the cars' trip weighting
+ * (`townCarWeight` below, and `townWeights` in cars.ts). Pedestrians keep the
+ * raw weight: walkers are cosmetic, never touch the traffic field, and a big
+ * planned city should still look busy on the pavement.
+ */
+export const TOWN_AMBIENT_CAR_CAP = (2 + Math.sqrt(216) / 1.6) * 2.4;
+
+/**
+ * TOWN-4.5: the town's traffic weight as far as AMBIENT CARS are concerned —
+ * `townTrafficWeight` clamped to `TOWN_AMBIENT_CAR_CAP`.
+ *
+ * This is the number to use anywhere a town's size decides how many cars it
+ * gets (the map budget, the trip weighting). `townTrafficWeight` stays the
+ * raw "how busy should this town feel" for the walkers and for flow's own
+ * background demand (which restates the raw formula on purpose — see
+ * `townWeight` in flow/index.ts).
+ */
+export function townCarWeight(town: TownTrafficShape): number {
+  return Math.min(TOWN_AMBIENT_CAR_CAP, townTrafficWeight(town));
+}
+
+/**
  * Cars the map wants, before the game's floor of `CAR_COUNT`. Capped.
  * The coefficient is low on purpose: a standard four-town island budgets
  * under that floor, so a fresh game still boots at the TRAFFIC-01 volume.
  * A city upgrade (or a genuinely larger town) pushes it over the floor.
+ *
+ * TOWN-4.5: each town contributes its `townCarWeight` — its weight, capped at
+ * `TOWN_AMBIENT_CAR_CAP` — so a planned (much larger) town cannot inflate the
+ * map's budget past what the heaviest tier-3 grid town asks for.
  */
-export function ambientCarBudget(towns: readonly {
-  houses?: readonly unknown[];
-  roads?: readonly unknown[];
-  level?: number;
-}[] | null | undefined): number {
+export function ambientCarBudget(towns: readonly TownTrafficShape[] | null | undefined): number {
   if (!towns?.length) return 0;
   let n = 0;
-  for (const t of towns) n += townTrafficWeight(t);
+  for (const t of towns) n += townCarWeight(t);
   return Math.min(CAR_HARD_CAP, Math.max(1, Math.round(n)));
 }
 
 /** Pedestrians the map wants. Scales with the same weight, no floor. */
-export function ambientPedBudget(towns: readonly {
-  houses?: readonly unknown[];
-  roads?: readonly unknown[];
-  level?: number;
-}[] | null | undefined): number {
+export function ambientPedBudget(towns: readonly TownTrafficShape[] | null | undefined): number {
   if (!towns?.length) return 0;
   // Low enough that a standard island is not already at the cap, so a city
   // upgrade still puts more people on the pavement.
