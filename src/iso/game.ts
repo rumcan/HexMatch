@@ -144,6 +144,9 @@ import { createGrowthMoment, type GrowthMoment } from "./town-growth";
 import {
   FIELD_OCC, WATER, generateMap, heightAt, grownTownHouses, resolveMapSeed, seedTownLevels, setTownLevel,
   STARTER_ISLAND_SEED, starterIslandGrid,
+  // TOWN-4.4 (#680): a planned town's district reveal — the tiles it grows
+  // (`plannedGrownTiles`) and the streets a tier-up has to pave (`plannedReveal`).
+  plannedGrownTiles, plannedReveal,
   TOWN_BLOCK, townBuildings, townForSeat, townGrownRings, townTier,
   tileInFootprint, townHouseAt, townObstacleTiles, rotatedSpan,
   type Grid, type Industry, type Town,
@@ -4453,6 +4456,14 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       if (track.dirt[i] || track.road[i]) built.add(i);
     }
     const isBuilt = (tx: number, ty: number): boolean => built.has(tIdx(tx, ty));
+    // TOWN-4.4 (#680): PUBLIC road — the town's own paving or an inter-town
+    // highway. A planned town's growth reveals its master plan's streets by
+    // PAVING them, so from the second sync on those tiles are `isBuilt` too;
+    // without this second question the reveal would read the streets it had
+    // just laid as "the player built here", trim them back to their last
+    // junction and drop every lot fronting them. A player's own road on a
+    // reserved district tile carries a player owner, so it still trims.
+    const isPublicAt = (tx: number, ty: number): boolean => isPublicRoad(track, tx, ty);
     // #298: town buildings (not streets, not the L17 grown ring) are obstacles
     // for the other seat's roads, for rail, and for depot placement. Rebuilt
     // here so the footprints match the art `townBuildings` just laid — a 2×2
@@ -4469,7 +4480,16 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // the same `isBuilt` question — marking the tiles first made its own
       // grownTownHouses call skip every grown tile, so the draw list came
       // back with the base town only (tall centre, empty grass around it).
-      const grown = tier >= 2 ? grownTownHouses(t, grid, townGrownRings(tier), isBuilt) : [];
+      // TOWN-4.4 (#680): a planned town does not grow the L17 ring — it
+      // REVEALS its master plan, district by district, from tier 0 up (and the
+      // whole plan when it has no tier at all). What it returns is the same
+      // kind of display-only ground the ring is: it hides the scenery under
+      // the new buildings and keeps them OUT of the town's obstacle set, so a
+      // reserved district stays free land a player may build on until the
+      // plan's own streets are paved over it.
+      const grown = t.plan
+        ? plannedGrownTiles(t, grid, tier, isBuilt, isPublicAt)
+        : tier >= 2 ? grownTownHouses(t, grid, townGrownRings(tier), isBuilt) : [];
       const laid = townBuildings(t, footprintOf, {
         tier, grid, blocked: isBuilt, shapes: shapesOn,
         // TOWN-2 (#653): organic towns draw from the long-building path and
@@ -4478,6 +4498,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         // MAP-2 (#559): the tree defs arrive with the scenery load, so a lot
         // may only draw one the atlas can actually blit yet.
         spriteKnown: (s) => atlasRef?.has(s) === true,
+        // TOWN-4.4 (#680): only a planned town asks (see `isPublicAt`).
+        publicRoad: isPublicAt,
       });
       const ring = new Set<number>();
       for (const [gx, gy] of grown) {
@@ -6447,7 +6469,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     note(t.tx, t.ty);
     for (const [hx, hy] of t.houses) note(hx, hy);
     for (const [rx, ry] of t.roads) note(rx, ry);
-    const R = ext + townGrownRings(Math.max(townTier(t), 1)) * TOWN_BLOCK + 1;
+    // TOWN-4.4 (#680): a planned town reveals the WHOLE plan by tier 3, which
+    // reaches further than the L17 ring's block-ring arithmetic, so the box
+    // everything below invalidates is the plan's own bounds.
+    const plan = t.plan;
+    const R = plan
+      ? Math.max(
+        ext,
+        Math.abs(plan.bounds.x0 - t.tx), Math.abs(plan.bounds.x1 - t.tx),
+        Math.abs(plan.bounds.y0 - t.ty), Math.abs(plan.bounds.y1 - t.ty),
+      ) + 1
+      : ext + townGrownRings(Math.max(townTier(t), 1)) * TOWN_BLOCK + 1;
     // #296: the ring road grows with the town. A grown town (tier 2+) gets a
     // public road loop just outside its grown districts, on FREE ground only:
     // water, occupied tiles, anything already carrying track or rail and any
@@ -6455,7 +6487,47 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // a player built is ever removed). Idempotent: a restored save re-runs
     // this and finds the loop already paved.
     let grewRing = false;
-    if (mapOptions.rings && townGrownRings(Math.max(townTier(t), 1)) > 0) {
+    if (plan) {
+      // TOWN-4.4 (#680): a PLANNED town grows by REVEALING its master plan —
+      // tier N shows districts 0..N, streets included. This is where the new
+      // district's streets are paved (public road, the same owner and the same
+      // street tier the town's district-0 streets got at boot), on free ground
+      // only, and it is the planned town's answer to the ring road above: no
+      // loop around a plan, because a plan already knows where its streets go.
+      //
+      // `plannedReveal` is the SAME function `townBuildings` derives the draw
+      // list from, so the streets paved here and the lots drawn by the re-sync
+      // below can never disagree: a tile the player has built on trims its
+      // street back to the last junction (no stub is ever paved) and the lots
+      // that lose their street are simply not drawn. Nothing a player built is
+      // removed, and nothing here writes occupancy or `Town.houses` — a
+      // revealed district stays display-only, exactly as L17 pinned the ring.
+      const takenHere = (x: number, y: number): boolean =>
+        hasTrack(track, "road", x, y) || hasTrack(track, "dirt", x, y)
+        || hasRail(rail.rail, x, y) || !!grid.builtAt?.(x, y);
+      const reveal = plannedReveal(t, grid, townTier(t), {
+        blocked: takenHere,
+        publicRoad: (x, y) => isPublicRoad(track, x, y),
+      });
+      const paved: [number, number][] = [];
+      for (const [x, y] of reveal.grownRoads) {
+        if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
+        const i = y * MAP_W + x;
+        if (grid.terrain[i] === WATER || grid.occupancy[i] !== -1) continue;
+        if (takenHere(x, y)) continue;
+        buildTile(track, "road", x, y, PUBLIC_OWNER);
+        paved.push([x, y]);
+        grewRing = true;
+      }
+      // A revealed street is a STREET (kerbed, slow) like the ones the boot
+      // stamped, under the same town-roads option. The avenue is never in
+      // `grownRoads` — TOWN-4.3 lays it at full length from tier 0 — so its
+      // tier cannot be clobbered here.
+      if (mapOptions.rings) {
+        for (const [x, y] of paved) setRoadTier(track, x, y, ROAD_TIER.street);
+      }
+      if (grewRing) syncWorld();
+    } else if (mapOptions.rings && townGrownRings(Math.max(townTier(t), 1)) > 0) {
       for (let y = t.ty - R; y <= t.ty + R; y++) {
         for (let x = t.tx - R; x <= t.tx + R; x++) {
           if (Math.max(Math.abs(x - t.tx), Math.abs(y - t.ty)) !== R) continue;

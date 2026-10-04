@@ -232,6 +232,13 @@ export function flourishLookAt(
  * the district builds OUTWARD from the town that was already there. Pure and
  * deterministic: the same lots always band the same way, which is what keeps a
  * re-sync (or another client) from re-shuffling the waves mid-build.
+ *
+ * TOWN-4.4 (#680): a PLANNED town's tier-up hands this the lots of the newly
+ * revealed district instead of the L17 ring's, and needs nothing else — its
+ * `hall` is `Town.tx/ty`, which TOWN-4.3 makes the square's avenue-facing
+ * centre tile, so the bands already run outward from the SQUARE. The item list
+ * comes from the same `syncWorld` diff as ever; only what the diff contains
+ * changed (see `plannedReveal`/`plannedGrownTiles` in grid.ts).
  */
 export function growthLots(
   items: readonly { tx: number; ty: number; sprite: string; w: number; h: number }[],
