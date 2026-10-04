@@ -3626,6 +3626,34 @@ export function plannedGrownTiles(
 }
 
 /**
+ * TOWN-4.4 (#680): the CUL-DE-SAC CIRCLES of a map — every planned town's
+ * turning-circle tiles, as tile keys, for the road renderer's circle pass.
+ *
+ * Cached per grid exactly like `townGroundBytes`: a plan is derived from the
+ * seed and never moves, so this costs one walk of the towns the first time a
+ * chunk bake asks and nothing thereafter — no per-frame work, and a chunk
+ * re-bake (a build, a tier-up) reads the same set. Returns null when the map
+ * has no planned towns, which is every map generated before TOWN-4.3, so the
+ * renderer skips the pass entirely there.
+ */
+const culDeSacCache = new WeakMap<Grid, Set<number> | null>();
+
+export function culDeSacTiles(grid: Grid): Set<number> | null {
+  const hit = culDeSacCache.get(grid);
+  if (hit !== undefined) return hit;
+  let out: Set<number> | null = null;
+  for (const t of grid.towns) {
+    for (const [x, y] of t.plan?.culDeSacs ?? []) {
+      if (!inBounds(x, y)) continue;
+      if (!out) out = new Set<number>();
+      out.add(idx(x, y));
+    }
+  }
+  culDeSacCache.set(grid, out);
+  return out;
+}
+
+/**
  * One in `of` of a zone's 2×2 lots takes a SINGLE whole-lot building; the
  * rest pack frontage art and singles, which is what puts a street of shops
  * between the towers instead of a row of identical blocks.

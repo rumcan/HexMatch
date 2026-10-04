@@ -197,6 +197,11 @@ export interface RoadTile {
    * whether it is a junction cell. Drives the offset figures, the outer
    * sidewalk and the median passes. */
   avenue?: AvenueInfo;
+  /** TOWN-4.4 (#680): set on a planned town's cul-de-sac circle tile
+   * (`TownPlan.culDeSacs`) — the lane ends in a kerbed turning circle instead
+   * of a raw stub. Drives the disc + kerb pass; the tile's own figures and
+   * sidewalks are the ordinary dead-end ones, which the disc covers. */
+  culDeSac?: boolean;
 }
 
 /**
@@ -1060,4 +1065,84 @@ export function avenueMedianLampSpot(tx: number, ty: number, info: AvenueInfo): 
   const even = info.axis === "x" ? (tx & 1) === 0 : (ty & 1) === 0;
   if (!even) return null;
   return info.axis === "x" ? [tx + 0.25, ty + 1] : [tx + 1, ty + 0.25];
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOWN-4.4 (#680) — the CUL-DE-SAC TURNING CIRCLE.
+//
+// A planned town's outer ribbon is served by lane spurs that end in a turning
+// circle (`TownPlan.culDeSacs`) rather than in a raw stub: the epic's §2.8
+// "no stubs — every street ends at a junction, a cul-de-sac circle, the
+// avenue, or the town edge". This is the geometry of that round end, and it is
+// vector like every other road figure here — no sprite, nothing for the lead to
+// draw (epic §6: "Cul-de-sac turning circle: vector geometry in
+// road-geometry.ts, no sprite").
+//
+// Two closed polygons on the circle tile, both centred on the tile centre:
+//
+//   disc  the asphalt, filled with the paved material. Its radius IS
+//         `CUL_DE_SAC_RADIUS`, so the turning circle is 0.9 tiles across —
+//         wider than the lane that feeds it (a Street's core is 0.78 × 0.8 =
+//         0.624), which is what makes it read as a place to turn around
+//         rather than as a road that stopped.
+//   kerb  the ring the disc's edge wears, stroked with SIDEWALK_WIDTH exactly
+//         like a sidewalk ribbon, sitting INSIDE the disc's edge so no grass
+//         shows between the two. It is the "kerbed" half of the ticket: a
+//         cul-de-sac is a paved circle with a kerb around it, not a hole in
+//         the lawn.
+//
+// The lane's own arm keeps its figures (`roadFigures` gives a dead end a
+// centre-to-port run) and its own flank ribbons (`sidewalkPaths` already caps a
+// dead end with an arc), so the circle is added ON TOP of the street the plan
+// drew: the disc covers the arm's rounded end and the cap arc's inner half, and
+// the ring closes the whole thing. Both polygons stay inside the tile
+// (0.45 < 0.5), so a chunk boundary can never cut a circle in half and no
+// neighbouring tile has to know about it.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The turning circle's radius, in tile units — the asphalt's outer edge. */
+export const CUL_DE_SAC_RADIUS = 0.45;
+
+/** Pieces the circle is cut into. Sixteen is round at 2× and cheap; it is the
+ *  same order as `SIDEWALK_ARC_SEGMENTS` (8 per quarter turn). */
+export const CUL_DE_SAC_SEGMENTS = 16;
+
+/** The kerb ring's centreline radius: the ribbon straddles the disc's edge. */
+export const CUL_DE_SAC_KERB_RADIUS = CUL_DE_SAC_RADIUS - SIDEWALK_WIDTH / 2;
+
+/** A closed circle of `segments` ground points around a tile's centre. */
+function circlePoints(tx: number, ty: number, radius: number, segments: number): GroundPoint[] {
+  const c = tileCentre(tx, ty);
+  const points: GroundPoint[] = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    points.push([c[0] + radius * Math.cos(a), c[1] + radius * Math.sin(a)]);
+  }
+  // Closed: the last point repeats the first, so `trace`/`traceInto` callers
+  // stroke a ring and fill callers get a closed polygon for free.
+  points.push(points[0]);
+  return points;
+}
+
+/** The turning circle's asphalt, as a closed polygon to FILL. */
+export function culDeSacDisc(tx: number, ty: number): GroundPoint[] {
+  return circlePoints(tx, ty, CUL_DE_SAC_RADIUS, CUL_DE_SAC_SEGMENTS);
+}
+
+/** The turning circle's kerb, as a closed ring to STROKE with SIDEWALK_WIDTH. */
+export function culDeSacKerb(tx: number, ty: number): GroundPoint[] {
+  return circlePoints(tx, ty, CUL_DE_SAC_KERB_RADIUS, CUL_DE_SAC_SEGMENTS);
+}
+
+/**
+ * The turning-circle figures of a cul-de-sac tile: the disc and its kerb, as
+ * the two paths the road renderer's cached chunk paints. `mask` is the tile's
+ * connection nibble — a circle with no arm at all (a plan tile the trim left
+ * isolated) draws nothing, because there is no street to turn around in.
+ */
+export function culDeSacFigures(
+  tx: number, ty: number, mask: number,
+): { disc: GroundPoint[]; kerb: GroundPoint[] } | null {
+  if (maskOf(mask) === 0) return null;
+  return { disc: culDeSacDisc(tx, ty), kerb: culDeSacKerb(tx, ty) };
 }

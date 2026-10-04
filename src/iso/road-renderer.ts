@@ -38,13 +38,17 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H, mapSizedBuffer } from "../game/config";
 import type { Camera } from "./camera";
-import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
+// TOWN-4.4 (#680): `culDeSacTiles` is the planned towns' turning-circle set.
+import { WATER, culDeSacTiles, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH, roadWidth as widthOf, sidewalkOffset,
   continuousRoadFigures, highwayDividerFigures,
   hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
   avenuePaintFigures, avenueSidewalkPaths, avenueMedianStrip, avenueMedianTreeSpot,
-  avenueMedianLampSpot, type AvenueInfo, type GroundPoint, type RoadFigure, type RoadTile,
+  avenueMedianLampSpot,
+  // TOWN-4.4 (#680): the cul-de-sac turning circle (a kerbed round end).
+  culDeSacFigures,
+  type AvenueInfo, type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 import {
   DEFAULT_RAIL_STYLE, paintRailTiles, railBridgeDecksIn, railDetailFor, railTilesIn,
@@ -525,6 +529,11 @@ export function roadTilesIn(
     const outer: -1 | 1 = !p ? 1 : (axis === "x" ? (p[1] > ty ? -1 : 1) : (p[0] > tx ? -1 : 1));
     return { axis, outer, junction: avenueJunction(track, tx, ty) };
   };
+  // TOWN-4.4 (#680): the planned towns' cul-de-sac circles — a lane that ends
+  // in a kerbed turning circle rather than in a raw stub. Read once per chunk
+  // bake from the cached grid set (never per frame, never per tile walk); null
+  // on every map with no planned town, which is every map before TOWN-4.3.
+  const circles = world.grid ? culDeSacTiles(world.grid) : null;
   // Town level is visual building progression only. Town road bytes are
   // paved at every level, so the road material and its connection geometry do
   // not change when a town is upgraded. In particular, a level-0 town must
@@ -550,6 +559,7 @@ export function roadTilesIn(
         const tile = roadTile(tx, ty, road, "paved", paved, tier === 1 || (tier === 0 && town),
           diagonalAt(tx, ty), avenue);
         if (tier) tile.tier = tier;
+        if (circles?.has(ty * MAP_W + tx)) tile.culDeSac = true;
         if (roadRailDeckAxis(packedTier)) { tile.deck = true; tile.railDeck = true; }
         out.push(tile);
         // ROADS-3 (#394): an overpass carries a road deck ACROSS the highway.
@@ -1276,6 +1286,49 @@ export function paintRoadTiles(
     ctx.lineWidth = JOINT_WIDTH;
     for (const quad of medianQuads) { trace(ctx, { points: [...quad, quad[0]] }, elev); ctx.stroke(); }
     ctx.globalAlpha = 1;
+  }
+
+  // 2d. TOWN-4.4 (#680): the CUL-DE-SAC TURNING CIRCLE — a planned town's
+  //     outer lane ends in a kerbed round end instead of a raw stub. The disc
+  //     is FILLED with the same paved material as the asphalt, over the arm's
+  //     rounded end and the dead-end sidewalk cap (which is what hides them),
+  //     and its edge wears the sidewalk's own slab + crown kerb, so the circle
+  //     reads as pavement with a kerb around it rather than as a hole in the
+  //     lawn. Batched like the sidewalks and the median: one path for every
+  //     disc in the chunk and one for every kerb, so a town with a dozen
+  //     cul-de-sacs costs two fills and two strokes inside a chunk BAKE and
+  //     nothing at all per frame.
+  const discs: RoadFigure[] = [];
+  const kerbs: RoadFigure[] = [];
+  for (const t of tiles) {
+    if (!t.culDeSac || t.material !== "paved") continue;
+    const fig = culDeSacFigures(t.tx, t.ty, t.mask);
+    if (!fig) continue;
+    discs.push({ points: fig.disc });
+    kerbs.push({ points: fig.kerb });
+  }
+  if (discs.length) {
+    // The soft verge under the circle's edge — the shoulders pass' own reach,
+    // so the disc sits on disturbed ground like the lane that feeds it.
+    ctx.globalAlpha = SHOULDER_ALPHA;
+    ctx.strokeStyle = style.paved.shoulder;
+    ctx.lineWidth = SHOULDER_WIDTH * 2;
+    ctx.beginPath();
+    for (const disc of discs) traceInto(ctx, disc, elev);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = fills.paved;
+    ctx.beginPath();
+    for (const disc of discs) traceInto(ctx, disc, elev);
+    ctx.fill();
+    for (const [colour, width] of [[SIDEWALK_STYLE.ribbon, SIDEWALK_WIDTH],
+      [SIDEWALK_STYLE.crown, SIDEWALK_WIDTH * 0.55]] as const) {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (const kerb of kerbs) traceInto(ctx, kerb, elev);
+      ctx.stroke();
+    }
   }
 
   // 3. Dirt→paved transitions, laid OVER the opaque dirt core.
