@@ -22,6 +22,7 @@ import { turnWorld } from "./camera";
 import type { Grid } from "./grid";
 import { LEVEL_PX, elevationActive, surfaceHeight, worldToGround } from "./elevation";
 import type { Atlas, SpriteDef } from "./atlas";
+import type { LotFront } from "./town-plan";
 
 /** One thing to draw: a sprite placed at a footprint origin. */
 export interface DrawItem {
@@ -57,6 +58,19 @@ export interface DrawItem {
    * the rest of the scene sorts exactly as it did.
    */
   lift?: number;
+  /**
+   * TOWN-4.6 (#682): the street this building fronts — the `front` of the
+   * PLANNED town lot it stands on (`town-plan.ts`'s `LotFront`: the neighbour
+   * tile the street sits on).
+   *
+   * Optional, and for the same reason `TownBuilding.front` is: a grid or
+   * organic town's art carries no facing, and every reader that does not know
+   * about planned towns — the save, the wire, the depth sort — keeps reading
+   * `{sprite, tx, ty}` exactly as before. In 2D the facing is spent where the
+   * sprite name is chosen (`streetFacingSprite`); the 3D layer turns the model
+   * by it.
+   */
+  front?: LotFront;
 }
 
 /** A DrawItem resolved against the atlas: world rect + depth key. */
