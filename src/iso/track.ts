@@ -27,6 +27,7 @@
 import { MAP_W, MAP_H, lockMapSize, onMapSize } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, moneyValueOf, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, heightAt as tileHeight, type Grid } from "./grid";
+import type { TownPlan } from "./town-plan";
 import {
   BRIDGE_COST, HIGHWAY_BRIDGE_SPAN, bridgeDeckAt, planBridges, sideJoinAt, type BridgePlan,
 } from "./bridges";
@@ -416,6 +417,48 @@ export function seedTownDiagonals(t: Track, grid: Grid): void {
     for (const [ax, ay, bx, by] of town.organicDiag ?? []) {
       stampRoadDiagonal(t, ax, ay, bx, by);
     }
+  }
+}
+
+/**
+ * TOWN-4.3 (#679): stamp a planned town's AVENUE onto a fresh track.
+ *
+ * The avenue is the town's spine: one two-tile boulevard running the full
+ * length of the plan, laid at full length from tier 0, entered by the
+ * inter-town highways at its ends (`TownPlan.termini`). Until TOWN-4.2 (#678)
+ * lands there is no avenue tier, so both carriageways are stamped as ordinary
+ * public road — the same owner and the same tile a highway uses, so nothing
+ * downstream can tell them apart yet.
+ *
+ * THIS HELPER IS THE ONLY PLACE THAT CHANGES WHEN TOWN-4.2 LANDS: the TODO
+ * below is the seam. Nothing else in the boot chain needs to move.
+ */
+function stampAvenue(t: Track, plan: TownPlan): void {
+  // TODO(TOWN-4.2): AVENUE_X/Y tier — lay the centre line (and its right-hand
+  // neighbour) as `AVENUE_X` / `AVENUE_Y` in the tier byte's free low bits 6/7,
+  // with one-way right-hand traffic derived from the pair, instead of plain
+  // road. Everything else about the stamp (which tiles, which owner, when)
+  // stays exactly as it is here.
+  for (const [x, y] of plan.avenueTiles) {
+    if (!inMapT(x, y)) continue;
+    buildTile(t, "road", x, y, PUBLIC_OWNER);
+    // A planned town's avenue also rides `mapOptions.rings`' street tier by
+    // virtue of being in `Town.roads`, so reset it here: the avenue is a
+    // trunk, not a kerbed town street — and pins the tier seam for #678.
+    setRoadTier(t, x, y, ROAD_TIER.road);
+  }
+}
+
+/**
+ * TOWN-4.3 (#679): stamp every planned town's avenue, after `seedTownRoads`
+ * (a town's district-0 streets are already paved; this lays the full-length
+ * avenue over its whole plan). A grid or organic town carries no plan, so the
+ * call is a no-op on every map generated before this ticket — byte-identical
+ * boots there.
+ */
+export function seedTownAvenues(t: Track, grid: Grid): void {
+  for (const town of grid.towns) {
+    if (town.plan) stampAvenue(t, town.plan);
   }
 }
 
