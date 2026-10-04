@@ -15,7 +15,10 @@ import { fillCoastalHoles } from "./coastline";
 import { deriveTownNames } from "./town-names";
 // TOWN-2 (#653): the town street-plan option's NAME. Type-only: match-settings
 // is the protocol's import-free leaf, so this pulls nothing game-side in.
-import type { TownLayout } from "../net/match-settings";
+import type { TownLayout, MapSizeName } from "../net/match-settings";
+// TOWN-4.1 (#677): the runtime map size — its table, the allocation lock and
+// the hook that keeps size-derived module values (the archipelago bases) live.
+import { MAP_SIZES, lockMapSize, onMapSize } from "../game/config";
 import {
   MAP_W, MAP_H, mulberry32, INDUSTRIES, INDUSTRY_QUOTA, INDUSTRY_BY_KEY, FACTORY_FOOTPRINT,
   factoryFootprintFor,
@@ -247,6 +250,14 @@ export interface MapGenOptions {
    * byte-identical with or without the field existing.
    */
   preset?: MapPreset;
+  /**
+   * TOWN-4.1 (#677): the size the caller expects. The size itself is the
+   * BOOT's to set — `setMapSize`, once, before any map-sized allocation — so
+   * this generates nothing; it is checked against the live size, and a
+   * mismatch throws rather than build a map the save and the wire would
+   * disagree with. Absent (every caller before TOWN-4.1): no check.
+   */
+  size?: MapSizeName;
 }
 
 /**
@@ -396,8 +407,15 @@ export function townObstacleTiles(
  * The bases are shared constants: the town placer reads them to seat one
  * town per quadrant.
  */
-export const ARCHIPELAGO_VX = Math.floor(MAP_W * 0.38);
-export const ARCHIPELAGO_HY = Math.floor(MAP_H * 0.62);
+export let ARCHIPELAGO_VX = Math.floor(MAP_W * 0.38);
+export let ARCHIPELAGO_HY = Math.floor(MAP_H * 0.62);
+// TOWN-4.1 (#677): already RELATIVE to the map, so they follow its size — live
+// bindings re-derived on every `setMapSize` (computed once at import, they
+// froze at 144 and would cut a 216 map off-centre).
+onMapSize(() => {
+  ARCHIPELAGO_VX = Math.floor(MAP_W * 0.38);
+  ARCHIPELAGO_HY = Math.floor(MAP_H * 0.62);
+});
 /** How far a channel may meander from its base (plus its 1-tile half-width). */
 const CHANNEL_WANDER = 11;
 
@@ -744,6 +762,52 @@ export function footprintNearWater(
   return false;
 }
 
+// ── TOWN-4.1 (#677): spacing on a larger map ──────────────────────────────
+//
+// T4's rule for a bigger map, applied again: COUNTS stay fixed (INDUSTRY_QUOTA,
+// TOWN_COUNT — a large map does not get more towns or industries) and the
+// extra room goes to SEPARATION. Every absolute tile distance below was tuned
+// on the standard 144 map, and on a larger one it scales by the side ratio
+// (216 / 144 = 1.5):
+//
+//   constant / site                        standard → large (216)
+//   industry spacing ladder (placeIndustries)  12 8 6 4 2 1 → 18 12 9 6 3 1
+//                                          (the last rung, 1 = overlap-only, stays)
+//   industry re-site ladder (applyRoadSpawnBuffer) 12 8 6 4 2 → 18 12 9 6 3
+//   INDUSTRY_ROAD_SEP  (highway verge)      10 → 15
+//   TOWN_INDUSTRY_SEP  (the town's industry ring) 8 → 12
+//   REPAIR_REACH       (re-site search radius) 24 → 36
+//   TOWN_TOWN_SEP      (town centres)       28 → 42
+//                                          (the ladder's fallback rungs 6 4 2 stay:
+//                                          they only exist so every town places)
+//   ARCHIPELAGO_VX/HY  — already relative (0.38 / 0.62 of a side), live.
+//
+// Deliberately NOT scaled: counts (above); town spans (TOWN-4.3 grows towns);
+// the map-edge margins; terrain shape — the elevation ramp (1 level per 10
+// tiles from the edge), river sources (≥18 tiles from the sea) and the rough
+// blobs; and the knobs only standard-size places use — the Starter Island
+// preset's ring and jitter, the archipelago channel wander, WATERFRONT_REACH.
+//
+// On a standard map `spread` returns its argument untouched — no multiply, no
+// rounding — so every standard seed stays byte-identical (pinned in
+// tests/unit/town-4-1-map-size.test.ts).
+
+/** The side ratio a larger map spreads its features by: exactly 1 on standard. */
+export function mapSpread(): number {
+  const side = Math.min(MAP_W, MAP_H);
+  return side === MAP_SIZES.standard ? 1 : side / MAP_SIZES.standard;
+}
+
+/** A spacing distance tuned on the standard map, at the current map's spread. */
+export function spread(tiles: number): number {
+  const k = mapSpread();
+  return k === 1 ? tiles : Math.max(1, Math.round(tiles * k));
+}
+
+/** A separation ladder at the current spread; an overlap-only rung (≤1) stays. */
+const spreadLadder = (ladder: readonly number[]): number[] =>
+  ladder.map((sep) => (sep > 1 ? spread(sep) : sep));
+
 function placeIndustries(
   terrain: Uint8Array, rng: () => number,
   preset?: MapPreset, centre?: [number, number] | null, waterfront = false,
@@ -844,7 +908,8 @@ function placeIndustries(
   // more attempts per industry; the rule itself never relaxes (a River Valley
   // industry off the water is not a River Valley industry).
   const tries = (waterfront ? 250 : 90) * (gate ? 2 : 1);
-  for (const sep of [12, 8, 6, 4, 2, 1]) {
+  // TOWN-4.1: the ladder spreads with a larger map (see `mapSpread`).
+  for (const sep of spreadLadder([12, 8, 6, 4, 2, 1])) {
     let placedAny = true;
     while (placedAny) {
       placedAny = false;
@@ -906,7 +971,7 @@ function placeIndustries(
  * outside its streets as well as beside them, and the buffer is measured with
  * the same Chebyshev metric every other separation in this file uses.
  */
-export const INDUSTRY_ROAD_SEP = 10;
+export const INDUSTRY_ROAD_SEP = 10;   // standard-map value; `spread()` scales it (TOWN-4.1)
 
 /**
  * Every tile the map seeds as a PUBLIC ROAD: the highways (`grid.publicRoads`)
@@ -1016,6 +1081,11 @@ function applyRoadSpawnBuffer(
 ): void {
   const waterfront = opts.waterfront === true;
   const connected = opts.connected !== false;
+  // TOWN-4.1 (#677): the three distances this repair measures, at the map's
+  // spread (identical to the constants on a standard map).
+  const roadSep = spread(INDUSTRY_ROAD_SEP);
+  const townSep = spread(TOWN_INDUSTRY_SEP);
+  const reach = spread(REPAIR_REACH);
   // The buffer is measured from the HIGHWAY tiles only.
   //
   // The rule is that a resource node must not spawn in a verge a Depot can
@@ -1097,7 +1167,7 @@ function applyRoadSpawnBuffer(
     ox: number, oy: number, w: number, h: number, sep: number, sepField: Uint16Array,
     wantWater = false, tier: 0 | 1 | 2 = 0,
   ): [number, number] | null => {
-    for (let d = 1; d <= REPAIR_REACH; d++) {
+    for (let d = 1; d <= reach; d++) {
       for (let dy = -d; dy <= d; dy++) {
         for (let dx = -d; dx <= d; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;   // ring only
@@ -1108,8 +1178,8 @@ function applyRoadSpawnBuffer(
             for (let y = 0; y < h && ok; y++) {
               const i = idx(tx + x, ty + y);
               ok = terrain[i] !== WATER && occ[i] === -1 && open[i] === 1
-                && roadField[i] >= INDUSTRY_ROAD_SEP
-                && townField[i] >= TOWN_INDUSTRY_SEP
+                && roadField[i] >= roadSep
+                && townField[i] >= townSep
                 && (sep <= 1 || sepField[i] >= sep);
             }
           }
@@ -1127,8 +1197,8 @@ function applyRoadSpawnBuffer(
 
   // Anything inside a public road's verge moves — or inside a town ring an
   // earlier move tightened.
-  const near = industriesInRoadBuffer(list, roadField, INDUSTRY_ROAD_SEP)
-    .concat(industriesInRoadBuffer(list, townField, TOWN_INDUSTRY_SEP))
+  const near = industriesInRoadBuffer(list, roadField, roadSep)
+    .concat(industriesInRoadBuffer(list, townField, townSep))
     .filter((ind, i, arr) => arr.indexOf(ind) === i);
   if (!near.length) return;
 
@@ -1151,7 +1221,7 @@ function applyRoadSpawnBuffer(
     const tiers: (0 | 1 | 2)[] = gate ? [2, 1, 0] : [0];
     for (const wantWater of ladders) {
       for (const tier of tiers) {
-        for (const sep of [12, 8, 6, 4, 2]) {
+        for (const sep of spreadLadder([12, 8, 6, 4, 2])) {
           found = nearestFit(ind.tx, ind.ty, ind.w, ind.h, sep, sepField, wantWater, tier);
           if (found) break;
         }
@@ -1176,7 +1246,8 @@ function applyRoadSpawnBuffer(
   }
 }
 
-/** How far (Chebyshev) a buffered industry may be stepped to find legal ground. */
+/** How far (Chebyshev) a buffered industry may be stepped to find legal ground.
+ *  Standard-map value; `spread()` scales it on a larger map (TOWN-4.1). */
 const REPAIR_REACH = 24;
 /** TOWN-1: number of towns per map. */
 const TOWN_COUNT = 4;
@@ -1226,9 +1297,11 @@ export const TOWN_BLOCK = 3;
 export const TOWN_SPAN_MIN = 6;
 export const TOWN_SPAN_MAX = 9;
 /** Minimum Chebyshev distance from EVERY town tile to any industry tile.
- * T4 widens the former 3-tile ring to 8 on the roomier map. */
+ * T4 widens the former 3-tile ring to 8 on the roomier map. Standard-map
+ * value; `spread()` scales it on a larger map (TOWN-4.1). */
 const TOWN_INDUSTRY_SEP = 8;
-/** TOWN-1: minimum Chebyshev distance between two town centres. */
+/** TOWN-1: minimum Chebyshev distance between two town centres. Standard-map
+ *  value; `spread()` scales it on a larger map (TOWN-4.1). */
 const TOWN_TOWN_SEP = 28;
 /** TOWN-1: occupancy sentinel for town tiles (distinct from industry indices ≥ 0). */
 export const TOWN_OCC = -2;
@@ -3330,6 +3403,10 @@ function placeTowns(
   const want = gen.townCount === undefined ? TOWN_COUNT
     : Math.max(1, Math.min(6, Math.floor(gen.townCount)));
   const connected = gen.connected !== false;
+  // TOWN-4.1 (#677): the town's industry ring and the centre-to-centre gap, at
+  // the map's spread (the constants themselves on a standard map).
+  const townIndustrySep = spread(TOWN_INDUSTRY_SEP);
+  const townTownSep = spread(TOWN_TOWN_SEP);
 
   const tileFree = (tx: number, ty: number) => {
     if (!inBounds(tx, ty)) return false;
@@ -3466,7 +3543,7 @@ function placeTowns(
     // centre inside its own quadrant, so the towns spread over the islands
     // instead of clustering on one. Off maps sample the whole map, as ever.
     const region = gen.regions?.length ? gen.regions[t % gen.regions.length] : null;
-    for (const sep of [TOWN_TOWN_SEP, 6, 4, 2]) {
+    for (const sep of [townTownSep, 6, 4, 2]) {
       for (let attempt = 0; attempt < 120 && !placed; attempt++) {
         const cx = townCentre
           ? Math.round(townCentre[0] + (rng() * 2 - 1) * townJitter)
@@ -3479,7 +3556,7 @@ function placeTowns(
             ? region.y0 + Math.floor(rng() * (region.y1 - region.y0 + 1))
           : 4 + Math.floor(rng() * (MAP_H - 8));
         if (!tileFree(cx, cy)) continue;
-        if (industrySep(cx, cy) < TOWN_INDUSTRY_SEP) continue;
+        if (industrySep(cx, cy) < townIndustrySep) continue;
         if (sep > 0 && townSep(cx, cy) < sep) continue;
 
         // TOWN-GRID: lay the street grid and its house blocks around the
@@ -3499,7 +3576,7 @@ function placeTowns(
           // industry's edge, a house may not. An organic town's houses also
           // keep only the blocks its noisy outline kept.
           (hx, hy) => {
-            if (industrySep(hx, hy) < TOWN_INDUSTRY_SEP) return false;
+            if (industrySep(hx, hy) < townIndustrySep) return false;
             return !outline
               || outline(Math.floor((hx - cx) / TOWN_BLOCK), Math.floor((hy - cy) / TOWN_BLOCK));
           },
@@ -3906,6 +3983,12 @@ function makeElevation(
  * game RNG and pass it in (see `randomSeed`).
  */
 export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
+  // TOWN-4.1 (#677): the map is built at the live size, which the boot set
+  // just before this call. A caller that names a size is held to it.
+  if (opts.size !== undefined && (MAP_SIZES[opts.size] !== MAP_W || MAP_SIZES[opts.size] !== MAP_H)) {
+    throw new Error(`generateMap: a ${opts.size} map was asked for, but the map is ${MAP_W}×${MAP_H} — call setMapSize before generating`);
+  }
+  lockMapSize();
   const s = seed >>> 0;
   const rng = mulberry32(s);
   // PROG-1 (#475): the scenario knobs thread through here. Every one defaults

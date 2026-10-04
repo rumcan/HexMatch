@@ -25,7 +25,10 @@ import { totalStorageRent, storageRentLabel } from "./storage-rent";
 // timer can ever claw them back. That is the K1 bug class and it does not
 // recur.
 // ══════════════════════════════════════════════════════════════════════════
-import { resolveMapOptions, resolveTownLayout, type MapOptions, type TownLayout } from "./map-options";
+import {
+  resolveMapOptions, resolveTownLayout, resolveMapSize, readMapSize,
+  type MapOptions, type TownLayout, type MapSizeName,
+} from "./map-options";
 import { mountTerrainGl, terrainGlWanted, type TerrainGl } from "./terrain-gl-adapter";
 import manifestJson from "../../assets/iso-atlas/manifest.json";
 import atlas05 from "../../assets/iso-atlas/atlas@0.5x.png";
@@ -323,11 +326,14 @@ import {
   MAP_W, MAP_H, BANDIT_MS, PROTEST_MS, SABOTAGE, SECURITY,
   rand,
   tileToScreen, type ResKey,
+  // TOWN-4.1 (#677): the runtime map size — set once per boot, claimed by this
+  // game and released by its dispose.
+  MAP_SIZES, setMapSize, claimMapSize, releaseMapSize,
 } from "../game/config";
 import { createQuarry, CARGO_TO_GEM, GEM_TO_CARGO, type Quarry } from "./quarry";
 import {
   saveKeyFor, scenarioSaveKey, SAVEGAME_VERSION, OLD_SAVE_TOAST,
-  loadRecentSave, clearSave, trackSave, trackRestored,
+  loadRecentSave, clearSave, trackSave, trackRestored, isOldSave, saveFitsItsMap,
   loopCarryToWire, savedLoopCarry,
   type SaveGamePayload,
 } from "./savegame-runtime";
@@ -785,6 +791,16 @@ export interface IsoGameOptions {
    */
   layout?: TownLayout;
   /**
+   * TOWN-4.1 (#677): force the map size — `"standard"` (144×144, every save,
+   * chapter, scenario and room before the option) or `"large"` (216×216).
+   * Absent, it is read from `?size=standard|large` for a NEW game, from the
+   * save's own record when one resumes (absent there = standard), and from
+   * the host's record in a room (a guest's URL never splits the seats). The
+   * Starter Island and the lessons are always standard. Explicit wins over a
+   * save: a save of another size is then not resumed (a different map).
+   */
+  size?: MapSizeName;
+  /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
    * carries — and is otherwise OFF in every mode. The new loop is
@@ -1065,7 +1081,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // MAP-1 (#412): a URL that names a map feature asks for a FRESH map with it —
   // don't resume a save onto a different terrain (the save is still written).
   const searchNow = (() => { try { return location.search; } catch { return ""; } })();
-  const mapParamsInUrl = /[?&](rivers|elevation|shapes|rings|layout)=/.test(searchNow);
+  // TOWN-4.1 (#677): `?size=` is one of them — a URL that names a size asks
+  // for a fresh map of that size, never a resumed save resized under it.
+  const mapParamsInUrl = /[?&](rivers|elevation|shapes|rings|layout|size)=/.test(searchNow);
   // STORY-01 fix: each mode has its own save slot — the sandbox's, or this
   // contract's. A contract that read the sandbox save resumed that world (its
   // seed, the rival's network, phase "play") against the chapter's lower ★
@@ -1074,12 +1092,23 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const saveKey = storyChapter
     ? saveKeyFor(storyChapter.id)
     : scenarioDef ? scenarioSaveKey(scenarioDef.id) : saveKeyFor(null);
-  const foundSave = savesOff || mapParamsInUrl ? null : loadRecentSave(Date.now(), saveKey);
+  const recentSave = savesOff || mapParamsInUrl ? null : loadRecentSave(Date.now(), saveKey);
+  // TOWN-4.1 (#677): an EXPLICIT size (tests, debug boots) outranks the save's
+  // record — and a save recorded at another size is another map, so it is not
+  // resumed under it (its bytes would not fit the track this boot builds).
+  const explicitSize = readMapSize(opts.size);
+  const foundSave = recentSave && explicitSize
+    && (readMapSize((recentSave.map as { size?: unknown } | undefined)?.size) ?? "standard") !== explicitSize
+    ? null : recentSave;
   // L15 (#230): old saves (v1 / snap 15) are from a different game — refuse
   // with a clear message and keep the slot untouched so the toast is honest.
   // The new loop is the only loop now, so no save needs a flag to open.
   const rawSave = savesOff ? null : (() => { try { const r = localStorage.getItem(saveKey); return r ? JSON.parse(r) : null; } catch { return null; } })();
-  const isOld = rawSave !== null && (rawSave.v !== SAVEGAME_VERSION || rawSave.snapV !== SNAPSHOT_VERSION);
+  // TOWN-4.1 (#677): the version rule lives in `isOldSave` now (it also takes a
+  // snap 17 save — a 144 map, byte for byte), and a save whose layers do not
+  // fit the map size its own record names is refused the same way rather than
+  // restored into a track of another size.
+  const isOld = rawSave !== null && (isOldSave(rawSave) || !saveFitsItsMap(rawSave));
   const bootSave = isOld ? null : foundSave;
   let saveToastPending = false;
   let oldSaveToastPending = isOld;
@@ -1144,6 +1173,24 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     scenario: scenarioOn ? (scenarioDef ?? {}) : null,
   });
   mapOptions.layout = townLayout;
+  // TOWN-4.1 (#677): the map SIZE, over the ticket's chain (explicit → a new
+  // game's `?size=` → the save's record → the host's room record → story /
+  // scenario → the default — standard everywhere until TOWN-4.5). The Starter
+  // Island and the lessons are fixed places: standard, like the rest of their
+  // hard-coded map record. Written back so the save records it, and SET here —
+  // once, before generateMap / createTrack / any map-sized allocation below.
+  const mapSize: MapSizeName = opts.tutorialSection || starterIsland ? "standard"
+    : resolveMapSize({
+      explicit: { size: explicitSize ?? undefined },
+      search: searchNow,
+      save: bootSave ? (bootSave as unknown as { map?: unknown }) : null,
+      room: isMp() ? settings : null,
+      story: storyOn ? (storyChapter ?? {}) : null,
+      scenario: scenarioOn ? (scenarioDef ?? {}) : null,
+    });
+  mapOptions.size = mapSize;
+  setMapSize(MAP_SIZES[mapSize], MAP_SIZES[mapSize]);
+  const mapSizeClaim = claimMapSize();
   const organicTowns = townLayout === "organic";
   const riversOn = mapOptions.rivers, elevationOn = mapOptions.elevation, shapesOn = mapOptions.shapes;
   const grid: Grid = opts.tutorialSection ? tutorialMap(opts.tutorialSection)
@@ -1152,6 +1199,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     : generateMap(seed, {
       rivers: riversOn, elevation: elevationOn, shapes: shapesOn, rings: mapOptions.rings,
       layout: townLayout,
+      // TOWN-4.1: held to the size just set (a mismatch throws, never builds).
+      size: mapSize,
       ...(scenarioDef?.gen ?? {}),
     });
   // #456: the seed-derived heights, kept as the baseline the edited-heights
@@ -16945,6 +16994,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   (window as unknown as Record<string, unknown>).__iso = {
     get phase() { return phase; },
     get tool() { return tool; },
+    /** TOWN-4.1 (#677): the size this game resolved — a boot fact, read-only.
+     *  `__iso.mapSize` is the option ("standard" | "large"); the tiles are
+     *  `__iso.grid.w` × `__iso.grid.h`. */
+    get mapSize() { return { name: mapSize, w: MAP_W, h: MAP_H }; },
     /** E1 (#261): inspect the regenerated height map without coupling callers to its storage. */
     heightAt: (tx: number, ty: number) => heightAt(grid, tx, ty),
     /** L1a (#232): the new-loop feature flag, read-only — it is a boot fact
@@ -18496,5 +18549,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     if (threeLayer) { setHideExtra(null); setHideVehicle(null); threeLayer.dispose(); }
     root.classList.remove("iso-game");
     root.innerHTML = "";
+    // TOWN-4.1 (#677): the map's buffers die with the game — unlock the size
+    // and hand it back (to standard), unless a newer boot has claimed it since.
+    releaseMapSize(mapSizeClaim);
   };
 }

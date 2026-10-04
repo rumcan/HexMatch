@@ -36,7 +36,7 @@
 // invalidates single tiles with `invalidateTile(..., "rail", 1)` when a rail
 // byte moves.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, HH, MAP_W, MAP_H } from "../game/config";
+import { HW, HH, MAP_W, MAP_H, mapSizedBuffer } from "../game/config";
 import { getViewYaw, getViewYawTarget, turnWorld, type Camera } from "./camera";
 import { WATER, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
@@ -62,7 +62,10 @@ import { flowMarkingsRev, paintFlowMarkings } from "./flow";
 // frame. The live World carries the resolved flag itself (`RoadWorld.
 // diagonalRoads`); this constant is the fallback for a world that does not.
 const DIAGONAL_ROADS = resolveDiagonalRoads();
-const EMPTY_ROADS = new Uint8Array(MAP_W * MAP_H);
+// TOWN-4.1 (#677): the shared all-zero layer a read-only Track view falls back
+// to, allocated on first use at the live map size (at import it froze at 144²
+// and a 216 map read past its end). Never written; one length check per bake.
+const emptyRoads = mapSizedBuffer((n) => new Uint8Array(n));
 const diagonalsOn = (world: RoadWorld): boolean => world.diagonalRoads ?? DIAGONAL_ROADS;
 
 type Ctx2D = CanvasRenderingContext2D;
@@ -479,9 +482,10 @@ export function roadTilesIn(
   // Read-only view for D1's link reader: use its endpoint/tier rules rather
   // than guessing diagonal adjacency from PRESENT or duplicating storage.
   // owner/upgraded are not consulted by roadDiagLinked; no arrays are copied.
-  const track: Track | undefined = diagonalsOn(world) ? {
-    road: world.roadBits ?? EMPTY_ROADS, dirt: world.dirtBits ?? EMPTY_ROADS,
-    tier: world.roadTiers, owner: EMPTY_ROADS, upgraded: EMPTY_ROADS,
+  const empty = diagonalsOn(world) ? emptyRoads() : null;
+  const track: Track | undefined = empty ? {
+    road: world.roadBits ?? empty, dirt: world.dirtBits ?? empty,
+    tier: world.roadTiers, owner: empty, upgraded: empty,
     revision: 0, diagonalRoads: true,
   } : undefined;
   const onWater = (x: number, y: number) => cellAt(world.grid?.terrain, x, y) === WATER;

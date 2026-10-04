@@ -324,7 +324,9 @@ describe("D1 flags and persistence", () => {
     expect(t.dirt).toEqual(dirt); expect(t.owner).toEqual(owner);
     expect(t.tier!.every((b) => b === 0)).toBe(true);
     expect(route(t, [5, 5], [6, 5])).toEqual([[5, 5], [6, 5]]);
-    const oldSnapshot = { ...snapshot(createTrack(false)), version: 17, ...oldTrack };
+    // TOWN-4.1 (#677): the pre-D1 BYTES at the current wire version — a v17
+    // envelope is refused now (v18 carries the map size), by design.
+    const oldSnapshot = { ...snapshot(createTrack(false)), version: SNAPSHOT_VERSION, ...oldTrack };
     delete oldSnapshot.tier;
     const restored = applySnapshot(oldSnapshot).track;
     expect(restored.dirt).toEqual(dirt);
@@ -343,7 +345,7 @@ describe("D1 flags and persistence", () => {
       expect(roadDiagLinked(copy, 10, 10, 11, 11)).toBe(true);
     }
     expect(SAVEGAME_VERSION).toBe(3);
-    expect(SNAPSHOT_VERSION).toBe(17);
+    expect(SNAPSHOT_VERSION).toBe(18);   // TOWN-4.1 (#677) bumped it for the map size, not D1
     expect(snap.version).toBe(SNAPSHOT_VERSION);
     expect(snap.dirt.length).toBe(snapshot(createTrack(false)).dirt.length);
     expect(snap).not.toHaveProperty("diagonalRoads");

@@ -24,7 +24,7 @@
 // Masks are recomputed ONLY for the tile placed plus its four neighbours, and
 // only the containing chunks are invalidated. The whole map is never rescanned.
 // ══════════════════════════════════════════════════════════════════════════
-import { MAP_W, MAP_H } from "../game/config";
+import { MAP_W, MAP_H, lockMapSize, onMapSize } from "../game/config";
 import { TRANSPORT, UPGRADE_COST, FACTORY_FOOTPRINT, ROAD_TIERS, moneyValueOf, type Cargo } from "./config";
 import { WATER, ROUGH, TOWN_OCC, FIELD_OCC, rotatedSpan, heightAt as tileHeight, type Grid } from "./grid";
 import {
@@ -37,7 +37,11 @@ import { roadJoinSlopeRefusal, roadStepRefusal } from "./slopes";
 // uses 8-tile chunks; a D1 guard test pins this invalidation contract. Moving
 // the renderer's constants into a leaf module is a separate renderer cleanup.
 const CHUNK = 8;
-const chunksX = Math.ceil(MAP_W / CHUNK);
+// TOWN-4.1 (#677): the chunk grid's width follows the map size — computed once
+// at import it froze at 144's 18 columns, and a 216 map's chunk ids would
+// alias across rows (the renderer would rebake the wrong chunks).
+let chunksX = Math.ceil(MAP_W / CHUNK);
+onMapSize(() => { chunksX = Math.ceil(MAP_W / CHUNK); });
 
 // ── directions ────────────────────────────────────────────────────────────
 export const NE = 1, SE = 2, SW = 4, NW = 8;
@@ -176,15 +180,20 @@ export interface Track {
   diagonalRoads?: boolean;
 }
 
-export const createTrack = (diagonalRoads = resolveDiagonalRoads()): Track => ({
-  diagonalRoads: !!diagonalRoads,
-  dirt: new Uint8Array(MAP_W * MAP_H),
-  road: new Uint8Array(MAP_W * MAP_H),
-  owner: new Uint8Array(MAP_W * MAP_H),
-  upgraded: new Uint8Array(MAP_W * MAP_H),
-  tier: new Uint8Array(MAP_W * MAP_H),
-  revision: 0,
-});
+export const createTrack = (diagonalRoads = resolveDiagonalRoads()): Track => {
+  // TOWN-4.1 (#677): five layers at the live size — which may no longer change
+  // under them (`setMapSize` refuses a locked map in dev builds).
+  lockMapSize();
+  return {
+    diagonalRoads: !!diagonalRoads,
+    dirt: new Uint8Array(MAP_W * MAP_H),
+    road: new Uint8Array(MAP_W * MAP_H),
+    owner: new Uint8Array(MAP_W * MAP_H),
+    upgraded: new Uint8Array(MAP_W * MAP_H),
+    tier: new Uint8Array(MAP_W * MAP_H),
+    revision: 0,
+  };
+};
 
 // ── ROADS-2 (#393): road tiers ──────────────────────────────────────────────
 export const ROAD_TIER = { road: 0, street: 1, highway: 2, ramp: 3 } as const;
@@ -282,7 +291,8 @@ export const roadTierAt = (t: Track, tx: number, ty: number): RoadTier =>
 export function setRoadTier(t: Track, tx: number, ty: number, tier: RoadTier): void {
   if (!inMapT(tx, ty)) return;
   const i = tIdx(tx, ty);
-  if (!t.tier) t.tier = new Uint8Array(MAP_W * MAP_H);
+  // TOWN-4.1: sized off the track's own layers, like `trackRestored` does.
+  if (!t.tier) t.tier = new Uint8Array(t.road.length);
   const packed = tier | (t.tier[i] & (ROAD_RAIL_DECK_X | ROAD_RAIL_DECK_Y));
   if ((t.road[i] & PRESENT) === 0 || t.tier[i] === packed) return;
   t.tier[i] = packed;

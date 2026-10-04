@@ -73,7 +73,7 @@
 // changes size. That is asserted in the unit tests; it is the same rule the
 // scenery LOD keeps in the renderer.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, MAP_H, MAP_W, ZOOM_STEPS } from "../game/config";
+import { HW, MAP_H, MAP_W, ZOOM_STEPS, mapSizedBuffer } from "../game/config";
 import { detailTierFor, type DetailTier } from "./detail-tiers";
 import {
   RAIL_BED_SHOULDER, RAIL_BED_WIDTH, RAIL_WEB_WIDTH, RAIL_WIDTH, TIE_WIDTH,
@@ -91,7 +91,10 @@ import { roadTile, roadWidth } from "./road-geometry";
 const RAIL_OVERPASS = 128;
 
 const DIAGONAL_ROADS = resolveDiagonalRoads();
-const EMPTY_ROADS = new Uint8Array(MAP_W * MAP_H);
+// TOWN-4.1 (#677): the shared all-zero layer a read-only Track view falls back
+// to, allocated on first use at the live map size (at import it froze at 144²
+// and a 216 map read past its end). Never written; one length check per bake.
+const emptyRoads = mapSizedBuffer((n) => new Uint8Array(n));
 
 type Ctx2D = CanvasRenderingContext2D;
 
@@ -659,9 +662,10 @@ export function railTilesIn(
   const maskAt = (x: number, y: number): number => cellAt(layer.tile, x, y) & BITS;
   // Read-only shared D1 endpoint/tier reader, evaluated only while baking a
   // cache chunk. No layer copies and no per-frame road or rail scans.
+  const empty = emptyRoads();
   const roadView: Track = {
-    road: world.roadBits ?? EMPTY_ROADS, dirt: world.dirtBits ?? EMPTY_ROADS,
-    owner: EMPTY_ROADS, upgraded: EMPTY_ROADS, revision: 0, tier: world.roadTiers,
+    road: world.roadBits ?? empty, dirt: world.dirtBits ?? empty,
+    owner: empty, upgraded: empty, revision: 0, tier: world.roadTiers,
     diagonalRoads: world.diagonalRoads ?? DIAGONAL_ROADS,
   };
   const out: RailTile[] = [];

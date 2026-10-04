@@ -90,6 +90,39 @@ export function defaultTownLayout(): TownLayout {
   return mode === "test" ? "grid" : "organic";
 }
 
+/**
+ * TOWN-4.1 (#677): the map's size, by NAME — `standard` (144×144: every save,
+ * story chapter, scenario and room written before the option existed) or
+ * `large` (216×216). The tile counts live in `MAP_SIZES`
+ * (src/game/config.ts); this leaf only knows the names, for the same bundle
+ * reason as `TownLayout` above.
+ */
+export type MapSizeName = "standard" | "large";
+
+/** TOWN-4.1: the names `size` may carry, for the wire/save readers and `?size=`. */
+export const MAP_SIZE_NAMES: readonly MapSizeName[] = ["standard", "large"];
+
+/** Read a stored / wire / URL map size; anything else → null (the caller's
+ *  rule applies). Only the known names pass, so a hand-edited save or a
+ *  future build's record can never hand the generator a size it has no
+ *  table entry for. */
+export function readMapSize(raw: unknown): MapSizeName | null {
+  return typeof raw === "string" && (MAP_SIZE_NAMES as readonly string[]).includes(raw)
+    ? (raw as MapSizeName)
+    : null;
+}
+
+/**
+ * TOWN-4.1: the size a NEW game generates with. Standard everywhere — free
+ * play, rooms, the unit-test runner. TOWN-4.5 (#681) flips FREE PLAY to
+ * large; that is a one-line change here plus the menu, and nothing that
+ * reads an absent size (old saves, old rooms) may follow it: those read
+ * "standard" explicitly (`resolveMapSize`).
+ */
+export function defaultMapSize(): MapSizeName {
+  return "standard";
+}
+
 export interface MapOptions {
   rivers: boolean;
   elevation: boolean;
@@ -120,6 +153,15 @@ export interface MapOptions {
    *     exact five-key shape they have always had.
    */
   layout?: TownLayout;
+  /**
+   * TOWN-4.1 (#677): the map's size. OPTIONAL and absent from the frozen
+   * records and `MAP_KEYS`, on the `layout` pattern: a record without the key
+   * was written before the option existed and IS a standard map — a save, a
+   * room's settings or a story record all read it as "standard", so nothing
+   * old ever resizes under a player. A new game's size is resolved by the
+   * boot (`resolveMapSize`) and written back here, so its save records it.
+   */
+  size?: MapSizeName;
 }
 export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false, rings: false, diag: false });
 export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true, rings: true, diag: true });
@@ -154,6 +196,15 @@ export function readMapOptions(raw: unknown): MapOptions | null {
     if (!layout) return null;
     out.layout = layout;
   }
+  // TOWN-4.1 (#677): the size, with the layout's strictness — an unknown name
+  // drops the whole record rather than regenerating a different-sized map
+  // under a save. A missing key stays missing (= standard; every reader
+  // resolves it), so a pre-TOWN-4.1 record keeps its exact shape.
+  if (o.size !== undefined) {
+    const size = readMapSize(o.size);
+    if (!size) return null;
+    out.size = size;
+  }
   return out;
 }
 /** Equality; an absent value means the defaults (see `MatchSettings.map`). */
@@ -162,7 +213,9 @@ export function mapOptionsEqual(a: MapOptions | null | undefined, b: MapOptions 
   // TOWN-2: an absent layout is the pre-TOWN-2 plan ("grid") on BOTH sides, so
   // a record written before the option existed still equals one written after
   // it that never asked for organic towns.
-  return MAP_KEYS.every((k) => x[k] === y[k]) && (x.layout ?? "grid") === (y.layout ?? "grid");
+  // TOWN-4.1: an absent size is "standard" on both sides, the same way.
+  return MAP_KEYS.every((k) => x[k] === y[k]) && (x.layout ?? "grid") === (y.layout ?? "grid")
+    && (x.size ?? "standard") === (y.size ?? "standard");
 }
 
 export const AI_SKILL_KEYS = ["easy", "normal", "hard"] as const;
@@ -455,6 +508,9 @@ export function describeMatchSettings(settings: MatchSettings): string {
     ? PURSE_PRESETS.find((p) => p.key === preset)?.label ?? "Standard"
     : `${settings.startPurse.wood} wood · ${settings.startPurse.stone} stone · ${settings.startPurse.ore} ore`;
   parts.push(`${purse} resources`);
+  // TOWN-4.1 (#677): a guest should hear the map is bigger before it lands.
+  // Standard (or absent) says nothing, so every existing line reads as before.
+  if (settings.map?.size === "large") parts.push("Large map");
   if (!perksEnabled(settings)) parts.push("No manager perks");
   if (settings.aiSeats.length > 0) {
     parts.push(settings.aiSeats

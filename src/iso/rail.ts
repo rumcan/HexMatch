@@ -39,7 +39,7 @@
 //   gets its own layer beside it. No curves, no junctions, and no transfer
 //   between the road graph and the rail graph at a crossing.
 // ══════════════════════════════════════════════════════════════════════════
-import { MAP_W } from "../game/config";
+import { MAP_W, MAP_H, lockMapSize } from "../game/config";
 import { BUILD_COSTS, BUILD_COSTS_MONEY, CARGOES, INDUSTRY_BY_KEY, SLOPES, VICTORY, type Cargo } from "./config";
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
@@ -477,11 +477,16 @@ export interface Rail {
   revision: number;
 }
 
-export const createRail = (): Rail => ({
-  tile: new Uint8Array(MAP_W * MAP_W),
-  owner: new Uint8Array(MAP_W * MAP_W),
-  revision: 0,
-});
+export const createRail = (): Rail => {
+  // TOWN-4.1 (#677): W×H at the live size (this read `MAP_W * MAP_W` — right
+  // only while every map was square) — and the size is now locked under it.
+  lockMapSize();
+  return {
+    tile: new Uint8Array(MAP_W * MAP_H),
+    owner: new Uint8Array(MAP_W * MAP_H),
+    revision: 0,
+  };
+};
 
 /** A tile the LAYER says carries player-built rail (any mask, stub included). */
 export const hasRail = (rail: Rail, tx: number, ty: number): boolean =>
