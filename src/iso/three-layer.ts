@@ -5,6 +5,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { HW, HH } from "../game/config";
 import { getViewYaw, getViewYawTarget, rotateViewStep, setViewYawTarget } from "./camera";
+import type { LotFront } from "./town-plan";
 
 // LIVE-3D stage 3 (Meshy): tools/models/build-models.mjs bakes each model square to the grid exactly as the
 // sprite renderer did and writes public/models/manifest.json: per model the sprite's front `turn` (quarter
@@ -90,7 +91,110 @@ export const spinOf = (sprite: string, tx: number, ty: number, w: number, h: num
   return w === h ? (x >>> 3) & 3 : ((x >>> 3) & 1) * 2;
 };
 
-export interface ThreeItem { sprite: string; tx: number; ty: number; w: number; h: number; lift?: number }   // lift: terrain elevation in px at zoom 1
+// ══════════════════════════════════════════════════════════════════════════
+// TOWN-4.6 (#682) — A PLANNED TOWN'S BUILDINGS FACE THEIR STREET.
+//
+// `townBuildings` hands every planned-town draw item the direction of the
+// street its lot fronts (`TownBuilding.front`, a `LotFront`: the NEIGHBOUR TILE
+// the street sits on, so a lot fronting SE has the street at (tx+w, ty)). The
+// 3D model is then turned so its front points down that direction; a grid or
+// organic town has no `front` and keeps `spinOf`'s hash facing.
+//
+// THE ONE SPACE EVERYTHING HERE SHARES is the one HEADING_DEG uses: a ground
+// direction is a QUARTER TURN of the +X axis, and +X is the tile lattice's
+// south-east (+u), -Z its north-east (-v). So
+//
+//     SE = 0   NE = 1   NW = 2   SW = 3
+//
+// and a quarter turn of the model (`rot`, the `Math.PI / 2` step `fill` feeds
+// the instance matrix) is exactly that lattice turn: `turnTilePoint(u, v, k)`
+// in depth.ts and the camera's own `turnWorld` at k × 90° are the same map.
+// The model's yaw therefore never mentions the view yaw — the whole three scene
+// is seen through the turned camera — which is what makes it testable and what
+// keeps a building's door on its street at all four yaws.
+//
+// WHAT IS STILL A GUESS, AND HOW TO CORRECT IT IN ONE LINE: which wall of a
+// SHIPPED SPRITE the front stands on. The models come from Meshy / Hunyuan and
+// no table records the face they were built front-first; `FRONT_AXIS` below is
+// that table, empty until the lead fills a name in. Until then the front is
+// DERIVED from the art convention (SPRITE_FRONT): the art pipeline's sun is
+// upper-left, so the screen's lower-LEFT wall (SW) is the lit one
+// (docs/ART-3D.md §1, assets/buildings-src/footprints.json) and that is the
+// wall a door is painted on. `?front=se|ne|nw|sw` overrides it for a play-test,
+// so if the doors come out on the wrong side the lead flips it without a build.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** A lot's street direction, as quarter turns of +X (SE). */
+export const FRONT_TURN: Record<LotFront, number> = { SE: 0, NE: 1, NW: 2, SW: 3 };
+/** The quarter turns of +X that name each direction — `FRONT_TURN` inverted. */
+export const TURN_FRONT: readonly LotFront[] = ["SE", "NE", "NW", "SW"];
+/** The axis a model's FRONT points along in the model's OWN (baked) frame. */
+export type FrontAxis = "+x" | "-z" | "-x" | "+z";
+/**
+ * The per-model front axis 3D-FIX-5 (#664) introduced for the vehicles, opened
+ * to the buildings: an entry here WINS over the derived default. Empty today —
+ * the builder's own FRONT_AXIS only covers the two moving models that came out
+ * backwards, and nothing has measured a building's front face yet. Add one when
+ * a model is seen facing the wrong way: `town_flats: "+z"`.
+ */
+export const FRONT_AXIS: Record<string, FrontAxis> = {};
+/** Each axis, in the same quarter-turn space: +X is 0 and the turn runs SE→NE→NW→SW. */
+const AXIS_TURN: Record<FrontAxis, number> = { "+x": 0, "-z": 1, "-x": 2, "+z": 3 };
+/**
+ * The wall a shipped sprite's front stands on, as a ground direction: SW (3),
+ * the screen's lower-left wall, the one the art pipeline lights.
+ */
+export const SPRITE_FRONT_SW = 3;
+/** The two directions the camera can see: a front on SE or SW is looking at you. */
+const facesCamera = (dir: number): boolean => (dir & 3) === 0 || (dir & 3) === 3;
+
+/**
+ * The quarter turns of +X a model's front points along BEFORE it is turned —
+ * its front axis in its own frame. `turn` (the manifest) plus `extra` (the `_r`
+ * mirror, the platform's view) is the turn that reproduces the sprite, so with
+ * no table entry the axis is whatever puts the front on `spriteFront` then.
+ */
+export function modelFrontTurn(
+  model: string, turn: number, extra: number, spriteFront: number = SPRITE_FRONT_SW,
+): number {
+  const axis = FRONT_AXIS[model];
+  if (axis) return AXIS_TURN[axis];
+  return (spriteFront - ((turn + extra) & 3)) & 3;
+}
+
+/**
+ * The quarter turn to instance a model at so that its FRONT points down the
+ * street a lot fronts — the number `fill` feeds the instance matrix instead of
+ * `spinOf`'s hash. Pure, and cheap: four table reads, no allocation.
+ *
+ * Non-square art can only take the two turns that keep the model's long axis on
+ * the lot's long axis (the ticket's "rotate only by 0/180 unless the lot
+ * footprint is the transposed one"): the sprite the filler chose already fits
+ * the lot, so `rotSprite` is one of them and `rotSprite + 2` is the other. When
+ * the street is a quarter turn away from both, the tie is broken by taking the
+ * one that still faces the CAMERA — a terrace shows its front from the street
+ * side it is seen from, never its back.
+ */
+export function facingTurn(
+  model: string, turn: number, extra: number, front: LotFront, w: number, h: number,
+  spriteFront: number = SPRITE_FRONT_SW,
+): number {
+  const rotSprite = (turn + extra) & 3;
+  const axis = modelFrontTurn(model, turn, extra, spriteFront);
+  const ideal = (FRONT_TURN[front] - axis) & 3;
+  // A square footprint may take any quarter turn; a non-square one only the
+  // turns that keep its plan on the lot, which is the test below.
+  if (w === h || ((ideal - rotSprite) & 1) === 0) return ideal;
+  const flip = (rotSprite + 2) & 3;
+  return facesCamera(axis + rotSprite) ? rotSprite : flip;
+}
+
+/**
+ * One thing the 3D layer instances. `lift` is the terrain elevation in px at
+ * zoom 1; `front` is TOWN-4.6 (#682): the street direction a planned-town lot
+ * fronts, absent on grid and organic towns (which keep the random `spinOf`).
+ */
+export interface ThreeItem { sprite: string; tx: number; ty: number; w: number; h: number; lift?: number; front?: LotFront }
 export interface ThreeStats { fps: number; drawCalls: number; triangles: number; instances: number; textures: number; vehicles: number }
 interface Cam { x: number; y: number; zoom: number; vw: number; vh: number }
 
@@ -134,6 +238,9 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   const fixedYaw = q.get("yaw");
   const noBoxes = q.get("models") === "none";   // debug: hide the 2D buildings and draw nothing (empty-scene reference shot)
   const noModels = tris > 0 || q.get("models") === "0" || noBoxes;   // stress mode and ?models=0 keep the boxes
+  // TOWN-4.6 (#682): `?front=se|ne|nw|sw` names the wall a shipped sprite's front stands on — the ONE knob to
+  // turn if the doors come out on the wrong side of the street in the play-test. Default SW (see SPRITE_FRONT_SW).
+  const spriteFront = FRONT_TURN[(q.get("front") ?? "sw").toLowerCase() as LotFront] ?? SPRITE_FRONT_SW;
   const canvas = document.createElement("canvas");
   canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3";
   host.insertBefore(canvas, before);
@@ -266,7 +373,12 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
           const it = list[i];
           // as render.html: turn by the sprite's quarter turns, then fit the plan uniformly into the footprint (fill 0.92)
           const mi = manifest![mo!.name];
-          const rot = (mi.turn + mo!.extra + spinOf(sprite, it.tx, it.ty, it.w, it.h)) & 3;
+          // TOWN-4.6 (#682): a planned-town lot knows where its street is, so the model TURNS TO FACE IT instead
+          // of taking `spinOf`'s hash. Everything else (a grid or organic town) keeps today's random facing. The
+          // turn is a pure function of the sprite, the model and the front — no tile hash, no per-frame work.
+          const rot = it.front !== undefined
+            ? facingTurn(mo!.name, mi.turn, mo!.extra, it.front, it.w, it.h, spriteFront)
+            : (mi.turn + mo!.extra + spinOf(sprite, it.tx, it.ty, it.w, it.h)) & 3;
           const ex = rot & 1 ? mi.ez : mi.ex, ez = rot & 1 ? mi.ex : mi.ez;
           const s = Math.min((it.w * 0.92) / ex, (it.h * 0.92) / ez) * (MODEL_SCALE[mo!.name] ?? 1);
           pos.set(it.tx + it.w / 2, (it.lift ?? 0) / K, it.ty + it.h / 2);
