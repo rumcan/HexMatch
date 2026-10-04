@@ -82,8 +82,7 @@ describe("ART-1950S compiled building PNGs", () => {
         expect(e.anchor[1]).toBeLessThanOrEqual(e.h);
       });
 
-      // QUARANTINE (#694): town_hotel became 1x2 (#662) but its art is still the 2x2 drawing; owed art, lead re-renders.
-      (name === "town_hotel" ? it.skip : it)("@2x output is the tight alpha trim of the authored source (B-3.1)", async () => {
+      it("@2x output is the tight alpha trim of the authored source (B-3.1)", async () => {
         const src = join(ROOT, "assets", "buildings-src", `${name}@2x.png`);
         if (!existsSync(src)) return; // source masters are committed alongside
         const box = await alphaBBox(src);
