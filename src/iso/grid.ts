@@ -3293,6 +3293,10 @@ function plannedArt(
   footprintOf: (sprite: string) => [number, number],
   known?: (sprite: string) => boolean,
 ): [number, number] | null {
+  // TOWN-BUG-2 (#699, #694): town_hotel's manifest footprint is 1x2 but its PNG
+  // is still the 2x2 drawing (116 px wide on a 96 px diamond), so it overhangs
+  // the lot onto the street. Out of the planned pools until it is re-rendered.
+  if (PLANNED_OVERSIZE_ART.has(name)) return null;
   if (known) return known(name) ? footprintOf(name) : null;
   if (buildingFootprint(name) !== null) return footprintOf(name);
   return (TOWN_TREE_VARIANTS as readonly string[]).includes(name) ? footprintOf(name) : null;
@@ -3394,6 +3398,27 @@ export function lotFrontageTiles(lot: Lot): [number, number][] {
     for (let j = 0; j < lot.h; j++) out.push([x, lot.y + j]);
   }
   return out;
+}
+
+/** TOWN-BUG-2 (#699): art whose PNG is bigger than its manifest footprint (#694). */
+const PLANNED_OVERSIZE_ART: ReadonlySet<string> = new Set(["town_hotel", "town_hotel_r"]);
+const highwayCache = new WeakMap<Grid, Set<number>>();
+/**
+ * TOWN-BUG-2 (#699): the inter-town highway tiles that are NOT a town's own
+ * paving. `publicRoad` answers "public" for them too (it cannot tell a street
+ * from a highway). `publicRoadTiles` now keeps highways off plan land, so this
+ * is the backstop: a building must never be laid on a highway tile.
+ */
+function highwayTilesOf(grid: Grid): Set<number> {
+  let set = highwayCache.get(grid);
+  if (!set) {
+    const paving = new Set<number>();
+    for (const t of grid.towns) for (const [x, y] of t.roads) paving.add(idx(x, y));
+    set = new Set<number>();
+    for (const [x, y] of grid.publicRoads ?? []) if (!paving.has(idx(x, y))) set.add(idx(x, y));
+    highwayCache.set(grid, set);
+  }
+  return set;
 }
 
 /**
@@ -3709,8 +3734,9 @@ function townBuildingsPlanned(
   const taken = plannedTaken(opts.grid, opts.blocked, opts.publicRoad);
   const out: TownBuilding[] = [];
   const used = new Set<number>();
+  const highways = opts.grid ? highwayTilesOf(opts.grid) : null;
   const free = (x: number, y: number): boolean =>
-    inBounds(x, y) && !used.has(idx(x, y)) && !taken(x, y);
+    inBounds(x, y) && !used.has(idx(x, y)) && !taken(x, y) && !highways?.has(idx(x, y));
 
   const place = (sprite: string, ox: number, oy: number, w: number, h: number, front?: LotFront): boolean => {
     for (let dy = 0; dy < h; dy++) {
@@ -4034,6 +4060,18 @@ export function publicRoadTiles(
   for (const t of towns) for (const [hx, hy] of t.houses) houses.add(idx(hx, hy));
   const paved = new Set<number>();
   for (const t of towns) for (const [rx, ry] of t.roads) paved.add(idx(rx, ry));
+  // TOWN-BUG-2 (#699): a planned town's reserved districts are free land until
+  // they grow, so the highway used to cut straight through future lots and
+  // block interiors — and the grown town then stood on the road. Every tile the
+  // plan reserves is off-limits except its own streets and avenue (a highway
+  // may run along a town street, as it does in a grid town).
+  const planLand = new Set<number>();
+  for (const t of towns) {
+    if (!t.plan) continue;
+    for (const [x, y] of t.plan.reserved) planLand.add(idx(x, y));
+    for (const [x, y] of t.plan.avenueTiles) planLand.delete(idx(x, y));
+    for (const s of t.plan.streets) for (const [x, y] of s.tiles) planLand.delete(idx(x, y));
+  }
 
   const passable = (tx: number, ty: number): boolean => {
     if (!inBounds(tx, ty)) return false;
@@ -4041,7 +4079,7 @@ export function publicRoadTiles(
     // occ < 0 keeps both free land (-1) and town tiles (-2); the house set is
     // what takes the houses back out, so a highway may cross a ring road but
     // never runs through somebody's living room.
-    return terrain[i] !== WATER && occ[i] < 0 && !houses.has(i);
+    return terrain[i] !== WATER && occ[i] < 0 && !houses.has(i) && !planLand.has(i);
   };
 
   /** Shortest drivable route between two road-network components. */
