@@ -12,7 +12,7 @@
 //   • the "Clouds" switch lives in the graphics store (default on, persisted,
 //     suppressed by performance mode) and on the settings sheet.
 // ══════════════════════════════════════════════════════════════════════════
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { Atlas, type Manifest } from "../../src/iso/atlas";
 import {
@@ -21,7 +21,10 @@ import {
   cloudAlphaForZoom, cloudPositions, createCloudField, paintCloudLayer,
   writeCloudPositions, type CloudSprites,
 } from "../../src/iso/clouds";
-import { IsoRenderer, type World } from "../../src/iso/renderer";
+import { IsoRenderer, setCloudsMasterSwitch, type World } from "../../src/iso/renderer";
+// LIVE-3D: clouds are OFF in the game (CLOUDS_ENABLED); these tests pin the plumbing with the master switch up.
+beforeAll(() => setCloudsMasterSwitch(true));
+afterAll(() => setCloudsMasterSwitch(false));
 import { createCamera, centerOnMap } from "../../src/iso/camera";
 import { MAP_W, MAP_H } from "../../src/game/config";
 import { generateMap } from "../../src/iso/grid";

@@ -385,7 +385,9 @@ export const setHideExtra = (f: ((e: DrawItem) => boolean) | null): void => { hi
  * LIVE-3D (owner, 2026-10-03): clouds and their ground shadows are OFF ("not good enough yet"). One switch: flip to
  * true to bring them back; nothing else was removed, and the graphics setting still gates them when this is on.
  */
-export const CLOUDS_ENABLED = false;
+export let CLOUDS_ENABLED = false;
+/** Tests (and a future settings toggle) may lift the master switch; renderers built afterwards read it. */
+export const setCloudsMasterSwitch = (on: boolean): void => { CLOUDS_ENABLED = on; };
 let hideVehicle: ((e: DrawItem) => boolean) | null = null;
 /** LIVE-3D (`?three=1`): moving sprites (cars, lorries, trains) this predicate accepts are drawn in 3D instead. */
 export const setHideVehicle = (f: ((e: DrawItem) => boolean) | null): void => { hideVehicle = f; };
