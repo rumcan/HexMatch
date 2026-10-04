@@ -2281,7 +2281,12 @@ export class IsoRenderer {
     }
     this.overlayBlits = rest.length;
     const placed = rest.map((i) => place(this.atlas, i, this.world.grid)).filter(Boolean) as Placed[];
-    for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
+    // LIVE-3D (3D-FIX-2): the sprites the vector overlay does not own (the `sprites` rollback's tile highlights,
+    // a drag preview's own art) sit on tiles too, so they take the same turn the structures pass gives theirs:
+    // the anchor is re-seated on the TURNED footprint (a non-square footprint otherwise drifts off its lot) and
+    // the hill lift is taken off AFTER the turn, which is the direction the terrain and the highlight use.
+    // yaw 0 is the old one-line path, byte for byte.
+    for (const p of this.overlayOrder(placed)) this.blit(ctx, p, timeMs);
     // #462: route lines sit on the road, above the placement glow, under debug
     // marks and the protest crowd.
     if (this.routeOverlay && this.routeOverlay.length) {
@@ -2305,6 +2310,29 @@ export class IsoRenderer {
    * strings, cheap to hold.
    */
   readonly drawnSprites = new Set<string>();
+
+  /**
+   * LIVE-3D (3D-FIX-2): depth order for the overlay's OWN sprites.
+   *
+   * At yaw 0 this is `depthSort(placed)` — the path every test and every
+   * sprite-mode screenshot has always taken. Under a turn each sprite is
+   * re-seated by `turnPlaced` (anchor pinned to its turned footprint, hill
+   * lift screen-vertical) and sorted in the TURNED lattice, then mapped back
+   * to its draw copy — the same two-step the structures pass uses, so the
+   * overlay's art lands on the tile the game picked for it at every yaw.
+   */
+  private overlayOrder(placed: Placed[]): Placed[] {
+    const yaw = getViewYaw();
+    if (yaw === 0 || placed.length === 0) return depthSort(placed).order;
+    const k = yawQuarter(yaw);
+    const pairs = placed.map((p) => turnPlaced(p, yaw, k));
+    const back = new Map<Placed, Placed>();
+    for (const q of pairs) back.set(q.sort, q.draw);
+    const sorted = depthSort(pairs.map((q) => q.sort)).order;
+    const out: Placed[] = [];
+    for (const q of sorted) out.push(back.get(q)!);
+    return out;
+  }
 
   /** Draw one placed sprite; false when its image is not loaded. */
   private blit(ctx: Ctx2D, p: Placed, timeMs: number): boolean {

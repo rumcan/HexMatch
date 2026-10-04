@@ -14,11 +14,12 @@ import { getViewYaw, getViewYawTarget, setViewYawTarget } from "./camera";
 const MODEL_YAW: Record<string, number> = {};
 // LIVE-3D (owner 2026-10-03: the big cream-banded 5-storey brick building towered over its block): store_2x4 (and its _r)
 // is drawn at 60% in plan AND height, still centred on its lot.
-// 3D-FIX-1 (2026-10-03): the 5-storey cream-stone-banded red-brick hotel (town_hotel) towered over its block.
-// It is the tallest 2×2 hotel/offices-class building in tier-3 towns (town_hotel h=1.248, town_house_c 1.049,
-// town_offices_tall 0.777, town_flats_grey 0.590). Scaled to 60% in plan and height so it reads as a
-// normal city block. HEIGHT_SCALE in build-models.mjs is only a record; the runtime scale is here.
-export const MODEL_SCALE: Record<string, number> = { store_2x4: 0.6, town_hotel: 0.6 };
+// 3D-FIX-3 (2026-10-03): town_hotel is a true 1×2 now (#662), so it no longer needs the 60% stopgap
+// 3D-FIX-1 bolted on here — the runtime already fits a model's plan to the footprint it stands on
+// (`s = min((w*0.92)/ex, (h*0.92)/ez)`), and a 1×2 lot is half the plan a 2×2 lot gave it. The height
+// follows the plan, so the hotel now stands at 1.149 tiles instead of 1.38. PLAN_FIT in
+// tools/models/build-models.mjs records the fit for when the model is next rebuilt from source.
+export const MODEL_SCALE: Record<string, number> = { store_2x4: 0.6 };
 // compat alias: older code and tests may reference MODEL_SIZE
 export const MODEL_SIZE = MODEL_SCALE;
 interface ModelInfo { turn: number; ex: number; ez: number; h: number; moving?: boolean; lengthM?: number }
