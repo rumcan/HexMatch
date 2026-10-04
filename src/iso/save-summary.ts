@@ -23,8 +23,9 @@
 // ══════════════════════════════════════════════════════════════════════════
 import {
   SAVE_KEY, SCENARIO_SAVE_KEY_PREFIX, clearSave, loadRecentSave, saveKeyFor,
-  scenarioSaveKey, trackRestored, type SaveGamePayload,
+  scenarioSaveKey, trackRestored, saveMapSide, type SaveGamePayload,
 } from "./savegame-runtime";
+import { withMapSize } from "../game/config";
 import { createTrack } from "./track";
 import { readMapOptions } from "./map-options";
 import { createScoreState, rescore, vpFor, type LoopScoring } from "./victory";
@@ -125,6 +126,19 @@ function loopScoringFor(
  * render. A corrupt layer fails closed to zeros rather than breaking a menu.
  */
 function starsFromSave(d: SaveGamePayload): { you: number; rival: number } {
+  // TOWN-4.1 (#677): a save is scored on ITS OWN map size — a large save read
+  // on the menu (which sits at the standard size between games) would not fit
+  // a standard scratch track. `withMapSize` runs the scoring at the save's
+  // size and puts the size, and its lock, back afterwards: nothing built here
+  // outlives the call. A size this build has no table entry for fails closed
+  // to zeros, exactly like a corrupt layer (the door stays; the boot then
+  // refuses that save with the old-save toast).
+  const side = saveMapSide(d);
+  if (side === null) return { you: 0, rival: 0 };
+  return withMapSize(side, side, () => starsAtOwnSize(d));
+}
+
+function starsAtOwnSize(d: SaveGamePayload): { you: number; rival: number } {
   try {
     // #440: the throwaway track builds under the SAVE's road rule, not the
     // menu's. Connectivity reads the diagonal links only when the flag says

@@ -1406,10 +1406,19 @@ export const bestCandidate = (
  * the stall turn free. Callers that need the true ranking call
  * `planCandidates` directly.
  */
-const DEEP_PLAN_PURSE: Purse = {
-  wood: MAP_W * MAP_H, stone: MAP_W * MAP_H, grain: MAP_W * MAP_H,
-  oil: MAP_W * MAP_H, ore: MAP_W * MAP_H, gold: MAP_W * MAP_H,
-};
+// TOWN-4.1 (#677): "deeper than any build on this map" is a fact about the
+// LIVE map, so the purse is read per plan (one per size, cached) — computed at
+// import it froze at 144². Same numbers on a standard map, so the same plans.
+let deepPlanPurseCells = -1;
+let deepPlanPurseCache: Purse = {};
+function deepPlanPurse(): Purse {
+  const n = MAP_W * MAP_H;
+  if (n !== deepPlanPurseCells) {
+    deepPlanPurseCells = n;
+    deepPlanPurseCache = { wood: n, stone: n, grain: n, oil: n, ore: n, gold: n };
+  }
+  return deepPlanPurseCache;
+}
 
 export interface DeepPlanOptions {
   /** Cargo actually held — scarcity weighting of the score, order-only. */
@@ -1500,7 +1509,7 @@ export function deepPlanCandidates(
     return hit.cands;
   }
   const cands = planCandidates(state, factory, {
-    stock: opts.stock ?? {}, purse: DEEP_PLAN_PURSE,
+    stock: opts.stock ?? {}, purse: deepPlanPurse(),
     free, freeDepots, depotTier, oreUrgency: opts.oreUrgency, now: opts.now, newLoop,
     wantCargo: opts.wantCargo, contests: opts.contests,
   });

@@ -37,7 +37,7 @@
 // Every draw coordinate goes through Math.floor, and nothing is ever scaled
 // inside drawImage — the atlases ship pre-rendered at 0.5×/1×/2×.
 // ══════════════════════════════════════════════════════════════════════════
-import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H } from "../game/config";
+import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H, onMapSize } from "../game/config";
 import type { Camera } from "./camera";
 import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
 import type { Atlas } from "./atlas";
@@ -98,8 +98,15 @@ const LAND_SCALE = 0.2;
 const SEA_SCALE = 0.16;
 
 export const CHUNK = 8;
-export const chunksX = Math.ceil(MAP_W / CHUNK);
-export const chunksY = Math.ceil(MAP_H / CHUNK);
+// TOWN-4.1 (#677): LIVE bindings that follow the map size. The chunk cache
+// keys on `cy * chunksX + cx`; frozen at import (144 → 18 columns) a 216 map's
+// 27 columns would alias across rows and blit the wrong chunk.
+export let chunksX = Math.ceil(MAP_W / CHUNK);
+export let chunksY = Math.ceil(MAP_H / CHUNK);
+onMapSize(() => {
+  chunksX = Math.ceil(MAP_W / CHUNK);
+  chunksY = Math.ceil(MAP_H / CHUNK);
+});
 export const chunkIndexOf = (tx: number, ty: number) =>
   ((ty / CHUNK) | 0) * chunksX + ((tx / CHUNK) | 0);
 

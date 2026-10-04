@@ -20,7 +20,7 @@
 // rejected with a clear message rather than silently desyncing, which is what
 // happens today.
 // ══════════════════════════════════════════════════════════════════════════
-import { MAP_W, MAP_H } from "../game/config";
+import { MAP_W, MAP_H, MAP_SIZES, MAP_SIDE_MIN, MAP_SIDE_MAX, onMapSize } from "../game/config";
 import { generateMap } from "./grid";
 import { FLEET, type Cargo } from "./config";
 import { createTrack, type Track } from "./track";
@@ -98,9 +98,26 @@ import type { OfferWire } from "./offers";
 // from the wire. A v15 guest would try to trade and bless on a host that no
 // longer has those systems, so mixed versions must refuse.
 // v17 (L15 sweep): boards and crossPrompt fully removed from types and wire.
-export const SNAPSHOT_VERSION = 17;
+// v18 (TOWN-4.1 / #677): the map SIZE is per game (standard 144 / large 216),
+// so a track layer is no longer a fixed 144² bytes. The snapshot carries the
+// size it was built at (`mapW`/`mapH`, absent = 144) and a guest refuses a
+// size it did not build (code "size"), both ways. A v17 guest would read a
+// 216 host's layers as malformed at best — mixed versions must refuse.
+// NOT a save break: a save's track layers share this wire format, and every
+// v17 save is a 144 map, byte for byte — `savegame-runtime.ts` keeps reading
+// it (SAVE_SNAP_VERSIONS) and loads it at 144.
+export const SNAPSHOT_VERSION = 18;
 
-export const EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
+/** TOWN-4.1: the byte count of one track (or rail) layer on a w×h map. */
+export const expectedTrackBytes = (w: number = MAP_W, h: number = MAP_H): number => w * h;
+
+/**
+ * One track layer's byte count on the LIVE map (`expectedTrackBytes()`), kept
+ * as a live binding for its importers. Validation does not read it: a
+ * snapshot is measured against the size it says it was built at.
+ */
+export let EXPECTED_TRACK_BYTES = MAP_W * MAP_H;
+onMapSize(() => { EXPECTED_TRACK_BYTES = MAP_W * MAP_H; });
 
 // ── base64 for typed arrays ───────────────────────────────────────────────
 // Works in both the browser (btoa/atob) and Node (Buffer), because the unit
@@ -402,10 +419,10 @@ export interface RailTileWire {
   owner: number;
 }
 export interface RailWire {
-  /** base64 Uint8Array(MAP_W*MAP_W) — direction masks plus the PRESENT bit.
+  /** base64 Uint8Array(MAP_W*MAP_H) — direction masks plus the PRESENT bit.
    *  Sent on a join/resync; a steady-state delta sends `tiles` instead. */
   tile?: string;
-  /** base64 Uint8Array(MAP_W*MAP_W) — per-tile owner (player index + 1). */
+  /** base64 Uint8Array(MAP_W*MAP_H) — per-tile owner (player index + 1). */
   owner?: string;
   /** The sparse half: only the tiles that moved since the last publish. */
   tiles?: RailTileWire[];
@@ -430,6 +447,14 @@ export interface Snapshot {
   version: number;
   /** The map seed. Terrain and industries are regenerated from it, not sent. */
   seed: number;
+  /**
+   * TOWN-4.1 (#677): the map's size in tiles — what every track and rail layer
+   * below is measured against. Optional on the wire (absent = the standard
+   * 144); `buildSnapshot` always writes it. A guest whose own map is a
+   * different size refuses the snapshot (`SnapshotError` code "size").
+   */
+  mapW?: number;
+  mapH?: number;
   t: number;
   setupPhase: boolean;
   won: boolean;
@@ -490,6 +515,9 @@ export interface Snapshot {
 
 export interface SnapshotSource {
   seed: number;
+  /** TOWN-4.1: the map's size; absent = the live size (the host's own map). */
+  mapW?: number;
+  mapH?: number;
   track: Track;
   harvesters: Harvester[];
   factories: Factory[];
@@ -533,6 +561,9 @@ export function buildSnapshot(src: SnapshotSource): Snapshot {
   return {
     version: SNAPSHOT_VERSION,
     seed: src.seed >>> 0,
+    // TOWN-4.1 (#677): the size the layers below were built at.
+    mapW: src.mapW ?? MAP_W,
+    mapH: src.mapH ?? MAP_H,
     t: src.t ?? 0,
     setupPhase: src.setupPhase,
     won: src.won,
@@ -618,8 +649,9 @@ function copyRailWire(w: RailWire | undefined | null): RailWire | undefined {
 
 // ── validation ────────────────────────────────────────────────────────────
 export class SnapshotError extends Error {
-  readonly code: "version" | "malformed" | "seed";
-  constructor(code: "version" | "malformed" | "seed", message: string) {
+  /** TOWN-4.1: "size" — the host's map is not the size this game built. */
+  readonly code: "version" | "malformed" | "seed" | "size";
+  constructor(code: "version" | "malformed" | "seed" | "size", message: string) {
     super(message);
     this.code = code;
     this.name = "SnapshotError";
@@ -646,6 +678,25 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   if (typeof o.seed !== "number" || !Number.isFinite(o.seed)) {
     return new SnapshotError("malformed", "Snapshot has no map seed.");
   }
+  // TOWN-4.1 (#677): the size the snapshot was built at — absent is the
+  // standard map (every snapshot before the size was a runtime option). It
+  // must be the size THIS game built, both ways: a 144 snapshot on a 216
+  // client would stamp 144² bytes into a 216² track (every row misaligned),
+  // and the reverse cannot fit at all.
+  const snapW = o.mapW === undefined ? MAP_SIZES.standard : o.mapW;
+  const snapH = o.mapH === undefined ? MAP_SIZES.standard : o.mapH;
+  for (const side of [snapW, snapH]) {
+    if (typeof side !== "number" || !Number.isInteger(side) || side < MAP_SIDE_MIN || side > MAP_SIDE_MAX) {
+      return new SnapshotError("malformed", "Snapshot carries a malformed map size.");
+    }
+  }
+  if (snapW !== MAP_W || snapH !== MAP_H) {
+    return new SnapshotError(
+      "size",
+      `This room plays a ${snapW}×${snapH} map, but this game built a ${MAP_W}×${MAP_H} one. Rejoin the room.`,
+    );
+  }
+  const layerBytes = expectedTrackBytes(snapW, snapH);
   if (typeof o.dirt !== "string" || typeof o.road !== "string"
     || typeof o.owner !== "string" || typeof o.upgraded !== "string") {
     return new SnapshotError("malformed", "Snapshot is missing its track layers.");
@@ -755,10 +806,10 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
       return new SnapshotError("malformed", "Snapshot rail is malformed.");
     }
     for (const [name, b64] of [["rail.tile", r.tile], ["rail.owner", r.owner]] as const) {
-      if (b64 !== undefined && base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
+      if (b64 !== undefined && base64ToBytes(b64).length !== layerBytes) {
         return new SnapshotError(
           "malformed",
-          `Snapshot ${name} layer is the wrong size (expected ${EXPECTED_TRACK_BYTES} bytes).`,
+          `Snapshot ${name} layer is the wrong size (expected ${layerBytes} bytes).`,
         );
       }
     }
@@ -797,10 +848,10 @@ export function validateSnapshot(s: unknown, localSeed?: number): SnapshotError 
   }
   for (const [name, b64] of [["dirt", o.dirt], ["road", o.road], ["owner", o.owner],
     ["upgraded", o.upgraded]] as const) {
-    if (base64ToBytes(b64).length !== EXPECTED_TRACK_BYTES) {
+    if (base64ToBytes(b64).length !== layerBytes) {
       return new SnapshotError(
         "malformed",
-        `Snapshot ${name} layer is the wrong size (expected ${EXPECTED_TRACK_BYTES} bytes).`,
+        `Snapshot ${name} layer is the wrong size (expected ${layerBytes} bytes).`,
       );
     }
   }
