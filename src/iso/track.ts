@@ -576,19 +576,19 @@ export function seedTownDiagonals(t: Track, grid: Grid): void {
  * below is the seam. Nothing else in the boot chain needs to move.
  */
 function stampAvenue(t: Track, plan: TownPlan): void {
-  // TODO(TOWN-4.2): AVENUE_X/Y tier — lay the centre line (and its right-hand
-  // neighbour) as `AVENUE_X` / `AVENUE_Y` in the tier byte's free low bits 6/7,
-  // with one-way right-hand traffic derived from the pair, instead of plain
-  // road. Everything else about the stamp (which tiles, which owner, when)
-  // stays exactly as it is here.
+  // TOWN-4.2 (#678): the same two-pass stamp the player's Avenue commit uses —
+  // lay both carriageways first, then set the axis tier, so every
+  // avenuePartner read inside setRoadTier's autotile finds the pair. (This
+  // also overrides the `rings` street tier the avenue picks up from
+  // `Town.roads`: the avenue is a trunk, not a kerbed town street.)
+  const tier: RoadTier = plan.axis === "x" ? AVENUE_X : AVENUE_Y;
+  const laid: [number, number][] = [];
   for (const [x, y] of plan.avenueTiles) {
     if (!inMapT(x, y)) continue;
     buildTile(t, "road", x, y, PUBLIC_OWNER);
-    // A planned town's avenue also rides `mapOptions.rings`' street tier by
-    // virtue of being in `Town.roads`, so reset it here: the avenue is a
-    // trunk, not a kerbed town street — and pins the tier seam for #678.
-    setRoadTier(t, x, y, ROAD_TIER.road);
+    laid.push([x, y]);
   }
+  for (const [x, y] of laid) setRoadTier(t, x, y, tier);
 }
 
 /**
