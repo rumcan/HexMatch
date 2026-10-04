@@ -93,8 +93,8 @@ jobs:
           npx playwright test --project=desktop-chromium --shard=${{ matrix.shard }}/6 2>&1 | tee /tmp/pw.log || {
             echo "PLAYWRIGHT_FAILED"
             if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw.log \
-                | grep -av "npm warn" | tail -n 120 > /tmp/pw-fail.txt || true
+              grep -aE "✘|✓|failed|passed|Error|expect|timeout|Timeout|timed out|ms exceeded|^ *[0-9]+\)|at .*spec" /tmp/pw.log \
+                | grep -av "npm warn" | tail -n 160 > /tmp/pw-fail.txt || true
               jq -Rs --arg id "pw-${{ github.run_id }}" \
                 '{body: ("### e2e failure (run " + $id + ")\n```\n" + . + "\n```")}' \
                 /tmp/pw-fail.txt > /tmp/pw-body.json
@@ -150,8 +150,8 @@ jobs:
           npm run test:e2e:mp -- --shard=${{ matrix.shard }}/6 2>&1 | tee /tmp/pw-mp.log || {
             echo "PLAYWRIGHT_MP_FAILED"
             if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-              grep -aE "✘|✓|failed|passed|Error|expect|at .*spec" /tmp/pw-mp.log \
-                | grep -av "npm warn" | tail -n 120 > /tmp/pw-mp-fail.txt || true
+              grep -aE "✘|✓|failed|passed|Error|expect|timeout|Timeout|timed out|ms exceeded|^ *[0-9]+\)|at .*spec" /tmp/pw-mp.log \
+                | grep -av "npm warn" | tail -n 160 > /tmp/pw-mp-fail.txt || true
               jq -Rs --arg id "pw-mp-${{ github.run_id }}-${{ matrix.shard }}" \
                 '{body: ("### e2e-multiplayer failure (run " + $id + ")\n```\n" + . + "\n```")}' \
                 /tmp/pw-mp-fail.txt > /tmp/pw-mp-body.json
