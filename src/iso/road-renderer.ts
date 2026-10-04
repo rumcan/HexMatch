@@ -298,19 +298,64 @@ const LAMP_SHADOW_R = 0.04;
  */
 const LAMP_ELLIPSE_SEGMENTS = 12;
 
-/** A screen-space offset of `n` projected pixels to the RIGHT, in ground units. */
-const pxRight = (n: number): GroundPoint => [n / (2 * HW), -n / (2 * HW)];
-/** A screen-space offset of `n` projected pixels UP, in ground units. */
-const pxUp = (n: number): GroundPoint => [-n / (2 * HH), -n / (2 * HH)];
+// The two screen-space offsets the lamp art was built from, `pxRight(n)` and
+// `pxUp(n)`, are now `screenOffsetAt(n, 0, 0)` and `screenOffsetAt(0, -n, 0)`
+// exactly — the general form below, at an unturned view. They are spelled out
+// there because a raster baked for a TURNED view needs the inverse turn baked
+// into every pixel offset (see `screenOffsetAt`), and keeping both spellings
+// would have left the old, un-turned one to be picked up by mistake.
+
+/**
+ * TOWN-4.6 (#682) — A SCREEN OFFSET, FOR A RASTER BAKED FOR A TURNED VIEW.
+ *
+ * A road chunk is painted in UNTURNED ground coordinates and blitted through
+ * the view turn: `RoadCache.paint` puts the canvas under
+ * `M(vq) = [[c, 2s], [-s / 2, c]]` (camera.ts's `turnWorld`, HW/HH = 2). That
+ * turns the ground correctly — and it turns anything drawn as a SCREEN shape
+ * with it, so a lamp post baked as "up the screen" leans over by the yaw and
+ * lies flat at a quarter turn. The fix is to bake the inverse: ask here for the
+ * ground offset whose IMAGE under `M` is the screen offset you want.
+ *
+ *   M⁻¹ = [[c, −2s], [s / 2, c]]   (det M = c² + s² = 1)
+ *
+ * and the un-projection is the usual `u = wx / 2HW + wy / 2HH`,
+ * `v = wy / 2HH − wx / 2HW`. `vq = 0` is the identity and returns exactly what
+ * `pxRight` / `pxUp` return, so an unturned view is byte-identical to before.
+ */
+export function screenOffsetAt(dx: number, dy: number, vq = 0): GroundPoint {
+  const k = vq & 3;
+  const c = k === 0 ? 1 : k === 2 ? -1 : 0;
+  const s = k === 1 ? 1 : k === 3 ? -1 : 0;
+  const wx = c * dx - 2 * s * dy;
+  const wy = 0.5 * s * dx + c * dy;
+  return [wx / (2 * HW) + wy / (2 * HH), wy / (2 * HH) - wx / (2 * HW)];
+}
+/** `pxUp` / `pxRight` for a raster baked for a view turned `vq` quarters. */
+const upAt = (n: number, vq: number): GroundPoint => screenOffsetAt(0, -n, vq);
+const rightAt = (n: number, vq: number): GroundPoint => screenOffsetAt(n, 0, vq);
+
+/**
+ * A screen-space CIRCLE of `n` pixels radius, as a ground polyline, for a
+ * raster baked for a view turned `vq` quarters.
+ *
+ * An unturned view can fit the same circle as a tilted ground ellipse (the
+ * lamp glow's trick); that dies under a turn, because `M` is not a similarity
+ * — at 45° it shears — so the circle is walked point by point instead. Twelve
+ * segments, exactly like every other curve here.
+ */
+function screenCircleInto(ctx: Ctx2D, [u, v]: GroundPoint, n: number, vq = 0): void {
+  for (let i = 0; i <= LAMP_ELLIPSE_SEGMENTS; i++) {
+    const a = (i / LAMP_ELLIPSE_SEGMENTS) * Math.PI * 2;
+    const [du, dv] = screenOffsetAt(n * Math.cos(a), n * Math.sin(a), vq);
+    if (i === 0) ctx.moveTo(u + du, v + dv);
+    else ctx.lineTo(u + du, v + dv);
+  }
+  ctx.closePath();
+}
 
 /** TOWN-4.2 (#678): the median's vector planting — trunk + two-tone crown
  *  (the ticket allows a vector crown until the lead's tree sprite lands). */
 const MEDIAN_TREE = { trunk: "#54402a", crown: "#2f5d34", crownLight: "#4c8a4a" };
-/** A screen-space circle of `n` pixels as a ground ellipse (the glow's
- *  rotation trick): the projection flattens it exactly like the lamp glow. */
-const screenCircle = (n: number): [number, number, number] =>
-  [n / (Math.SQRT2 * HW), n / (Math.SQRT2 * HH), -Math.PI / 4];
-
 /**
  * Add a ground-plane ellipse to the current path, as a polyline.
  *
@@ -893,8 +938,17 @@ function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPE
  * Drawn last of everything on a road, because a lamp stands ABOVE the ground
  * it is planted in: its head can legitimately hang over the next tile's
  * asphalt, and the asphalt was painted several passes ago.
+ *
+ * TOWN-4.6 (#682): `vq` is the view quarter this chunk is baked for, same as
+ * `paintAvenueFurniture` — the post, the lantern box and the pane are SCREEN
+ * shapes, so they go through `screenOffsetAt` and stay upright and square at
+ * every yaw instead of leaning with the turn. The two GROUND shapes stay as
+ * they were: the contact shadow lies on the pavement and must turn with it,
+ * and the glow is now a walked screen circle (a 12-gon inside the old 2.2px
+ * ellipse — under a tenth of a pixel off it) because the tilted-ellipse trick
+ * that made it round at yaw 0 shears under `M`. `vq = 0` is the old numbers.
  */
-function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER): void {
+export function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER, vq = 0): void {
   const spots: GroundPoint[] = [];
   for (const t of tiles) {
     if (!t.sidewalk) continue;
@@ -926,7 +980,8 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
 
     // 2. The iron post, and the lantern it carries: a screen-aligned box, so
     //    its 4x3 pixels read as pixels at every zoom.
-    const head: GroundPoint = [base[0] + pxUp(LAMP_POST_H)[0], base[1] + pxUp(LAMP_POST_H)[1]];
+    const rise = upAt(LAMP_POST_H, vq);
+    const head: GroundPoint = [base[0] + rise[0], base[1] + rise[1]];
     ctx.strokeStyle = SIDEWALK_STYLE.iron;
     ctx.lineWidth = PIXEL;
     ctx.beginPath();
@@ -934,10 +989,10 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
     ctx.lineTo(head[0], head[1]);
     ctx.stroke();
 
-    const corner = (right: number, up: number): GroundPoint => [
-      head[0] + pxRight(right)[0] + pxUp(up)[0],
-      head[1] + pxRight(right)[1] + pxUp(up)[1],
-    ];
+    const corner = (right: number, up: number): GroundPoint => {
+      const [dr, dv] = screenOffsetAt(right, up, vq);
+      return [head[0] + dr, head[1] + dv];
+    };
     const [bl, br, tr, tl] = [
       corner(-LAMP_HEAD_W / 2, 0), corner(LAMP_HEAD_W / 2, 0),
       corner(LAMP_HEAD_W / 2, LAMP_HEAD_H), corner(-LAMP_HEAD_W / 2, LAMP_HEAD_H),
@@ -945,11 +1000,10 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
     // 3. The warm light it throws, BEFORE the lantern that contains it: the
     //    glow belongs around the glass, not painted over its housing.
     const bulb: GroundPoint = [corner(0, LAMP_HEAD_H / 2)[0], corner(0, LAMP_HEAD_H / 2)[1]];
-    const glowR = LAMP_GLOW_R / (Math.SQRT2 * HW), glowRy = LAMP_GLOW_R / (Math.SQRT2 * HH);
     ctx.fillStyle = SIDEWALK_STYLE.glow;
     ctx.globalAlpha = SIDEWALK_STYLE.glowAlpha;
     ctx.beginPath();
-    ellipseInto(ctx, bulb, glowR, glowRy, -Math.PI / 4);
+    screenCircleInto(ctx, bulb, LAMP_GLOW_R, vq);
     ctx.fill();
     ctx.globalAlpha = 1;
 
@@ -986,8 +1040,16 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
  * into the chunk raster with every other road pass — no per-frame cost, no
  * extra draw calls, no art asset required (the vector crown stands in until
  * the lead's median tree sprite exists).
+ *
+ * TOWN-4.6 (#682): `vq` is the view quarter this chunk is baked for — the same
+ * quarter `RoadCache` keys the raster on and `draperFor` drapes it with. The
+ * furniture's SCREEN offsets (up the post, across the arms, the round crown and
+ * glow) go through `screenOffsetAt`, so they stay screen-up and screen-round
+ * once `RoadCache.paint` turns the finished bitmap: the tree stands on its
+ * median and the lamp hangs over it at all four yaws instead of leaning over
+ * with the turn. `vq = 0` is the old numbers exactly.
  */
-function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER): void {
+export function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER, vq = 0): void {
   const trees: GroundPoint[] = [];
   const lamps: GroundPoint[] = [];
   for (const t of tiles) {
@@ -1003,13 +1065,15 @@ function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT
   ctx.lineJoin = "miter";
 
   for (const base of trees) {
-    // Contact shadow — the one ground shape.
+    // Contact shadow — the one ground shape (a ground ellipse: it lies ON the
+    // median, so it turns with the ground like the strip under it).
     ctx.fillStyle = SIDEWALK_STYLE.shadow;
     ctx.beginPath();
     ellipseInto(ctx, base, LAMP_SHADOW_R * 1.6, LAMP_SHADOW_R * 1.6, 0);
     ctx.fill();
     // Trunk: a short screen line up from the median.
-    const top: GroundPoint = [base[0] + pxUp(6)[0], base[1] + pxUp(6)[1]];
+    const up6 = upAt(6, vq);
+    const top: GroundPoint = [base[0] + up6[0], base[1] + up6[1]];
     ctx.strokeStyle = MEDIAN_TREE.trunk;
     ctx.lineWidth = PIXEL * 1.6;
     ctx.beginPath();
@@ -1017,16 +1081,17 @@ function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT
     ctx.lineTo(top[0], top[1]);
     ctx.stroke();
     // Crown: two offset circles (dark body, light top) — a plump tree silhouette.
-    const [rx, ry, rot] = screenCircle(5.5);
-    const crown: GroundPoint = [top[0] + pxUp(3)[0], top[1] + pxUp(3)[1]];
+    const up3 = upAt(3, vq);
+    const crown: GroundPoint = [top[0] + up3[0], top[1] + up3[1]];
     ctx.fillStyle = MEDIAN_TREE.crown;
     ctx.beginPath();
-    ellipseInto(ctx, crown, rx, ry, rot);
+    screenCircleInto(ctx, crown, 5.5, vq);
     ctx.fill();
-    const lit: GroundPoint = [crown[0] + pxUp(1.5)[0] + pxRight(-1)[0], crown[1] + pxUp(1.5)[1] + pxRight(-1)[1]];
+    const up15 = upAt(1.5, vq), left1 = rightAt(-1, vq);
+    const lit: GroundPoint = [crown[0] + up15[0] + left1[0], crown[1] + up15[1] + left1[1]];
     ctx.fillStyle = MEDIAN_TREE.crownLight;
     ctx.beginPath();
-    ellipseInto(ctx, lit, rx * 0.55, ry * 0.55, rot);
+    screenCircleInto(ctx, lit, 5.5 * 0.55, vq);
     ctx.fill();
   }
 
@@ -1036,7 +1101,8 @@ function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT
     ctx.beginPath();
     ellipseInto(ctx, base, LAMP_SHADOW_R, LAMP_SHADOW_R, 0);
     ctx.fill();
-    const head: GroundPoint = [base[0] + pxUp(LAMP_POST_H)[0], base[1] + pxUp(LAMP_POST_H)[1]];
+    const post = upAt(LAMP_POST_H, vq);
+    const head: GroundPoint = [base[0] + post[0], base[1] + post[1]];
     ctx.strokeStyle = SIDEWALK_STYLE.iron;
     ctx.lineWidth = PIXEL;
     ctx.beginPath();
@@ -1044,24 +1110,25 @@ function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT
     ctx.lineTo(head[0], head[1]);
     ctx.stroke();
     for (const side of [-1, 1]) {
-      const arm: GroundPoint = [head[0] + pxRight(side * 2.4)[0], head[1] + pxRight(side * 2.4)[1]];
+      const armAt = rightAt(side * 2.4, vq);
+      const arm: GroundPoint = [head[0] + armAt[0], head[1] + armAt[1]];
       ctx.beginPath();
       ctx.moveTo(head[0], head[1]);
       ctx.lineTo(arm[0], arm[1]);
       ctx.stroke();
-      const corner = (right: number, up: number): GroundPoint => [
-        arm[0] + pxRight(right)[0] + pxUp(up)[0], arm[1] + pxRight(right)[1] + pxUp(up)[1],
-      ];
+      const corner = (right: number, up: number): GroundPoint => {
+        const a = rightAt(right, vq), b = upAt(up, vq);
+        return [arm[0] + a[0] + b[0], arm[1] + a[1] + b[1]];
+      };
       const [bl, br, tr, tl] = [
         corner(-LAMP_HEAD_W / 2, 0), corner(LAMP_HEAD_W / 2, 0),
         corner(LAMP_HEAD_W / 2, LAMP_HEAD_H), corner(-LAMP_HEAD_W / 2, LAMP_HEAD_H),
       ];
       const bulb: GroundPoint = [corner(0, LAMP_HEAD_H / 2)[0], corner(0, LAMP_HEAD_H / 2)[1]];
-      const [grx, gry, grot] = screenCircle(LAMP_GLOW_R);
       ctx.fillStyle = SIDEWALK_STYLE.glow;
       ctx.globalAlpha = SIDEWALK_STYLE.glowAlpha;
       ctx.beginPath();
-      ellipseInto(ctx, bulb, grx, gry, grot);
+      screenCircleInto(ctx, bulb, LAMP_GLOW_R, vq);
       ctx.fill();
       ctx.globalAlpha = 1;
       ctx.fillStyle = SIDEWALK_STYLE.iron;
@@ -1142,6 +1209,13 @@ export function paintRoadTiles(
    * carries no garden art.
    */
   gardens: readonly Decal[] = [],
+  /**
+   * TOWN-4.6 (#682): the view quarter this raster is baked for. The road chunk
+   * is blitted through the view turn, so the passes that draw SCREEN shapes
+   * (the avenue's median trees and lamps) have to bake the inverse turn to
+   * stay upright. 0 = an unturned view, which is byte-identical to before.
+   */
+  vq = 0,
 ): void {
   // Patterns are created against THIS context; a material with no texture
   // falls through to its flat colour, which is a complete look, not a hole.
@@ -1429,10 +1503,11 @@ export function paintRoadTiles(
   // 5. #159 Street lamps, on top of everything else on the ground: see
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.
   //    Markings stay under a lamp, exactly as paint on asphalt does.
-  paintStreetLamps(ctx, tiles, elev);
+  paintStreetLamps(ctx, tiles, elev, vq);
   // 5b. TOWN-4.2 (#678): the median's trees and double lamps — same layer as
-  //     the lamps, still inside this bake (no per-frame anything).
-  paintAvenueFurniture(ctx, tiles, elev);
+  //     the lamps, still inside this bake (no per-frame anything). TOWN-4.6
+  //     passes the view quarter so they stay upright under a turned view.
+  paintAvenueFurniture(ctx, tiles, elev, vq);
 
   // 6. R2 (#266) The decks' kerbs and railings, last of all: a bridge's fence
   //    stands OVER its surface, and over the lamps of any street that happens
@@ -1668,13 +1743,13 @@ export class RoadCache {
       // Ground coordinates → this surface's device pixels. The gutter origin
       // is folded in here; the camera is NOT — that belongs to the blit.
       ctx.setTransform(HW * zoom, HH * zoom, -HW * zoom, HH * zoom, -px * zoom, -py * zoom);
-      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev, diagonalsOn(world), gardens);
+      paintRoadTiles(ctx, tiles, style, townGround, roadDecks, elev, diagonalsOn(world), gardens, vq);
       // …and the track OVER the finished road: that is what a level crossing
       // is, and why the road pass above has to stay exactly as it was.
       paintRailTiles(ctx, rail, this.railDetail, this.railStyle, railDecks, elev);
       // Road-above-rail is the inverse ordering of a level/rail-deck crossing.
       // Repaint only those deck tiles, inside the existing cached raster.
-      if (gradeRoadDecks.length) paintRoadTiles(ctx, gradeRoadDecks, style, [], [], elev, diagonalsOn(world));
+      if (gradeRoadDecks.length) paintRoadTiles(ctx, gradeRoadDecks, style, [], [], elev, diagonalsOn(world), [], vq);
       // Owner (2026-09-28): roads and rails sat bright on shaded hillsides —
       // the terrain shader lights slopes, this layer never did. Shade them the
       // same way, only where road/rail paint already is (source-atop).
