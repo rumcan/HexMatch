@@ -346,9 +346,11 @@ interface BlockSpec {
  *
  * `industries` is the halo rule of BUILD item 2: "keep industries at
  * TOWN_INDUSTRY_SEP from the WHOLE plan, so growth never hits an industry".
- * A block within `PLANNED_INDUSTRY_SEP` tiles of a resource footprint is
- * dropped whole (the lots the grown city would draw on), while streets may
- * still pass closer, exactly as a grid town's streets may.
+ * A block within `industrySep` tiles of a resource footprint is dropped whole
+ * (the lots the grown city would draw on), while streets may still pass
+ * closer, exactly as a grid town's streets may. `industrySep` defaults to
+ * `PLANNED_INDUSTRY_SEP`; placeTowns passes TOWN-4.1's spread of it, so a
+ * large map keeps the same ratio a standard one does.
  */
 export function planTown(
   cx: number, cy: number,
@@ -356,6 +358,7 @@ export function planTown(
   rng: () => number,
   size: PlanSize = "standard",
   industries: readonly IndustryRect[] = [],
+  industrySep: number = PLANNED_INDUSTRY_SEP,
 ): TownPlan | null {
   const knobs = KNOBS[size];
   const pick = <T,>(list: readonly T[]): T => list[Math.floor(rng() * list.length)];
@@ -569,7 +572,7 @@ export function planTown(
         if (!freeAt(u, v)) { ok = false; break; }
       }
     }
-    if (ok && gapToIndustry(spec.u0, spec.v0, spec.u1, spec.v1) < PLANNED_INDUSTRY_SEP) ok = false;
+    if (ok && gapToIndustry(spec.u0, spec.v0, spec.u1, spec.v1) < industrySep) ok = false;
     if (ok) kept.push(spec);
   }
   const idealBlocks = specs.filter((s) => !s.square).length;
