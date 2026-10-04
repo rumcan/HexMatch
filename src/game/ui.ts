@@ -698,6 +698,12 @@ export interface UiHooks {
    */
   onZoom?: (dir: 1 | -1) => void;
   /**
+   * ROT-UI-1: the two rotate keys under the minimap plate. The GAME owns the
+   * yaw (camera.ts `rotateViewStep` — the very function `[` and `]` call); the
+   * chrome only reports the click.
+   */
+  onRotate?: (dir: -1 | 1) => void;
+  /**
    * BUILD-1 (#460): the Undo chip's click. The GAME owns the record, the
    * 8-second window and the refund; the chrome only reports the click (and
    * paints the countdown it is handed through `UiState.undo`).
@@ -838,6 +844,12 @@ export interface OriginalUi {
   el: HTMLElement;
   /** Where the iso canvas layer stack is mounted (the original map canvas slot). */
   mapHost: HTMLElement;
+  /**
+   * ROT-UI-1: show/hide the two rotate keys under the minimap plate. The game
+   * passes three-layer.ts's one predicate (`rotationAvailable()`); nothing else
+   * may unlock them, and the boot state is hidden.
+   */
+  setRotationAvailable: (available: boolean) => void;
   /**
    * M1 (#254): where the minimap mounts — a plate over the map's lower-left
    * corner. `src/iso/minimap.ts` owns everything inside it; the chrome owns
@@ -1012,6 +1024,36 @@ const ICON_MINIMAP =
   + `stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">`
   + `<path d="M12 5l10 7-10 7-10-7z"/><rect x="8.5" y="9.5" width="7" height="5" rx=".5"/></svg>`;
 
+/**
+ * ROT-UI-1: the two rotate keys under the minimap plate — a circular arrow
+ * (anticlockwise = `[`, clockwise = `]`), same stroke-SVG recipe as every HUD
+ * key, so they sit in the plate in currentColor at any size.
+ */
+const ICON_ROTATE_LEFT =
+  `<svg class="hud-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" `
+  + `stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">`
+  + `<path d="M3.4 12a8.6 8.6 0 1 0 2.6-6.2L3.4 8.2"/><path d="M3.2 3.6v4.8h4.8"/></svg>`;
+const ICON_ROTATE_RIGHT =
+  `<svg class="hud-ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" `
+  + `stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">`
+  + `<path d="M20.6 12a8.6 8.6 0 1 1-2.6-6.2l2.6 2.4"/><path d="M20.8 3.6v4.8h-4.8"/></svg>`;
+
+/** ROT-UI-1: the once-per-profile rotate tip, the way B7's battle hint gates
+ *  itself (`takeFirstBattleHint`, src/iso/battle-howto.ts) — pure, so the
+ *  unit test proves "shows once" without a browser. Storage refused (private
+ *  mode) = show it, like a first run. */
+export const ROTATE_HINT_KEY = "hexmatch:rotate-hint";
+export function takeRotateHint(
+  storage: Pick<Storage, "getItem" | "setItem"> | null =
+    typeof localStorage !== "undefined" ? localStorage : null,
+): boolean {
+  try {
+    if (storage?.getItem(ROTATE_HINT_KEY) === "seen") return false;
+    storage?.setItem(ROTATE_HINT_KEY, "seen");
+  } catch { /* storage refused: show it, like a first run */ }
+  return true;
+}
+
 /** Optional per-boot chrome flags (RAIL-05: the railway's four buttons only
  *  exist when the feature flag lets them — the campaign boots without rail
  *  until #179/#181 land). L11 (#226): the Market tab is gone on EVERY loop,
@@ -1174,6 +1216,31 @@ export function createOriginalUi(
   // regime pass (`paintZoom`) can keep its pressed state truthful.
   const minimapHost = h("div", "minimap-dock");
   root.appendChild(minimapHost);
+  // ── ROT-UI-1: the rotate keys, directly under the minimap ───────────────
+  // Two `.icon-btn`s (the HUD's own key recipe) inside the plate, so they can
+  // never overlap the canvas at any viewport — the plate grows to hold them.
+  // Hidden until the game says rotation is available (`setRotationAvailable`,
+  // wired to three-layer.ts's `rotationAvailable()`), so a 2D boot shows no
+  // dead keys. src/iso/minimap.ts inserts its canvas first, so the map stays
+  // above its own chrome.
+  const rotateRow = h("div", "minimap-rotate hidden");
+  const rotateLeftBtn = h("button", "icon-btn rotate-left", ICON_ROTATE_LEFT);
+  rotateLeftBtn.type = "button";
+  rotateLeftBtn.title = "Rotate view left ([)";
+  rotateLeftBtn.setAttribute("aria-label", "Rotate view left ([)");
+  const rotateRightBtn = h("button", "icon-btn rotate-right", ICON_ROTATE_RIGHT);
+  rotateRightBtn.type = "button";
+  rotateRightBtn.title = "Rotate view right (])";
+  rotateRightBtn.setAttribute("aria-label", "Rotate view right (])");
+  const rotateBy = (dir: -1 | 1) => {
+    hooks.onRotate?.(dir);
+    // The first button-turn names the keys — once per profile (shared tip gate).
+    if (takeRotateHint()) toast("Tip: [ and ] rotate too");
+  };
+  rotateLeftBtn.onclick = () => rotateBy(-1);
+  rotateRightBtn.onclick = () => rotateBy(1);
+  rotateRow.append(rotateLeftBtn, rotateRightBtn);
+  minimapHost.appendChild(rotateRow);
   const minimapBtn = h("button", "fab minimap-toggle", ICON_MINIMAP);
   minimapBtn.type = "button";
   minimapBtn.title = "Minimap";
@@ -1186,6 +1253,17 @@ export function createOriginalUi(
     syncMinimapKey();
   };
   syncMinimapKey();
+  /**
+   * ROT-UI-1: the ONE way the rotate keys appear — the game passes
+   * `rotationAvailable()` from three-layer.ts. Hidden (the boot state) they are
+   * `display: none`, so they are out of the tab order and off the pointer path
+   * as well.
+   */
+  const setRotationAvailable = (available: boolean): void => {
+    rotateRow.classList.toggle("hidden", !available);
+    rotateRow.setAttribute("aria-hidden", String(!available));
+  };
+  setRotationAvailable(false);
 
   // ── MUSIC-1 (#377): the mini radio's dock ────────────────────────────────
   // The chrome owns the PLACE — the very top-right corner, one lane under the
@@ -6180,6 +6258,7 @@ export function createOriginalUi(
     el: root,
     mapHost,
     minimapHost,
+    setRotationAvailable,
     radioHost,
     renderBoard,
     boardFinale,

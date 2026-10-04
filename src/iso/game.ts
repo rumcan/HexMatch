@@ -107,7 +107,7 @@ import {
 } from "./protest";
 import { loadGroundTextures } from "./ground";
 import {
-  createCamera, tickViewYaw, getViewYaw, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
+  createCamera, tickViewYaw, getViewYaw, rotateViewStep, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
   bootZoomFor, tapSlop, HH, HW, visibleTileRange, screenToTileAt,
   type Camera, type GestureState,
@@ -126,7 +126,7 @@ import {
 } from "./level-ground";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
 import { IsoRenderer, composeRouteOverlay, paintClaimFlags, paintLaneInvite, type ClaimFlagView, type LaneInviteView, type World, type RouteOverlayPath, setHideExtra, setHideVehicle } from "./renderer";
-import { mountThreeLayer, threeWanted, type ThreeLayer } from "./three-layer";
+import { mountThreeLayer, rotationAvailable, threeWanted, type ThreeLayer } from "./three-layer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
 import { BRIDGE_REFUSAL_TEXT } from "./bridges";
@@ -2272,6 +2272,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       stopCameraMotion();
       commitCamera(zoomStepAt(cam, dir, cam.vw / 2, cam.vh / 2));
     },
+    // ROT-UI-1: the rotate keys under the minimap plate. Same door the `[` and
+    // `]` keys open (`rotateViewStep` in camera.ts) — the loop's tickViewYaw
+    // eases the turn and re-pivots the camera, so nothing more to do here.
+    onRotate: (dir) => rotateViewStep(dir),
     onSwap: (r1, c1, r2, c2) => {
       // MP-05: guests never mutate their local board. Route the action to the
       // host, where the guest seat's board is authoritative, just like map
@@ -2925,6 +2929,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   let lastThreeItems: { sprite: string; tx: number; ty: number; w: number; h: number; lift: number }[] = [];   // __iso.threeItems
   const RAIL_3D = /^(platform|train-depot)_(ne|se|sw|nw)$/;
   const threeLayer: ThreeLayer | null = threeWanted() ? mountThreeLayer(ui.mapHost, canvases.overlay) : null;
+  // ROT-UI-1: the rotate keys under the minimap exist only where the view can
+  // actually turn — three-layer.ts's one predicate (false without ?three=1, and
+  // false when the WebGL layer failed to mount).
+  ui.setRotationAvailable(rotationAvailable());
   // terrain elevation in px at a ground point, for the 3D vehicles (depth.ts E3: moving sprites read the surface at their tile centre)
   const threeLift = (u: number, v: number): number => (elevationActive(grid) ? surfaceHeight(grid, u, v) * LEVEL_PX : 0);
   if (threeLayer) {

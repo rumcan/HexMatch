@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { HW, HH } from "../game/config";
-import { getViewYaw, getViewYawTarget, setViewYawTarget } from "./camera";
+import { getViewYaw, getViewYawTarget, rotateViewStep, setViewYawTarget } from "./camera";
 
 // LIVE-3D stage 3 (Meshy): tools/models/build-models.mjs bakes each model square to the grid exactly as the
 // sprite renderer did and writes public/models/manifest.json: per model the sprite's front `turn` (quarter
@@ -102,6 +102,15 @@ const DEPTH = 2048;
 
 export const threeWanted = (s: string = typeof location !== "undefined" ? location.search : ""): boolean =>
   new URLSearchParams(s).get("three") === "1";
+
+/**
+ * ROT-UI-1: the ONE predicate the HUD's rotate buttons show/hide on — true
+ * while the live-3D layer is actually mounted. `?three=1` alone is not enough:
+ * a WebGL failure (mountThreeLayer → null) leaves the view unturnable, so the
+ * buttons must stay away too.
+ */
+let mounted = false;
+export const rotationAvailable = (): boolean => mounted;
 
 export interface ThreeLayer {
   canvas: HTMLCanvasElement;
@@ -406,8 +415,8 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     if (fixedYaw != null || e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
-    if (e.key === "[") setViewYawTarget(getViewYawTarget() - Math.PI / 2);
-    else if (e.key === "]") setViewYawTarget(getViewYawTarget() + Math.PI / 2);
+    if (e.key === "[") rotateViewStep(-1);
+    else if (e.key === "]") rotateViewStep(1);
   };
   window.addEventListener("keydown", onKey);
 
@@ -462,11 +471,13 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   const api: ThreeLayer = {
     canvas, setItems, update, stats, drawsSprite, drawsVehicle, updateVehicles, onModels: null,
     dispose() {
+      mounted = false;
       cancelAnimationFrame(rafId);
       window.clearTimeout(notifyTimer);
       window.removeEventListener("keydown", onKey);
       renderer.dispose(); canvas.remove();
     },
   };
+  mounted = true;
   return api;
 }

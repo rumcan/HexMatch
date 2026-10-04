@@ -44,6 +44,13 @@ export const getViewYaw = (): number => yaw;
 export const getViewYawTarget = (): number => yawTarget;
 /** Ask for a yaw (radians); tickViewYaw eases there. */
 export const setViewYawTarget = (a: number): void => { yawTarget = a; };
+/**
+ * ROT-UI-1: one rotate step — the HUD's two buttons and the `[` / `]` keys both
+ * call this, so the on-screen control and the keyboard cannot drift apart.
+ * `dir` is −1 for anticlockwise (`[`) and +1 for clockwise (`]`); the ease is
+ * `tickViewYaw`'s, and the view settles on an exact quarter turn.
+ */
+export const rotateViewStep = (dir: -1 | 1): void => { yawTarget += (dir * Math.PI) / 2; };
 const applyYaw = (a: number): void => { yaw = a; yawC = Math.cos(a); yawS = Math.sin(a); };
 /** World-pixel point -> its image under the view turn (default: the current yaw). */
 export function turnWorld(wx: number, wy: number, a = yaw): [number, number] {
@@ -165,12 +172,16 @@ export const tapSlop = (pointerType: string, dpr: number): number =>
   (pointerType === "mouse" ? 4 : Math.round(10 * dpr));
 
 // ── panning + clamping ────────────────────────────────────────────────────
-/** Axis-aligned bounds of the whole map diamond in world space. */
-export function mapWorldBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
+/**
+ * Axis-aligned bounds of the whole map diamond in world space. `a` defaults to
+ * the live view yaw; ROT-UI-1 passes 0 for the map's own (unturned) box — the
+ * stable size the minimap's fit must keep at every yaw.
+ */
+export function mapWorldBounds(a = yaw): { minX: number; minY: number; maxX: number; maxY: number } {
   // corners: (0,0) top, (MAP_W,0) right, (MAP_W,MAP_H) bottom, (0,MAP_H) left
-  if (yaw !== 0) {   // LIVE-3D: the turned diamond's bounding box
+  if (a !== 0) {   // LIVE-3D: the turned diamond's bounding box
     const pts = [[0, 0], [MAP_W * HW, MAP_W * HH], [(MAP_W - MAP_H) * HW, (MAP_W + MAP_H) * HH], [-MAP_H * HW, MAP_H * HH]]
-      .map(([x, y]) => turnWorld(x, y));
+      .map(([x, y]) => turnWorld(x, y, a));
     return {
       minX: Math.min(...pts.map((p) => p[0])), maxX: Math.max(...pts.map((p) => p[0])),
       minY: Math.min(...pts.map((p) => p[1])), maxY: Math.max(...pts.map((p) => p[1])),

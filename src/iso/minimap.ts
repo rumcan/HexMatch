@@ -36,6 +36,16 @@
 // fitted into the canvas: mx = ox + wx·s, my = oy + wy·s. Every spatial rule
 // is a pure function below, pinned in tests/unit/iso-minimap.test.ts.
 //
+// ROT-UI-1: the plate is TURNED with the view (`?three=1` camera rotation) —
+// the map's up is the screen's up. Plate space is the turned world: a world
+// point is turned by `turnWorld` (camera.ts) before the fit, so the tile
+// image, the tiles' own points, the markers and map-north all turn together,
+// and a click inverse-turns back to a world point before the camera write.
+// The FIT is yaw-independent (`minimapLayout` keeps the scale of the map's
+// unturned bounds and centres on the turned bounds' own middle), so turning
+// the view can never zoom the plate — only the island's orientation changes.
+// At yaw 0 every rule below is the unturned one, bit for bit.
+//
 // ── markers: the hook #256 hangs sabotage events on ─────────────────────
 //   minimap.setMarkers([{ id: "protest:3", tx, ty, color, progress: 0.4,
 //                         kind: "protest", label: "Protest — 0:42" }]);
@@ -50,7 +60,7 @@
 // With `onMarker` unset a press on a marker pans like any other press.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H, tileToScreen } from "../game/config";
-import { type Camera, centerOnWorld, mapWorldBounds, screenToWorld } from "./camera";
+import { getViewYaw, turnWorld, type Camera, centerOnWorld, mapWorldBounds } from "./camera";
 import { GRASS, ROUGH, SAND, WATER, type Grid } from "./grid";
 import { FACTORY_FOOTPRINT } from "./config";
 import { PUBLIC_OWNER, plantFootprintTiles, type Track } from "./track";
@@ -168,12 +178,23 @@ export const MINIMAP_PAD = 3;
 /** CSS-px size of the canvas and the world → minimap fit (`s` > 0 when drawable). */
 export interface MinimapLayout { w: number; h: number; s: number; ox: number; oy: number }
 
-/** Fit the whole island (its 2:1 world bounds) into a `w`×`h` canvas, centred. */
-export function minimapLayout(w: number, h: number, pad = MINIMAP_PAD): MinimapLayout {
-  const b = mapWorldBounds();
-  const bw = b.maxX - b.minX, bh = b.maxY - b.minY;
-  const s = Math.max(0, Math.min((w - 2 * pad) / bw, (h - 2 * pad) / bh));
-  return { w, h, s, ox: (w - bw * s) / 2 - b.minX * s, oy: (h - bh * s) / 2 - b.minY * s };
+/**
+ * Fit the whole island (its 2:1 world bounds) into a `w`×`h` canvas, centred.
+ *
+ * ROT-UI-1: the SCALE is the yaw-0 fit and stays put at every yaw — turning
+ * the view must not zoom the plate (mid-turn the turned diamond's bounding box
+ * is smaller, and fitting THAT would pulse). The OFFSET centres the map as it
+ * is currently turned, so the island keeps the middle of the plate at every
+ * angle and the tips reach the pad at the quarter turns (where the turned
+ * bounding box equals the unturned one).
+ */
+export function minimapLayout(w: number, h: number, pad = MINIMAP_PAD, yaw = getViewYaw()): MinimapLayout {
+  const b = mapWorldBounds(yaw);              // the turned diamond's bounding box
+  const b0 = mapWorldBounds(0);               // the stable fit: the unturned box
+  const bw0 = b0.maxX - b0.minX, bh0 = b0.maxY - b0.minY;
+  const s = Math.max(0, Math.min((w - 2 * pad) / bw0, (h - 2 * pad) / bh0));
+  // centre on the turned box's own middle: at yaw 0 this is the historic formula
+  return { w, h, s, ox: w / 2 - ((b.minX + b.maxX) / 2) * s, oy: h / 2 - ((b.minY + b.maxY) / 2) * s };
 }
 
 export const worldToMinimap = (l: MinimapLayout, wx: number, wy: number): [number, number] =>
@@ -184,49 +205,81 @@ export const minimapToWorld = (l: MinimapLayout, mx: number, my: number): [numbe
 
 /**
  * Tile coordinates → minimap point. Like `tileToScreen` this is the TOP vertex
- * of tile (tx,ty); pass `tx + 0.5, ty + 0.5` for a tile's middle.
+ * of tile (tx,ty); pass `tx + 0.5, ty + 0.5` for a tile's middle. ROT-UI-1: the
+ * world point is turned by the view yaw first, so the tile lands where the
+ * turned plate draws it.
  */
-export function tileToMinimap(l: MinimapLayout, tx: number, ty: number): [number, number] {
+export function tileToMinimap(l: MinimapLayout, tx: number, ty: number, yaw = getViewYaw()): [number, number] {
   const [wx, wy] = tileToScreen(tx, ty);
-  return worldToMinimap(l, wx, wy);
+  const [tx2, ty2] = turnWorld(wx, wy, yaw);
+  return worldToMinimap(l, tx2, ty2);
 }
 
 /** Minimap point → FRACTIONAL tile coordinates (floor them for the tile). */
-export function minimapToTile(l: MinimapLayout, mx: number, my: number): [number, number] {
-  const [wx, wy] = minimapToWorld(l, mx, my);
+export function minimapToTile(l: MinimapLayout, mx: number, my: number, yaw = getViewYaw()): [number, number] {
+  const [px, py] = minimapToWorld(l, mx, my);
+  const [wx, wy] = turnWorld(px, py, -yaw);   // plate space is turned world: unturn first
   return [(wx / HW + wy / HH) / 2, (wy / HH - wx / HW) / 2];
 }
 
 /**
  * The canvas transform that draws the one-pixel-per-tile image as the iso
  * diamond: image point (u, v) → backing px `bs · tileToMinimap(u, v)`. It is
- * `tileToScreen` (linear) composed with the minimap fit, as the six numbers
- * `setTransform(a, b, c, d, e, f)` takes.
+ * `tileToScreen` (linear) composed with the view turn and the minimap fit, as
+ * the six numbers `setTransform(a, b, c, d, e, f)` takes. At yaw 0 it is the
+ * historic transform exactly; at a quarter turn the browser rotates the image
+ * with it, so no second draw path is needed.
  */
-export function tileImageTransform(l: MinimapLayout, bs: number): [number, number, number, number, number, number] {
+export function tileImageTransform(
+  l: MinimapLayout, bs: number, yaw = getViewYaw(),
+): [number, number, number, number, number, number] {
   const k = l.s * bs;
-  return [HW * k, HH * k, -HW * k, HH * k, l.ox * bs, l.oy * bs];
+  if (yaw === 0) return [HW * k, HH * k, -HW * k, HH * k, l.ox * bs, l.oy * bs];
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  // turnWorld ∘ tileToScreen, in the six numbers (HW = 2·HH):
+  //   u: (c·HW + 2s·HH)u + (−c·HW + 2s·HH)v   v: (−s·HW/2 + c·HH)u + (s·HW/2 + c·HH)v
+  return [HW * k * (c + s), HH * k * (c - s), HW * k * (s - c), HH * k * (c + s), l.ox * bs, l.oy * bs];
 }
 
 export interface MinimapRect { x: number; y: number; w: number; h: number }
 
 /** The main canvas' view, as a rectangle on the minimap. */
 export function viewportRect(l: MinimapLayout, cam: Camera): MinimapRect {
-  // LIVE-3D: a turned view is a turned quad on the (unturned) map; its bounding box is the rectangle drawn.
-  const q = [screenToWorld(cam, 0, 0), screenToWorld(cam, cam.vw, 0), screenToWorld(cam, 0, cam.vh), screenToWorld(cam, cam.vw, cam.vh)];
-  const x0 = Math.min(...q.map((c) => c[0])), x1 = Math.max(...q.map((c) => c[0]));
-  const y0 = Math.min(...q.map((c) => c[1])), y1 = Math.max(...q.map((c) => c[1]));
-  const [x, y] = worldToMinimap(l, x0, y0);
-  return { x, y, w: (x1 - x0) * l.s, h: (y1 - y0) * l.s };
+  // ROT-UI-1: screen = turned world · zoom + camera offset, and the plate IS the
+  // turned world, so the view is the plain viewport rectangle divided by zoom —
+  // exact at every yaw (the old code bbox'd the turned quad's four corners).
+  const [x, y] = worldToMinimap(l, -cam.x / cam.zoom, -cam.y / cam.zoom);
+  return { x, y, w: (cam.vw / cam.zoom) * l.s, h: (cam.vh / cam.zoom) * l.s };
 }
 
 export const rectContains = (r: MinimapRect, mx: number, my: number, slop = 0): boolean =>
   mx >= r.x - slop && mx <= r.x + r.w + slop && my >= r.y - slop && my <= r.y + r.h + slop;
 
 /** The camera that centres the main view on minimap point (mx, my) — clamped. */
-export function cameraAt(cam: Camera, l: MinimapLayout, mx: number, my: number): Camera {
-  const [wx, wy] = minimapToWorld(l, mx, my);
+export function cameraAt(cam: Camera, l: MinimapLayout, mx: number, my: number, yaw = getViewYaw()): Camera {
+  const [px, py] = minimapToWorld(l, mx, my);
+  const [wx, wy] = turnWorld(px, py, -yaw);   // unturn the click: centerOnWorld turns it back
   return centerOnWorld(cam, wx, wy);
+}
+
+/**
+ * ROT-UI-1: where MAP NORTH points in plate space (unit vector, y down). North
+ * is the map's own top — the world −y direction the plate has always carried —
+ * turned with the view: up at yaw 0, left at 90°, down at 180°, right at 270°.
+ * The world turn is anisotropic (the iso lattice), so the vector is the image
+ * of (0, −1) under `turnWorld`, normalised.
+ */
+export function northDir(yaw = getViewYaw()): [number, number] {
+  const [x, y] = turnWorld(0, -1, yaw);
+  const d = Math.hypot(x, y) || 1;
+  return [x / d, y / d];
+}
+
+/** The north badge's centre, plate px: inside the rim, on the north side. */
+export function northBadgeAt(l: MinimapLayout, yaw = getViewYaw()): [number, number] {
+  const [dx, dy] = northDir(yaw);
+  const r = Math.max(6, Math.min(l.w, l.h) / 2 - 10);
+  return [l.w / 2 + dx * r, l.h / 2 + dy * r];
 }
 
 /** "Go there": the camera centred on the MIDDLE of tile (tx,ty) — clamped. */
@@ -338,9 +391,15 @@ export interface MinimapDirty { terrain: boolean; network: boolean; view: boolea
 export const networkKey = (netVersion: number, railRevision: number): string =>
   `${netVersion}|${railRevision}`;
 
-/** `size` is anything that changes when the canvas' box or backing store does. */
-export const viewKey = (cam: Camera, size: string, markers: string): string =>
-  `${cam.x},${cam.y},${cam.zoom},${cam.vw},${cam.vh}|${size}|${markers}`;
+/**
+ * `size` is anything that changes when the canvas' box or backing store does.
+ * ROT-UI-1: the view yaw is part of the key — a turn (and only a turn) redraws
+ * the plate, at the camera's own ease (a settled view keeps the same key and
+ * costs one string build per frame). Quantised to 1e-3 rad, the same tick the
+ * ease snaps on.
+ */
+export const viewKey = (cam: Camera, size: string, markers: string, yaw = getViewYaw()): string =>
+  `${cam.x},${cam.y},${cam.zoom},${cam.vw},${cam.vh}|${size}|${markers}|y${Math.round(yaw * 1000)}`;
 
 /**
  * The redraw gate. `next` says which layers these keys dirty and records them
@@ -643,6 +702,7 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
   let terrain: MinimapTerrain | null = null;
   let netBuf: Uint32Array | null = null;
   let layout: MinimapLayout | null = null;
+  let layoutYaw = 0;        // the view yaw the current layout was fitted at
   let bs = 0;               // backing px per CSS px
   let cssW = 0, cssH = 0;   // the canvas' laid-out CSS box
 
@@ -679,7 +739,10 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
     c.addEventListener("lostpointercapture", onUp);
     c.addEventListener("pointerleave", onLeave);
     c.addEventListener("contextmenu", onContext);
-    host.appendChild(c);
+    // ROT-UI-1: the canvas stays the plate's FIRST child — the HUD's chrome row
+    // (the rotate keys) is appended to the plate before this canvas exists, and
+    // the map must sit above it.
+    host.insertBefore(c, host.firstChild);
     canvas = c;
     if (ro) ro.observe(c);
     else { cssW = c.clientWidth; cssH = c.clientHeight; }
@@ -695,11 +758,16 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
     // line instead of dropping every other tile.
     const nbs = Math.min(3, Math.max(2, Math.ceil(dpr)));
     const bw = Math.round(cssW * nbs), bh = Math.round(cssH * nbs);
-    if (bw !== c.width || bh !== c.height || nbs !== bs || !layout || layout.w !== cssW || layout.h !== cssH) {
+    // ROT-UI-1: the layout is also re-fitted when the view turns — the scale is
+    // yaw-independent, but the offset re-centres the turned island (a few adds,
+    // only on the frames the yaw actually moves).
+    const yawNow = getViewYaw();
+    if (bw !== c.width || bh !== c.height || nbs !== bs || !layout || layout.w !== cssW || layout.h !== cssH || layoutYaw !== yawNow) {
       c.width = bw;
       c.height = bh;
       bs = nbs;
-      layout = minimapLayout(cssW, cssH);
+      layout = minimapLayout(cssW, cssH, MINIMAP_PAD, yawNow);
+      layoutYaw = yawNow;
     }
     if (!ctx) ctx = c.getContext("2d");
     if (!tiles) {
@@ -761,6 +829,27 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
     g.fill();
   }
 
+  /**
+   * ROT-UI-1: the north badge — which way the map's own north lies now that the
+   * plate turns with the view (up at yaw 0, left at 90°, …). Drawn on the rim
+   * the compass points to, so it never covers the middle of the island.
+   */
+  function drawNorth(g: CanvasRenderingContext2D, l: MinimapLayout): void {
+    const [x, y] = northBadgeAt(l);
+    g.beginPath();
+    g.arc(x, y, 6.5, 0, Math.PI * 2);
+    g.fillStyle = "rgba(10, 12, 13, 0.74)";
+    g.fill();
+    g.strokeStyle = pal.viewport;
+    g.lineWidth = 1;
+    g.stroke();
+    g.fillStyle = pal.viewport;
+    g.font = "700 8px ui-monospace, monospace";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("N", x, y + 0.5);
+  }
+
   function drawView(c: HTMLCanvasElement, cam: Camera): void {
     const g = ctx, l = layout;
     if (!g || !l) return;
@@ -788,6 +877,7 @@ export function createMinimap(host: HTMLElement, opts: MinimapOptions): Minimap 
     g.lineWidth = 1.25;
     g.strokeRect(r.x, r.y, r.w, r.h);
     for (const m of markers) drawMarker(g, l, m);
+    drawNorth(g, l);
     stats.view++;
   }
 
