@@ -13,6 +13,10 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { fillCoastalHoles } from "./coastline";
 import { deriveTownNames } from "./town-names";
+import {
+  PLANNED_INDUSTRY_SEP, planTown, planVillage, plannedTownSep,
+  type IndustryRect, type PlanSize, type TownPlan,
+} from "./town-plan";
 // TOWN-2 (#653): the town street-plan option's NAME. Type-only: match-settings
 // is the protocol's import-free leaf, so this pulls nothing game-side in.
 import type { TownLayout, MapSizeName } from "../net/match-settings";
@@ -71,6 +75,20 @@ export interface Town {
    * A pure function of the houses plus the terrain/occupancy at placement
    * time, so the map stays deterministic under the seed. */
   roads: [number, number][];
+  /**
+   * TOWN-4.3 (#679): the master plan of a `layout: "planned"` town — the
+   * avenue, the square, every street and every lot of the full city, decided
+   * at generation. Its `houses`/`roads` above are the district-0 slices of
+   * it that the town OWNS from tier 0 (plus the avenue, its spine); the
+   * further districts are reserved but stay free land until TOWN-4.4's
+   * reveal draws them, exactly as L17's grown ring does.
+   *
+   * Absent on a grid or organic town — and on every save written before this
+   * ticket — so every reader that does not know about plans is unaffected,
+   * and the map stays a pure function of its seed (the plan is regenerated,
+   * never stored on the wire).
+   */
+  plan?: TownPlan;
   /**
    * L17 (#245): the town's VISUAL tier — how far it has grown on the map.
    *
@@ -2412,7 +2430,10 @@ export function grownTownHouses(
   t: Town, grid: Grid, rings: number,
   blocked?: (tx: number, ty: number) => boolean,
 ): [number, number][] {
-  if (rings <= 0 || !grid.towns.includes(t)) return [];
+  // TOWN-4.3 (#679): L17's grown ring is not a planned town's growth — that
+  // arrives with TOWN-4.4's district-by-district reveal of `t.plan`. Drawing
+  // the ring here would scatter houses over ground the plan has not zoned.
+  if (rings <= 0 || !grid.towns.includes(t) || t.plan) return [];
   const own = new Set<number>();
   let extent = 0;
   const note = (tx: number, ty: number) => {
@@ -3297,6 +3318,18 @@ export function publicRoadTiles(
   const out: [number, number][] = [];
   const added = new Set<number>();
   const highwaySet = new Set<number>();
+  // TOWN-4.3 (#679): a planned town's avenue ends are its front doors (BUILD
+  // item 3) — "route the inter-town highways to the two avenue termini (pick
+  // the terminus nearer each neighbour)". A component that holds a plan's
+  // termini is linked TO a terminus rather than to whichever of its tiles the
+  // flood reaches first, so the highway enters the town at an avenue end. A
+  // map with no planned towns has no doors and keeps the historical targets,
+  // so every existing seed's highways stay byte-identical.
+  const doors = new Set<number>();
+  for (const t of towns) {
+    if (!t.plan) continue;
+    for (const [dx, dy] of t.plan.termini) doors.add(idx(dx, dy));
+  }
   const grow = (root: number): void => {
     const inTree = [root];
     const rest = comps.map((_, i) => i).filter((i) => i !== root);
@@ -3307,7 +3340,12 @@ export function publicRoadTiles(
       let bestLen = Infinity;
       for (let i = 0; i < rest.length; i++) {
         const compIdx = rest[i];
-        const path = linkFromNetwork(networkSet, comps[compIdx], highwaySet, paved);
+        let targets = comps[compIdx];
+        if (doors.size) {
+          const own = targets.filter((id) => doors.has(id));
+          if (own.length) targets = own;
+        }
+        const path = linkFromNetwork(networkSet, targets, highwaySet, paved);
         if (!path.length) continue;
         // path length is number of tiles; shorter is better, tie-break by comp index
         const len = path.length;
@@ -3512,6 +3550,27 @@ function placeTowns(
   };
 
   const wantTowns = preset?.towns ?? want;
+  // TOWN-4.3 (#679): `layout: "planned"` replaces the street lattice with a
+  // master plan. Everything below reads `planned` once and leaves the grid and
+  // organic paths untouched — their maps stay byte-identical.
+  const planned = gen.layout === "planned";
+  // TOWN-4.3 (#679) + TOWN-4.1 (#677): the plan is sized by the map it is
+  // drawn on — the standard 144 map draws the 22–28 tile avenue and the 4×4
+  // square, the large 216 one the 32–40 tile avenue and the 4×6 square
+  // (`plannedTownSep` follows the same knob).
+  const planSize: PlanSize = MAP_SIZES.large === MAP_W ? "large" : "standard";
+  // The industry halo is measured against the WHOLE plan (BUILD item 2), so
+  // `planTown` needs the footprints in its own shape — and TOWN-4.1's spread
+  // of the same TOWN_INDUSTRY_SEP a grid town keeps around its houses.
+  const industryRects: IndustryRect[] = planned
+    ? industries.map((i) => ({ tx: i.tx, ty: i.ty, w: i.w, h: i.h }))
+    : [];
+  const plannedIndustrySep = spread(PLANNED_INDUSTRY_SEP);
+  // Every tile an earlier plan already reserved (plus its avenue). The
+  // reserved bands are NOT stamped in `occ` — TOWN-4.4 reveals them — so a
+  // second plan's free-ground test cannot see them, and two plans could
+  // interleave; the sep ladder is the target, this set is the hard floor.
+  const planTaken = new Set<number>();
   // TOWN-2 (#653): the organic extras of the town that finally places —
   // reset per town, so a rejected candidate's carving never leaks into the
   // next one's `Town` record.
@@ -3529,7 +3588,16 @@ function placeTowns(
     // centre inside its own quadrant, so the towns spread over the islands
     // instead of clustering on one. Off maps sample the whole map, as ever.
     const region = gen.regions?.length ? gen.regions[t % gen.regions.length] : null;
-    for (const sep of [townTownSep, 6, 4, 2]) {
+    // TOWN-4.3 (#679): a planned town keeps `plannedTownSep` (44 standard, 64
+    // large — the epic's own numbers, not TOWN-4.1's spread of the grid's 28:
+    // a plan is up to 40 tiles long, so 28 would let two plans overlap). The
+    // fallback rung is 0 because the hard floor is the plan's own free-ground
+    // test plus `planTaken` (no two plans share a tile): a large map that
+    // cannot place four plans at the 64 target inside the attempt budget
+    // still places four towns that interlock instead of dropping one (seen on
+    // seeds 1 and 42). On the standard seeds the target rung places all four
+    // towns outright.
+    for (const sep of planned ? [plannedTownSep(planSize), 0] : [townTownSep, 6, 4, 2]) {
       for (let attempt = 0; attempt < 120 && !placed; attempt++) {
         const cx = townCentre
           ? Math.round(townCentre[0] + (rng() * 2 - 1) * townJitter)
@@ -3544,6 +3612,49 @@ function placeTowns(
         if (!tileFree(cx, cy)) continue;
         if (industrySep(cx, cy) < townIndustrySep) continue;
         if (sep > 0 && townSep(cx, cy) < sep) continue;
+
+        if (planned) {
+          // TOWN-4.3 (#679): draw the master plan on this centre — or reject
+          // it and let the next candidate try. `planTown` reads the CURRENT
+          // occupancy, so a plan never overlaps an industry or an earlier
+          // town, and it returns null when the ground cannot hold a plan
+          // worth having (no avenue run, a cut square, < 6 blocks, > 40% of
+          // the ideal blocks lost).
+          const plan = planTown(cx, cy, terrain, occ, rng, planSize, industryRects, plannedIndustrySep);
+          if (!plan) continue;
+          let clash = false;
+          for (const [x, y] of plan.reserved) if (planTaken.has(idx(x, y))) { clash = true; break; }
+          if (!clash) for (const [x, y] of plan.avenueTiles) if (planTaken.has(idx(x, y))) { clash = true; break; }
+          if (clash) continue;
+          // BUILD item 2: the town OWNS district 0 plus the avenue; the rest
+          // of the plan is reserved (TOWN-4.4 reveals it) and stays free land.
+          const village = planVillage(plan);
+          if (village.houses.length < TOWN_HOUSES_MIN) continue;
+          const blocked = new Set<number>();
+          for (const [hx, hy] of village.houses) blocked.add(idx(hx, hy));
+          for (const [rx, ry] of village.roads) blocked.add(idx(rx, ry));
+          // The square is town ground too (the commit stamps it TOWN_OCC):
+          // leaving it out of `blocked` made the plaza a "free" pocket walled
+          // in by its own blocks, and every plan was rejected as an enclave.
+          for (const [sx, sy] of village.square) blocked.add(idx(sx, sy));
+          if (connected) {
+            if (!allIndustriesReachable(blocked)) continue;
+            if (!noEnclaves(blocked)) continue;
+          }
+          // Commit: houses, streets and the square are the town's ground (a
+          // player may not build on them); the reserved districts are not.
+          for (const [hx, hy] of village.houses) occ[idx(hx, hy)] = TOWN_OCC;
+          for (const [rx, ry] of village.roads) occ[idx(rx, ry)] = TOWN_OCC;
+          for (const [sx, sy] of village.square) occ[idx(sx, sy)] = TOWN_OCC;
+          for (const [rx, ry] of plan.reserved) planTaken.add(idx(rx, ry));
+          for (const [ax, ay] of plan.avenueTiles) planTaken.add(idx(ax, ay));
+          towns.push({
+            id: towns.length, tx: cx, ty: cy,
+            houses: village.houses, roads: village.roads, plan,
+          });
+          placed = true;
+          break;
+        }
 
         // TOWN-GRID: lay the street grid and its house blocks around the
         // centre. Computed against the CURRENT occupancy, so neither houses
@@ -4018,9 +4129,11 @@ export function generateMap(seed: number, opts: MapGenOptions = {}): Grid {
       townCount: opts.townCount,
       connected: opts.archipelago === true ? false : undefined,
       regions: opts.archipelago === true ? archipelagoRegions() : undefined,
-      // TOWN-2 (#653): the street plan rides the map options. Absent ("grid")
-      // regenerates every pre-TOWN-2 seed byte for byte.
-      layout: opts.layout === "organic" ? "organic" : "grid",
+      // TOWN-2 (#653) / TOWN-4.3 (#679): the street plan rides the map
+      // options. Absent ("grid") regenerates every pre-TOWN-2 seed byte for
+      // byte, and an undefined/unknown name reads as "grid" — so a "planned"
+      // map is the only one whose stream moves.
+      layout: opts.layout === "planned" ? "planned" : opts.layout === "organic" ? "organic" : "grid",
     });
   // TOWN-3 (#561): name the towns from the seed alone, on a private RNG
   // stream (see `town-names.ts`) — drawn AFTER placement so the number and

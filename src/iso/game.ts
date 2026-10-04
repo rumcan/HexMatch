@@ -150,7 +150,7 @@ import {
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads, seedTownDiagonals,
-  seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
+  seedTownAvenues, seedPublicRoads, isPublicRoad, isUpgradedRoad, tileCost, structureTiles,
   dirtyTiles, plantFootprintTiles, buildTile, PUBLIC_OWNER, type RoadTierKey,
   highwayRouteTiers, planInterchange, buildInterchange, tierTileCost, setRoadTier, ROAD_TIER, ROAD_TIER_KEYS, addCost, roadDragRefusalText,
   type Track, type TrackKind, type Purse, type DragPreview,
@@ -1291,6 +1291,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   if (mapOptions.rings) {
     for (const town of grid.towns) for (const [x, y] of town.roads) setRoadTier(track, x, y, ROAD_TIER.street);
   }
+  // TOWN-4.3 (#679): a planned town's AVENUE goes on after the streets (and
+  // after the street tier above): it is laid at full length from tier 0 — the
+  // town's spine — and `stampAvenue` in track.ts is the single place that
+  // learns about the TOWN-4.2 avenue tier when it lands. A no-op on grid and
+  // organic maps, which carry no plan.
+  seedTownAvenues(track, grid);
   // PP-13: the inter-town highways go on next, stamped PUBLIC_OWNER — every
   // player's network may route over them, which is what makes them worth
   // having on the map at all. Order matters: a highway tile a town already
