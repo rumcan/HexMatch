@@ -3037,29 +3037,15 @@ function townBuildingsShapes(
  * asked for trees on exactly those lots. The pick is per tile and pure, so a
  * re-sync, another client and a restored save all draw the same thing.
  */
-const CITY_HOME_VARIANTS = ["town_small_house_1x1_1", "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_cottage_old_small_a", "town_cottage_old_small"] as const;
 function lotArtAt(
   x: number, y: number,
   footprintOf: (sprite: string) => [number, number],
   known?: (sprite: string) => boolean,
-  grown = false,
 ): string {
-  // CITY-HOMES (owner, 2026-10-03): a grown city (tier 2+) lost its ordinary houses to the big blocks and sat in empty
-  // lawns. A free lot there is a normal 1x1 home four times in five (the rest stay trees), by the same per-tile hash.
-  if (grown && hashPick(x + 0x11, y + 0x31, 100) < 80) {
-    const homes = CITY_HOME_VARIANTS.filter((v) => {
-      if (known && !known(v)) return false;
-      try { const [fw, fh] = footprintOf(v); return fw === 1 && fh === 1; } catch { return false; }
-    });
-    if (homes.length) return homes[hashPick(x, y, homes.length)];
-  }
   const trees = townTreePool(footprintOf, known);
   const parks = parkPool(footprintOf);
   const roll = hashPick(x + 0x5b, y + 0x27, 100);
-  // CITY-TREES (owner round 2): an open lot inside a town is ALL trees now (was 55% trees, 15% parks, 30% lawn), so
-  // no bare grass patch is left inside the street grid. Same per-tile hash, same draw-item road, same tile footprint:
-  // the count of draw items does not change (a lot already drew one lawn/park/tree sprite).
-  if (trees.length) return trees[hashPick(x, y, trees.length)];
+  if (trees.length && roll < 55) return trees[hashPick(x, y, trees.length)];
   if (roll < 70) return parks[hashPick(x + 7, y + 13, parks.length)];
   return buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : parks[0];
 }
@@ -3874,9 +3860,16 @@ function townBuildingsPlanned(
     // inside — where the zone has that art and this lot is one of the ones
     // that take it (`PLANNED_BLOCK_SHARE`).
     const [take, of] = PLANNED_BLOCK_SHARE[lot.zone];
-    if (pool.blocks.length && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
+    // Only art that fills the WHOLE lot may take it: a block-pool sprite that
+    // has since shrunk (3D-FIX-3 made town_hotel 1×2) would leave half the lot
+    // bare after the early return below.
+    const wholeLot = pool.blocks.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return (fw === lot.w && fh === lot.h) || (fw === lot.h && fh === lot.w);
+    });
+    if (wholeLot.length && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
       && take > 0 && hashPick(lot.x + 0x41, lot.y + 0x1d, of) < take) {
-      if (layFrom(pool.blocks, box, lot.front)) return;
+      if (layFrom(wholeLot, box, lot.front)) return;
     }
 
     // 4b. A GARDEN: an outer lot keeps one tile green, on the BACK row so the
