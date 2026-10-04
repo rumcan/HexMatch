@@ -92,7 +92,7 @@ afterEach(() => {
 describe("ROT-UI-1 — the rotate keys", () => {
   it("the predicate is the 3D layer's, and a 2D boot does not satisfy it", () => {
     expect(rotationAvailable()).toBe(false);           // nothing mounted here (no WebGL in jsdom)
-    expect(threeWanted("")).toBe(false);               // no ?three=1
+    expect(threeWanted("?three=0")).toBe(false);        // LIVE3D-ON: opted out
     expect(threeWanted("?three=1")).toBe(true);        // asked for, but the mount is what counts
   });
 

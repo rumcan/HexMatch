@@ -29,7 +29,7 @@ import { MP_BASE, MP_ORIGIN } from "../../playwright.multiplayer.config";
  *  `vite dev`. */
 // `unlimited=0`: the dev server gives the LOCAL seat a 9999 purse (game.ts `topUpDevPurse`) — these specs
 // assert real purses and exchanges, so they run the real economy, as that flag documents.
-export const MP_URL = `${MP_ORIGIN}${MP_BASE}?quality=low&unlimited=0`;
+export const MP_URL = `${MP_ORIGIN}${MP_BASE}?quality=low&unlimited=0&three=0`; // LIVE3D-ON (#698): 3D is the default now; MP specs keep their 2D pixels
 
 /**
  * The window both seats run in. `openSide` makes its OWN contexts (the project
