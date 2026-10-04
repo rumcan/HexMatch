@@ -36,7 +36,7 @@
 //            clear(), towns(), enable(on)
 // ══════════════════════════════════════════════════════════════════════════
 import { MAP_W, MAP_H } from "../../game/config";
-import { PRESENT, tIdx, type Track } from "../track";
+import { PRESENT, tIdx, AVENUE_X, AVENUE_Y, avenueJunction, type Track } from "../track";
 import type { Grid } from "../grid";
 import { ambientRoadGraph } from "../road-routing";
 import { ROAD_WIDTH, paintFigures } from "../road-geometry";
@@ -121,6 +121,10 @@ const rt = {
   trackRef: null as Track | null,
   trackRev: -1,
   junctionRef: null as Map<number, number> | null,
+  /** TOWN-4.2 (#678): `signals` as this module serves it to cars — the
+   *  ambience junctions UNIONED with every player-built Avenue junction
+   *  (townId −1 ⇒ one shared field controller). Rebuilt in `rebuild`. */
+  signalsMerged: null as SignalMapLike | null,
   townSig: "",
   signals: null as SignalMapLike | null,
   ambTime: 0,
@@ -156,13 +160,16 @@ function tierAt(track: Track, i: number): number {
   return (track.tier?.[i] ?? 0) & 7;
 }
 
-/** Jam capacity in PCU: dirt < street < road < highway. */
+/** Jam capacity in PCU: dirt < street < road < avenue < highway. */
 function capacityOf(track: Track, i: number): number {
   const paved = track.road[i] !== 0;
   if (!paved) return (track.dirt[i] & PRESENT) ? 2.5 : 3;
   const tier = tierAt(track, i);
   if (tier === 1) return 4;
   if (tier === 2 || tier === 4 || tier === 5) return 12;
+  // TOWN-4.2 (#678): a two-lane one-way carriageway sits between Road and
+  // Highway — four lanes of throughput in the art, priced between the two.
+  if (tier === 6 || tier === 7) return 10;
   return 6;
 }
 
@@ -183,16 +190,33 @@ function rebuild(track: Track, grid: Grid, signals: SignalMapLike): void {
     weight: townWeight(t),
     radius: 4 + Math.sqrt(t.roads?.length ?? 1) * 0.9,
   }));
+  // TOWN-4.2 (#678): ambience's buildSignals only covers town boxes and
+  // parity-deletes half the junctions — player-built Avenue junctions must be
+  // signalled BY DEFAULT, so they are UNIONED into the rebuild's input here
+  // (and into what flowSignals() serves to the cars). Real town junctions
+  // keep their own townId; Avenue-only junctions take townId −1, which seeds
+  // one shared "field" controller from the map seed like any other town.
+  const junctions = new Map(signals.junctions);
+  if (track.tier) {
+    for (let i = 0; i < track.tier.length; i++) {
+      const v = track.tier[i] & 7;
+      if (v !== AVENUE_X && v !== AVENUE_Y) continue;
+      if (junctions.has(i)) continue;
+      const x = i % MAP_W, y = (i / MAP_W) | 0;
+      if (avenueJunction(track, x, y)) junctions.set(i, -1);
+    }
+  }
   rebuildFlow(rt.flow, {
     mapW: MAP_W,
     mapH: MAP_H,
     seed: signals.seed,
     graph,
-    junctions: signals.junctions,
+    junctions,
     towns,
     capacityOf: (i) => capacityOf(track, i),
     corridorOf: (i) => corridorOf(track, i),
   });
+  rt.signalsMerged = junctions.size === signals.junctions.size ? signals : { seed: signals.seed, junctions };
   rt.trackRef = track;
   rt.trackRev = track.revision;
   rt.junctionRef = signals.junctions;
@@ -363,9 +387,11 @@ export function flowCarFactor(a: readonly number[], b: readonly number[]): numbe
   return segmentFactor(rt.flow, tIdx(a[0], a[1]), tIdx(b[0], b[1]), rt.flow.cfg.carPcu);
 }
 
-/** The signal map cars should obey when the game did not pass one. */
+/** The signal map cars should obey when the game did not pass one.
+ *  TOWN-4.2 (#678): the merged map — Avenue junctions are signalled by
+ *  default even where ambience's town-box scan never looked. */
 export function flowSignals(): SignalMapLike | null {
-  return live() ? rt.signals : null;
+  return live() ? (rt.signalsMerged ?? rt.signals) : null;
 }
 
 /** The ambience clock those signals are read against. */
@@ -439,6 +465,7 @@ export function resetTrafficFlow(): void {
   rt.trackRef = null;
   rt.trackRev = -1;
   rt.junctionRef = null;
+  rt.signalsMerged = null;
   rt.townSig = "";
   rt.holds.clear();
   rt.lastTickWall = -Infinity;

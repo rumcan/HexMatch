@@ -43,7 +43,8 @@ import {
   ROAD_WIDTH, SHOULDER_WIDTH, SIDEWALK_WIDTH, roadWidth as widthOf, sidewalkOffset,
   continuousRoadFigures, highwayDividerFigures,
   hasRoad, paintFigures, roadTile, sidewalkJoints, sidewalkPaths, streetLampSpots, townGroundQuad,
-  type GroundPoint, type RoadFigure, type RoadTile,
+  avenuePaintFigures, avenueSidewalkPaths, avenueMedianStrip, avenueMedianTreeSpot,
+  avenueMedianLampSpot, type AvenueInfo, type GroundPoint, type RoadFigure, type RoadTile,
 } from "./road-geometry";
 import {
   DEFAULT_RAIL_STYLE, paintRailTiles, railBridgeDecksIn, railDetailFor, railTilesIn,
@@ -54,7 +55,11 @@ import {
 } from "./bridge-renderer";
 import { FLAT_DRAPER, draperFor, elevationLiftPx, slopeShade, tileCorners, type Draper } from "./elevation";
 import type { Decal } from "./scenery";
-import { DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads, type Track } from "./track";
+import {
+  DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads,
+  // TOWN-4.2 (#678): which tiles are Avenue halves, and how they pair.
+  AVENUE_X, AVENUE_Y, isAvenueTier, avenuePartner, avenueJunction, type Track,
+} from "./track";
 // FLOW-1: stop lines, zebra crossings and street centre lines.
 import { flowMarkingsRev, paintFlowMarkings } from "./flow";
 
@@ -294,6 +299,14 @@ const pxRight = (n: number): GroundPoint => [n / (2 * HW), -n / (2 * HW)];
 /** A screen-space offset of `n` projected pixels UP, in ground units. */
 const pxUp = (n: number): GroundPoint => [-n / (2 * HH), -n / (2 * HH)];
 
+/** TOWN-4.2 (#678): the median's vector planting — trunk + two-tone crown
+ *  (the ticket allows a vector crown until the lead's tree sprite lands). */
+const MEDIAN_TREE = { trunk: "#54402a", crown: "#2f5d34", crownLight: "#4c8a4a" };
+/** A screen-space circle of `n` pixels as a ground ellipse (the glow's
+ *  rotation trick): the projection flattens it exactly like the lamp glow. */
+const screenCircle = (n: number): [number, number, number] =>
+  [n / (Math.SQRT2 * HW), n / (Math.SQRT2 * HH), -Math.PI / 4];
+
 /**
  * Add a ground-plane ellipse to the current path, as a polyline.
  *
@@ -479,24 +492,38 @@ export function roadTilesIn(
 ): RoadTile[] {
   const out: RoadTile[] = [];
   const paved = (x: number, y: number) => isPaved(world, x, y);
-  // Read-only view for D1's link reader: use its endpoint/tier rules rather
-  // than guessing diagonal adjacency from PRESENT or duplicating storage.
-  // owner/upgraded are not consulted by roadDiagLinked; no arrays are copied.
-  const empty = diagonalsOn(world) ? emptyRoads() : null;
-  const track: Track | undefined = empty ? {
+  // Read-only views for the link readers (D1 diagonals + TOWN-4.2 avenue
+  // pairing): use their endpoint/tier rules rather than guessing adjacency
+  // from PRESENT or duplicating storage. owner/upgraded are not consulted by
+  // roadDiagLinked or the avenue helpers; no arrays are copied — the shared
+  // map-sized zero buffer (first use, live size) backs the view. Built only
+  // on a cache bake — never on a cache hit, never per frame.
+  const empty = emptyRoads();
+  const track: Track = {
     road: world.roadBits ?? empty, dirt: world.dirtBits ?? empty,
     tier: world.roadTiers, owner: empty, upgraded: empty,
-    revision: 0, diagonalRoads: true,
-  } : undefined;
+    revision: 0, diagonalRoads: diagonalsOn(world),
+  };
   const onWater = (x: number, y: number) => cellAt(world.grid?.terrain, x, y) === WATER;
   const diagonalAt = (x: number, y: number): number => {
-    if (!track || onWater(x, y)) return 0; // Bridge decks remain axis-only.
+    if (!track.diagonalRoads || onWater(x, y)) return 0; // Bridge decks remain axis-only.
     let mask = 0;
     for (const d of DIAGONAL_DIRS) {
       const nx = x + DIR[d][0], ny = y + DIR[d][1];
       if (!onWater(nx, ny) && roadDiagLinked(track, x, y, nx, ny)) mask |= d;
     }
     return mask;
+  };
+  // TOWN-4.2 (#678): the Avenue context for a tile — axis from its byte,
+  // outer side from which perpendicular neighbour is its partner (none ⇒ +1,
+  // an orphan the builder refuses), junction from its cross neighbours.
+  const avenueInfoAt = (tx: number, ty: number, tier: number): AvenueInfo | undefined => {
+    if (!isAvenueTier(tier)) return undefined;
+    const axis = tier === AVENUE_X ? "x" : tier === AVENUE_Y ? "y" : null;
+    if (!axis) return undefined;
+    const p = avenuePartner(track, tx, ty);
+    const outer: -1 | 1 = !p ? 1 : (axis === "x" ? (p[1] > ty ? -1 : 1) : (p[0] > tx ? -1 : 1));
+    return { axis, outer, junction: avenueJunction(track, tx, ty) };
   };
   // Town level is visual building progression only. Town road bytes are
   // paved at every level, so the road material and its connection geometry do
@@ -516,7 +543,12 @@ export function roadTilesIn(
         // is wider with a solid centre line (see paintRoadTiles).
         const packedTier = world.roadTiers?.[ty * MAP_W + tx] ?? 0;
         const tier = packedTier & 7;
-        const tile = roadTile(tx, ty, road, "paved", paved, tier === 1 || (tier === 0 && town), diagonalAt(tx, ty));
+        // TOWN-4.2 (#678): an Avenue lays its offset cross-section (and its
+        // own outer sidewalk — the `true` below is irrelevant, roadTile ORs
+        // the avenue flag into `sidewalk`).
+        const avenue = avenueInfoAt(tx, ty, tier);
+        const tile = roadTile(tx, ty, road, "paved", paved, tier === 1 || (tier === 0 && town),
+          diagonalAt(tx, ty), avenue);
         if (tier) tile.tier = tier;
         if (roadRailDeckAxis(packedTier)) { tile.deck = true; tile.railDeck = true; }
         out.push(tile);
@@ -803,7 +835,12 @@ function paintSidewalks(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPE
   const paths: RoadFigure[] = [];
   const joints: RoadFigure[] = [];
   for (const t of streets) {
-    for (const path of sidewalkPaths(t.tx, t.ty, t.mask, t.diagonal, sidewalkOffset(t))) {
+    // TOWN-4.2 (#678): Avenue tiles carry the OUTER flank + end caps only —
+    // never a ribbon around the centre (there is no centre there to wrap).
+    const ribbons = t.avenue
+      ? avenueSidewalkPaths(t.tx, t.ty, t.mask, t.avenue)
+      : sidewalkPaths(t.tx, t.ty, t.mask, t.diagonal, sidewalkOffset(t));
+    for (const path of ribbons) {
       paths.push(path);
       for (const joint of sidewalkJoints(path)) joints.push(joint);
     }
@@ -851,6 +888,10 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
   const spots: GroundPoint[] = [];
   for (const t of tiles) {
     if (!t.sidewalk) continue;
+    // TOWN-4.2 (#678): an Avenue's lamps are the MEDIAN doubles — one every
+    // two tiles, drawn by paintAvenueFurniture. streetLampSpots would plant
+    // them at the junction quadrants of a carriageway tile.
+    if (t.avenue) continue;
     // E2 (#267): the post is planted on the DRAPEd spot and its head is built
     // from there with the same screen-pixel offsets, so a lamp stands on the
     // pavement however the street slopes, and still rises straight up the
@@ -923,6 +964,115 @@ function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRA
     for (const p of glass.slice(1)) ctx.lineTo(p[0], p[1]);
     ctx.closePath();
     ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
+ * TOWN-4.2 (#678) — the median's planting: a vector tree on every pair-tile
+ * and a DOUBLE lamp post every second tile, both standing on the strip
+ * `paintRoadTiles` laid in pass 2c. Screen-space like `paintStreetLamps`
+ * (planted on the DRAPEd ground point, rising straight up the screen), baked
+ * into the chunk raster with every other road pass — no per-frame cost, no
+ * extra draw calls, no art asset required (the vector crown stands in until
+ * the lead's median tree sprite exists).
+ */
+function paintAvenueFurniture(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = FLAT_DRAPER): void {
+  const trees: GroundPoint[] = [];
+  const lamps: GroundPoint[] = [];
+  for (const t of tiles) {
+    if (!t.avenue) continue;
+    const spot = avenueMedianTreeSpot(t.tx, t.ty, t.avenue);
+    if (spot) trees.push(elev.point(spot[0], spot[1]));
+    const lamp = avenueMedianLampSpot(t.tx, t.ty, t.avenue);
+    if (lamp) lamps.push(elev.point(lamp[0], lamp[1]));
+  }
+  if (!trees.length && !lamps.length) return;
+  ctx.save();
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+
+  for (const base of trees) {
+    // Contact shadow — the one ground shape.
+    ctx.fillStyle = SIDEWALK_STYLE.shadow;
+    ctx.beginPath();
+    ellipseInto(ctx, base, LAMP_SHADOW_R * 1.6, LAMP_SHADOW_R * 1.6, 0);
+    ctx.fill();
+    // Trunk: a short screen line up from the median.
+    const top: GroundPoint = [base[0] + pxUp(6)[0], base[1] + pxUp(6)[1]];
+    ctx.strokeStyle = MEDIAN_TREE.trunk;
+    ctx.lineWidth = PIXEL * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(base[0], base[1]);
+    ctx.lineTo(top[0], top[1]);
+    ctx.stroke();
+    // Crown: two offset circles (dark body, light top) — a plump tree silhouette.
+    const [rx, ry, rot] = screenCircle(5.5);
+    const crown: GroundPoint = [top[0] + pxUp(3)[0], top[1] + pxUp(3)[1]];
+    ctx.fillStyle = MEDIAN_TREE.crown;
+    ctx.beginPath();
+    ellipseInto(ctx, crown, rx, ry, rot);
+    ctx.fill();
+    const lit: GroundPoint = [crown[0] + pxUp(1.5)[0] + pxRight(-1)[0], crown[1] + pxUp(1.5)[1] + pxRight(-1)[1]];
+    ctx.fillStyle = MEDIAN_TREE.crownLight;
+    ctx.beginPath();
+    ellipseInto(ctx, lit, rx * 0.55, ry * 0.55, rot);
+    ctx.fill();
+  }
+
+  for (const base of lamps) {
+    // Shadow, post, then the two lanterns flanking the post top.
+    ctx.fillStyle = SIDEWALK_STYLE.shadow;
+    ctx.beginPath();
+    ellipseInto(ctx, base, LAMP_SHADOW_R, LAMP_SHADOW_R, 0);
+    ctx.fill();
+    const head: GroundPoint = [base[0] + pxUp(LAMP_POST_H)[0], base[1] + pxUp(LAMP_POST_H)[1]];
+    ctx.strokeStyle = SIDEWALK_STYLE.iron;
+    ctx.lineWidth = PIXEL;
+    ctx.beginPath();
+    ctx.moveTo(base[0], base[1]);
+    ctx.lineTo(head[0], head[1]);
+    ctx.stroke();
+    for (const side of [-1, 1]) {
+      const arm: GroundPoint = [head[0] + pxRight(side * 2.4)[0], head[1] + pxRight(side * 2.4)[1]];
+      ctx.beginPath();
+      ctx.moveTo(head[0], head[1]);
+      ctx.lineTo(arm[0], arm[1]);
+      ctx.stroke();
+      const corner = (right: number, up: number): GroundPoint => [
+        arm[0] + pxRight(right)[0] + pxUp(up)[0], arm[1] + pxRight(right)[1] + pxUp(up)[1],
+      ];
+      const [bl, br, tr, tl] = [
+        corner(-LAMP_HEAD_W / 2, 0), corner(LAMP_HEAD_W / 2, 0),
+        corner(LAMP_HEAD_W / 2, LAMP_HEAD_H), corner(-LAMP_HEAD_W / 2, LAMP_HEAD_H),
+      ];
+      const bulb: GroundPoint = [corner(0, LAMP_HEAD_H / 2)[0], corner(0, LAMP_HEAD_H / 2)[1]];
+      const [grx, gry, grot] = screenCircle(LAMP_GLOW_R);
+      ctx.fillStyle = SIDEWALK_STYLE.glow;
+      ctx.globalAlpha = SIDEWALK_STYLE.glowAlpha;
+      ctx.beginPath();
+      ellipseInto(ctx, bulb, grx, gry, grot);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = SIDEWALK_STYLE.iron;
+      ctx.beginPath();
+      ctx.moveTo(bl[0], bl[1]);
+      ctx.lineTo(br[0], br[1]);
+      ctx.lineTo(tr[0], tr[1]);
+      ctx.lineTo(tl[0], tl[1]);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = SIDEWALK_STYLE.lantern;
+      ctx.beginPath();
+      const glass = [
+        corner(-LAMP_GLASS_W / 2, LAMP_GLASS_Y), corner(LAMP_GLASS_W / 2, LAMP_GLASS_Y),
+        corner(LAMP_GLASS_W / 2, LAMP_GLASS_Y + LAMP_GLASS_H), corner(-LAMP_GLASS_W / 2, LAMP_GLASS_Y + LAMP_GLASS_H),
+      ];
+      ctx.moveTo(glass[0][0], glass[0][1]);
+      for (const p of glass.slice(1)) ctx.lineTo(p[0], p[1]);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
@@ -1096,6 +1246,37 @@ export function paintRoadTiles(
   }
   ctx.globalAlpha = 1;
   ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // 2c. TOWN-4.2 (#678): the planted MEDIAN — grass slab with a kerb on both
+  //     long edges, over the two carriageways' shoulders (whose translucent
+  //     0.03 reach tucks under it) and beside their cores (which abut it
+  //     exactly at 0.91/1.09). Drawn by the pair's outer=−1 cell only, one
+  //     strip per shared edge, and never at a junction (the median opens —
+  //     flow's zebra owns that ground). The town fill IS the tended-lawn
+  //     material, so the median reads as the same planting a town block gets.
+  const medianQuads: GroundPoint[][] = [];
+  for (const t of tiles) {
+    if (!t.avenue) continue;
+    const strip = avenueMedianStrip(t.tx, t.ty, t.avenue);
+    if (strip) medianQuads.push(strip);
+  }
+  if (medianQuads.length && townFill) {
+    ctx.fillStyle = townFill;
+    ctx.beginPath();
+    for (const quad of medianQuads) {
+      const d = elev.path(quad);
+      ctx.moveTo(d[0][0], d[0][1]);
+      for (let i = 1; i < d.length; i++) ctx.lineTo(d[i][0], d[i][1]);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.strokeStyle = SIDEWALK_STYLE.joint;
+    ctx.globalAlpha = SIDEWALK_STYLE.jointAlpha;
+    ctx.lineWidth = JOINT_WIDTH;
+    for (const quad of medianQuads) { trace(ctx, { points: [...quad, quad[0]] }, elev); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  }
 
   // 3. Dirt→paved transitions, laid OVER the opaque dirt core.
   for (const t of tiles) {
@@ -1134,7 +1315,14 @@ export function paintRoadTiles(
   for (const t of tiles) {
     if (t.material !== "paved") continue;
     if (t.tier === 1 || ((!t.deck || t.railDeck) && [2, 4, 5].includes(t.tier ?? 0))) continue;
-    for (const f of paintFigures(t.tx, t.ty, t.mask, t.diagonal)) {
+    // TOWN-4.2 (#678): an Avenue's dashed LANE DIVIDER runs along the offset
+    // centreline, trimmed at junction cells — never a centre line across the
+    // median or the cross stubs (flow-paint owns junction zebras, and only a
+    // Street carries a painted centre line, tier 1 above).
+    const avenueFigs = t.avenue
+      ? avenuePaintFigures(t.tx, t.ty, t.mask, t.avenue)
+      : paintFigures(t.tx, t.ty, t.mask, t.diagonal);
+    for (const f of avenueFigs) {
       ctx.setLineDash([DASH_ON, DASH_OFF]);
       // The dash phase stays anchored on the FLAT figure: the lattice it is
       // pinned to is a property of the world's tile grid, and a slope changes a
@@ -1189,6 +1377,9 @@ export function paintRoadTiles(
   //    `paintStreetLamps` for why they cannot go down with their sidewalks.
   //    Markings stay under a lamp, exactly as paint on asphalt does.
   paintStreetLamps(ctx, tiles, elev);
+  // 5b. TOWN-4.2 (#678): the median's trees and double lamps — same layer as
+  //     the lamps, still inside this bake (no per-frame anything).
+  paintAvenueFurniture(ctx, tiles, elev);
 
   // 6. R2 (#266) The decks' kerbs and railings, last of all: a bridge's fence
   //    stands OVER its surface, and over the lamps of any street that happens

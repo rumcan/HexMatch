@@ -1,7 +1,7 @@
 import { MAP_W } from "../game/config";
 import {
   DIR, DIRS, OPPOSITE, PRESENT, bitsAt, tIdx, inMapT, trackOpenTo, plantFootprintTiles, overpassJump,
-  roadDiagNeighbours, hasTrack, type Track, type TrackKind,
+  roadDiagNeighbours, hasTrack, avenueEdgeOk, type Track, type TrackKind,
 } from "./track";
 import { DEFAULT_FACING, depotEntranceTiles, type DepotFacing } from "./depot";
 
@@ -54,6 +54,11 @@ export function roadPath(
       const nx = x + DIR[d][0], ny = y + DIR[d][1];
       if (!inMapT(nx, ny)) continue;
       if (!(bitsOf(nx, ny) & OPPOSITE[d])) continue;           // it faces back
+      // TOWN-4.2 (#678): the mutual bits stay mutual, but an Avenue edge is
+      // also ONE-WAY — against the carriageway, across the median off a
+      // junction, and into an orphaned half never expand. Maps without
+      // avenues pass unchanged (avenueEdgeOk is a cheap non-avenue pass).
+      if (!avenueEdgeOk(track, x, y, nx, ny)) continue;
       const ni = tIdx(nx, ny);
       if (parent.has(ni)) continue;
       if (!trackOpenTo(track, owner, nx, ny)) continue;        // W2 + PP-13
@@ -145,7 +150,10 @@ function diagonalRoadPath(
     };
     for (const d of DIRS) {
       const nx = x + DIR[d][0], ny = y + DIR[d][1];
-      if ((bitsOf(x, y) & d) && (bitsOf(nx, ny) & OPPOSITE[d])) visit(nx, ny, 1);
+      // TOWN-4.2 (#678): same one-way Avenue gate as the BFS (no avenue
+      // tiles on the map → avenueEdgeOk is always true, costs one read).
+      if ((bitsOf(x, y) & d) && (bitsOf(nx, ny) & OPPOSITE[d])
+        && avenueEdgeOk(track, x, y, nx, ny)) visit(nx, ny, 1);
     }
     for (const [nx, ny] of roadDiagNeighbours(track, x, y, kind)) visit(nx, ny, Math.SQRT2);
     for (const d of DIRS) {
@@ -214,6 +222,9 @@ export function ambientRoadGraph(track: Track): Map<number, number[]> {
       if (!inMapT(nx, ny)) continue;
       const ni = tIdx(nx, ny);
       if (!(maskAt(ni) & OPPOSITE[d])) continue;
+      // TOWN-4.2 (#678): cars and lorries share this graph — Avenue edges
+      // leave only the way traffic may drive (one-way, junction-only crossings).
+      if (!avenueEdgeOk(track, x, y, nx, ny)) continue;
       open.push(ni);
     }
     for (const [nx, ny] of roadDiagNeighbours(track, x, y)) open.push(tIdx(nx, ny));
