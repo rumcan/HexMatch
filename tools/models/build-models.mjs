@@ -183,8 +183,22 @@ const names = fs.readdirSync(SRC).filter((n) => fs.existsSync(path.join(SRC, n, 
 const MOVING = /^(car_|rail_|vehicle_)/;
 // metres, from the sprite manifests' notes (truck 7 m, loco 10.3 m ...); the three sedans have no sprite yet
 const LENGTH_M = { vehicle_truck: 7, rail_loco: 10.3, rail_tender: 4.7, rail_box: 7.2, rail_tank: 6.7, rail_flat: 6.2, car_sedan_1: 4.8, car_sedan_2: 4.8, car_sedan_3: 4.8 };
-// models whose front came out at the back (render.mjs --flip): set after checking against the 2D sprites
-const FLIP = { vehicle_truck: true, rail_loco: true };   // LIVE-3D owner round 2: these two came out cab/boiler the wrong way round (drove in reverse)
+/**
+ * 3D-FIX-5 (#664): THE AXIS A MODEL'S FRONT POINTS ALONG, AS DATA.
+ *
+ * The builder squares a moving model with its long axis on +X, and the runtime turns it by the heading and
+ * scales it by lengthM / 12 — so +X is the front unless a source says otherwise. Two Meshy sources came out
+ * cab-first / boiler-first (the owner caught them driving in reverse); they are recorded HERE, not as a
+ * special case in the render loop.
+ *
+ * FLIP is derived from this table, so the two can never drift apart: a model recorded as "-x" is flipped at
+ * build time and therefore ships with its front on +X like every other model. tests/unit/3d-fix-5-facing.test.ts
+ * reads both tables and drives every vehicle through them (model x heading x view yaw); it fails if any model
+ * would drive backwards, which is the check the handover asked for ("check nothing drives backwards").
+ */
+const FRONT_AXIS = { vehicle_truck: "-x", rail_loco: "-x" };
+// models whose front came out at the back (render.mjs --flip): every "-x" above, no hand-kept second list.
+const FLIP = Object.fromEntries(Object.entries(FRONT_AXIS).filter(([, axis]) => axis === "-x").map(([n]) => [n, true]));
 // one model, two paints: vehicle_truck_blue is the red lorry's red paint turned to hue 215 (render.mjs --livery)
 const LIVERIES = [{ name: "vehicle_truck", outName: "vehicle_truck_blue", hue: 215 }];
 const rgbToHsv = (r, g, b) => { const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; let h = 0; if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx / 255]; };
