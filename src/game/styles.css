@@ -6434,6 +6434,19 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   border-color: var(--brass);
   box-shadow: none;
 }
+/* ROT-UI-1: the rotate keys ride IN the plate, under the canvas, so they can
+   never overlap it — the plate simply grows to hold them. Two of the HUD's own
+   `.icon-btn`s (30px, 40px in the touch regimes) centred in the plate's width;
+   the pressed wash is the HUD's own orange-on-brass active. */
+.minimap-rotate {
+  display: flex; justify-content: center; gap: 6px;
+  margin-top: 4px;
+}
+.minimap-rotate .icon-btn:active {
+  background: rgb(var(--c-orange) / 0.16);
+  border-color: rgb(var(--c-orange) / 0.55);
+  color: var(--gold2);
+}
 
 /* MUSIC-1 (#377): the dock is a flex item at the very end of the top bar's
    right cluster (ui.ts mounts it there), not a floating layer. */
