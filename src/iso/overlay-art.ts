@@ -30,9 +30,9 @@
 // view of the same list, not a second opinion.
 // ══════════════════════════════════════════════════════════════════════════
 import { tileToScreen } from "../game/config";
-import { worldToScreen, type Camera } from "./camera";
+import { getViewYaw, worldToScreen, type Camera } from "./camera";
 import type { Atlas } from "./atlas";
-import { place, type DrawItem } from "./depth";
+import { createSeatMemo, place, seatFind, seatTurned, yawQuarter, type DrawItem, type SeatMemo } from "./depth";
 import type { Grid } from "./grid";
 import { LEVEL_PX, cornerHeight, elevationActive } from "./elevation";
 
@@ -415,6 +415,15 @@ export class PlacementOverlay {
 
   private ghosts = new Map<string, GhostArt | null>();
   private last: OverlayStats | null = null;
+  /**
+   * LIVE-3D (3D-FIX-2): the ghost's TURNED seat, memoised per (sprite, tile,
+   * view quarter). The overlay re-places its ghost every frame, so without
+   * this a hovering player allocated a placement per sprite per frame. A new
+   * grid (a fresh map, a reload) drops it — the terrain under the tile is part
+   * of what `place()` bakes in.
+   */
+  private seats: SeatMemo = createSeatMemo();
+  private seatsFor: Grid | null = null;
 
   /** The last frame's paint facts, for `__iso.rendering()`. */
   get stats(): OverlayStats | null { return this.last; }
@@ -516,7 +525,9 @@ export class PlacementOverlay {
     const lift = this.grid && elevationActive(this.grid)
       ? cornerHeight(this.grid, c[0], c[1]) * LEVEL_PX
       : 0;
-    return worldToScreen(cam, wx, wy - lift);
+    // LIVE-3D: the hill lift is screen-vertical, so it is taken off AFTER the view turn (terrain shader does the same)
+    const [sx, sy] = worldToScreen(cam, wx, wy);
+    return [sx, sy - lift * cam.zoom];
   }
 
   private paintReach(
@@ -686,12 +697,25 @@ export class PlacementOverlay {
       ? s.ghostAlpha + (this.reducedMotion ? 0 : 0.06 * Math.sin(t / 780 + 1))
       : s.ghostAlpha * 0.82;
     let drawn = false;
+    // LIVE-3D (3D-FIX-2): the ghost rides the turned view like every other sprite — the ART is a billboard,
+    // its ANCHOR turns (same `turnPlaced` the structures pass uses). Memoised, so a still cursor allocates nothing.
+    const yaw = getViewYaw();
+    const k = yaw === 0 ? 0 : yawQuarter(yaw);
+    if (this.seatsFor !== this.grid) { this.seats = createSeatMemo(); this.seatsFor = this.grid; }
     for (const entry of entries) {
-      const placed = place(atlas, { sprite: entry.sprite, tx: entry.tx, ty: entry.ty }, this.grid);
-      if (!placed) continue;
+      let wx: number, wy: number;
+      if (yaw === 0) {
+        const placed = place(atlas, { sprite: entry.sprite, tx: entry.tx, ty: entry.ty }, this.grid);
+        if (!placed) continue;
+        wx = placed.wx; wy = placed.wy;
+      } else {
+        const slot = this.seatSlot(atlas, entry.sprite, entry.tx, entry.ty, yaw, k);
+        if (!slot) continue;
+        wx = slot.wx; wy = slot.wy;
+      }
       const art = this.ghostArt(atlas, entry.sprite, z, ghost.valid, makeSurface);
       if (!art) continue;
-      const [sx, sy] = worldToScreen(cam, placed.wx, placed.wy);
+      const [sx, sy] = worldToScreen(cam, wx, wy);
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
       ctx.drawImage(
@@ -703,6 +727,26 @@ export class PlacementOverlay {
       drawn = true;
     }
     return drawn;
+  }
+
+  /**
+   * LIVE-3D (3D-FIX-2): the ghost sprite's turned seat, memoised.
+   *
+   * `place()` is the same call the structures pass makes, so the ghost's foot
+   * lands where the real building's will — and `seatTurned` then re-seats that
+   * anchor for the turned view (the art stays a billboard). The result only
+   * depends on (sprite, tile, quarter) and the grid, and both are held in the
+   * memo's key, so the steady state allocates nothing.
+   */
+  private seatSlot(
+    atlas: Atlas, sprite: string, tx: number, ty: number, yaw: number, k: number,
+  ): { wx: number; wy: number } | null {
+    const memo = this.seats;
+    const hit = seatFind(memo, sprite, tx, ty, yaw, k);
+    if (hit) return hit;
+    const placed = place(atlas, { sprite, tx, ty }, this.grid);
+    if (!placed) return null;
+    return seatTurned(memo, placed, yaw, k);
   }
 
   /**

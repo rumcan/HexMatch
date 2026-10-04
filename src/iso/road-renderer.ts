@@ -37,7 +37,7 @@
 // byte moves.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, MAP_W, MAP_H, mapSizedBuffer } from "../game/config";
-import type { Camera } from "./camera";
+import { getViewYaw, getViewYawTarget, turnWorld, type Camera } from "./camera";
 // TOWN-4.4 (#680): `culDeSacTiles` is the planned towns' turning-circle set.
 import { WATER, culDeSacTiles, isTownTile, townGroundBytes, type Grid } from "./grid";
 import {
@@ -1592,7 +1592,22 @@ export class RoadCache {
     makeSurface: (w: number, h: number) => Surface | null,
   ): CacheEntry | null {
     // FLOW-1: the markings ride the raster, so their revision rides the key.
-    const key = `${this.styleVersion}:${flowMarkingsRev()}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${cx},${cy}`;
+    //
+    // LIVE-3D: the hill lift is baked PER VIEW QUARTER. A raster is turned as a flat bitmap by `paint`, so the
+    // lift has to be baked as the inverse quarter turn of the screen-vertical (-k, -k): that is what
+    // `draperFor(grid, vq)` returns, and at rest the road lies on its slope to the pixel at all four yaws (3D-FIX-4
+    // measured 0.00 px over every sloped tile of three elevation maps; baking the unturned lift and then turning
+    // the bitmap costs 62-69 px, which is the bug this keyed drape removes).
+    //
+    // MID-TURN (#663): the quarter comes from the DESTINATION yaw, so a turn re-bakes each visible chunk ONCE,
+    // on the first frame of the ease, while the blit transform still eases from the old angle. That front-loads
+    // the drift — worst on that first frame (2.24 x the tile lift: 71 px on a level-4 hill, easing back to 0
+    // over ~250 ms) — and it is the SMALLEST snap there is: switching at the 45 deg crossover instead (baking
+    // the quarter nearest the eased yaw) jumps 2.83 x the lift. A per-frame-exact lift is not affordable — it
+    // would re-rasterise every visible chunk on every frame of the ease — so the road layer snaps, exactly like
+    // the rest of the baked ground, and costs nothing per frame and no allocation while it does.
+    const vq = (((Math.round(getViewYawTarget() / (Math.PI / 2)) % 4) + 4) % 4);
+    const key = `${this.styleVersion}:${flowMarkingsRev()}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${vq}:${cx},${cy}`;
     const hit = this.entries.get(key);
     if (hit) {
       this.hits++;
@@ -1611,10 +1626,10 @@ export class RoadCache {
     // it is baked into the raster exactly like the rail's detail tier — no
     // per-frame work, and the flat path keeps the identity draper and the tile
     // range it has always evaluated.
-    const elev = draperFor(world.grid);
+    const elev = draperFor(world.grid, vq);
     const lift = elevationLiftPx(world.grid);
     const range = tilesForRect(
-      px, py, px + ROAD_CHUNK_W + GUTTER * 2, py + ROAD_CHUNK_H + GUTTER * 2, lift,
+      px - (vq ? 2 * lift : 0), py, px + ROAD_CHUNK_W + GUTTER * 2 + (vq ? 2 * lift : 0), py + ROAD_CHUNK_H + GUTTER * 2, lift,
     );
     // In the sprite road mode the atlas cells draw the roads, so this raster
     // carries the railway and nothing else.
@@ -1687,11 +1702,19 @@ export class RoadCache {
     makeSurface: (w: number, h: number) => Surface | null,
   ): number {
     const z = cam.zoom;
-    // Viewport in projected world pixels.
-    const wx0 = -cam.x / z, wy0 = -cam.y / z;
-    const wx1 = (cam.vw - cam.x) / z, wy1 = (cam.vh - cam.y) / z;
+    // LIVE-3D: under a view turn the chunk bitmaps (flat ground) are laid down through the same linear map the
+    // terrain uses, so roads and track stay glued to the turned ground. yaw 0 keeps the exact old path.
+    const yaw = getViewYaw();
+    // Viewport in projected (UNTURNED) world pixels: the turned view's four corners, taken back.
+    let wx0 = -cam.x / z, wy0 = -cam.y / z, wx1 = (cam.vw - cam.x) / z, wy1 = (cam.vh - cam.y) / z;
+    if (yaw !== 0) {
+      const pts = [[wx0, wy0], [wx1, wy0], [wx0, wy1], [wx1, wy1]].map(([x, y]) => turnWorld(x, y, -yaw));
+      wx0 = Math.min(...pts.map((q) => q[0])); wx1 = Math.max(...pts.map((q) => q[0]));
+      wy0 = Math.min(...pts.map((q) => q[1])); wy1 = Math.max(...pts.map((q) => q[1]));
+    }
     const cx0 = Math.floor(wx0 / ROAD_CHUNK_W), cx1 = Math.floor(wx1 / ROAD_CHUNK_W);
     const cy0 = Math.floor(wy0 / ROAD_CHUNK_H), cy1 = Math.floor(wy1 / ROAD_CHUNK_H);
+    const yc = Math.cos(yaw), ys = Math.sin(yaw);
 
     let blits = 0;
     for (let cy = cy0; cy <= cy1; cy++) {
@@ -1700,11 +1723,19 @@ export class RoadCache {
         if (!e?.surface) continue;
         const sx = Math.round(GUTTER * z), sy = Math.round(GUTTER * z);
         const sw = Math.round(ROAD_CHUNK_W * z), sh = Math.round(ROAD_CHUNK_H * z);
-        ctx.drawImage(
-          e.surface as unknown as CanvasImageSource,
-          sx, sy, sw, sh,
-          Math.round(e.ox * z + cam.x), Math.round(e.oy * z + cam.y), sw, sh,
-        );
+        if (yaw === 0) {
+          ctx.drawImage(
+            e.surface as unknown as CanvasImageSource,
+            sx, sy, sw, sh,
+            Math.round(e.ox * z + cam.x), Math.round(e.oy * z + cam.y), sw, sh,
+          );
+        } else {
+          const ox = e.ox * z, oy = e.oy * z;   // chunk origin in unturned device px; M = [[c, 2s], [-s/2, c]]
+          ctx.save();
+          ctx.setTransform(yc, -0.5 * ys, 2 * ys, yc, cam.x + yc * ox + 2 * ys * oy, cam.y - 0.5 * ys * ox + yc * oy);
+          ctx.drawImage(e.surface as unknown as CanvasImageSource, sx, sy, sw, sh, 0, 0, sw, sh);
+          ctx.restore();
+        }
         blits++;
       }
     }

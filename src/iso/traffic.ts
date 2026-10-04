@@ -62,7 +62,9 @@ export const LANE_OFFSET_AVENUE = 0.14;
 export const OVERPASS_LIFT = 0.9;
 /** Minimum gap (in tile units) to the vehicle ahead, measured along the
  *  direction of travel. */
-export const MIN_GAP = 0.35;
+// TRAFFIC-GAP (owner round 2, 3D layer): the 3D models are drawn at their real length (car 4.8 m = 0.4 tile, lorry 7 m =
+// 0.58 tile), so a 0.35 centre gap made queued vehicles overlap. 0.65 clears the longest lorry with a margin.
+export const MIN_GAP = 0.65;
 /** Comfortable braking decel (tiles/s²). */
 export const COMFORT_DECEL = 2.5;
 /** Junction approach radius: a vehicle is "at" a junction when its remaining
@@ -258,13 +260,16 @@ export function laneOffsetFor(v: VehiclePos, track: Track): [number, number] {
  * not calibrate motorway flow.
  */
 export function followSpeed(v0: number, distAhead: number): number {
-  if (!isFinite(distAhead) || distAhead > MIN_GAP + 1.5) return v0;
+  if (!isFinite(distAhead) || distAhead > MIN_GAP + 0.6) return v0;
   if (distAhead <= MIN_GAP) return 0;
   // Brake smoothly in the zone between MIN_GAP and MIN_GAP+1.5.
   const slack = distAhead - MIN_GAP;
   // 0 slack → 0 speed, 1.5 slack → v0. Use a quadratic so onset is gentle
   // and stop is firm; clip to v0.
-  const factor = Math.min(1, (slack / 1.5) ** 1.5);
+  // TRAFFIC-GAP: a creep floor, then a hard stop 0.02 inside the gap: the old pure power law approached the stop
+  // asymptotically (a queue "crawled" for tens of seconds and looked like it was still driving).
+  if (slack < 0.02) return 0;
+  const factor = Math.max(0.15, Math.min(1, (slack / 0.6) ** 1.5));
   return v0 * factor;
 }
 

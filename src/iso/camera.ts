@@ -32,11 +32,65 @@ export const createCamera = (vw = 800, vh = 600): Camera => ({
 });
 
 // ── space conversions ─────────────────────────────────────────────────────
-export const worldToScreen = (c: Camera, wx: number, wy: number): [number, number] =>
-  [wx * c.zoom + c.x, wy * c.zoom + c.y];
+// LIVE-3D: view yaw (?three=1 only). The view can be turned in quarter turns about tile (0,0). A turn of the
+// TILE lattice is, in world pixels, the linear map M(a) = [[cos a, 2 sin a], [-sin a / 2, cos a]] (HW/HH = 2);
+// every conversion below applies it, so picking, the minimap click, labels and all the 2D painters that go
+// through worldToScreen follow the turn. The yaw is 0 unless the three layer asks for it, and the fast path is
+// then exactly the old maths. The turn pivots about the SCREEN CENTRE: whenever the yaw changes, tickViewYaw
+// moves the camera offset so the ground point under the centre stays put (pan and zoom then work on screen
+// pixels, unchanged).
+let yaw = 0, yawC = 1, yawS = 0, yawTarget = 0;
+export const getViewYaw = (): number => yaw;
+export const getViewYawTarget = (): number => yawTarget;
+/** Ask for a yaw (radians); tickViewYaw eases there. */
+export const setViewYawTarget = (a: number): void => { yawTarget = a; };
+/**
+ * ROT-UI-1: one rotate step — the HUD's two buttons and the `[` / `]` keys both
+ * call this, so the on-screen control and the keyboard cannot drift apart.
+ * `dir` is −1 for anticlockwise (`[`) and +1 for clockwise (`]`); the ease is
+ * `tickViewYaw`'s, and the view settles on an exact quarter turn.
+ */
+export const rotateViewStep = (dir: -1 | 1): void => { yawTarget += (dir * Math.PI) / 2; };
+const applyYaw = (a: number): void => { yaw = a; yawC = Math.cos(a); yawS = Math.sin(a); };
+/** World-pixel point -> its image under the view turn (default: the current yaw). */
+export function turnWorld(wx: number, wy: number, a = yaw): [number, number] {
+  if (a === 0) return [wx, wy];
+  const c = a === yaw ? yawC : Math.cos(a), s = a === yaw ? yawS : Math.sin(a);
+  return [c * wx + 2 * s * wy, -0.5 * s * wx + c * wy];
+}
+const rePivot = (c: Camera, to: number): Camera => {
+  const px = (c.vw / 2 - c.x) / c.zoom, py = (c.vh / 2 - c.y) / c.zoom;
+  const [wx, wy] = turnWorld(px, py, -yaw);   // the ground point under the screen centre, untouched
+  applyYaw(to);
+  const [nx, ny] = turnWorld(wx, wy, to);
+  return { ...c, x: c.vw / 2 - nx * c.zoom, y: c.vh / 2 - ny * c.zoom };
+};
+/**
+ * Ease the yaw toward its target and return the camera that keeps the screen-centre ground point where it was,
+ * or null when nothing changed. Call once per frame (dtMs) and commit the result.
+ */
+export function tickViewYaw(c: Camera, dtMs: number): Camera | null {
+  if (yaw === yawTarget) return null;
+  let next = yaw + (yawTarget - yaw) * Math.min(1, (dtMs / 1000) * 10);
+  if (Math.abs(yawTarget - next) < 1e-3) next = yawTarget;
+  return rePivot(c, next);
+}
+/** Jump straight to a yaw (?yaw=, tests): same pivot rule, no ease. */
+export function snapViewYaw(c: Camera, a: number): Camera {
+  yawTarget = a;
+  return rePivot(c, a);
+}
 
-export const screenToWorld = (c: Camera, sx: number, sy: number): [number, number] =>
-  [(sx - c.x) / c.zoom, (sy - c.y) / c.zoom];
+export const worldToScreen = (c: Camera, wx: number, wy: number): [number, number] => {
+  if (yaw === 0) return [wx * c.zoom + c.x, wy * c.zoom + c.y];
+  const [tx, ty] = turnWorld(wx, wy);
+  return [tx * c.zoom + c.x, ty * c.zoom + c.y];
+};
+
+export const screenToWorld = (c: Camera, sx: number, sy: number): [number, number] => {
+  const px = (sx - c.x) / c.zoom, py = (sy - c.y) / c.zoom;
+  return yaw === 0 ? [px, py] : turnWorld(px, py, -yaw);
+};
 
 /** Flat pick (stage 1): screen pixel → tile. Fractional tiles are floored. */
 export function screenToTileAt(c: Camera, sx: number, sy: number): [number, number] {
@@ -66,8 +120,9 @@ export function stepZoom(z: Zoom, dir: number): Zoom {
 export function zoomAt(c: Camera, z: Zoom, sx: number, sy: number): Camera {
   const [wx, wy] = screenToWorld(c, sx, sy);
   const next: Camera = { ...c, zoom: z };
-  next.x = sx - wx * z;
-  next.y = sy - wy * z;
+  const [tx, ty] = turnWorld(wx, wy);
+  next.x = sx - tx * z;
+  next.y = sy - ty * z;
   return clampCamera(next);
 }
 
@@ -117,9 +172,21 @@ export const tapSlop = (pointerType: string, dpr: number): number =>
   (pointerType === "mouse" ? 4 : Math.round(10 * dpr));
 
 // ── panning + clamping ────────────────────────────────────────────────────
-/** Axis-aligned bounds of the whole map diamond in world space. */
-export function mapWorldBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
+/**
+ * Axis-aligned bounds of the whole map diamond in world space. `a` defaults to
+ * the live view yaw; ROT-UI-1 passes 0 for the map's own (unturned) box — the
+ * stable size the minimap's fit must keep at every yaw.
+ */
+export function mapWorldBounds(a = yaw): { minX: number; minY: number; maxX: number; maxY: number } {
   // corners: (0,0) top, (MAP_W,0) right, (MAP_W,MAP_H) bottom, (0,MAP_H) left
+  if (a !== 0) {   // LIVE-3D: the turned diamond's bounding box
+    const pts = [[0, 0], [MAP_W * HW, MAP_W * HH], [(MAP_W - MAP_H) * HW, (MAP_W + MAP_H) * HH], [-MAP_H * HW, MAP_H * HH]]
+      .map(([x, y]) => turnWorld(x, y, a));
+    return {
+      minX: Math.min(...pts.map((p) => p[0])), maxX: Math.max(...pts.map((p) => p[0])),
+      minY: Math.min(...pts.map((p) => p[1])), maxY: Math.max(...pts.map((p) => p[1])),
+    };
+  }
   return {
     minX: -MAP_H * HW,
     maxX: MAP_W * HW,
@@ -154,7 +221,8 @@ export const panBy = (c: Camera, dx: number, dy: number): Camera =>
  * `centerOnTile` would for the same spot.
  */
 export function centerOnWorld(c: Camera, wx: number, wy: number): Camera {
-  return clampCamera({ ...c, x: c.vw / 2 - wx * c.zoom, y: c.vh / 2 - wy * c.zoom });
+  const [tx, ty] = turnWorld(wx, wy);
+  return clampCamera({ ...c, x: c.vw / 2 - tx * c.zoom, y: c.vh / 2 - ty * c.zoom });
 }
 
 /** Centre the camera on a tile (recentre button). */

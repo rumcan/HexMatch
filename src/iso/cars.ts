@@ -37,7 +37,7 @@ import {
 import {
   JAM_TIMEOUT_MS, YIELD_WAIT_MS, STATIONARY_SPEED,
   buildHash, laneOffsetFor, overpassLiftFor, approachingJunction,
-  followSpeed, segKey,
+  followSpeed, segKey, MIN_GAP,
 } from "./traffic";
 // FLOW-1: cars feed the traffic field, slow in it, and obey its lights.
 import { flowCarFactor, flowObserveCars, flowSignals, flowTime } from "./flow";
@@ -805,6 +805,26 @@ export function tickCars(
       const oAlongH = oHeadingCanonical ? other.t * oLen : oLen - other.t * oLen;
       const gap = oAlongH - myAlongH;
       if (gap > 0.001 && gap < best) best = gap;
+      // TRAFFIC-GAP: two cars on the very same spot (a spawn on top of another) never separated, because only
+      // gap > 0 counted. A tie is broken by name, so exactly one of the pair is "ahead" and the other holds.
+      else if (gap >= -0.001 && gap <= 0.001 && String(mate.id) > String(car.name) && 0.0011 < best) best = 0.0011;
+    }
+    // TRAFFIC-GAP: a leader that has already turned into the NEXT segment (same ordered tile pair) still counts,
+    // else a queue overlaps across every tile boundary.
+    if (k + 2 < n) {
+      const c2 = car.route[k + 2];
+      const nk = segKey(b[0], b[1], c2[0], c2[1]);
+      for (const mate of hash.segmentMates(nk)) {
+        if (mate.id === car.name) continue;
+        const other = mate.v as Car;
+        if (other.state !== "driving" && other.state !== "arriving") continue;
+        const ok = Math.min(other.leg, other.route.length - 2);
+        const oa = other.route[ok], ob = other.route[ok + 1];
+        if (oa[0] !== b[0] || oa[1] !== b[1] || ob[0] !== c2[0] || ob[1] !== c2[1]) continue;
+        const oLen = Math.hypot(ob[0] - oa[0], ob[1] - oa[1]) || 1;
+        const gap = segLen - myAlong + other.t * oLen;
+        if (gap > 0.001 && gap < best && gap < MIN_GAP + 0.6) best = gap;   // near leaders only: no long-range taper
+      }
     }
     return best;
   };
@@ -857,6 +877,20 @@ export function tickCars(
         }
         break;
       } else if (car.state === "spawning") {
+        // TRAFFIC-GAP: never appear on top of a car already standing at (or just leaving) this origin, nor on a
+        // same-origin spawn with a smaller name (deterministic tie-break): hold invisible until the slot is free.
+        if (car.route.length >= 2 && car.fade <= 0.001) {
+          const s0 = car.route[0];
+          let taken = false;
+          for (const o of state.cars) {
+            if (o === car || o.route.length < 2) continue;
+            if (o.state === "spawning") { if (o.route[0][0] === s0[0] && o.route[0][1] === s0[1] && o.name < car.name) { taken = true; break; } continue; }
+            if (o.state !== "driving" && o.state !== "arriving") continue;
+            const ok = Math.min(o.leg, o.route.length - 2), oa = o.route[ok], ob = o.route[ok + 1];
+            if (Math.hypot(oa[0] + (ob[0] - oa[0]) * o.t - s0[0], oa[1] + (ob[1] - oa[1]) * o.t - s0[1]) < MIN_GAP) { taken = true; break; }
+          }
+          if (taken) { remaining = 0; break; }
+        }
         if (car.fadeMs <= remaining) {
           remaining -= car.fadeMs;
           car.fadeMs = 0;
@@ -965,6 +999,7 @@ export function tickCars(
             // Blocked by a car or a truck ahead — hold position. A light hold
             // is not a jam (the cycle clears it); a truck that never moves is.
             car._lastSpeed = 0;
+            remaining = 0;   // TRAFFIC-GAP: the held time counts as stuck time (it used to add 0, so a hard stop never jammed out)
             break;
           }
           const room = holdT !== null ? Math.max(0, holdT - car.t) : 1;
@@ -1007,7 +1042,7 @@ export function tickCars(
           car._stuckMs = 0;
         }
         // Jam recovery: if stuck too long, despawn and pick a new trip
-        if ((car._stuckMs ?? 0) > JAM_TIMEOUT_MS && track && grid && neighbours && townNodes && rng) {
+        if ((car._stuckMs ?? 0) > JAM_TIMEOUT_MS && track && grid) {   // TRAFFIC-GAP: no longer needs a pending trip search (it only existed when some car was waiting, so a real jam never cleared)
           car.state = "waiting";
           car.route = [];
           car.origin = null;
@@ -1021,7 +1056,7 @@ export function tickCars(
           car.arriveMs = 0;
           car._stuckMs = 0;
           car._yieldMs = 0;
-          car.waitMs = WAIT_MIN_MS + rng() * (WAIT_MAX_MS - WAIT_MIN_MS);
+          car.waitMs = WAIT_MIN_MS + (rng ? rng() * (WAIT_MAX_MS - WAIT_MIN_MS) : 1000);
         }
         break; // driving consumes remaining or transitions
       } else if (car.state === "arriving") {

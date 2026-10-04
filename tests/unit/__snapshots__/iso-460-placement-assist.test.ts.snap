@@ -23,6 +23,10 @@ exports[`#460 cost clarity on the build cards > every build card quotes $ and th
     "tool": "highway",
   },
   {
+    "sub": "$158 · two-way boulevard · one-way lanes · ×2",
+    "tool": "avenue",
+  },
+  {
     "sub": "free setup · then from $108",
     "tool": "harvester",
   },

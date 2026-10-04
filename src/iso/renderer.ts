@@ -39,9 +39,9 @@
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_W, TILE_H, MAP_W, MAP_H, onMapSize } from "../game/config";
 import type { Camera } from "./camera";
-import { visibleTileRange, screenToWorld, worldToScreen } from "./camera";
+import { visibleTileRange, screenToWorld, worldToScreen, getViewYaw } from "./camera";
 import type { Atlas } from "./atlas";
-import { depthSort, isMoving, place, pickSprite, type DrawItem, type Placed } from "./depth";
+import { depthSort, isMoving, place, pickSprite, turnPlaced, yawQuarter, type DrawItem, type Placed } from "./depth";
 import { GRASS, WATER, ROUGH, townGroundBytes, type Grid } from "./grid";
 import {
   FALLBACK, GROUND_TEX_SIZE, PERF_FLAT, createGroundPatterns, makeMatrix, oceanMatrix,
@@ -361,6 +361,7 @@ export function buildDrawList(
   }
   if (world.extra) {
     for (const e of world.extra) {
+      if (hideExtra && hideExtra(e)) continue;   // LIVE-3D spike: drawn by the three layer instead
       if (e.tx < r.x0 - 4 || e.tx > r.x1 + 4 || e.ty < r.y0 - 4 || e.ty > r.y1 + 4) continue;
       out.push(e);
     }
@@ -369,12 +370,27 @@ export function buildDrawList(
   // tile with the same generous pad the extras get.
   if (opts.vehicles !== false && world.vehicles) {
     for (const v of world.vehicles) {
+      if (hideVehicle && hideVehicle(v)) continue;   // LIVE-3D: drawn by the three layer
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       out.push(v);
     }
   }
   return out;
 }
+
+/** LIVE-3D spike (`?three=1`): extras this predicate accepts are not drawn as 2D sprites. */
+let hideExtra: ((e: DrawItem) => boolean) | null = null;
+export const setHideExtra = (f: ((e: DrawItem) => boolean) | null): void => { hideExtra = f; };
+/**
+ * LIVE-3D (owner, 2026-10-03): clouds and their ground shadows are OFF ("not good enough yet"). One switch: flip to
+ * true to bring them back; nothing else was removed, and the graphics setting still gates them when this is on.
+ */
+export let CLOUDS_ENABLED = false;
+/** Tests (and a future settings toggle) may lift the master switch; renderers built afterwards read it. */
+export const setCloudsMasterSwitch = (on: boolean): void => { CLOUDS_ENABLED = on; };
+let hideVehicle: ((e: DrawItem) => boolean) | null = null;
+/** LIVE-3D (`?three=1`): moving sprites (cars, lorries, trains) this predicate accepts are drawn in 3D instead. */
+export const setHideVehicle = (f: ((e: DrawItem) => boolean) | null): void => { hideVehicle = f; };
 
 /** Culling pad: largest footprint plus the tallest sprite expressed in tiles. */
 export function cullPad(atlas: Atlas): number {
@@ -547,10 +563,11 @@ export function composeRouteOverlay(
 }
 
 function tileCentre(cam: Camera, grid: Grid | null, tx: number, ty: number): [number, number] {
-  const [wx, wy] = grid
-    ? elevatedWorld(grid, tx + 0.5, ty + 0.5)
-    : [(tx - ty) * HW, (tx + ty) * HH + HH];
-  return worldToScreen(cam, wx, wy);
+  // LIVE-3D: turn the FLAT centre, then lift on screen (the hill lift is screen-vertical under a view turn)
+  const fw = (tx - ty) * HW, fy = (tx + ty) * HH + HH;
+  const lift = grid ? fy - elevatedWorld(grid, tx + 0.5, ty + 0.5)[1] : 0;
+  const [sx, sy] = worldToScreen(cam, fw, fy);
+  return [sx, sy - lift * cam.zoom];
 }
 
 function strokePolyline(
@@ -930,6 +947,9 @@ export class IsoRenderer {
   private roadMode: RoadRenderMode = "textured";
   private roadStyle: RoadStyle = DEFAULT_ROAD_STYLE;
   private roadCache = new RoadCache();
+  private turnedFor: Placed[] | null = null;
+  private turnedYaw = 0;
+  private turnedStatic: { draw: Placed; sort: Placed }[] = [];
   private roadBlits = 0;
   // ── placement overlay ───────────────────────────────────────────────────
   /** Vector by default; `sprites` is the baked-cell rollback (see the type). */
@@ -979,7 +999,7 @@ export class IsoRenderer {
   /** The positions scratch `paintCloudLayer` writes into — one, forever. */
   private readonly cloudScratch = new Float32Array(CLOUD_COUNT * 2);
   /** The effective enable from the game (the Clouds setting, perf-gated). */
-  private cloudsOn = true;
+  private cloudsOn = CLOUDS_ENABLED;
   /** False while the OS asks to reduce motion: the sky freezes at t=0. */
   private cloudMotion = true;
   /**
@@ -1324,7 +1344,7 @@ export class IsoRenderer {
    * never persisted, never on the wire.
    */
   setCloudsEnabled(on: boolean): void {
-    this.cloudsOn = on;
+    this.cloudsOn = CLOUDS_ENABLED && on;
   }
 
   /** The effective enable, for `__iso.rendering()` and the settings layer. */
@@ -1938,13 +1958,31 @@ export class IsoRenderer {
     const placed = this.staticPlaced.slice();
     let itemCount = this.staticItemCount;
     for (const v of this.world.vehicles ?? []) {
+      if (hideVehicle && hideVehicle(v)) continue;   // LIVE-3D: the three layer draws this one (was drawn twice)
       if (v.tx < r.x0 - 4 || v.tx > r.x1 + 4 || v.ty < r.y0 - 4 || v.ty > r.y1 + 4) continue;
       itemCount++;
       const p = place(this.atlas, v, this.world.grid);
       if (p) placed.push(p);
     }
     this.hadVehicles = (this.world.vehicles?.length ?? 0) > 0;
-    const sorted = depthSort(placed);
+    // LIVE-3D: a turned view re-seats each remaining 2D sprite (billboards keep their art, their anchor turns) and
+    // sorts them in the turned lattice. The static half is cached per (list, yaw) so a still turned view stays cheap.
+    const yaw = getViewYaw();
+    let sorted;
+    if (yaw === 0) sorted = depthSort(placed);
+    else {
+      const k = yawQuarter(yaw);
+      if (this.turnedFor !== this.staticPlaced || this.turnedYaw !== yaw) {
+        this.turnedFor = this.staticPlaced; this.turnedYaw = yaw;
+        this.turnedStatic = this.staticPlaced.map((q) => turnPlaced(q, yaw, k));
+      }
+      const pairs = [...this.turnedStatic];
+      for (let i = this.staticPlaced.length; i < placed.length; i++) pairs.push(turnPlaced(placed[i], yaw, k));
+      const back = new Map<Placed, Placed>();
+      for (const q of pairs) back.set(q.sort, q.draw);
+      const ss = depthSort(pairs.map((q) => q.sort));
+      sorted = { order: ss.order.map((q) => back.get(q)!), cycles: ss.cycles };
+    }
     const { order } = sorted;
     this.lastOrder = order;
     this.lastCycles = sorted.cycles;
@@ -2252,7 +2290,12 @@ export class IsoRenderer {
     }
     this.overlayBlits = rest.length;
     const placed = rest.map((i) => place(this.atlas, i, this.world.grid)).filter(Boolean) as Placed[];
-    for (const p of depthSort(placed).order) this.blit(ctx, p, timeMs);
+    // LIVE-3D (3D-FIX-2): the sprites the vector overlay does not own (the `sprites` rollback's tile highlights,
+    // a drag preview's own art) sit on tiles too, so they take the same turn the structures pass gives theirs:
+    // the anchor is re-seated on the TURNED footprint (a non-square footprint otherwise drifts off its lot) and
+    // the hill lift is taken off AFTER the turn, which is the direction the terrain and the highlight use.
+    // yaw 0 is the old one-line path, byte for byte.
+    for (const p of this.overlayOrder(placed)) this.blit(ctx, p, timeMs);
     // #462: route lines sit on the road, above the placement glow, under debug
     // marks and the protest crowd.
     if (this.routeOverlay && this.routeOverlay.length) {
@@ -2276,6 +2319,29 @@ export class IsoRenderer {
    * strings, cheap to hold.
    */
   readonly drawnSprites = new Set<string>();
+
+  /**
+   * LIVE-3D (3D-FIX-2): depth order for the overlay's OWN sprites.
+   *
+   * At yaw 0 this is `depthSort(placed)` — the path every test and every
+   * sprite-mode screenshot has always taken. Under a turn each sprite is
+   * re-seated by `turnPlaced` (anchor pinned to its turned footprint, hill
+   * lift screen-vertical) and sorted in the TURNED lattice, then mapped back
+   * to its draw copy — the same two-step the structures pass uses, so the
+   * overlay's art lands on the tile the game picked for it at every yaw.
+   */
+  private overlayOrder(placed: Placed[]): Placed[] {
+    const yaw = getViewYaw();
+    if (yaw === 0 || placed.length === 0) return depthSort(placed).order;
+    const k = yawQuarter(yaw);
+    const pairs = placed.map((p) => turnPlaced(p, yaw, k));
+    const back = new Map<Placed, Placed>();
+    for (const q of pairs) back.set(q.sort, q.draw);
+    const sorted = depthSort(pairs.map((q) => q.sort)).order;
+    const out: Placed[] = [];
+    for (const q of sorted) out.push(back.get(q)!);
+    return out;
+  }
 
   /** Draw one placed sprite; false when its image is not loaded. */
   private blit(ctx: Ctx2D, p: Placed, timeMs: number): boolean {
@@ -2382,13 +2448,15 @@ export class IsoRenderer {
     tx: number; ty: number; sprite: Placed | null; ref: unknown;
   } {
     const [wx, wy] = screenToWorld(this.cam, screenX, screenY);
+    // LIVE-3D: sprites are billboards at their turned anchors, so they are hit in the TURNED raw world.
+    const rawX = (screenX - this.cam.x) / this.cam.zoom, rawY = (screenY - this.cam.y) / this.cam.zoom;
     // E3 (#269): stage 1 resolves the tile the cursor SEES — height included, so
     // a raised tile in front of a lower one is the one picked. `pickTile` is the
     // exact flat pick on a flat map, so the option-off path is unchanged.
-    const flat = pickTile(this.world.grid, wx, wy);
+    const flat = pickTile(this.world.grid, wx, wy, getViewYaw());
     if (opts.sprites === false) return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
     if (!this.lastOrder.length) this.drawStructures(0);
-    const hit = pickSprite(this.atlas, this.lastOrder, wx, wy);
+    const hit = pickSprite(this.atlas, this.lastOrder, rawX, rawY);
     if (hit) return { tx: hit.tx, ty: hit.ty, sprite: hit, ref: hit.ref };
     return { tx: flat[0], ty: flat[1], sprite: null, ref: null };
   }

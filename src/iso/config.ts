@@ -1934,7 +1934,12 @@ export const CIVIC_BUILDINGS: readonly CivicBuildingDef[] = [
     minTier: 2, perHouses: 100, unique: false, fallback: "town_cinema",
   },
   {
-    sprite: "town_station", name: "Station", footprint: [2, 2],
+    // 3D-FIX-3 (#662): the station's stand-in is the cream-banded brick hotel,
+    // and the owner wants THAT building to be a true 1×2 — so the plot this
+    // kind claims is 1×2 too (the CIVIC-1 invariant: a kind's stand-in and its
+    // table footprint are the same shape). When `town_station` art lands it
+    // must be authored 1×2 to match; see the PR.
+    sprite: "town_station", name: "Station", footprint: [1, 2],
     minTier: 3, perHouses: 120, unique: false, fallback: "town_hotel",
   },
   {

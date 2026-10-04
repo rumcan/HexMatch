@@ -1,0 +1,460 @@
+{
+ "depot_1x2": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.5165,
+  "h": 0.3444
+ },
+ "factory": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9998,
+  "h": 0.5236
+ },
+ "factory_2x4": {
+  "turn": 0,
+  "ex": 0.5295,
+  "ez": 1,
+  "h": 0.4147
+ },
+ "farm": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.9938,
+  "h": 0.3422
+ },
+ "forest": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.9847,
+  "h": 0.3503
+ },
+ "gold_mine": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9377,
+  "h": 0.4123
+ },
+ "oil_rig": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.9999,
+  "h": 0.5065
+ },
+ "ore_mine": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.9999,
+  "h": 0.4256
+ },
+ "quarry": {
+  "turn": 0,
+  "ex": 0.9122,
+  "ez": 1,
+  "h": 0.3855
+ },
+ "shops_1x3": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.2322,
+  "h": 0.7777
+ },
+ "station_cap": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.6544,
+  "h": 0.4669
+ },
+ "station_lane": {
+  "turn": 0,
+  "ex": 0.9972,
+  "ez": 1,
+  "h": 0.3217
+ },
+ "station_wh_1": {
+  "turn": 0,
+  "ex": 0.9716,
+  "ez": 1,
+  "h": 0.6336
+ },
+ "station_wh_2": {
+  "turn": 0,
+  "ex": 0.9549,
+  "ez": 1,
+  "h": 0.4108
+ },
+ "station_wh_3": {
+  "turn": 0,
+  "ex": 0.9996,
+  "ez": 1,
+  "h": 0.3719
+ },
+ "store_2x4": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.5086,
+  "h": 0.695
+ },
+ "terrace_1x2": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.4004,
+  "h": 0.6793
+ },
+ "town_bank": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.8955,
+  "h": 0.6063
+ },
+ "town_center": {
+  "turn": 0,
+  "ex": 0.9195,
+  "ez": 1,
+  "h": 0.6987
+ },
+ "town_cinema": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8952,
+  "h": 0.5878
+ },
+ "town_cottage_old_small": {
+  "turn": 0,
+  "ex": 0.9122,
+  "ez": 1,
+  "h": 0.9016
+ },
+ "town_cottage_old_small_2": {
+  "turn": 1,
+  "ex": 0.9881,
+  "ez": 1,
+  "h": 0.5417
+ },
+ "town_cottage_old_small_a": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.7918,
+  "h": 0.8013
+ },
+ "town_cottage_tall": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9955,
+  "h": 0.8682
+ },
+ "town_flats": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.468,
+  "h": 0.8268
+ },
+ "town_flats_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8002,
+  "h": 1.3728
+ },
+ "town_flats_4": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.73,
+  "h": 1.3557
+ },
+ "town_flats_grey": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.6858,
+  "h": 0.5906
+ },
+ "town_flats_townhouse_tall": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.74,
+  "h": 1.2187
+ },
+ "town_flats_trop_1x1_4": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8699,
+  "h": 0.6018
+ },
+ "town_flats_trop_1x1_7": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9832,
+  "h": 0.6012
+ },
+ "town_flats_trop_2x1_6": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8095,
+  "h": 0.9672
+ },
+ "town_fountain_1x1": {
+  "turn": 0,
+  "ex": 0.9996,
+  "ez": 1,
+  "h": 0.3844
+ },
+ "town_hotel": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9491,
+  "h": 1.2486
+ },
+ "town_house_c": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.7939,
+  "h": 1.0498
+ },
+ "town_house_modern": {
+  "turn": 1,
+  "ex": 0.9999,
+  "ez": 1,
+  "h": 0.4919
+ },
+ "town_house_modern_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9068,
+  "h": 0.3685
+ },
+ "town_house_pool": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.9992,
+  "h": 0.3108
+ },
+ "town_office_1460": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8007,
+  "h": 1.3732
+ },
+ "town_office_tower_modern": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9207,
+  "h": 1.2059
+ },
+ "town_offices_1423": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.6811,
+  "h": 1.1442
+ },
+ "town_offices_tall": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8872,
+  "h": 0.7777
+ },
+ "town_shops_modern": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.5646,
+  "h": 1.0041
+ },
+ "town_shops_offices": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9954,
+  "h": 1.3238
+ },
+ "town_shops_offices_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.7197,
+  "h": 1.2836
+ },
+ "town_small_flat_1x1_1": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.8969,
+  "h": 0.7995
+ },
+ "town_small_flat_1x1_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.6959,
+  "h": 0.5441
+ },
+ "town_small_house_1x1_1": {
+  "turn": 1,
+  "ex": 1,
+  "ez": 0.8375,
+  "h": 0.6302
+ },
+ "town_townhouse_3": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.7304,
+  "h": 0.7444
+ },
+ "town_townhouse_garden_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.5811,
+  "h": 0.5117
+ },
+ "town_townhouse_garden_3": {
+  "turn": 0,
+  "ex": 0.9596,
+  "ez": 1,
+  "h": 0.89
+ },
+ "town_townhouse_gardens_2": {
+  "turn": 0,
+  "ex": 0.9991,
+  "ez": 1,
+  "h": 0.4673
+ },
+ "truck_depot": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9231,
+  "h": 0.2372
+ },
+ "truck_depot_bottom_entrance_ne": {
+  "turn": 3,
+  "ex": 1,
+  "ez": 1,
+  "h": 0.3754
+ },
+ "truck_depot_bottom_entrance_nw": {
+  "turn": 2,
+  "ex": 0.9357,
+  "ez": 1,
+  "h": 0.3538
+ },
+ "truck_depot_bottom_entrance_se": {
+  "turn": 1,
+  "ex": 0.9932,
+  "ez": 1,
+  "h": 0.3715
+ },
+ "truck_depot_bottom_entrance_sw": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9998,
+  "h": 0.3831
+ },
+ "truck_depot_top_entrance": {
+  "turn": 0,
+  "ex": 0.8879,
+  "ez": 1,
+  "h": 0.2313
+ },
+ "wheat_field": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.9999,
+  "h": 0.0781
+ },
+ "car_sedan_1": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.42,
+  "h": 0.3169,
+  "moving": true,
+  "lengthM": 4.8
+ },
+ "car_sedan_2": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4122,
+  "h": 0.3164,
+  "moving": true,
+  "lengthM": 4.8
+ },
+ "car_sedan_3": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4108,
+  "h": 0.3256,
+  "moving": true,
+  "lengthM": 4.8
+ },
+ "rail_box": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.3116,
+  "h": 0.4477,
+  "moving": true,
+  "lengthM": 7.2
+ },
+ "rail_flat": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.3673,
+  "h": 0.2955,
+  "moving": true,
+  "lengthM": 6.2
+ },
+ "rail_loco": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.2742,
+  "h": 0.3923,
+  "moving": true,
+  "lengthM": 10.3
+ },
+ "rail_tank": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.3664,
+  "h": 0.5147,
+  "moving": true,
+  "lengthM": 6.7
+ },
+ "rail_tender": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4587,
+  "h": 0.5421,
+  "moving": true,
+  "lengthM": 4.7
+ },
+ "vehicle_truck": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4299,
+  "h": 0.4412,
+  "moving": true,
+  "lengthM": 7
+ },
+ "vehicle_truck_blue": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4299,
+  "h": 0.4412,
+  "moving": true,
+  "lengthM": 7
+ },
+ "terrace_2x1_plain": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.4323,
+  "h": 0.4677
+ },
+ "terrace_2x1_yard": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.5483,
+  "h": 0.4677
+ },
+ "platform": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.2634,
+  "h": 0.3245
+ },
+ "train-depot": {
+  "turn": 0,
+  "ex": 1,
+  "ez": 0.96,
+  "h": 0.6
+ }
+}

@@ -18,6 +18,7 @@
 // the flat pick whenever it hits.
 // ══════════════════════════════════════════════════════════════════════════
 import { HW, HH, TILE_H, tileToScreen } from "../game/config";
+import { turnWorld } from "./camera";
 import type { Grid } from "./grid";
 import { LEVEL_PX, elevationActive, surfaceHeight, worldToGround } from "./elevation";
 import type { Atlas, SpriteDef } from "./atlas";
@@ -74,6 +75,9 @@ export interface Placed extends DrawItem {
    * instead of staying on the flat projection underneath it.
    */
   elev?: number;
+  /** LIVE-3D: the TURNED world top-left (raw, before the camera) when the view is yawed; wx/wy then hold its inverse turn. */
+  ux?: number;
+  uy?: number;
 }
 
 /**
@@ -326,15 +330,140 @@ export function depthSort(items: Placed[]): SortResult {
  * camera-removed) coordinates of the cursor. Returns the first opaque hit.
  */
 export function pickSprite(
-  atlas: Atlas, order: Placed[], wx: number, wy: number,
+  atlas: Atlas, order: Placed[], wx: number, wy: number,   // wx/wy: TURNED raw world when the view is yawed (Placed.ux/uy)
 ): Placed | null {
   for (let i = order.length - 1; i >= 0; i--) {
     const p = order[i];
     if (isMoving(p)) continue;   // RV-01: a moving truck is never clickable
     if (p.decor) continue;       // SCENERY: a tree is never clickable either
-    const lx = wx - p.wx, ly = wy - p.wy;
+    const lx = wx - (p.ux ?? p.wx), ly = wy - (p.uy ?? p.wy);
     if (lx < 0 || ly < 0 || lx >= p.w || ly >= p.h) continue;
     if (atlas.opaqueAt(p.sprite, Math.floor(lx), Math.floor(ly))) return p;
   }
   return null;
+}
+
+// ── LIVE-3D: the view turn for the 2D sprites that remain ────────────────────
+/** Quarter-turn index (0..3) nearest a yaw in radians. */
+export const yawQuarter = (yaw: number): number => (((Math.round(yaw / (Math.PI / 2)) % 4) + 4) % 4);
+
+/** A tile footprint's image under k quarter turns of the tile lattice about (0,0): [tx', ty', fw', fh']. */
+export function turnFootprint(tx: number, ty: number, fw: number, fh: number, k: number): [number, number, number, number] {
+  switch (k & 3) {
+    case 1: return [ty, -tx - fw, fh, fw];
+    case 2: return [-tx - fw, -ty - fh, fw, fh];
+    case 3: return [-ty - fh, tx, fh, fw];
+    default: return [tx, ty, fw, fh];
+  }
+}
+
+/** A fractional tile point under k quarter turns (the same lattice turn). */
+export function turnTilePoint(u: number, v: number, k: number): [number, number] {
+  switch (k & 3) {
+    case 1: return [v, -u];
+    case 2: return [-u, -v];
+    case 3: return [-v, u];
+    default: return [u, v];
+  }
+}
+
+/** The flat world point the sprite's anchor pixel lands on for a footprint at (tx,ty) of fw x fh (see drawOrigin). */
+export function footprintPin(def: Pick<SpriteDef, "center">, tx: number, ty: number, fw: number, fh: number): [number, number] {
+  const [sx, sy] = tileToScreen(tx + fw - 1, ty + fh - 1);
+  if (def.center) return [sx - (fw - fh) * (HW / 2), sy + TILE_H - (fw + fh) * (HH / 2)];
+  return [sx, sy + TILE_H];
+}
+
+/**
+ * Re-seat a placed sprite for a turned view. The sprite art never turns (a billboard): only its ANCHOR does. The
+ * returned `draw` keeps every downstream user of wx/wy honest (worldToScreen turns a point, so wx/wy hold the
+ * inverse turn of the true turned top-left, stored raw in ux/uy); `sort` is the same sprite described in the
+ * turned lattice (footprint, key, screen box) so depthSort orders it as the player now sees it.
+ */
+export function turnPlaced(p: Placed, yaw: number, k: number): { draw: Placed; sort: Placed } {
+  const ax = p.def.anchor[0], ay = p.def.anchor[1], elev = p.elev ?? 0;
+  let [tx, ty] = turnWorld(p.wx + ax, p.wy + elev + ay, yaw);
+  if (!isMoving(p) && k !== 0) {
+    // LIVE-3D (owner: buildings drift across their lot while turning): the anchor pixel sits on the footprint's SOUTH
+    // vertex (or its centre for def.center), and the south vertex of a TURNED footprint is a different point of the
+    // lot. Pin the anchor to that point of the turned footprint, so the billboard stays inside its own tiles.
+    const [pw, ph] = p.def.footprint;
+    const [a, b, w2, h2] = turnFootprint(p.tx, p.ty, pw, ph, k);
+    const [px, py] = footprintPin(p.def, a, b, w2, h2);
+    const [qx, qy] = turnWorld(p.wx + ax, p.wy + elev + ay, k * Math.PI / 2);
+    tx += px - qx; ty += py - qy;
+  }
+  const ux = tx - ax, uy = ty - ay - elev;
+  const [ix, iy] = turnWorld(ux, uy, -yaw);
+  const draw: Placed = { ...p, wx: ix, wy: iy, ux, uy };
+  const [fw, fh] = p.def.footprint;
+  let sort: Placed;
+  if (isMoving(p)) {
+    const [nx, ny] = turnTilePoint(p.fx! + 0.5, p.fy! + 0.5, k);
+    const fx = nx - 0.5, fy = ny - 0.5;
+    sort = { ...draw, wx: ux, wy: uy, tx: Math.round(fx), ty: Math.round(fy), key: Math.round(fx + fw - 1) + Math.round(fy + fh - 1) + 0.5 + (p.lift ?? 0) };
+  } else {
+    const [a, b, w2, h2] = turnFootprint(p.tx, p.ty, fw, fh, k);
+    sort = { ...draw, wx: ux, wy: uy, tx: a, ty: b, def: { ...p.def, footprint: [w2, h2] }, key: (a + w2 - 1) + (b + h2 - 1) + (p.lift ?? 0) };
+  }
+  return { draw, sort };
+}
+
+// ── LIVE-3D: the turned seat, memoised (3D-FIX-2) ─────────────────────────────
+/**
+ * One memoised "where does this sprite's top-left land under a turned view" slot.
+ *
+ * The placement overlay re-places its ghost on EVERY frame (`place()` + the
+ * turn), so a hovering player would allocate two objects and walk the whole
+ * anchor maths sixty times a second for a sprite that has not moved. The memo
+ * holds one slot per (sprite, tile) — the ghost's own list, a handful long —
+ * keyed additionally on the view quarter, so a still camera allocates nothing
+ * at all and a turn rebuilds once.
+ */
+export interface SeatSlot { sprite: string; tx: number; ty: number; wx: number; wy: number; live: boolean }
+
+export interface SeatMemo { yaw: number; k: number; slots: SeatSlot[] }
+
+export const createSeatMemo = (): SeatMemo => ({ yaw: 0, k: -1, slots: [] });
+
+/**
+ * The memoised seat of the sprite on tile (tx,ty) at this view quarter, or
+ * null when it has to be computed. The cheap half of `seatTurned`: no lookup
+ * here allocates, so a hovering player can call it every frame.
+ */
+export function seatFind(
+  memo: SeatMemo, sprite: string, tx: number, ty: number, yaw: number, k: number,
+): SeatSlot | null {
+  if (memo.yaw !== yaw || memo.k !== k) return null;
+  for (let i = 0; i < memo.slots.length; i++) {
+    const s = memo.slots[i];
+    if (s.live && s.sprite === sprite && s.tx === tx && s.ty === ty) return s;
+  }
+  return null;
+}
+
+/**
+ * The WORLD top-left a `Placed` is drawn at under a view turned `yaw` (nearest
+ * quarter `k`) — exactly `turnPlaced(p, yaw, k).draw`, memoised.
+ *
+ * Returns a REUSED slot: read `wx`/`wy` straight away, never store it. The
+ * slot's own `wx`/`wy` are the answer; `live` is bookkeeping.
+ */
+export function seatTurned(memo: SeatMemo, p: Placed, yaw: number, k: number): SeatSlot {
+  if (memo.yaw !== yaw || memo.k !== k) {
+    // A new view quarter invalidates every seat (the anchor turns with it).
+    memo.yaw = yaw; memo.k = k;
+    for (let i = 0; i < memo.slots.length; i++) memo.slots[i].live = false;
+  } else {
+    const hit = seatFind(memo, p.sprite, p.tx, p.ty, yaw, k);
+    if (hit) return hit;
+  }
+  let slot: SeatSlot | null = null;
+  for (let i = 0; i < memo.slots.length; i++) if (!memo.slots[i].live) { slot = memo.slots[i]; break; }
+  if (!slot) { slot = { sprite: "", tx: 0, ty: 0, wx: 0, wy: 0, live: false }; memo.slots.push(slot); }
+  const seat = turnPlaced(p, yaw, k).draw;
+  slot.sprite = p.sprite; slot.tx = p.tx; slot.ty = p.ty;
+  slot.wx = seat.wx; slot.wy = seat.wy;
+  slot.live = true;
+  return slot;
 }

@@ -111,7 +111,7 @@ import {
 } from "./protest";
 import { loadGroundTextures } from "./ground";
 import {
-  createCamera, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
+  createCamera, tickViewYaw, getViewYaw, rotateViewStep, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
   createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
   bootZoomFor, tapSlop, HH, HW, visibleTileRange, screenToTileAt,
   type Camera, type GestureState,
@@ -119,7 +119,7 @@ import {
 // AMB-2 (#391): the bird pool — cosmetic, seeded from the map seed, drawn at
 // the closest zoom through the renderer's shared above-structures hook.
 import { createBirds, paintBirds, scareBirds, tickBirds, BIRD_VIEW_PAD, type BirdState } from "./birds";
-import { LEVEL_PX, MAX_LEVEL, elevationActive, invalidateDraper, invalidateElevation, tileSurfaceHeight } from "./elevation";
+import { LEVEL_PX, MAX_LEVEL, elevationActive, invalidateDraper, invalidateElevation, surfaceHeight, tileSurfaceHeight } from "./elevation";
 // #456 LEVEL GROUND — the terraform rule: plan (pure), apply (the height
 // bytes), the wire diff of edited heights, and the refusal wording. The
 // planner's `levelCost` seam is for BUILD-1 (#460)'s "Slope: level it for $X"
@@ -129,7 +129,8 @@ import {
   type LevelPlan,
 } from "./level-ground";
 import { createLabelLayer, type LabelEntry, type LabelLayer } from "./labels";
-import { IsoRenderer, composeRouteOverlay, paintClaimFlags, paintLaneInvite, type ClaimFlagView, type LaneInviteView, type World, type RouteOverlayPath } from "./renderer";
+import { IsoRenderer, composeRouteOverlay, paintClaimFlags, paintLaneInvite, type ClaimFlagView, type LaneInviteView, type World, type RouteOverlayPath, setHideExtra, setHideVehicle } from "./renderer";
+import { mountThreeLayer, rotationAvailable, threeWanted, type ThreeLayer } from "./three-layer";
 import { DEFAULT_ROAD_STYLE } from "./road-renderer";
 // R2 (#266): the bridge rules' wording, for the refusals the drag can hit.
 import { BRIDGE_REFUSAL_TEXT } from "./bridges";
@@ -2331,6 +2332,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       stopCameraMotion();
       commitCamera(zoomStepAt(cam, dir, cam.vw / 2, cam.vh / 2));
     },
+    // ROT-UI-1: the rotate keys under the minimap plate. Same door the `[` and
+    // `]` keys open (`rotateViewStep` in camera.ts) — the loop's tickViewYaw
+    // eases the turn and re-pivots the camera, so nothing more to do here.
+    onRotate: (dir) => rotateViewStep(dir),
     onSwap: (r1, c1, r2, c2) => {
       // MP-05: guests never mutate their local board. Route the action to the
       // host, where the guest seat's board is authoritative, just like map
@@ -2979,6 +2984,26 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // Terrain-GL (opt-in, docs/TERRAIN_GL.md): the WebGL2 ground mounts under
   // the 2D stack; null = no WebGL2 / not asked for, and the 2D ground stays.
   const terrainGl: TerrainGl | null = terrainGlWanted() ? mountTerrainGl(ui.mapHost, grid, seed) : null;
+  // LIVE-3D spike: `?three=1` mounts the instanced 3D building layer under the overlay canvas.
+  // LIVE-3D: the railway structures the 3D layer draws (platform and train depot art, any view)
+  let lastThreeItems: { sprite: string; tx: number; ty: number; w: number; h: number; lift: number }[] = [];   // __iso.threeItems
+  const RAIL_3D = /^(platform|train-depot)_(ne|se|sw|nw)$/;
+  const threeLayer: ThreeLayer | null = threeWanted() ? mountThreeLayer(ui.mapHost, canvases.overlay) : null;
+  // ROT-UI-1: the rotate keys under the minimap exist only where the view can
+  // actually turn — three-layer.ts's one predicate (false without ?three=1, and
+  // false when the WebGL layer failed to mount).
+  ui.setRotationAvailable(rotationAvailable());
+  // terrain elevation in px at a ground point, for the 3D vehicles (depth.ts E3: moving sprites read the surface at their tile centre)
+  const threeLift = (u: number, v: number): number => (elevationActive(grid) ? surfaceHeight(grid, u, v) * LEVEL_PX : 0);
+  if (threeLayer) {
+    setHideExtra((e) => {
+      const k = (e.ref as { kind?: string } | undefined)?.kind;
+      return (k === "town" || k === "harvester" || k === "factory" || (k === "rail" && RAIL_3D.test(e.sprite))) && threeLayer.drawsSprite(e.sprite);
+    });
+    // the 2D sprites a ready 3D model replaces disappear as models land: re-sync once they do
+    threeLayer.onModels = () => syncWorld();
+    setHideVehicle((e) => threeLayer.drawsVehicle(e.sprite));
+  }
   const stage = ui.mapHost;
   // GFX-01: the tilt-shift composite. It mounts its own canvas above the
   // three layers and stays `display: none` until the setting says otherwise,
@@ -4565,6 +4590,18 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     // too: hover routes, score breakdowns, inspector components, drag previews.
     netVersion++;
     syncLabels();
+    if (threeLayer) {
+      // LIVE-3D spike: one box per town building / depot / plant, rebuilt only when the world syncs.
+      lastThreeItems = (world.extra ?? []).flatMap((e) => {
+        const k = (e.ref as { kind?: string } | undefined)?.kind;
+        if (k !== "town" && k !== "harvester" && k !== "factory" && !(k === "rail" && RAIL_3D.test(e.sprite))) return [];
+        const [w, h] = footprintOf(e.sprite);
+        // the 2D sprite rides up the hill with its base (depth.ts E3); the 3D model gets the same lift
+        const lift = elevationActive(grid) ? surfaceHeight(grid, e.tx + w - 0.5, e.ty + h - 0.5) * LEVEL_PX : 0;
+        return [{ sprite: e.sprite, tx: e.tx, ty: e.ty, w, h, lift }];
+      });
+      threeLayer.setItems(lastThreeItems);
+    }
     renderer?.setWorld(world);
   };
 
@@ -4611,10 +4648,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const contested = contestedIndustries(eco);
     const contestedT = contestedTowns(eco);
     const sword = (name: string) => `⚔ ${name}${contestClock ? ` · ${contestClock}` : ""}`;
-    // RES-LABELS-1: only the hovered / selected resource site wears a chip.
+    // RES-LABELS-1: no permanent name chip on resource sites; only the hovered / selected site wears one,
+    // and a site someone won a battle over keeps its sword chip.
     const focusInd = focusIndustryId();
     for (const ind of grid.industries) {
-      if (ind.id !== focusInd) continue;
+      if (ind.id !== focusInd && !contested.has(ind.id)) continue;
       const def = INDUSTRY_BY_KEY[ind.type];
       const hot = contested.has(ind.id);
       entries.push({
@@ -7870,6 +7908,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     invalidateDraper(grid);
     renderer?.heightsInvalidated(changed);
     terrainGl?.heightsChanged(grid, changed);
+    if (threeLayer) syncWorld();   // the 3D models ride the new terrain height
     // The 1-second flash at the tile the gesture started from — the eye is
     // already there, and the price it was charged is what it wants to see.
     const [sx, sy] = plan.changes[0];
@@ -7929,6 +7968,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     invalidateDraper(grid);
     renderer?.heightsInvalidated(changed);
     terrainGl?.heightsChanged(grid, changed);
+    if (threeLayer) syncWorld();   // the 3D models ride the new terrain height
   }
 
   /**
@@ -15709,6 +15749,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       invalidateDraper(grid);
       renderer?.heightsInvalidated(changed);
       terrainGl?.heightsChanged(grid, changed);
+      if (threeLayer) syncWorld();   // the 3D models ride the new terrain height
     }
     // R3 (#270): the dams come back the same way — one owner per site, the
     // bank from the wire row. `damsFromWire` validates row by row, so a stale
@@ -16911,6 +16952,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         }
       }
 
+      // LIVE-3D: ease the view turn and keep the screen-centre ground point fixed (camera.ts)
+      if (threeLayer) { const turned = tickViewYaw(cam, dt); if (turned) commitCamera(turned); }
       // TRAFFIC-01: trucks and ambient cars share the vehicles list — one
       // depth-sorted pass draws both, and culling treats them identically.
       // TRUCK-BRAND: the atlas decides whether a lorry wears a livery — the
@@ -16927,8 +16970,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       // its per-rect grade drew boxes round the cars and trains. The world
       // stays in plain daylight; only the `?light=` screenshot pin still grades.
       if (lightingPin != null) pushMatchLighting(dt);
-      terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh }, t);
+      terrainGl?.render({ x: cam.x, y: cam.y, zoom: cam.zoom, vw: cam.vw, vh: cam.vh, yaw: getViewYaw() }, t);
       renderer!.render(t, items, ghost);
+      threeLayer?.updateVehicles(world.vehicles ?? [], threeLift);
+      threeLayer?.update(cam);
       mini.paint();
       // #461: camera ease back to Depot after tuning.
       tickCameraAnim(t);
@@ -17267,6 +17312,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
      * exposed so a probe can check what a grown town actually draws: the
      * base blocks, the tier centre, and the tier-2+ GROWN districts.
      */
+    /** LIVE-3D spike: fps (5 s rAF average), draw calls, triangles, instances; null without ?three=1. */
+    threeStats: () => threeLayer?.stats() ?? null,
+    // LIVE-3D: the view yaw (radians) and the tile the game would pick under a screen pixel at that yaw
+    viewYaw: () => getViewYaw(),
+    get threeItems() { return lastThreeItems; },
+    tileAtScreen: (sx: number, sy: number) => { const p = renderer!.pick(sx, sy, { sprites: false }); return [p.tx, p.ty] as [number, number]; },
     get townDrawItems() {
       return (world.extra ?? [])
         .filter((e) => (e.ref as { kind?: unknown } | undefined)?.kind === "town")
@@ -18577,6 +18628,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     cancelAnimationFrame(raf);
     ro.disconnect();
     terrainGl?.dispose();
+    if (threeLayer) { setHideExtra(null); setHideVehicle(null); threeLayer.dispose(); }
     root.classList.remove("iso-game");
     root.innerHTML = "";
     // TOWN-4.1 (#677): the map's buffers die with the game — unlock the size

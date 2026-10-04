@@ -3860,9 +3860,16 @@ function townBuildingsPlanned(
     // inside — where the zone has that art and this lot is one of the ones
     // that take it (`PLANNED_BLOCK_SHARE`).
     const [take, of] = PLANNED_BLOCK_SHARE[lot.zone];
-    if (pool.blocks.length && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
+    // Only art that fills the WHOLE lot may take it: a block-pool sprite that
+    // has since shrunk (3D-FIX-3 made town_hotel 1×2) would leave half the lot
+    // bare after the early return below.
+    const wholeLot = pool.blocks.filter((v) => {
+      const [fw, fh] = footprintOf(v);
+      return (fw === lot.w && fh === lot.h) || (fw === lot.h && fh === lot.w);
+    });
+    if (wholeLot.length && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
       && take > 0 && hashPick(lot.x + 0x41, lot.y + 0x1d, of) < take) {
-      if (layFrom(pool.blocks, box, lot.front)) return;
+      if (layFrom(wholeLot, box, lot.front)) return;
     }
 
     // 4b. A GARDEN: an outer lot keeps one tile green, on the BACK row so the

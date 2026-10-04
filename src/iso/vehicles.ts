@@ -46,7 +46,7 @@ import {
 } from "./track";
 import {
   YIELD_WAIT_MS, STATIONARY_SPEED, buildHash, laneOffsetFor,
-  overpassLiftFor, approachingJunction, followSpeed, segKey,
+  overpassLiftFor, approachingJunction, followSpeed, segKey, MIN_GAP,
   type VehicleEntry,
 } from "./traffic";
 // FLOW-1: lights and congestion act on the lorry's REAL (economic) pose.
@@ -385,6 +385,27 @@ export function tickTrucks(
         gap = oAlong - along;
       }
       if (gap > 0.001 && gap < best) best = gap;
+      // TRAFFIC-GAP: a tie (two lorries on one spot) is broken by key: exactly one holds.
+      else if (gap >= -0.001 && gap <= 0.001 && String(mate.id) > String(truckKey(truck)) && 0.0011 < best) best = 0.0011;
+    }
+    // TRAFFIC-GAP: a leader already in the NEXT segment (same ordered tile pair, in my heading) still counts.
+    const nk2 = truck.reverse ? k - 1 : k + 2;
+    if (nk2 >= 0 && nk2 <= max) {
+      const P = truck.reverse ? sa : sb, Q = truck.route[nk2];
+      const nsk = segKey(P[0], P[1], Q[0], Q[1]);
+      for (const mate of hash.segmentMates(nsk)) {
+        if (mate.id === truckKey(truck)) continue;
+        const other = mate.v as Truck;
+        const omax = other.route.length - 1;
+        const ok = Math.min(other.leg, omax - 1);
+        const osa = other.route[ok], osb = other.route[ok + 1];
+        const hs = other.reverse ? osb : osa, he = other.reverse ? osa : osb;   // the other's heading start -> end
+        if (hs[0] !== P[0] || hs[1] !== P[1] || he[0] !== Q[0] || he[1] !== Q[1]) continue;
+        const oLen = Math.hypot(osb[0] - osa[0], osb[1] - osa[1]) || 1;
+        const oAlong = other.reverse ? (1 - other.t) * oLen : other.t * oLen;
+        const gap = segLen - along + oAlong;
+        if (gap > 0.001 && gap < best && gap < MIN_GAP + 0.6) best = gap;   // near leaders only
+      }
     }
     return best;
   };
