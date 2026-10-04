@@ -88,7 +88,13 @@ test("a guest's Exchange reaches the host and both purses move at the bank's rat
   }
 });
 
+// E2E-GREEN-1 (#666): the suite's per-test wall is `BOOT_BUDGET * 4` = 360 s
+// (playwright.multiplayer.config.ts), and this two-seat re-roll measured the
+// full 6.0 m on both attempts of run 37161647680 before the wall cut it off —
+// the same spec passed on the push run of that very commit. It is a budget,
+// not a behaviour: the steps and assertions are untouched.
 test("a guest's Reset re-rolls its seat's board on the host and spares the host's own board", async ({ browser }, testInfo) => {
+  test.setTimeout(540_000);
   const pair = await matchedPair(browser);
   const { host, guest } = pair;
   try {
@@ -124,7 +130,11 @@ test("a guest's Reset re-rolls its seat's board on the host and spares the host'
   }
 });
 
+// E2E-GREEN-1 (#666): same class as the re-roll above — 5.1 m of the 6.0 m
+// wall on the loaded run, 51 s of headroom. Same budget for the same reason:
+// two seats, a live room, software GL.
 test("two seats clicking one tile at the same instant settle on a single depot", async ({ browser }, testInfo) => {
+  test.setTimeout(540_000);
   const pair = await matchedPair(browser);
   const { host, guest } = pair;
   try {
