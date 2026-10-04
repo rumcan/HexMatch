@@ -6,6 +6,12 @@
 // from an older version — start a new game" — and the slot is left alone so
 // the message is honest when read. The version is 3 / snap 17 — boards removed.
 //
+// TOWN-4.1 (#677): snap 18 makes the map SIZE a per-game option. A save
+// records it in its `map` record (`map.size`, absent = standard), and a snap
+// 17 save — written before the option existed — is a 144×144 map whose track
+// bytes are exactly what snap 18 writes for one, so it still loads (at 144):
+// see SAVE_SNAP_VERSIONS.
+//
 // The shape is deliberately boring: one JSON payload in localStorage, written
 // every few seconds and on pagehide, read once at boot. The map itself is
 // seed-derived (`generateMap(seed)`) so only MUTABLE state travels — the
@@ -22,6 +28,8 @@
 // ride `eco.harvesters`, the records they belong to.
 // ══════════════════════════════════════════════════════════════════════════
 import type { Cargo } from "./config";
+import { MAP_SIZES } from "../game/config";
+import { readMapSize, type MapSizeName, type TownLayout } from "../net/match-settings";
 import type { Track } from "./track";
 import type { EconomyState } from "./economy";
 import {
@@ -32,6 +40,20 @@ import type { DamWire } from "./dams";
 export const SAVE_KEY = "hexmatch:save";
 export const SAVEGAME_VERSION = 3;
 export const OLD_SAVE_TOAST = "This save is from an older version — start a new game";
+
+/**
+ * TOWN-4.1 (#677): the snapshot versions whose saves this build loads. The
+ * current one, and 17 — the last version before the map size was an option:
+ * every snap 17 save is a standard (144×144) map with byte-identical track
+ * layers, so bumping the WIRE version must not refuse it (the protocol.ts
+ * v9 note: "a bump there would refuse every existing single-player save").
+ * The next bump that keeps saves loadable adds the outgoing version here;
+ * one that genuinely moves the seeded map leaves it out.
+ */
+export const SAVE_SNAP_VERSIONS: readonly number[] = [17, SNAPSHOT_VERSION];
+
+const snapVersionLoads = (snapV: unknown): boolean =>
+  typeof snapV === "number" && SAVE_SNAP_VERSIONS.includes(snapV);
 
 export interface SavedBoardShape { kind: string; data: unknown }
 
@@ -45,7 +67,13 @@ export interface SaveGamePayload {
    *  optional for the same reason one layer down: a save written before the
    *  45° road rule carries no key, and `readMapOptions` reads a missing key as
    *  OFF — so it resumes axis-only, exactly as it was played. */
-  map?: { rivers: boolean; elevation: boolean; shapes: boolean; rings?: boolean; diag?: boolean };
+  map?: {
+    rivers: boolean; elevation: boolean; shapes: boolean; rings?: boolean; diag?: boolean;
+    /** TOWN-2 (#653): the street plan; absent = "grid" (a pre-TOWN-2 save). */
+    layout?: TownLayout;
+    /** TOWN-4.1 (#677): the map size; absent = "standard" (every save before it). */
+    size?: MapSizeName;
+  };
   skillKey: string;
   phase: string;
   winnerId: string | null;
@@ -197,7 +225,7 @@ export const readSave = (key: string = SAVE_KEY): SaveGamePayload | null => {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as SaveGamePayload;
-    if (d.v !== SAVEGAME_VERSION || d.snapV !== SNAPSHOT_VERSION) return null;
+    if (d.v !== SAVEGAME_VERSION || !snapVersionLoads(d.snapV)) return null;
     if (typeof d.seed !== "number" || !d.track) return null;
     return d;
   } catch { return null; }
@@ -213,7 +241,55 @@ export function readRawSave(key: string = SAVE_KEY): SaveGamePayload | null {
 
 export function isOldSave(raw: SaveGamePayload | null): boolean {
   if (!raw) return false;
-  return raw.v !== SAVEGAME_VERSION || raw.snapV !== SNAPSHOT_VERSION;
+  return raw.v !== SAVEGAME_VERSION || !snapVersionLoads(raw.snapV);
+}
+
+/**
+ * TOWN-4.1 (#677): the side, in tiles, of the map a save was played on — its
+ * own record's `map.size` (absent = standard: every save written before the
+ * option). null for a size name this build has no table entry for (a save
+ * from a newer build): such a save cannot be regenerated here.
+ */
+export function saveMapSide(d: { map?: unknown } | null | undefined): number | null {
+  const rec = d?.map;
+  const raw = rec && typeof rec === "object" ? (rec as Record<string, unknown>).size : undefined;
+  if (raw === undefined) return MAP_SIZES.standard;
+  const name = readMapSize(raw);
+  return name ? MAP_SIZES[name] : null;
+}
+
+/**
+ * TOWN-4.1 (#677): do the save's layers fit the map its own record names?
+ * Every track (and rail) layer that is present and non-empty must be exactly
+ * side² bytes. A save that fails was written by a build whose size table
+ * differs (or was edited by hand) — restoring it would stamp its bytes into a
+ * different-sized track, every row misaligned, so the boot refuses it with
+ * the old-save toast instead (and leaves the slot alone). An empty or absent
+ * layer is nothing to misplace, so it passes.
+ */
+export function saveFitsItsMap(d: SaveGamePayload | null | undefined): boolean {
+  if (!d) return true;
+  const side = saveMapSide(d);
+  if (side === null) return false;
+  const want = side * side;
+  const layers: unknown[] = [];
+  if (d.track && typeof d.track === "object") {
+    const t = d.track as Record<string, unknown>;
+    layers.push(t.dirt, t.road, t.owner, t.upgraded, t.tier);
+  }
+  if (d.rail && typeof d.rail === "object") {
+    const r = d.rail as unknown as Record<string, unknown>;
+    layers.push(r.tile, r.owner);
+  }
+  for (const layer of layers) {
+    if (typeof layer !== "string" || layer.length === 0) continue;
+    try {
+      if (base64ToBytes(layer).length !== want) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 export const clearSave = (key: string = SAVE_KEY): void => {
