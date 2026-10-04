@@ -31,7 +31,7 @@ import type { Grid } from "./grid";
 import type { DrawItem } from "./depth";
 import { ambientRoadGraph } from "./road-routing";
 import {
-  carModelOf, holdTForLight, modelSpriteName, townTrafficWeight,
+  carModelOf, holdTForLight, modelSpriteName, townCarWeight,
   type CarModel, type SignalMap,
 } from "./ambience";
 import {
@@ -291,10 +291,18 @@ function weightedTown(ids: number[], weights: Map<number, number> | undefined, r
   return ids[ids.length - 1]!;
 }
 
+/**
+ * Where new trips start, by town. TOWN-4.5: the weight is the town's CAPPED
+ * car weight (`townCarWeight`), the same number `ambientCarBudget` sums — so a
+ * planned town several times the size of a grid town cannot take a bigger
+ * share of the map's cars than today's heaviest tier-3 grid town does. The
+ * two must move together: the budget decides how many cars exist, this decides
+ * where they are born.
+ */
 function townWeights(grid: Grid | null | undefined): Map<number, number> | undefined {
   if (!grid?.towns?.length) return undefined;
   const m = new Map<number, number>();
-  for (const t of grid.towns) m.set(t.id, townTrafficWeight(t));
+  for (const t of grid.towns) m.set(t.id, townCarWeight(t));
   return m;
 }
 
