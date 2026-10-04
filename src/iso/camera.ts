@@ -44,6 +44,13 @@ export const getViewYaw = (): number => yaw;
 export const getViewYawTarget = (): number => yawTarget;
 /** Ask for a yaw (radians); tickViewYaw eases there. */
 export const setViewYawTarget = (a: number): void => { yawTarget = a; };
+/**
+ * ROT-UI-1: one rotate step — the HUD's two buttons and the `[` / `]` keys both
+ * call this, so the on-screen control and the keyboard cannot drift apart.
+ * `dir` is −1 for anticlockwise (`[`) and +1 for clockwise (`]`); the ease is
+ * `tickViewYaw`'s, and the view settles on an exact quarter turn.
+ */
+export const rotateViewStep = (dir: -1 | 1): void => { yawTarget += (dir * Math.PI) / 2; };
 const applyYaw = (a: number): void => { yaw = a; yawC = Math.cos(a); yawS = Math.sin(a); };
 /** World-pixel point -> its image under the view turn (default: the current yaw). */
 export function turnWorld(wx: number, wy: number, a = yaw): [number, number] {
