@@ -101,7 +101,12 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     const play = findButton(/^Play vs AI/);
     expect(play.textContent).toMatch(/no login/);
     await click(play);
-    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
+    expect(choices).toEqual([{
+      mode: "ai", portrait: "anne", conquest: false,
+      // TOWN-4.5 (#681): the new-game door forwards the Play screen's
+      // remembered map (the shipped default under the runner).
+      map: { size: "standard", layout: "grid" },
+    }]);
     expect(confirmPlate()).toBeNull();
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
   });
@@ -144,7 +149,12 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     await click(findButton(/^Play vs AI/));
     await click(confirmOk());
     await flush();
-    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
+    expect(choices).toEqual([{
+      mode: "ai", portrait: "anne", conquest: false,
+      // TOWN-4.5 (#681): the new-game door forwards the Play screen's
+      // remembered map (the shipped default under the runner).
+      map: { size: "standard", layout: "grid" },
+    }]);
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
     expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBeNull();
   });

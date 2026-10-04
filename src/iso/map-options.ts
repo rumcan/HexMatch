@@ -27,13 +27,14 @@
 
 import {
   MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions,
-  readTownLayout, defaultTownLayout, readMapSize, defaultMapSize, MAP_SIZE_NAMES,
-  type MapOptions, type TownLayout, type MapSizeName,
+  readTownLayout, defaultTownLayout, defaultRoomTownLayout, readMapSize, defaultMapSize,
+  MAP_SIZE_NAMES, type MapOptions, type TownLayout, type MapSizeName,
 } from "../net/match-settings";
 
 export {
   MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions,
-  readTownLayout, defaultTownLayout, readMapSize, defaultMapSize, MAP_SIZE_NAMES,
+  readTownLayout, defaultTownLayout, defaultRoomTownLayout, readMapSize, defaultMapSize,
+  MAP_SIZE_NAMES,
 };
 export type { MapOptions, TownLayout, MapSizeName };
 
@@ -80,14 +81,17 @@ export function resolveMapOptions(src: MapOptionSources): MapOptions {
  *   3. a resumed save's recorded layout — a record without the key predates
  *      TOWN-2 and was generated "grid", so it resumes "grid";
  *   4. a networked room's `MatchSettings.map.layout` — the HOST's record (a
- *      guest's URL cannot split the seats); a room without a map uses the
- *      new-game default;
+ *      guest's URL cannot split the seats); a room that names NO layout plays
+ *      the pre-4.5 default (`defaultRoomTownLayout()` — organic outside the
+ *      runner, grid under it), NOT the new-game default, so old rooms load
+ *      exactly the towns they always did. New rooms carry the layout
+ *      explicitly and never read this fallback;
  *   5. a story contract / scenario — OFF ("grid") unless the chapter says
  *      otherwise, the same rule its booleans play;
- *   6. otherwise `defaultTownLayout()` — "organic" for a new game, "grid"
- *      under the unit-test runner so the seed-pinned suites keep their maps.
- *      TOWN-4.3 (#679) ADDS "planned" to the chain and changes NO default:
- *      making it the new-game default is TOWN-4.5 (#681).
+ *   6. otherwise `defaultTownLayout()` — "planned" for a new free-play game,
+ *      "grid" under the unit-test runner so the seed-pinned suites keep
+ *      their maps. The planned default is TOWN-4.5 (#681); TOWN-4.3 only
+ *      added the name to the chain.
  *
  * Nothing here reads `KEYS`: the layout is not a boolean and never rides the
  * `?rivers=0|1` loop — it has its own names and its own param.
@@ -100,7 +104,10 @@ export function resolveTownLayout(
   // absent key reads as the pre-TOWN-2 plan.
   if (src.save) return readTownLayout(src.save.map && (src.save.map as Record<string, unknown>).layout) ?? "grid";
   if (src.room) {
-    return readTownLayout(src.room.map?.layout) ?? runnerDefault;
+    // TOWN-4.5 (#681): NOT `runnerDefault` — a room that names no layout is
+    // an OLD room, and old rooms keep the pre-4.5 default (organic outside
+    // the runner, grid under it) rather than following the flip to planned.
+    return readTownLayout(src.room.map?.layout) ?? defaultRoomTownLayout();
   }
   if (src.story || src.scenario) {
     const tuned = (src.story ?? src.scenario) as { mapOptions?: Partial<MapOptions> } | null | undefined;
@@ -132,10 +139,13 @@ export function resolveTownLayout(
  *   4. a networked room's `MatchSettings.map.size` — the HOST's record, so a
  *      guest's own `?size=` cannot split the seats. Absent = standard too: a
  *      room whose settings predate the option (or name no size) plays the map
- *      it always did, even once TOWN-4.5 makes large the free-play default;
+ *      it always did, even now that TOWN-4.5 (#681) makes large the new-game
+ *      default. New rooms carry the size explicitly;
  *   5. a story contract / scenario — standard: tuned places (a chapter or a
  *      scenario may name a size in its `mapOptions`; none does);
- *   6. otherwise `defaultMapSize()` — standard, in this ticket, everywhere.
+ *   6. otherwise `defaultMapSize()` — large for a new free-play game,
+ *      standard under the unit-test runner (TOWN-4.5's flip; TOWN-4.1 kept
+ *      standard everywhere).
  *
  * The Starter Island and the tutorial lessons never get here: `game.ts`
  * hard-codes their whole map record (standard), exactly as it already does

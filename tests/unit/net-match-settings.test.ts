@@ -107,14 +107,23 @@ describe("#186 defaults are the shipped game", () => {
     expect(isDefaultMatchSettings(null)).toBe(true);
     expect(isDefaultMatchSettings(undefined)).toBe(true);
     expect(isDefaultMatchSettings(CUSTOM)).toBe(false);
+    // TOWN-4.5 (#681): the map-less baseline and the live copy (which carries
+    // the map explicitly) are the same rules — an absent map reads as the
+    // current defaults on both sides of the equality.
+    expect(matchSettingsEqual(DEFAULT_MATCH_SETTINGS, defaultMatchSettings())).toBe(true);
+    expect(matchSettingsEqual(defaultMatchSettings(), DEFAULT_MATCH_SETTINGS)).toBe(true);
   });
 
   it("hands out a copy, so a caller cannot move the defaults", () => {
     const mine = defaultMatchSettings();
     mine.startPurse.wood = 999;
     mine.aiSeats.push("easy");
+    // TOWN-4.5 (#681): the map record is a fresh object per call too.
+    mine.map!.layout = "organic";
     expect(DEFAULT_MATCH_SETTINGS.startPurse.wood).toBe(12);
     expect(DEFAULT_MATCH_SETTINGS.aiSeats).toEqual([]);
+    expect(defaultMatchSettings().map).not.toBe(mine.map);
+    expect(defaultMatchSettings().map!.layout).not.toBe("organic");
   });
 });
 
@@ -217,8 +226,13 @@ describe("#186 normalizeMatchSettings — the strict wire reader", () => {
     // renamed preset. `coerce` is the lenient reader: salvage what reads,
     // default the rest, and never throw.
     expect(coerceMatchSettings({ winTarget: 99, aiSeats: ["medium", "easy"], startPurse: { wood: "x", stone: 30 } }))
-      .toEqual({ aiSeats: ["easy"], winTarget: WIN_TARGET_MAX, startPurse: { wood: 12, stone: 30, ore: 0 } });
-    expect(coerceMatchSettings("nonsense")).toEqual(DEFAULT_MATCH_SETTINGS);
+      .toEqual({
+        aiSeats: ["easy"], winTarget: WIN_TARGET_MAX, startPurse: { wood: 12, stone: 30, ore: 0 },
+        // TOWN-4.5 (#681): "default the rest" includes the map — a repaired
+        // block carries the current map defaults, like the purse line above.
+        map: defaultMatchSettings().map,
+      });
+    expect(coerceMatchSettings("nonsense")).toEqual(defaultMatchSettings());
   });
 });
 
@@ -255,22 +269,28 @@ describe("#186 the welcome round-trip", () => {
 
 describe("#186 remembering the host's last room", () => {
   it("returns the defaults when nothing was stored", () => {
-    expect(loadMatchSettings(fakeStorage())).toEqual(DEFAULT_MATCH_SETTINGS);
-    expect(loadMatchSettings(null)).toEqual(DEFAULT_MATCH_SETTINGS);
+    // TOWN-4.5 (#681): the LIVE defaults — a complete map included — is what a
+    // new room boots when the host filed nothing. The map-less
+    // DEFAULT_MATCH_SETTINGS stays the frozen wire-shape baseline.
+    expect(loadMatchSettings(fakeStorage())).toEqual(defaultMatchSettings());
+    expect(loadMatchSettings(null)).toEqual(defaultMatchSettings());
   });
 
   it("stores and reads back the last-used rules", () => {
     const storage = fakeStorage();
     saveMatchSettings(CUSTOM, storage);
     expect(storage.raw.get(MATCH_SETTINGS_STORAGE_KEY)).toBeDefined();
-    expect(loadMatchSettings(storage)).toEqual(CUSTOM);
+    // TOWN-4.5 (#681): a record that names no map comes back with the CURRENT
+    // map defaults filled in — the host never chose a map, so a new room
+    // plays today's default, shown and played identically.
+    expect(loadMatchSettings(storage)).toEqual({ ...CUSTOM, map: defaultMatchSettings().map });
   });
 
   it("falls back to the defaults on a corrupt or hostile value", () => {
     expect(loadMatchSettings(fakeStorage({ [MATCH_SETTINGS_STORAGE_KEY]: "{not json" })))
-      .toEqual(DEFAULT_MATCH_SETTINGS);
+      .toEqual(defaultMatchSettings());
     expect(loadMatchSettings(fakeStorage({ [MATCH_SETTINGS_STORAGE_KEY]: "null" })))
-      .toEqual(DEFAULT_MATCH_SETTINGS);
+      .toEqual(defaultMatchSettings());
   });
 
   it("survives storage that throws (private mode)", () => {
@@ -278,7 +298,7 @@ describe("#186 remembering the host's last room", () => {
       getItem: () => { throw new Error("denied"); },
       setItem: () => { throw new Error("denied"); },
     };
-    expect(loadMatchSettings(hostile)).toEqual(DEFAULT_MATCH_SETTINGS);
+    expect(loadMatchSettings(hostile)).toEqual(defaultMatchSettings());
     expect(() => saveMatchSettings(CUSTOM, hostile)).not.toThrow();
   });
 

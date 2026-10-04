@@ -78,13 +78,30 @@ export function readTownLayout(raw: unknown): TownLayout | null {
 }
 
 /**
- * TOWN-2: the town layout a NEW game generates with — organic in a shipped or
- * dev build, grid under the unit-test runner. That is the `defaultMapOptions()`
- * rule one function down, and it is why every seed-pinned suite keeps the
- * rectangular towns it was written against: nothing here has to know which
- * tests exist, only that the runner's maps do not move.
+ * TOWN-4.5 (#681): the town layout a NEW game generates with — planned in a
+ * shipped or dev build, grid under the unit-test runner. That is the
+ * `defaultMapOptions()` rule one function down, and it is why every
+ * seed-pinned suite keeps the rectangular towns it was written against:
+ * nothing here has to know which tests exist, only that the runner's maps
+ * do not move. (TOWN-2's default was organic; the flip to planned is this
+ * ticket. Rooms that name no layout do NOT follow it — see
+ * `defaultRoomTownLayout`, the pre-4.5 default old rooms keep playing.)
  */
 export function defaultTownLayout(): TownLayout {
+  let mode: string | undefined;
+  try { mode = import.meta.env?.MODE; } catch { mode = undefined; }
+  return mode === "test" ? "grid" : "planned";
+}
+
+/**
+ * TOWN-4.5 (#681): the layout a ROOM that names none plays — organic in a
+ * shipped or dev build, grid under the unit-test runner. This is the PRE-4.5
+ * new-game default, kept so a room whose settings predate the option (no
+ * `map.layout`) loads exactly the towns it always did, even though new games
+ * and new rooms are planned now. New rooms carry an explicit layout (see
+ * `defaultMatchSettings`), so this only ever serves old records.
+ */
+export function defaultRoomTownLayout(): TownLayout {
   let mode: string | undefined;
   try { mode = import.meta.env?.MODE; } catch { mode = undefined; }
   return mode === "test" ? "grid" : "organic";
@@ -113,14 +130,17 @@ export function readMapSize(raw: unknown): MapSizeName | null {
 }
 
 /**
- * TOWN-4.1: the size a NEW game generates with. Standard everywhere — free
- * play, rooms, the unit-test runner. TOWN-4.5 (#681) flips FREE PLAY to
- * large; that is a one-line change here plus the menu, and nothing that
- * reads an absent size (old saves, old rooms) may follow it: those read
- * "standard" explicitly (`resolveMapSize`).
+ * TOWN-4.5 (#681): the size a NEW game generates with — large in a shipped
+ * or dev build, standard under the unit-test runner (the seed-pinned suites
+ * keep their 144 maps). Nothing that reads an ABSENT size follows the flip:
+ * old saves and old rooms read "standard" explicitly (`resolveMapSize`), so
+ * they never resize under a player; only a new free-play game and a new room
+ * (whose settings carry the size — see `defaultMatchSettings`) play large.
  */
 export function defaultMapSize(): MapSizeName {
-  return "standard";
+  let mode: string | undefined;
+  try { mode = import.meta.env?.MODE; } catch { mode = undefined; }
+  return mode === "test" ? "standard" : "large";
 }
 
 export interface MapOptions {
@@ -207,15 +227,22 @@ export function readMapOptions(raw: unknown): MapOptions | null {
   }
   return out;
 }
-/** Equality; an absent value means the defaults (see `MatchSettings.map`). */
+/** Equality; an absent value means the defaults (see `MatchSettings.map`).
+ *
+ * TOWN-4.5 (#681): an absent layout/size reads as the CURRENT new-game
+ * default on both sides (`defaultTownLayout()` / `defaultMapSize()`), so a
+ * fresh room — whose settings carry the defaults explicitly — still equals
+ * the map-less `DEFAULT_MATCH_SETTINGS`, and a pre-4.5 room (no layout/size
+ * named) still reads as the shipped rules it played under. This is ONLY the
+ * equality used by `isDefaultMatchSettings` and the lobby's dirty check: the
+ * GENERATOR's readers (`resolveTownLayout` / `resolveMapSize`) resolve old
+ * records to their pinned legacy values (organic/grid, standard), so old
+ * rooms and old saves never re-terrain. */
 export function mapOptionsEqual(a: MapOptions | null | undefined, b: MapOptions | null | undefined): boolean {
   const x = a ?? defaultMapOptions(), y = b ?? defaultMapOptions();
-  // TOWN-2: an absent layout is the pre-TOWN-2 plan ("grid") on BOTH sides, so
-  // a record written before the option existed still equals one written after
-  // it that never asked for organic towns.
-  // TOWN-4.1: an absent size is "standard" on both sides, the same way.
-  return MAP_KEYS.every((k) => x[k] === y[k]) && (x.layout ?? "grid") === (y.layout ?? "grid")
-    && (x.size ?? "standard") === (y.size ?? "standard");
+  return MAP_KEYS.every((k) => x[k] === y[k])
+    && (x.layout ?? defaultTownLayout()) === (y.layout ?? defaultTownLayout())
+    && (x.size ?? defaultMapSize()) === (y.size ?? defaultMapSize());
 }
 
 export const AI_SKILL_KEYS = ["easy", "normal", "hard"] as const;
@@ -303,10 +330,14 @@ export interface MatchSettings {
   /** What every seat starts with. */
   startPurse: StartPurse;
   /** MAP-1 (#412): the map features the room generates with — and, since
-   *  #440, the road rule both seats build under (`map.diag`). Absent = the
-   *  defaults (every seat runs the same build, so they agree). This is why
-   *  the HOST decides: the record is the room's, and a guest reads the same
-   *  one it was handed rather than its own URL. */
+   *  #440, the road rule both seats build under (`map.diag`). TOWN-4.5
+   *  (#681): a NEW room carries the size and town layout explicitly (large +
+   *  planned — see `defaultMatchSettings`), so both seats agree even though
+   *  the defaults moved. Absent = a room whose settings predate the option:
+   *  the boot resolves it to the LEGACY map (standard, organic outside the
+   *  runner), never the current defaults. This is why the HOST decides: the
+   *  record is the room's, and a guest reads the same one it was handed
+   *  rather than its own URL. */
   map?: MapOptions;
   /** MP-MGR (owner, 2026-09-29): do the managers' perks apply? Absent = ON
    *  (old clients and old rooms), so only `false` is ever written. The
@@ -319,19 +350,41 @@ export function perksEnabled(settings: MatchSettings | null | undefined): boolea
   return settings?.perks !== false;
 }
 
-/** The rules a host who touches nothing plays by — today's game, verbatim. */
+/**
+ * The rules a host who touches nothing plays by — today's game, verbatim.
+ *
+ * TOWN-4.5 (#681): deliberately map-LESS (frozen before the map had defaults
+ * worth naming). It stays the wire-shape baseline — `normalizeMatchSettings`
+ * of an empty block, the room's "no settings filed" state — while
+ * `defaultMatchSettings()` below is the live copy new rooms and sessions
+ * actually boot from, map included. `isDefaultMatchSettings` still reads
+ * this as default (`mapOptionsEqual` resolves both sides' absent map to the
+ * current defaults), so the ladder's question keeps working.
+ */
 export const DEFAULT_MATCH_SETTINGS: MatchSettings = {
   aiSeats: [],
   winTarget: DEFAULT_WIN_TARGET,
   startPurse: { ...DEFAULT_START_PURSE },
 };
 
-/** A fresh copy of the defaults (callers own what they hand back). */
+/**
+ * A fresh copy of the defaults (callers own what they hand back — the map
+ * record is built new on every call, like the purse).
+ *
+ * TOWN-4.5 (#681): carries the map explicitly — the booleans plus the current
+ * new-game size and town layout (large + planned outside the unit-test
+ * runner; all-OFF, standard + grid under it, which resolves exactly as an
+ * absent map always did). A new room therefore PLAYS large + planned on both
+ * seats even when the host files nothing (the room then holds no settings
+ * and each seat boots its own copy of this), while an old room's map-less
+ * record keeps resolving to the legacy map.
+ */
 export function defaultMatchSettings(): MatchSettings {
   return {
     aiSeats: [],
     winTarget: DEFAULT_WIN_TARGET,
     startPurse: { ...DEFAULT_START_PURSE },
+    map: { ...defaultMapOptions(), layout: defaultTownLayout(), size: defaultMapSize() },
   };
 }
 
@@ -510,7 +563,13 @@ export function describeMatchSettings(settings: MatchSettings): string {
   parts.push(`${purse} resources`);
   // TOWN-4.1 (#677): a guest should hear the map is bigger before it lands.
   // Standard (or absent) says nothing, so every existing line reads as before.
+  // TOWN-4.5 (#681): "Large map" keeps printing now that large is the default —
+  // a guest should still hear the map is big (and an old standard room reads
+  // audibly different). A non-default town plan is named the same way;
+  // planned (or absent) says nothing.
   if (settings.map?.size === "large") parts.push("Large map");
+  if (settings.map?.layout === "organic") parts.push("Organic towns");
+  else if (settings.map?.layout === "grid") parts.push("Grid towns");
   if (!perksEnabled(settings)) parts.push("No manager perks");
   if (settings.aiSeats.length > 0) {
     parts.push(settings.aiSeats
@@ -524,11 +583,32 @@ export function describeMatchSettings(settings: MatchSettings): string {
 export const MATCH_SETTINGS_STORAGE_KEY = "hexmatch:match-settings";
 
 /**
+ * Fill a stored record's map up to the CURRENT new-room defaults. A record
+ * that names no map (every record stored before TOWN-4.5, when the lobby had
+ * no map dials) or no layout/size gets the defaults for exactly the keys it
+ * does not name — the host never chose a map, so a new room plays today's
+ * default, shown and played identically, and stays a default-rules (ranked)
+ * match. The WIRE reader (`normalizeMatchSettings`) deliberately does NOT do
+ * this: an old room's map-less record must keep resolving to the legacy map.
+ */
+function withMapDefaults(settings: MatchSettings): MatchSettings {
+  const map = settings.map;
+  if (map && map.layout !== undefined && map.size !== undefined) return settings;
+  return {
+    ...settings,
+    map: { ...defaultMapOptions(), layout: defaultTownLayout(), size: defaultMapSize(), ...map },
+  };
+}
+
+/**
  * The last settings this browser used, or the defaults.
  *
  * Storage is injectable for the same reason `resolveSkillKey`'s is: the suite
  * reads this without a window, and a private-mode browser that throws on read
  * gets the defaults rather than a broken lobby.
+ *
+ * TOWN-4.5 (#681): a stored record always comes back with a COMPLETE map
+ * (see `withMapDefaults`) — the lobby's dials show it, the room plays it.
  */
 export function loadMatchSettings(
   storage: Pick<Storage, "getItem"> | null =
@@ -538,7 +618,7 @@ export function loadMatchSettings(
   try {
     const raw = storage.getItem(MATCH_SETTINGS_STORAGE_KEY);
     if (!raw) return defaultMatchSettings();
-    return coerceMatchSettings(JSON.parse(raw));
+    return withMapDefaults(coerceMatchSettings(JSON.parse(raw)));
   } catch {
     return defaultMatchSettings();
   }

@@ -3661,6 +3661,25 @@ html, body, #root {
 }
 .ms-note { margin: 5px 0 0; font-size: 10px; color: var(--txt-dim); font-family: var(--mono); }
 
+/* TOWN-4.5 (#681): the solo menu's new-game map — the same preset-key look as
+   the lobby's dials above, with a row label naming each dial. */
+.ng-map { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.ng-map .start-actions-label { margin: 0; }
+.ng-row { display: flex; flex-direction: column; gap: 4px; }
+.ng-name { font: 600 10px var(--mono); letter-spacing: 1.6px; text-transform: uppercase; color: var(--txt-dim); }
+.ng-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.ng-preset {
+  flex: 1 1 auto; min-height: 34px; padding: 5px 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  font-size: 11px; letter-spacing: .8px;
+}
+.ng-preset small { font: 500 9px var(--mono); letter-spacing: 1px; color: var(--txt-dim); }
+.ng-preset.on {
+  color: #101618; border-color: var(--gold2, rgb(var(--c-orange) / 1));
+  background: var(--gold2, rgb(var(--c-orange) / 1));
+}
+.ng-preset.on small { color: rgba(16, 22, 24, 0.75); }
+
 /* Native disabled states prevent activation by pointer and keyboard. */
 .build-btn:disabled, .sab-btn:disabled, .post-btn:disabled, .mini:disabled {
   filter: grayscale(.8) brightness(.8); opacity: .42; cursor: not-allowed;

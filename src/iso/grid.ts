@@ -4381,6 +4381,163 @@ function placeTowns(
     return true;
   };
 
+  // ══════════════════════════════════════════════════════════════════════
+  // TOWN-4.5 (#681): the planned fast checks — the same two verdicts, less map.
+  //
+  // A large planned map burned 2–5 s in the two per-candidate floods above
+  // (measured 2026-10-04 on seeds 1, 7, 42, 1337: 47–128 candidates reach the
+  // floods at ~19 ms per flood each; the reachability flood NEVER rejects and
+  // the enclave flood rejects ~97% of what it sees). The ticket's map-gen
+  // guard (large + planned under 1.5 s on a CI runner) needs the floods
+  // cheaper WITHOUT moving a town: large saves regenerate their map from the
+  // seed, so a changed verdict would rebuild a different map under an old
+  // save. Every fast check below returns the EXACT boolean its full check
+  // returns:
+  //
+  //   1. `plannedNoEnclaves` floods only the blockage's neighbourhood. With
+  //      the base map enclave-free, a NEW sealed pocket must touch the new
+  //      blockage (every other tile kept the industry path the base check
+  //      gave it), so each free neighbour's component over open-minus-blocked
+  //      is flooded and must touch an industry. Pass ⟺ the full check passes:
+  //      (⇒) a full pass reaches every free tile, so every neighbour's
+  //      component touches an industry; (⇐) a free tile's base path either
+  //      avoids the blockage (still open) or crosses it (then the tile sits
+  //      in a neighbour's component, which touches an industry). A reject
+  //      costs the pocket (typically tens of tiles); a pass costs one
+  //      neighbourhood flood.
+  //   2. The enclave check runs FIRST (it is the selector) and the UNCHANGED
+  //      `allIndustriesReachable` only on its survivors (~4 per map): order
+  //      never moves a verdict, and neither check draws from the RNG stream.
+  //   3. The base map (town 0, industries only) is verified enclave-free ONCE
+  //      per map; every later town inherits it from the committed town before
+  //      it (which passed the mini check ⟺ the full one). On the pathological
+  //      base (a pre-existing enclave — e.g. a grass islet walled in water —
+  //      where a candidate covering the pocket could PASS the full check, or
+  //      no open industry tile to flood from), every candidate falls back to
+  //      the two full checks above, so the verdicts are the legacy ones bit
+  //      for bit.
+  //
+  // Grid and organic candidates NEVER reach this code: their branch below
+  // calls the two closures exactly as before, so every standard map stays
+  // byte-identical (the TOWN-4.1 digests pin them) and the TOWN-4.3 planned
+  // audits keep passing on the identical towns.
+  // ══════════════════════════════════════════════════════════════════════
+  /** Town 0's base-map verdict (towns 1+ inherit it — see above). */
+  let plannedBaseOk: boolean | null = null;
+  /** Mini-flood scratch, allocated once per map (planned maps only). */
+  let plannedDone: Uint32Array | null = null;
+  let plannedSeen: Uint32Array | null = null;
+  let plannedIsInd: Uint8Array | null = null;
+  let plannedGen = 0;
+
+  /** The base map (before this town) is enclave-free. Computed once per map,
+   *  on town 0's first flood-reaching candidate — town 0's occupancy IS the
+   *  industries-only base then, because nothing commits before the checks
+   *  pass (and if town 0 places nothing, town 1's base is that same map). */
+  const plannedBaseEnclaveFree = (): boolean => {
+    if (plannedBaseOk === null) plannedBaseOk = noEnclaves(new Set<number>());
+    return plannedBaseOk;
+  };
+
+  /** Same boolean as `noEnclaves(blocked)` — requires `plannedBaseEnclaveFree()`. */
+  const plannedNoEnclaves = (blocked: Set<number>): boolean => {
+    const W = MAP_W, H = MAP_H, N = W * H;
+    if (!plannedDone || plannedDone.length !== N) {
+      plannedDone = new Uint32Array(N);
+      plannedSeen = new Uint32Array(N);
+      plannedIsInd = new Uint8Array(N);
+      for (const ind of industries) {
+        for (let x = ind.tx; x < ind.tx + ind.w; x++) {
+          for (let y = ind.ty; y < ind.ty + ind.h; y++) {
+            if (x >= 0 && y >= 0 && x < W && y < H) plannedIsInd[y * W + x] = 1;
+          }
+        }
+      }
+    }
+    const done = plannedDone, seen = plannedSeen!, isInd = plannedIsInd!;
+    // The full check answers true vacuously with no open industry tile to
+    // flood from (no industries, or all of them water-covered): not a case
+    // the neighbourhood flood can see, so fall back bit for bit.
+    let indOpen = false;
+    for (const ind of industries) {
+      for (let x = ind.tx; x < ind.tx + ind.w && !indOpen; x++) {
+        for (let y = ind.ty; y < ind.ty + ind.h && !indOpen; y++) {
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          const i = y * W + x;
+          if (terrain[i] !== WATER && occ[i] !== TOWN_OCC && !blocked.has(i)) indOpen = true;
+        }
+      }
+      if (indOpen) break;
+    }
+    if (!indOpen) return noEnclaves(blocked);
+    const gen = ++plannedGen;
+    const open = (i: number): boolean =>
+      terrain[i] !== WATER && occ[i] !== TOWN_OCC && !blocked.has(i);
+    // The seeds: free neighbours of the blockage (dupes harmless — the
+    // resolve loop re-checks `done`).
+    const seeds: number[] = [];
+    for (const b of blocked) {
+      const x = b % W, y = (b / W) | 0;
+      if (x > 0) { const n = b - 1; if (done[n] !== gen && open(n)) seeds.push(n); }
+      if (x < W - 1) { const n = b + 1; if (done[n] !== gen && open(n)) seeds.push(n); }
+      if (y > 0) { const n = b - W; if (done[n] !== gen && open(n)) seeds.push(n); }
+      if (y < H - 1) { const n = b + W; if (done[n] !== gen && open(n)) seeds.push(n); }
+    }
+    // Every seeded component must touch an industry. Components proven good
+    // are claimed in `done` (a claimed tile is never re-flooded); the current
+    // component's flood marks `seen`, and touching a claimed tile counts as
+    // industry contact — every claimed tile reaches an industry by induction
+    // (the first claim is by direct contact, every later one by contact with
+    // a claim or an industry tile). A reject returns at once, so a failed
+    // component's half-claims die with the call's stamp.
+    const stack: number[] = [];
+    for (const s of seeds) {
+      if (done[s] === gen) continue;
+      const sg = ++plannedGen;
+      let touches = isInd[s] === 1;
+      seen[s] = sg;
+      done[s] = gen;
+      stack.length = 0;
+      stack.push(s);
+      while (stack.length) {
+        const cur = stack.pop()!;
+        const x = cur % W, y = (cur / W) | 0;
+        // Four neighbours, unrolled: skip the current flood, skip walls,
+        // count claimed ground as contact, flood the rest.
+        if (x > 0) {
+          const n = cur - 1;
+          if (seen[n] !== sg) {
+            if (!open(n)) { /* a wall */ } else if (done[n] === gen) touches = true;
+            else { seen[n] = sg; done[n] = gen; if (isInd[n] === 1) touches = true; stack.push(n); }
+          }
+        }
+        if (x < W - 1) {
+          const n = cur + 1;
+          if (seen[n] !== sg) {
+            if (!open(n)) { /* a wall */ } else if (done[n] === gen) touches = true;
+            else { seen[n] = sg; done[n] = gen; if (isInd[n] === 1) touches = true; stack.push(n); }
+          }
+        }
+        if (y > 0) {
+          const n = cur - W;
+          if (seen[n] !== sg) {
+            if (!open(n)) { /* a wall */ } else if (done[n] === gen) touches = true;
+            else { seen[n] = sg; done[n] = gen; if (isInd[n] === 1) touches = true; stack.push(n); }
+          }
+        }
+        if (y < H - 1) {
+          const n = cur + W;
+          if (seen[n] !== sg) {
+            if (!open(n)) { /* a wall */ } else if (done[n] === gen) touches = true;
+            else { seen[n] = sg; done[n] = gen; if (isInd[n] === 1) touches = true; stack.push(n); }
+          }
+        }
+      }
+      if (!touches) return false;
+    }
+    return true;
+  };
+
   const wantTowns = preset?.towns ?? want;
   // TOWN-4.3 (#679): `layout: "planned"` replaces the street lattice with a
   // master plan. Everything below reads `planned` once and leaves the grid and
@@ -4470,8 +4627,16 @@ function placeTowns(
           // in by its own blocks, and every plan was rejected as an enclave.
           for (const [sx, sy] of village.square) blocked.add(idx(sx, sy));
           if (connected) {
-            if (!allIndustriesReachable(blocked)) continue;
-            if (!noEnclaves(blocked)) continue;
+            // TOWN-4.5 (#681): the enclave check first (it rejects ~97%; the
+            // reachability flood never rejects), as the mini-flood when the
+            // base map is enclave-free — else the two full checks bit for bit.
+            if (plannedBaseEnclaveFree()) {
+              if (!plannedNoEnclaves(blocked)) continue;
+              if (!allIndustriesReachable(blocked)) continue;
+            } else {
+              if (!allIndustriesReachable(blocked)) continue;
+              if (!noEnclaves(blocked)) continue;
+            }
           }
           // Commit: houses, streets and the square are the town's ground (a
           // player may not build on them); the reserved districts are not.

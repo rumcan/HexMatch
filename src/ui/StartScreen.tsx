@@ -63,6 +63,8 @@ import {
   WIN_TARGET_MIN,
   WIN_TARGET_PRESETS,
   clampWinTarget,
+  defaultMatchSettings,
+  defaultRoomTownLayout,
   describeMatchSettings,
   isDefaultMatchSettings,
   loadMatchSettings,
@@ -71,9 +73,15 @@ import {
   scalePurse,
   winPresetOf,
   type AiSkillKey,
+  type MapSizeName,
   type MatchSettings,
+  type TownLayout,
   perksEnabled,
 } from "../net/match-settings";
+// TOWN-4.5 (#681): the solo menu's remembered map choice (size + town plan).
+import {
+  loadNewGameMap, saveNewGameMap, type NewGameMap,
+} from "./new-game-map";
 import { type Portrait } from "../iso/config";
 // CONTINUE-01 (#191): the menus name the saves they can resume, and starting
 // a new game deliberately clears the slot first instead of silently resuming.
@@ -110,6 +118,10 @@ export type StartChoice =
        *  "Play the Starter Island" replay). The first launch passes the same
        *  scenario through `firstRun`. */
       starter?: boolean;
+      /** TOWN-4.5 (#681): the Play screen's remembered map for a NEW free-play
+       *  game (a resumed save ignores it — the boot reads the save's record).
+       *  Absent = the shipped default (large + planned). */
+      map?: NewGameMap;
     }
   | { mode: "story"; chapter: string; portrait: Portrait }
   | { mode: "story-intro"; portrait: Portrait }
@@ -313,6 +325,13 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
    * visible instead of silent.
    */
   const [roomSettings, setRoomSettings] = useState<MatchSettings>({ ...DEFAULT_MATCH_SETTINGS, startPurse: { ...DEFAULT_MATCH_SETTINGS.startPurse } });
+  // TOWN-4.5 (#681): the solo menu's map choice — the size + town plan the
+  // "Play vs AI" doors boot a NEW game with, remembered per browser.
+  const [newGameMap, setNewGameMapState] = useState<NewGameMap>(() => loadNewGameMap());
+  const setNewGameMap = useCallback((prefs: NewGameMap) => {
+    setNewGameMapState(prefs);
+    saveNewGameMap(prefs);
+  }, []);
   /** RANK-01: Any rank (the default — fastest) or Similar rank (widening). */
   const [rankSearch, setRankSearch] = useState<RankSearch>("any");
   /** The rung a similar-rank search is currently on, for the waiting screen. */
@@ -853,9 +872,12 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         winTarget: patch.winTarget ?? prev.winTarget,
         startPurse: patch.startPurse ? { ...patch.startPurse } : { ...prev.startPurse },
       };
-      // MP-MGR: keep the map record (as before, it rode in via applySettings
-      // only) and the perks flag; only an explicit `false` is written.
-      if (prev.map) next.map = prev.map;
+      // MP-MGR: keep the map record and the perks flag; only an explicit
+      // `false` is written. TOWN-4.5: an explicit `patch.map` REPLACES the
+      // record — the host's map dials always pass the complete map they show,
+      // so every other patch keeps carrying the room's map untouched.
+      if (patch.map) next.map = patch.map;
+      else if (prev.map) next.map = prev.map;
       const perks = patch.perks ?? prev.perks;
       if (perks === false) next.perks = false;
       saveMatchSettings(next);
@@ -895,13 +917,10 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
     });
   }, [net]);
 
+  // TOWN-4.5: Reset is the shipped rules, map included (large + planned) —
+  // the same record a new room boots when the host files nothing.
   const resetSettings = useCallback(() => {
-    const next: MatchSettings = {
-      aiSeats: [],
-      winTarget: DEFAULT_MATCH_SETTINGS.winTarget,
-      startPurse: { ...DEFAULT_MATCH_SETTINGS.startPurse },
-    };
-    applySettings(next);
+    applySettings(defaultMatchSettings());
   }, [applySettings]);
 
   const roster = useMemo(() => {
@@ -1027,13 +1046,13 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         confirmLabel: "Start new game",
         act: () => {
           discardSoloSave(null);
-          onStart({ mode: "ai", portrait, conquest });
+          onStart({ mode: "ai", portrait, conquest, map: newGameMap });
         },
       });
       return;
     }
-    onStart({ mode: "ai", portrait, conquest });
-  }, [onStart, portrait, sandboxSave]);
+    onStart({ mode: "ai", portrait, conquest, map: newGameMap });
+  }, [onStart, portrait, sandboxSave, newGameMap]);
 
   /** A scenario card resumes when a save exists; this sibling starts the
    *  scenario over, clearing the slot only after the player confirms. */
@@ -1225,6 +1244,39 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
           <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open" onClick={() => beginAiNew(false)}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
           {/* 2026-09: play until the rival cannot go on — no ★ line. */}
           <button data-sfx="open" onClick={() => beginAiNew(true)}>Play vs AI — Conquest <small>no ★ line · win when the rival is bankrupt</small></button>
+          {/* TOWN-4.5 (#681): the NEW-game map — the size + town plan both
+              "Play vs AI" doors above boot with, remembered per browser. A
+              resumed save (Continue), the Starter Island, story and scenarios
+              never consult it. */}
+          <div className="ng-map" role="group" aria-label="New game map">
+            <p className="start-actions-label">New game map</p>
+            <div className="ng-row" role="group" aria-label="Map size">
+              <span className="ng-name">Map size</span>
+              <div className="ng-presets">
+                {(["standard", "large"] as const).map((size) => (
+                  <button type="button" key={size} data-sfx="tab"
+                    className={`ng-preset${newGameMap.size === size ? " on" : ""}`}
+                    aria-pressed={newGameMap.size === size}
+                    onClick={() => setNewGameMap({ ...newGameMap, size })}>
+                    {size === "large" ? "Large" : "Standard"}<small>{size === "large" ? "216×216" : "144×144"}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="ng-row" role="group" aria-label="Town style">
+              <span className="ng-name">Town style</span>
+              <div className="ng-presets">
+                {(Object.entries({ planned: "avenues + plazas", organic: "winding lanes", grid: "city blocks" }) as [TownLayout, string][]).map(([layout, blurb]) => (
+                  <button type="button" key={layout} data-sfx="tab"
+                    className={`ng-preset${newGameMap.layout === layout ? " on" : ""}`}
+                    aria-pressed={newGameMap.layout === layout}
+                    onClick={() => setNewGameMap({ ...newGameMap, layout })}>
+                    {layout.charAt(0).toUpperCase()}{layout.slice(1)}<small>{blurb}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
           {/* PROG-1 (#475): four tuned maps beyond the default island. */}
           <button data-sfx="open" onClick={() => { setScenProgress(loadScenarioProgress()); setState("scenarios"); }}>Scenarios <small>four maps · unlock by winning</small></button>
           {/* Owner (2026-09-29): Multiplayer has its own screen — the header's
@@ -1558,6 +1610,18 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   const canStart = humanSeats >= 2 || aiSeats.length > 0;
   const winKey = winPresetOf(shown.winTarget);
   const purseKey = pursePresetOf(shown.startPurse);
+  // TOWN-4.5 (#681): the room's map. The host edits it (their stored record
+  // always carries a complete map — `loadMatchSettings` fills it); a guest
+  // reads the room's copy. An old room that names nothing still plays the
+  // LEGACY map, shown honestly: standard size (the room branch of
+  // `resolveMapSize`), organic towns outside the runner.
+  const shownSize: MapSizeName = shown.map?.size ?? "standard";
+  const shownLayout: TownLayout = shown.map?.layout ?? defaultRoomTownLayout();
+  // The host's map dials change one key of the COMPLETE map they show.
+  const patchMap = (patch: { size?: MapSizeName; layout?: TownLayout }) => {
+    const fallback = defaultMatchSettings().map;
+    patchSettings({ map: { ...(settings.map ?? fallback!), ...patch } });
+  };
   // RANK-01: the seat rows carry a badge each. The room's board is the source
   // for everyone (including ourselves, echoed back), and the local file is the
   // fallback for our own seat until that echo lands.
@@ -1668,6 +1732,38 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
           ))}
         </div>
         <p className="ms-purse">{START_PURSE_KEYS.map((key) => `${shown.startPurse[key]} ${key}`).join(" · ")} for every seat</p>
+      </fieldset>
+
+      {/* TOWN-4.5 (#681): the room's MAP — size first, then the town plan. The
+          host's dials; a guest reads the room's copy (an old room that names
+          nothing shows — and plays — the legacy map). */}
+      <fieldset className="ms-group" disabled={locked || !hosting}>
+        <legend>Map size</legend>
+        <div className="ms-presets" role="group" aria-label="Map size">
+          {(["standard", "large"] as const).map((size) => (
+            <button type="button" key={size} data-sfx="tab"
+              className={`ms-preset${shownSize === size ? " on" : ""}`}
+              aria-pressed={shownSize === size}
+              onClick={() => hosting && patchMap({ size })}>
+              {size === "large" ? "Large" : "Standard"}<small>{size === "large" ? "216×216" : "144×144"}</small>
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset className="ms-group" disabled={locked || !hosting}>
+        <legend>Town style</legend>
+        <div className="ms-presets" role="group" aria-label="Town style">
+          {(Object.entries({ planned: "avenues + plazas", organic: "winding lanes", grid: "city blocks" }) as [TownLayout, string][]).map(([layout, blurb]) => (
+            <button type="button" key={layout} data-sfx="tab"
+              className={`ms-preset${shownLayout === layout ? " on" : ""}`}
+              aria-pressed={shownLayout === layout}
+              onClick={() => hosting && patchMap({ layout })}>
+              {layout.charAt(0).toUpperCase()}{layout.slice(1)}<small>{blurb}</small>
+            </button>
+          ))}
+        </div>
+        <p className="ms-hint">Planned towns grow along avenues as they level; organic and grid towns keep their familiar streets.</p>
       </fieldset>
 
       {/* MP-MGR: manager perks on / off — the host's rule, read-only for a guest. */}

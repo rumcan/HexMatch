@@ -236,6 +236,10 @@ export default function App() {
       ? startIsoGame(ref.current, {
         role: "solo", portrait: choice.portrait, onQuitToMenu: quitToMenu,
         conquest: choice.conquest === true,
+        // TOWN-4.5 (#681): the Play screen's remembered map for a new game —
+        // absent (a resumed save boots without it) = the shipped default.
+        size: choice.map?.size,
+        layout: choice.map?.layout,
         // run.world feedback: the very first game is coached, not toured.
         firstRun,
         // FTUE-1 (#464): the Starter Island — the fixed preset map, the

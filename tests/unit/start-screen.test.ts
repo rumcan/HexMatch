@@ -57,7 +57,7 @@ vi.mock("../../src/net/rankstore", () => ({
 }));
 
 import StartScreen, { type StartChoice } from "../../src/ui/StartScreen";
-import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
+import { DEFAULT_MATCH_SETTINGS, defaultMatchSettings, type MatchSettings } from "../../src/net/match-settings";
 import { PROTOCOL_VERSION, type HexProtocol, type WelcomeMsg } from "../../src/net/protocol";
 import {
   NO_ROOM_SERVER_MESSAGE,
@@ -508,7 +508,10 @@ describe("MP-06 join screen", () => {
     expect(text()).toContain("No room server behind this page");
     expect(mockCreate).not.toHaveBeenCalled();
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
+    expect(choices).toEqual([{
+      mode: "ai", portrait: "anne", conquest: false,
+      map: { size: "standard", layout: "grid" },
+    }]);
   });
 
   it("refuses to join and to auto-matchmake when there is no room server", async () => {
@@ -544,7 +547,10 @@ describe("MP-06 join screen", () => {
     await click("Host a game");
     expect(text()).toContain("Sign in to play with friends");
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
+    expect(choices).toEqual([{
+      mode: "ai", portrait: "anne", conquest: false,
+      map: { size: "standard", layout: "grid" },
+    }]);
   });
 });
 
@@ -655,7 +661,10 @@ describe("auto matchmaking: never time out, and the rank window", () => {
     expect(mockMatch).toHaveBeenCalledTimes(1);
     expect(text()).toContain("Sign in to play with friends");
     await click("Play vs AI");
-    expect(choices).toEqual([{ mode: "ai", portrait: "anne", conquest: false }]);
+    expect(choices).toEqual([{
+      mode: "ai", portrait: "anne", conquest: false,
+      map: { size: "standard", layout: "grid" },
+    }]);
   });
 
   it("Any rank opens at the widest rung and STAYS there — no criterion, no give-up", async () => {
@@ -861,7 +870,9 @@ describe("#186 host game settings", () => {
     await click("Marathon");
     await ackSettings(room);
     await click("Reset to default");
-    expect(settingsClaims(room).at(-1)?.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    // TOWN-4.5 (#681): Reset files the live shipped rules — the map (large +
+    // planned) included — so the room plays the default map on both seats.
+    expect(settingsClaims(room).at(-1)?.settings).toEqual(defaultMatchSettings());
     expect(text()).toContain(`First to ${DEFAULT_MATCH_SETTINGS.winTarget}★`);
     expect(button("Reset to default").disabled).toBe(true);
   });
@@ -893,7 +904,7 @@ describe("#186 host game settings", () => {
     expect(text()).toContain("Match rules");
     // The guest sees the same dials and cannot move any of them…
     const groups = [...container.querySelectorAll("fieldset.ms-group")] as HTMLFieldSetElement[];
-    expect(groups.length).toBe(3);
+    expect(groups.length).toBe(5);
     expect(groups.every((g) => g.disabled)).toBe(true);
     // …has no seat controls at all…
     expect(text()).not.toContain("Add AI opponent");

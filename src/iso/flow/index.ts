@@ -143,11 +143,40 @@ function live(): boolean {
 }
 
 // ── network build ───────────────────────────────────────────────────────
-function townWeight(t: { houses?: readonly unknown[]; roads?: readonly unknown[]; level?: number }): number {
+export function townWeight(t: { houses?: readonly unknown[]; roads?: readonly unknown[]; level?: number }): number {
   // ambience.townTrafficWeight, restated to keep this module cycle-free.
   const size = Math.max(1, t.houses?.length ?? 0, t.roads?.length ?? 0);
   const tierMul = t.level === undefined ? 1 : 0.7 + Math.max(0, t.level) * 0.35;
   return (1 + Math.sqrt(size) / 6) * tierMul;
+}
+
+/**
+ * TOWN-4.5 (#681): the background-demand weight NOTHING may exceed — the
+ * heaviest tier-3 grid town this formula ever produced, measured the way
+ * #687's car cap was (max over seeds 1–60): 169 houses / 216 road tiles at
+ * tier 3, ≈ 6.037. Computed FROM `townWeight`, so the pin is the grid
+ * town's weight bit-for-bit, not a rounded copy of it. A planned town's
+ * avenues hold far more road tiles than a grid town's streets, so without
+ * this the background demand a planned capital radiates (1.25 × weight ×
+ * e^(−d/r) per road tile) would jam its own streets and drag its
+ * `tileFactor` below a legacy town's — which would read as LOWER traffic
+ * income on the new default map. The radius still grows with the town (the
+ * field covers the bigger footprint), but the peak never exceeds what the
+ * old towns reached. RE-PIN only by re-sweeping the legacy generator and
+ * taking the new max — never from a planned map.
+ */
+export const FLOW_TOWN_WEIGHT_CAP = townWeight({
+  houses: new Array(169), roads: new Array(216), level: 3,
+});
+
+/**
+ * TOWN-4.5 (#681): the weight a town RADIATES — the raw `townWeight`, capped
+ * at `FLOW_TOWN_WEIGHT_CAP`. The flow's `townCarWeight`: every caller that
+ * turns a town into background demand reads this, so planned-scale towns
+ * radiate the heaviest grid town's peak and never more.
+ */
+export function flowTownWeight(t: { houses?: readonly unknown[]; roads?: readonly unknown[]; level?: number }): number {
+  return Math.min(FLOW_TOWN_WEIGHT_CAP, townWeight(t));
 }
 
 function townSignature(grid: Grid): string {
@@ -187,7 +216,9 @@ function rebuild(track: Track, grid: Grid, signals: SignalMapLike): void {
     id: t.id,
     tx: t.tx,
     ty: t.ty,
-    weight: townWeight(t),
+    // TOWN-4.5 (#681): capped — planned-scale towns radiate the same peak
+    // background demand as the heaviest legacy town, never more.
+    weight: flowTownWeight(t),
     radius: 4 + Math.sqrt(t.roads?.length ?? 1) * 0.9,
   }));
   // TOWN-4.2 (#678): ambience's buildSignals only covers town boxes and

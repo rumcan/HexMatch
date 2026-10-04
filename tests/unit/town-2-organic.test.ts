@@ -400,15 +400,18 @@ describe("TOWN-2 the layout option", () => {
     }
   });
 
-  it("a new game resolves organic; the unit-test runner resolves grid", () => {
+  it("a new game resolves planned; the unit-test runner resolves grid", () => {
     expect(resolveTownLayout({})).toBe("grid");
     vi.stubEnv("MODE", "production");
     try {
-      expect(resolveTownLayout({})).toBe("organic");
+      // TOWN-4.5 (#681): the new-game default flipped organic → planned. (A
+      // room that names NO layout still plays organic — the "host's record"
+      // test below — so old rooms never re-terrain.)
+      expect(resolveTownLayout({})).toBe("planned");
       // ?layout= is a new-game param, both ways, only in known names
       expect(resolveTownLayout({ search: "?layout=grid" })).toBe("grid");
       expect(resolveTownLayout({ search: "?layout=organic" })).toBe("organic");
-      expect(resolveTownLayout({ search: "?layout=round" })).toBe("organic");
+      expect(resolveTownLayout({ search: "?layout=round" })).toBe("planned");
       expect(resolveTownLayout({ explicit: { layout: "grid" }, search: "?layout=organic" })).toBe("grid");
     } finally { vi.unstubAllEnvs(); }
   });

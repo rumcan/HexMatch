@@ -36,7 +36,7 @@ import {
 } from "../../src/net/protocol";
 import { CHAT_MAX_LEN } from "../../src/net/chat";
 import type { ConnectionState, HexRoom } from "../../src/net/transport";
-import { DEFAULT_MATCH_SETTINGS, type MatchSettings } from "../../src/net/match-settings";
+import { DEFAULT_MATCH_SETTINGS, defaultMatchSettings, type MatchSettings } from "../../src/net/match-settings";
 import { applyTrackDelta } from "../../src/net/delta";
 import { base64ToBytes, buildSnapshot, type Snapshot } from "../../src/iso/snapshot";
 import {
@@ -1210,7 +1210,10 @@ describe("#186 the room's settings on a session", () => {
   it("reads the defaults until the room says otherwise", () => {
     const session = new NetSession({ room: asRoom(host), role: "host" });
     session.attach({});
-    expect(session.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    // TOWN-4.5 (#681): the live defaults — a complete map included — is what
+    // a session holds before the room speaks. (DEFAULT_MATCH_SETTINGS stays
+    // the frozen map-less baseline the wire shape is read against.)
+    expect(session.settings).toEqual(defaultMatchSettings());
     session.dispose();
   });
 
@@ -1231,7 +1234,7 @@ describe("#186 the room's settings on a session", () => {
     expect(host.frames("settingsClaim")).toEqual([{ type: "settingsClaim", settings: RULES }]);
     // Nothing is applied optimistically: the echo is the only thing that moves
     // the session's copy, so a refused claim is visible rather than silent.
-    expect(session.settings).toEqual(DEFAULT_MATCH_SETTINGS);
+    expect(session.settings).toEqual(defaultMatchSettings());
     host.deliver({ type: "settings", settings: RULES });
     expect(session.settings).toEqual(RULES);
     expect(seen).toEqual([RULES]);
