@@ -100,8 +100,27 @@ const DEPTH = 2048;
 // Terrain elevation (E3, depth.ts): 2D sprites ride up the hill by surfaceHeight * LEVEL_PX; ThreeItem.lift carries it.
 // This was the "buildings sit a little low" bug: the 3D layer stood every model on level 0 (8 px per level).
 
-export const threeWanted = (s: string = typeof location !== "undefined" ? location.search : ""): boolean =>
-  new URLSearchParams(s).get("three") === "1";
+// LIVE3D-ON (#698): 3D is the default. `?three=0` opts out and `?three=1` forces on; either wins over the
+// persisted "3D buildings" setting for that boot. WebGL failure falls back to 2D (threeUnavailable()).
+const THREE_KEY = "hexmatch.three3d";
+export const threeSetting = (): boolean => {
+  try { return localStorage.getItem(THREE_KEY) !== "0"; } catch { return true; }
+};
+export const setThreeSetting = (on: boolean): void => {
+  try { localStorage.setItem(THREE_KEY, on ? "1" : "0"); } catch { /* storage blocked */ }
+};
+export const threeWanted = (s: string = typeof location !== "undefined" ? location.search : ""): boolean => {
+  const v = new URLSearchParams(s).get("three");
+  if (v === "1") return true;
+  if (v === "0") return false;
+  return threeSetting();
+};
+let mountFailed = false;
+/** True when WebGL is missing or the layer could not mount: the setting shows "3D unavailable on this device". */
+export const threeUnavailable = (): boolean => {
+  if (mountFailed) return true;
+  try { return !document.createElement("canvas").getContext("webgl2") && !document.createElement("canvas").getContext("webgl"); } catch { return true; }
+};
 
 /**
  * ROT-UI-1: the ONE predicate the HUD's rotate buttons show/hide on — true
@@ -142,7 +161,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     // Owner (2026-10-03): "is there a type of anti alias we can turn on". MSAA on the 3D layer (the buildings and
     // vehicles are the jagged edges); `?aa=0` switches it off if the frame rate ever needs the fill back.
     renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: q.get("aa") !== "0", powerPreference: "high-performance" });
-  } catch { canvas.remove(); return null; }
+  } catch { canvas.remove(); mountFailed = true; return null; }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x000000, 0);
   renderer.shadowMap.enabled = false;

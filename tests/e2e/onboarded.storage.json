@@ -3,7 +3,7 @@
   "origins": [
     {
       "origin": "http://localhost:4173",
-      "localStorage": [{ "name": "hexmatch:onboarded", "value": "1" }]
+      "localStorage": [{ "name": "hexmatch:onboarded", "value": "1" }, { "name": "hexmatch.three3d", "value": "0" }]
     }
   ]
 }

@@ -50,8 +50,12 @@ export async function bootSoloIso(
      *  off the click path — a spec that plays the game, not onboarding,
      *  remembers what onboarding would otherwise have written itself. */
     remembered?: Record<string, string>;
+    /** LIVE3D-ON (#698): leave the URL bare so the default (3D on) boots. */
+    defaultThree?: boolean;
   },
 ): Promise<void> {
+  // LIVE3D-ON (#698): 3D is the default; specs keep their 2D pixels unless the URL says three=1 (or three=0 already).
+  if (!opts.defaultThree && !/[?&]three=/.test(opts.url)) opts = { ...opts, url: opts.url + (opts.url.includes("?") ? "&" : "?") + "three=0" };
   if (opts.remembered && Object.keys(opts.remembered).length > 0) {
     await page.addInitScript((state: Record<string, string>) => {
       for (const [k, v] of Object.entries(state)) localStorage.setItem(k, v);

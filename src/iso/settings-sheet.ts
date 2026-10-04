@@ -60,6 +60,8 @@ const SUPPRESSED_BY_PERF = "Unavailable while Performance mode is on.";
 const RADIO_NOTE = "The player at the top right. Off stops the stream and releases the connection.";
 const RADIO_OFF_NOTE = "Off — the stream is stopped and the player is disconnected. Your volume is remembered.";
 
+import { setThreeSetting, threeSetting, threeUnavailable } from "./three-layer";
+
 export interface SettingsSheetHandle {
   readonly el: HTMLElement;
   /** Resolves when the sheet closes itself — Done, backdrop, or Escape. */
@@ -95,6 +97,10 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
       <div class="gfx-row">
         <div class="gfx-copy"><h3>Clouds</h3><p class="gfx-cloud-note">${CLOUDS_NOTE}</p></div>
         <button type="button" class="gfx-switch" role="switch" aria-label="Clouds" data-gfx="clouds" data-sfx="click">ON</button>
+      </div>
+      <div class="gfx-row">
+        <div class="gfx-copy"><h3>3D buildings</h3><p class="gfx-three-note">Buildings, vehicles and platforms drawn in 3D, with a turnable view. Applies from the next game.</p></div>
+        <button type="button" class="gfx-switch" role="switch" aria-label="3D buildings" data-gfx="three" data-sfx="click">ON</button>
       </div>
       <div class="gfx-row">
         <div class="gfx-copy"><h3>Lighting</h3><p class="gfx-light-note">${LIGHTING_NOTE}</p></div>
@@ -150,6 +156,20 @@ export function showSettingsSheet(host: HTMLElement = document.body): SettingsSh
   const perfBtn = root.querySelector("[data-gfx=\"performance\"]") as HTMLButtonElement;
   const cloudBtn = root.querySelector("[data-gfx=\"clouds\"]") as HTMLButtonElement;
   const cloudNote = root.querySelector(".gfx-cloud-note") as HTMLElement;
+  const threeBtn = root.querySelector("[data-gfx=\"three\"]") as HTMLButtonElement;
+  const threeNote = root.querySelector(".gfx-three-note") as HTMLElement;
+  const paintThree = () => {
+    const gone = threeUnavailable();
+    const on = threeSetting() && !gone;
+    threeBtn.textContent = on ? "ON" : "OFF";
+    threeBtn.classList.toggle("on", on);
+    threeBtn.setAttribute("aria-checked", String(on));
+    threeBtn.disabled = gone;
+    threeBtn.setAttribute("aria-disabled", String(gone));
+    if (gone) threeNote.textContent = "3D unavailable on this device";
+  };
+  threeBtn.onclick = () => { setThreeSetting(!threeSetting()); paintThree(); };
+  paintThree();
   const lightSeg = root.querySelector("[data-gfx-lighting]") as HTMLElement;
   const lightNote = root.querySelector(".gfx-light-note") as HTMLElement;
   const soundBtn = root.querySelector("[data-gfx=\"sound\"]") as HTMLButtonElement;
