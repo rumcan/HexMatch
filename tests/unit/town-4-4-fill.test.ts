@@ -322,6 +322,103 @@ describe("TOWN-4.4 zone purity", () => {
     }
   });
 
+  it("never overlaps: no two drawings share a tile, anywhere in the town", () => {
+    // BUILD item 1's packing rule — a 2-deep lot run takes its 2×2s, 1×2s,
+    // 2×1s and 1×1s along the street and never overlaps. Checked across the
+    // WHOLE draw list, not per lot, so the square's dressing, a lot's art and a
+    // block's yard cannot overlap each other either.
+    const bad: string[] = [];
+    for (const { seed, grid, town } of towns) {
+      for (const tier of [0, TOWN_VISUAL_MAX]) {
+        const { laid } = drawn(town, grid, tier);
+        const cover = new Map<number, string>();
+        for (const item of laid) {
+          const [w, h] = footprintOf(item.sprite);
+          for (let dy = 0; dy < h; dy++) {
+            for (let dx = 0; dx < w; dx++) {
+              const key = idx(item.tx + dx, item.ty + dy);
+              const other = cover.get(key);
+              if (other) bad.push(`seed ${seed} t${tier}: ${item.sprite} on ${other} at ${item.tx + dx},${item.ty + dy}`);
+              else cover.set(key, item.sprite);
+            }
+          }
+          // And the footprint the manifest gives it is the one it was laid with:
+          // a drawing never claims more ground than its own art covers.
+          expect(w * h, `${item.sprite}`).toBeGreaterThan(0);
+        }
+        // Nothing is drawn on a street tile: the plan's lots never overlap its
+        // roads (4.3's rule), and the fill respects it.
+        const { reveal } = drawn(town, grid, tier);
+        for (const key of reveal.roadKeys) {
+          expect(cover.has(key), `seed ${seed} t${tier}: art on a street tile`).toBe(false);
+        }
+      }
+    }
+    expect(bad, bad.slice(0, 12).join("\n")).toEqual([]);
+  });
+
+  it("lays the plan's pinned civic buildings, and only from the tier they are due", () => {
+    // BUILD item 1's civic half: 4.3 pins the plots (`PLAN_CIVIC` — the post
+    // office beside the square, the school and the hospital in the outer
+    // ribbon, the stadium on a long plot) and CIVIC-1's table says what each
+    // draws and from which tier. The fill honours both: the pinned name, its
+    // mirror, or CIVIC-1's same-footprint stand-in while the art is owed — and
+    // never the pinned art before its `minTier`.
+    let pinned = 0;
+    let stadiums = 0;
+    for (const { seed, grid, town } of towns) {
+      for (const tier of [0, 1, 2, TOWN_VISUAL_MAX]) {
+        const { reveal, laid } = drawn(town, grid, tier);
+        const cover = new Map<number, string>();
+        for (const item of laid) {
+          const [w, h] = footprintOf(item.sprite);
+          for (let dy = 0; dy < h; dy++) {
+            for (let dx = 0; dx < w; dx++) cover.set(idx(item.tx + dx, item.ty + dy), item.sprite);
+          }
+        }
+        for (const lot of reveal.lots) {
+          if (!lot.civic) continue;
+          pinned++;
+          const def = CIVIC_BUILDINGS.find((d) => d.sprite === lot.civic);
+          expect(def, `seed ${seed}: ${lot.civic} is not a CIVIC-1 building`).toBeTruthy();
+          const onLot = new Set<string>();
+          for (let dy = 0; dy < lot.h; dy++) {
+            for (let dx = 0; dx < lot.w; dx++) {
+              const sprite = cover.get(idx(lot.x + dx, lot.y + dy));
+              if (sprite) onLot.add(sprite);
+            }
+          }
+          // The plot is never bare: due or not, it draws something.
+          expect(onLot.size, `seed ${seed} t${tier}: the ${def!.name} plot is empty`).toBeGreaterThan(0);
+          // The pinned art itself only appears from its tier (it is owed art, so
+          // today this is the gate that matters — when the PNGs land, the same
+          // line pins that they arrive at the right tier and not before).
+          if (tier < def!.minTier) {
+            expect(onLot.has(def!.sprite), `seed ${seed} t${tier}: ${def!.name} before its tier`).toBe(false);
+            expect(onLot.has(`${def!.sprite}_r`)).toBe(false);
+          } else {
+            const allowed = new Set([def!.sprite, `${def!.sprite}_r`, def!.fallback, `${def!.fallback}_r`]
+              .filter((n): n is string => !!n));
+            expect([...onLot].some((n) => allowed.has(n)),
+              `seed ${seed} t${tier}: the ${def!.name} plot drew ${[...onLot].join(", ")}`).toBe(true);
+            // The stadium is the one plot big enough to be unmistakable: its
+            // stand-in is 8 tiles, and nothing in the civic band's own pool is.
+            if (def!.footprint[0] * def!.footprint[1] >= 8) {
+              const big = [...onLot].some((n) => {
+                const [w, h] = footprintOf(n);
+                return w * h >= 8;
+              });
+              expect(big, `seed ${seed} t${tier}: no ${def!.name} on its long plot`).toBe(true);
+              stadiums++;
+            }
+          }
+        }
+      }
+    }
+    expect(pinned, "no planned town pinned a civic plot").toBeGreaterThan(0);
+    expect(stadiums, "no stadium was laid at tier 3 on any seed").toBeGreaterThan(0);
+  });
+
   it("puts a garden tree on outer lots at the documented rate", () => {
     expect(TOWN_GARDEN_TREE_IN).toBe(3);
     let outerLots = 0;
