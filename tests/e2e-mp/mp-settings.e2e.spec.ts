@@ -27,6 +27,13 @@ const summary = (side: { page: import("@playwright/test").Page }) =>
   side.page.locator(".match-settings .ms-summary");
 
 test("a host's ★ line and purse become the guest's rules, live and in game", async ({ browser }, testInfo) => {
+  // E2E-GREEN-1 (#666): the pair's BOOT is the whole cost of this spec — its
+  // sibling below, handed an already-booted pair, finishes in ~20 s. On run
+  // 37163361110 both attempts died in `expectBooted` at the harness's 180 s
+  // boot budget (`TimeoutError: page.waitForFunction: Timeout 180000ms
+  // exceeded`) while the push run of the same commit passed. Budgets only:
+  // no step, wait predicate or assertion changes.
+  test.setTimeout(540_000);
   const pair = await pairUp(browser);
   const { host, guest } = pair;
   try {
@@ -53,7 +60,7 @@ test("a host's ★ line and purse become the guest's rules, live and in game", a
 
     // ── both seats boot on those rules ────────────────────────────────────
     await startMatch(pair);
-    await Promise.all([expectBooted(host), expectBooted(guest)]);
+    await Promise.all([expectBooted(host, 300_000), expectBooted(guest, 300_000)]);
 
     for (const side of [host, guest]) {
       const rules = await side.page.evaluate(() =>
