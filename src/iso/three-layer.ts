@@ -22,10 +22,46 @@ const MODEL_YAW: Record<string, number> = {};
 export const MODEL_SCALE: Record<string, number> = { store_2x4: 0.6 };
 // compat alias: older code and tests may reference MODEL_SIZE
 export const MODEL_SIZE = MODEL_SCALE;
+
+/**
+ * 3D-FIX-5 (#664) — A HEADING IS A GROUND DIRECTION, NOT A SCREEN ONE.
+ *
+ * The sprite names carry one of eight headings (`truck_red_se`, `car_bus_ne`, …). In ground coordinates
+ * (u along +tx, v along +ty) a heading is a unit vector: se = +u, sw = +v, nw = -u, ne = -v, and the four
+ * cardinals bisect them. Turning a model by this many radians about Y then points its front along the
+ * heading — and because the whole three scene is seen through the turned camera, the SAME number is right at
+ * every view yaw. Nothing here knows about the camera: that is what makes the table testable.
+ */
+export const HEADING_DEG: Record<string, number> = { se: 0, e: 45, ne: 90, n: 135, nw: 180, w: -135, sw: -90, s: -45 };
+
+/**
+ * 3D-FIX-5 (#664) — THE ONE alias table for the ambient cars. The sim's CAR_MODELS (sedan, sedan2, pickup,
+ * bus, van) are 1950s-60s shapes the Meshy set does not carry, so each is an alias of a model we do have.
+ * pickup, van and bus are lorry-bodied, so all three keep THE LORRY'S scaling: the same model, uniformly
+ * scaled by `lengthM / 12` (one tile = 12 m) — only the length differs, never the proportions, which is what
+ * "keep the lorry scaling" means. The lengths come from the 1x art widths, not from taste: the shipped lorry
+ * sprite is 26 px at 7 m, and the ambience notes size the sedan at 22 px, the pickup at 24, the van at 22 and
+ * the bus at 32 — so pickup 6.5 m, van 5.5 m, bus 9 m. A bus therefore reads as a bus without any of the three
+ * being stretched into a shape the model is not.
+ *
+ * The two sedans take their model's own length (4.8 m) — no `lengthM` — so they are never distorted either.
+ */
+export const VEHICLE_MODEL_ALIAS: Record<string, { model: string; lengthM?: number }> = {
+  sedan: { model: "car_sedan_1" },
+  sedan2: { model: "car_sedan_2" },
+  pickup: { model: "vehicle_truck", lengthM: 6.5 },
+  van: { model: "vehicle_truck", lengthM: 5.5 },
+  bus: { model: "vehicle_truck", lengthM: 9 },
+};
 interface ModelInfo { turn: number; ex: number; ez: number; h: number; moving?: boolean; lengthM?: number }
 type Manifest = Record<string, ModelInfo>;
-/** Sprite name -> model name (+ extra quarter turns); null = no model (the box stays). */
-const modelOf = (sprite: string, mf: Manifest | null): { name: string; extra: number } | null => {
+/**
+ * Sprite name -> model name (+ extra quarter turns); null = no model (the box stays).
+ *
+ * 3D-FIX-5 (#664): exported (it was module-private) so the platform's and the depot's quarter turns are testable
+ * data instead of a number only the render loop can see — see tests/unit/3d-fix-5-facing.test.ts.
+ */
+export const modelOf = (sprite: string, mf: Manifest | null): { name: string; extra: number } | null => {
   if (!mf) return null;
   if (mf[sprite]) return { name: sprite, extra: 0 };
   // LIVE-3D: the railway's platform (4x1 / 1x4 by view) and train depot (2x2). The platform model lies along X with
@@ -273,12 +309,8 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   // composeVehicles): a sprite name that encodes model + heading, and the fractional tile fx/fy. We read those,
   // so every selection rule (livery per owner, wagon per cargo, heading octant) stays the sim's. Nothing is
   // allocated per frame: one InstancedMesh per model part, preallocated, `count` set each frame.
-  const HEADING_DEG: Record<string, number> = { se: 0, e: 45, ne: 90, n: 135, nw: 180, w: -135, sw: -90, s: -45 };
-  // ambient cars -> the three Meshy sedans / the lorry (the game's CAR_MODELS: sedan, sedan2, pickup, bus, van)
-  const CAR_MODEL_OF: Record<string, { model: string; lengthM?: number }> = {
-    sedan: { model: "car_sedan_1" }, sedan2: { model: "car_sedan_2" }, pickup: { model: "car_sedan_3" },
-    bus: { model: "vehicle_truck", lengthM: 9 }, van: { model: "vehicle_truck", lengthM: 5.5 },
-  };
+  // 3D-FIX-5 (#664): HEADING_DEG and VEHICLE_MODEL_ALIAS are module constants now (see the top of the file) so
+  // the facing rules are DATA the tests can drive, not numbers buried in this closure.
   const SEDANS = ["car_sedan_1", "car_sedan_2", "car_sedan_3"];
   const WAGON_KIND: Record<string, string> = { grain: "box", ore: "box", gold: "box", wood: "flat", stone: "flat", oil: "tank" };
   interface VState { model: string; lengthM?: number; count: number; pools: Pool[]; ready: boolean }
@@ -298,7 +330,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
     const V = "(ne|nw|se|sw|n|e|s|w)";
     let model = "", view = "", lengthM: number | undefined;
     if ((m = new RegExp(`^truck_(red|blue|goods)_${V}$`).exec(sprite))) { model = m[1] === "blue" ? "vehicle_truck_blue" : "vehicle_truck"; view = m[2]; }
-    else if ((m = new RegExp(`^car_(sedan2|sedan|pickup|bus|van)_${V}$`).exec(sprite))) { const c = CAR_MODEL_OF[m[1]]; model = c.model; lengthM = c.lengthM; view = m[2]; }
+    else if ((m = new RegExp(`^car_(sedan2|sedan|pickup|bus|van)_${V}$`).exec(sprite))) { const c = VEHICLE_MODEL_ALIAS[m[1]]; model = c.model; lengthM = c.lengthM; view = m[2]; }
     else if ((m = new RegExp(`^car(\\d+)_${V}$`).exec(sprite))) { model = SEDANS[(Number(m[1]) - 1) % 3]; view = m[2]; }
     else if ((m = new RegExp(`^car-(loco|tender|box|flat|tank)_${V}$`).exec(sprite))) { model = `rail_${m[1]}`; view = m[2]; }
     else if ((m = new RegExp(`^wagon_([a-z]+)_${V}(_loaded)?$`).exec(sprite)) && WAGON_KIND[m[1]]) { model = `rail_${WAGON_KIND[m[1]]}`; view = m[2]; }
