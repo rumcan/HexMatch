@@ -50,6 +50,12 @@ export const LANE_OFFSET = 0.12;
 /** Highway: two lanes each direction, so the offset is wider — two offsets
  *  from the centre, straddling the divider. */
 export const LANE_OFFSET_HIGHWAY = 0.24;
+/** TOWN-4.2 (#678): the Avenue carriageway keeps the single-lane offset plus
+ *  a small OUTER bias — the right-hand rule already points at the outer side
+ *  of the pair (the median is behind the driver), and the +0.02 clears the
+ *  planted median kerb: from the carriage centre the car sits 0.16 out on a
+ *  0.78-wide carriageway, never crossing it. */
+export const LANE_OFFSET_AVENUE = 0.14;
 /** Extra z-lift for vehicles ON an overpass deck — large enough to guarantee
  *  they draw OVER the crossing road beneath, small enough not to float above
  *  the bridge itself. */
@@ -98,6 +104,13 @@ export function lanePerp(dx: number, dy: number, tier?: number): [number, number
   if (tier === 2 || tier === OVERPASS_X || tier === OVERPASS_Y) {
     // Highway: larger offset, two lanes straddling divider.
     return [px * (LANE_OFFSET_HIGHWAY / LANE_OFFSET), py * (LANE_OFFSET_HIGHWAY / LANE_OFFSET)];
+  }
+  // TOWN-4.2 (#678): the Avenue case — same right-hand rule, slightly wider
+  // so the car clears the median kerb. The one-way rule itself lives in the
+  // directed ambientRoadGraph (cars never route against AVENUE travel), and
+  // `laneOffsetFor` already samples this tier at the mid-segment tile.
+  if (tier === 6 || tier === 7) {
+    return [px * (LANE_OFFSET_AVENUE / LANE_OFFSET), py * (LANE_OFFSET_AVENUE / LANE_OFFSET)];
   }
   return [px, py];
 }
