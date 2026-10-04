@@ -333,7 +333,7 @@ function importTimeSizeReads(file: string): ImportTimeRead[] {
     const names = ts.isVariableStatement(st)
       ? st.declarationList.declarations.map((d) => d.name.getText(sf)) : [];
     const isLet = ts.isVariableStatement(st) && (st.declarationList.flags & ts.NodeFlags.Let) !== 0;
-    out.push({ file: relative(SRC, file), line: sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1, names, isLet });
+    out.push({ file: relative(SRC, file).split("\\").join("/"), line: sf.getLineAndCharacterOfPosition(st.getStart(sf)).line + 1, names, isLet });
   }
   return out;
 }
