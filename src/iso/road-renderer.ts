@@ -990,7 +990,7 @@ export function paintStreetLamps(ctx: Ctx2D, tiles: RoadTile[], elev: Draper = F
     ctx.stroke();
 
     const corner = (right: number, up: number): GroundPoint => {
-      const [dr, dv] = screenOffsetAt(right, up, vq);
+      const [dr, dv] = screenOffsetAt(right, -up, vq);
       return [head[0] + dr, head[1] + dv];
     };
     const [bl, br, tr, tl] = [

@@ -494,6 +494,10 @@ describe("TOWN-4.6 the avenue's median keeps its dressing at every yaw", () => {
     for (const lamp of zero) {
       expect(lamp[0][0]).toEqual([0, 0]);
       expect(dist(lamp[0][1], [0, -8]), "the post is 8px straight up").toBeLessThan(1e-9);
+      // The lantern sits ON the head, not hung below it (#159's pxUp geometry).
+      for (const [, y] of lamp[2]) expect(y, "the housing is above the post head").toBeLessThanOrEqual(-8 + 1e-9);
+      const glowY = lamp[1].reduce((s, [, y]) => s + y, 0) / lamp[1].length;
+      expect(glowY, "the glow is centred above the head").toBeLessThan(-8);
     }
     for (const q of QUARTERS) {
       const turned = shapeAt(q);

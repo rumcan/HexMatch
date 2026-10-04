@@ -240,7 +240,7 @@ export function mountThreeLayer(host: HTMLElement, before: HTMLElement | null, s
   const noModels = tris > 0 || q.get("models") === "0" || noBoxes;   // stress mode and ?models=0 keep the boxes
   // TOWN-4.6 (#682): `?front=se|ne|nw|sw` names the wall a shipped sprite's front stands on — the ONE knob to
   // turn if the doors come out on the wrong side of the street in the play-test. Default SW (see SPRITE_FRONT_SW).
-  const spriteFront = FRONT_TURN[(q.get("front") ?? "sw").toLowerCase() as LotFront] ?? SPRITE_FRONT_SW;
+  const spriteFront = FRONT_TURN[(q.get("front") ?? "sw").toUpperCase() as LotFront] ?? SPRITE_FRONT_SW;
   const canvas = document.createElement("canvas");
   canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3";
   host.insertBefore(canvas, before);
