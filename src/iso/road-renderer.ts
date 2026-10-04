@@ -1344,7 +1344,21 @@ export class RoadCache {
     makeSurface: (w: number, h: number) => Surface | null,
   ): CacheEntry | null {
     // FLOW-1: the markings ride the raster, so their revision rides the key.
-    const vq = (((Math.round(getViewYawTarget() / (Math.PI / 2)) % 4) + 4) % 4);   // LIVE-3D: the hill lift is baked per view quarter
+    //
+    // LIVE-3D: the hill lift is baked PER VIEW QUARTER. A raster is turned as a flat bitmap by `paint`, so the
+    // lift has to be baked as the inverse quarter turn of the screen-vertical (-k, -k): that is what
+    // `draperFor(grid, vq)` returns, and at rest the road lies on its slope to the pixel at all four yaws (3D-FIX-4
+    // measured 0.00 px over every sloped tile of three elevation maps; baking the unturned lift and then turning
+    // the bitmap costs 62-69 px, which is the bug this keyed drape removes).
+    //
+    // MID-TURN (#663): the quarter comes from the DESTINATION yaw, so a turn re-bakes each visible chunk ONCE,
+    // on the first frame of the ease, while the blit transform still eases from the old angle. That front-loads
+    // the drift — worst on that first frame (2.24 x the tile lift: 71 px on a level-4 hill, easing back to 0
+    // over ~250 ms) — and it is the SMALLEST snap there is: switching at the 45 deg crossover instead (baking
+    // the quarter nearest the eased yaw) jumps 2.83 x the lift. A per-frame-exact lift is not affordable — it
+    // would re-rasterise every visible chunk on every frame of the ease — so the road layer snaps, exactly like
+    // the rest of the baked ground, and costs nothing per frame and no allocation while it does.
+    const vq = (((Math.round(getViewYawTarget() / (Math.PI / 2)) % 4) + 4) % 4);
     const key = `${this.styleVersion}:${flowMarkingsRev()}:${diagonalsOn(world) ? 1 : 0}:${zoom}:${vq}:${cx},${cy}`;
     const hit = this.entries.get(key);
     if (hit) {

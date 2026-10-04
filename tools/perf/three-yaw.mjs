@@ -16,7 +16,28 @@ await play.waitFor({ state: "visible", timeout: 60000 }); await play.click();
 await page.waitForFunction(() => { const h = window.__iso; return !!h && !!h.grid && h.grid.industries.length > 0 && !h.loading && /^(setup-factory|play)$/.test(h.phase); }, null, { timeout: 120000 });
 await page.waitForTimeout(1500);
 await page.evaluate(() => { const h = window.__iso; outer: for (const t of h.grid.towns) for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) { const tx = t.tx + dx, ty = t.ty + dy; if (h.placementPlan("factory", tx, ty).valid && h.placeFactory(tx, ty)) break outer; } });
-const town = await page.evaluate(() => { const t = window.__iso.grid.towns[0]; return { tx: t.tx + 4, ty: t.ty + 4 }; });
+// 3D-FIX-4 (#663): park the camera on a road that climbs a hill, not on the flat town apron — a road on level
+// ground has no lift baked into it and would show nothing either way. Steepest public-road tile wins.
+const target = await page.evaluate(() => {
+  const h = window.__iso, g = h.grid, H = g.height ?? null;
+  const at = (x, y) => (x < 0 || y < 0 || x >= g.w || y >= g.h ? 0 : H?.[y * g.w + x] ?? 0);
+  let best = null;
+  if (H) {
+    for (const [tx, ty] of g.publicRoads ?? []) {
+      const base = at(tx, ty);
+      const slope = Math.max(
+        Math.abs(base - at(tx + 1, ty)), Math.abs(base - at(tx, ty + 1)), Math.abs(base - at(tx + 1, ty + 1)),
+        Math.abs(base - at(tx - 1, ty)), Math.abs(base - at(tx, ty - 1)), Math.abs(base - at(tx - 1, ty - 1)),
+      );
+      if (slope > 0 && (!best || slope > best.slope)) best = { tx, ty, slope, kind: "public-road-on-a-slope" };
+    }
+  }
+  if (best) return best;
+  const t = g.towns[0];
+  return { tx: t.tx + 4, ty: t.ty + 4, slope: 0, kind: "town (no sloped road on this map)" };
+});
+const town = target;
+console.log("TARGET " + JSON.stringify(target));
 await page.evaluate((t) => window.__iso.lookAt(t.tx, t.ty, 1), town);
 for (let k = 0; k < Number(process.env.KMAX ?? 4); k++) {
   if (k) { await page.keyboard.press("]"); await page.waitForTimeout(1200); }
@@ -35,5 +56,8 @@ for (let k = 0; k < Number(process.env.KMAX ?? 4); k++) {
   }, { town, secs: 3 });
   console.log(JSON.stringify(r));
   await page.screenshot({ path: `tools/perf/yaw-${EXTRA.includes("three") ? "3d" : "2d"}-${k}.png` });
+  // #663: a tight shot of the sloped road itself, so the lead can see whether the ribbon still lies on the
+  // ground at this quarter without hunting for it in the wide shot.
+  await page.screenshot({ path: `tools/perf/yaw-road-${k}.png`, clip: { x: 1280 / 2 - 220, y: 720 / 2 - 140, width: 440, height: 280 } });
 }
 await browser.close();
