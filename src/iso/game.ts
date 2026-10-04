@@ -3,6 +3,7 @@ import {
   sabotagedScore, sessionSabotage, SESSION_SABOTAGE_COOLDOWN_MS, type BlackMarketState,
 } from "./black-market";
 import { totalStorageRent, storageRentLabel } from "./storage-rent";
+import { flowSignals } from "./flow";
 // ══════════════════════════════════════════════════════════════════════════
 // E11 — the playable isometric game.
 //
@@ -2268,8 +2269,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     onTool: (t) => {
       if (t === "select") { cancelPlacement(); return; }
       // ROADS-2 (#393): Street / Highway are the Road tool at another tier.
+      // TOWN-4.2 (#678): Avenue too (the straight-pair drag lives in track.ts).
       const key = t as string;
-      if (key === "street" || key === "highway" || key === "road" || key === "ramp") {
+      if (key === "street" || key === "highway" || key === "road" || key === "ramp" || key === "avenue") {
         roadTier = key;
         armTool("road");
         return;
@@ -17573,7 +17575,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         cars: cars.cars.length,
         carBudget: carCount,
         pedestrians: streetLife.peds.length,
-        lights: streetLife.signals.junctions.size,
+        // TOWN-4.2: the signalled set the cars obey (input junctions UNION
+        // Avenue crossings) — falls back to the raw ambience map pre-tick.
+        lights: (flowSignals()?.junctions ?? streetLife.signals.junctions).size,
         time: streetLife.time,
         art: AMBIENT_ART_NEEDED,
       };

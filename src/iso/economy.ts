@@ -1170,8 +1170,8 @@ export function depotRoutePay(
 export const depotRouteName = (cargo: Cargo | null, id: number): string =>
   cargo ? DEPOT_TREE[cargo].name : `Depot #${id}`;
 
-/** Street < Road < Highway, matching `track.ts` `RANK_OF_STORED`. */
-const STORED_RANK = [1, 0, 2, 1, 2, 2];
+/** Street < Road < Highway < Avenue, matching `track.ts` `RANK_OF_STORED`. */
+const STORED_RANK = [1, 0, 2, 1, 2, 2, 3, 3];
 const storedRank = (tier: number): number => STORED_RANK[tier & 7] ?? 1;
 
 

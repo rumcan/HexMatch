@@ -44,6 +44,7 @@ import { BUILD_COSTS, BUILD_COSTS_MONEY, CARGOES, INDUSTRY_BY_KEY, SLOPES, VICTO
 import {
   NE, SE, SW, NW, DIRS, DIR, OPPOSITE, PRESENT, tIdx, inMapT, plantFootprintTiles,
   OVERPASS_COST, OVERPASS_X, OVERPASS_Y, roadTierAt, roadRailDeckAxis, addCost, mergedPresent, octPath, crossingMasksOk, roadConnectionMask, roadDiagLinked,
+  isAvenueTier,
   DIAGONAL_DIRS, straightTrackDirection, type DragPreview, type Purse, type Track,
 } from "./track";
 import { heightAt, WATER, FIELD_OCC, GRASS, ROUGH, SAND, factoryFootprintOf, idx, type Grid } from "./grid";
@@ -1501,6 +1502,8 @@ export type RailRefusal =
   /** R2 (#266): the tile would hang a side connection on a standing rail bridge. */
   | "bridge-junction"
   | "overpass-stop"
+  /** TOWN-4.2 (#678): a grade-separated rail drag would deck an Avenue tile. */
+  | "avenue-deck"
   /** E4 (#268): the step climbs more than `SLOPES.railMaxStep`, or a level
    *  change sits closer than `SLOPES.railRampRun` tiles to another one. */
   | "too-steep"
@@ -1540,6 +1543,8 @@ export const RAIL_REFUSAL_TEXT: Record<RailRefusal, string> = {
   "industry-taken": "That industry is already claimed — only one Depot may hold it.",
   "bridge-junction": "A bridge stays straight — no track can join its side.",
   "overpass-stop": "Overpasses are straight through; place the platform or depot beyond the deck.",
+  // TOWN-4.2 (#678): v1 crosses an Avenue at grade only.
+  "avenue-deck": "An Avenue carries no overpass — lay the rail across it at grade.",
   // #429: each sentence names the rule AND the fix, so a red tile is never a
   // riddle. (The counts are pinned to `SLOPES.railRampRun` by a unit test.)
   "too-steep": "Too steep — rail needs 2 flat tiles between climbs; end on level ground and climb again.",
@@ -1892,9 +1897,16 @@ export function buildRail(
   let candidate = tiles, why: RailRefusal = "ok";
   if (gradeSeparated) {
     const stacked = ([x, y]: [number, number]) => [OVERPASS_X, OVERPASS_Y].includes(roadTierAt(track, x, y));
+    // TOWN-4.2 (#678): an Avenue never takes a rail overpass deck — v1
+    // crosses it at grade only (the level crossing `crossingRefusalAt`
+    // already allows at right angles across both carriageways).
+    const avenue = ([x, y]: [number, number]) => isAvenueTier(roadTierAt(track, x, y));
     const bad = tiles.findIndex((tile, n) => !(original.tile[tIdx(...tile)] & RAIL_PRESENT)
-      && (stacked(tile) || (railGradeCrossing(track, tiles, n) && !railGradeFlat(grid, tiles, n))));
-    if (bad >= 0) { candidate = tiles.slice(0, bad); why = stacked(tiles[bad]) ? "crossing-curve" : "too-steep"; }
+      && (stacked(tile) || avenue(tile) || (railGradeCrossing(track, tiles, n) && !railGradeFlat(grid, tiles, n))));
+    if (bad >= 0) {
+      candidate = tiles.slice(0, bad);
+      why = avenue(tiles[bad]) ? "avenue-deck" : stacked(tiles[bad]) ? "crossing-curve" : "too-steep";
+    }
   }
   for (;;) {
     const result = buildRailAttempt(grid, track, state, ownerId, candidate);

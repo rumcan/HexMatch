@@ -1128,6 +1128,10 @@ export const BUILD_COSTS_MONEY: Readonly<Record<string, number>> = {
   street: moneyValueOf({ wood: 2, stone: 2, ore: 4 }),
   highway: moneyValueOf({ wood: 4, stone: 10, ore: 24 }),
   ramp: moneyValueOf({ wood: 3, stone: 6, ore: 10 }),
+  // TOWN-4.2 (#678): the Avenue tier — per TOWN-4's "2× Road per tile pair
+  // plus 25%" read as 1.25× Road PER TILE (a pair = two tiles), so one
+  // constant (AVENUE_COST below) is the whole price.
+  avenue: moneyValueOf({ wood: 3.75, stone: 3.75, ore: 15 }),
   overpass: moneyValueOf({ wood: 6, stone: 12, ore: 8 }),
   // #456 Level Ground: the price of ONE tile moved ONE level (patch tiles and
   // the automatic edge ramps both). Priced as a small stone bill so the charge
@@ -1289,13 +1293,23 @@ export const TRANSPORT: Record<"dirt" | "road", TransportDef> = {
 };
 
 /**
+ * TOWN-4.2 (#678): the Avenue's PER-TILE price — TOWN-4's "2× Road per tile
+ * pair plus 25%" is 1.25× Road on each of the pair's two tiles, so this one
+ * constant is the whole cost model (`tierTileCost` prices upgrades from it,
+ * `BUILD_COSTS_MONEY.avenue` derives its money row from it).
+ */
+export const AVENUE_COST: Partial<Record<Cargo, number>> = { wood: 3.75, stone: 3.75, ore: 15 };
+
+/**
  * ROADS-2 (#393): the paved layer's three tiers. `throughput` is the per-tile
  * haul speed a route averages over (Dirt is 1.0 for reference), and `cost` is
  * per tile. Street is the cheap, slow town lane; Road is today's paved road
  * (its numbers ARE TRANSPORT.road's); Highway is the fast, dear long-haul
  * carriageway (2 tiles wide in the art; it climbs like any road — see slopes).
+ * TOWN-4.2 (#678): Avenue is the two-tile one-way boulevard (carriageways on
+ * AVENUE_X / AVENUE_Y in `track.ts`).
  */
-export const ROAD_TIERS: Record<"street" | "road" | "highway" | "ramp", {
+export const ROAD_TIERS: Record<"street" | "road" | "highway" | "ramp" | "avenue", {
   name: string; throughput: number; cost: Partial<Record<Cargo, number>>; blurb: string;
 }> = {
   street: { name: "Street", throughput: 1.2, cost: { wood: 2, stone: 2, ore: 4 }, blurb: "cheap town lane · slow" },
@@ -1303,6 +1317,8 @@ export const ROAD_TIERS: Record<"street" | "road" | "highway" | "ramp", {
   highway: { name: "Highway", throughput: 2.3, cost: { wood: 4, stone: 10, ore: 24 }, blurb: "fastest hauling · any road joins it" },
   // ROADS-3 (#394): the only way on or off a Highway.
   ramp: { name: "Ramp", throughput: 1.6, cost: { wood: 3, stone: 6, ore: 10 }, blurb: "joins a Highway to your roads" },
+  // TOWN-4.2 (#678): one-way boulevard, two lanes each way (lane rendering).
+  avenue: { name: "Avenue", throughput: 2.0, cost: AVENUE_COST, blurb: "two-way boulevard · one-way lanes" },
 };
 /** Throughput by the numeric tier stored on the track (0 Road, 1 Street, 2 Highway). */
 export const TIER_THROUGHPUT: readonly number[] = [
@@ -1310,6 +1326,8 @@ export const TIER_THROUGHPUT: readonly number[] = [
   ROAD_TIERS.ramp.throughput,
   // ROADS-3 (#394): an overpass tile is highway along its axis
   ROAD_TIERS.highway.throughput, ROAD_TIERS.highway.throughput,
+  // TOWN-4.2 (#678): AVENUE_X / AVENUE_Y — between Road and Highway.
+  ROAD_TIERS.avenue.throughput, ROAD_TIERS.avenue.throughput,
 ];
 
 // Dirt→road upgrade pays only the difference (settled: yes, pave in place).
