@@ -1651,6 +1651,205 @@ export function townCentreSprite(tier: number): string {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// TOWN-4.4 (#680) — the ZONE POOLS of a PLANNED town.
+//
+// A planned town's master plan (src/iso/town-plan.ts) zones every lot by its
+// distance from the square — epic §2.6 — and `townBuildings` draws each lot
+// from ITS ZONE's pool, so a downtown avenue frontage never comes out as
+// bungalows and an outer cul-de-sac never comes out as office towers.
+//
+// Every pool is built from the variant lists that already exist (PP-12's
+// `TOWN_HOUSE_VARIANTS`, CITY-1's `TOWN_HOME_VARIANTS`, F4's
+// `TOWN_SHAPE_VARIANTS`, MAP-2's `TOWN_TREE_VARIANTS`, #159's
+// `TOWN_PARK_VARIANTS`) plus the names the lead owes — see
+// `PLANNED_ART_NEEDED` at the foot of this section. A new drawing slots in by
+// NAME: `grid.ts` filters every pool by footprint and by what the atlas can
+// actually blit, so an unshipped name costs a lot its pick (it falls back to
+// the next shape down, then to greenery) and never punches a hole in the map.
+//
+// Three shapes per zone, because a plan's lots come in three shapes: a 2-deep
+// lot run is 2×2, 2×1 or 1×2 in world tiles (never longer — the generator
+// subdivides a frontage into 1s and 2s), so a pool declares
+//
+//   blocks  the whole-lot art (2×2 and up),
+//   long    the narrow-frontage art (1×2 / 2×1, turned with `_r`),
+//   single  what one free lot tile draws,
+//
+// and the filler packs them along the street in that order, never overlapping.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The zone of a planned town's lot. Structurally `town-plan.ts`'s `LotZone`:
+ *  `TOWN_ZONE_POOLS[lot.zone]` in grid.ts only typechecks while the two agree,
+ *  so a new zone cannot silently fall through to another zone's art. */
+export type TownZone = "downtown" | "inner" | "outer" | "edge" | "civic";
+
+/** One zone's building art, by the lot shape it fills. */
+export interface TownZonePool {
+  /** Whole-lot art: the 2×2 (and bigger) buildings the zone stands. */
+  blocks: readonly string[];
+  /** Narrow frontage: the 1×2 / 2×1 rows, packed along the street. */
+  long: readonly string[];
+  /** One free lot tile. */
+  single: readonly string[];
+  /** Corner lots only — a shop on the corner of a run (epic §2.6). */
+  corner?: readonly string[];
+  /** What the block's INTERIOR tiles draw behind the lots: back yards,
+   *  courtyards, parking. Ground art, 1×1, never a building. */
+  interior: readonly string[];
+}
+
+/**
+ * DOWNTOWN — avenue frontage within ~10 tiles of the square: 2×2 commercial
+ * blocks (bank, cinema, offices, hotel, flats) with shopfronts behind them.
+ * The ticket names the 2×2 set; the 1×1 shopfronts and offices come from
+ * PP-12's list so a narrow lot still reads as commerce rather than as a house.
+ */
+export const TOWN_DOWNTOWN_VARIANTS = [
+  "town_bank", "town_cinema", "town_offices_tall", "town_office_tower_modern",
+  "town_flats", "town_flats_grey", "town_hotel",
+] as const;
+
+/** Downtown's 1×1 shopfronts and offices — the narrow-lot and packing art. */
+export const TOWN_DOWNTOWN_SHOPFRONTS = [
+  "town_shops_modern", "town_shops_offices", "town_shops_offices_2",
+  "town_office_1460", "town_offices_1423",
+] as const;
+
+/**
+ * Downtown's 1×2 / 2×1 shop rows. No shopfront of that shape is shipped yet,
+ * so F4's plain terrace stands in (it reads as a row of small units); the
+ * lead's `shopfront_2x1` / `shopfront_1x2` (+ `_r` mirrors) slot straight in.
+ */
+export const TOWN_DOWNTOWN_LONG = ["shopfront_2x1", "terrace_2x1_plain"] as const;
+
+/**
+ * INNER RESIDENTIAL — terraces and townhouses (1×2 / 2×1), small flats, and a
+ * corner shop on the corner lots. F4's `TOWN_SHAPE_VARIANTS` terraces are the
+ * long art; the 1×1s are PP-12's townhouses and small flats; the 2×2s are the
+ * smaller of the apartment blocks, so an inner block is not all towers.
+ */
+export const TOWN_INNER_LONG = ["terrace_2x1_yard", "terrace_2x1_plain"] as const;
+
+export const TOWN_INNER_VARIANTS = [
+  "town_townhouse_3", "town_townhouse_garden_2", "town_townhouse_garden_3",
+  "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_small_house_1x1_1",
+  "town_flats_2", "town_flats_4", "town_flats_townhouse_tall",
+  "town_cottage_tall", "town_cottage_old_small", "town_cottage_old_small_a",
+] as const;
+
+export const TOWN_INNER_BLOCKS = [
+  "town_house_c", "town_townhouse_gardens_2", "town_flats", "town_flats_grey",
+] as const;
+
+/** A corner lot's shop (the epic's "corner shops (corner lots only)"). */
+export const TOWN_CORNER_SHOP_VARIANTS = [
+  "corner_shop_1x1", "town_shops_modern", "town_shops_offices",
+] as const;
+
+/**
+ * OUTER RESIDENTIAL — CITY-1's detached houses (`TOWN_HOME_VARIANTS`), each
+ * lot with a garden tree on one tile in `TOWN_GARDEN_TREE_IN`. Reusing the
+ * CITY-1 pool is deliberate: an upgraded grid town and a planned town's outer
+ * ring then draw the same houses, and a new house drawing lands in both.
+ */
+export const TOWN_OUTER_VARIANTS = TOWN_HOME_VARIANTS;
+
+/** A garden tree on one in N outer lots (epic §2.6). 0 plants none. */
+export const TOWN_GARDEN_TREE_IN = 3;
+
+/**
+ * EDGE — the plan's rim: parks, allotments, ponds and playgrounds, the odd
+ * cottage, and the church with its graveyard. Greenery-dominant on purpose:
+ * this is the band that has to read as "the town stops here", and it is where
+ * a `park` block (no lots at all) sits.
+ */
+export const TOWN_EDGE_VARIANTS = [
+  "town_cottage_old_small", "town_cottage_old_small_a", "town_small_house_1x1_1",
+] as const;
+
+export const TOWN_EDGE_GREEN = [
+  "church_graveyard_1x1", "park_allotment_1x1", "park_pond_1x1", "park_playground_1x1",
+  "park_garden_1x1",
+] as const;
+
+/** The block interiors' stand-ins until the lead's decals land (BUILD item 3):
+ *  downtown parking or courtyard, inner courtyard or garden, outer gardens. */
+export const TOWN_INTERIOR_DOWNTOWN = [
+  "town_parking_1x1", "town_courtyard_1x1", TOWN_LAWN,
+] as const;
+export const TOWN_INTERIOR_INNER = [
+  "town_courtyard_1x1", "town_backyard_1x1", "park_garden_1x1", TOWN_LAWN,
+] as const;
+export const TOWN_INTERIOR_OUTER = [
+  "town_backyard_1x1", "park_garden_1x1", TOWN_LAWN,
+] as const;
+
+/** The zone pools `townBuildings` fills a planned town from. */
+export const TOWN_ZONE_POOLS: Record<TownZone, TownZonePool> = {
+  downtown: {
+    blocks: TOWN_DOWNTOWN_VARIANTS,
+    long: TOWN_DOWNTOWN_LONG,
+    single: TOWN_DOWNTOWN_SHOPFRONTS,
+    corner: TOWN_CORNER_SHOP_VARIANTS,
+    interior: TOWN_INTERIOR_DOWNTOWN,
+  },
+  inner: {
+    blocks: TOWN_INNER_BLOCKS,
+    long: TOWN_INNER_LONG,
+    single: TOWN_INNER_VARIANTS,
+    corner: TOWN_CORNER_SHOP_VARIANTS,
+    interior: TOWN_INTERIOR_INNER,
+  },
+  outer: {
+    blocks: [],
+    long: TOWN_INNER_LONG,
+    single: TOWN_OUTER_VARIANTS,
+    interior: TOWN_INTERIOR_OUTER,
+  },
+  edge: {
+    blocks: [],
+    long: [],
+    // Trees first: the rim band is mostly green, with the odd cottage in it.
+    single: [...TOWN_TREE_VARIANTS, ...TOWN_EDGE_GREEN, ...TOWN_EDGE_VARIANTS],
+    interior: [...TOWN_TREE_VARIANTS, ...TOWN_EDGE_GREEN, TOWN_LAWN],
+  },
+  // A civic plot whose building is not due yet (its `minTier` is above the
+  // town's tier, or neither its art nor its stand-in can be drawn) fills from
+  // the band it sits in — the inner pools, which is what a reserved plot in a
+  // terrace row should look like while it waits.
+  civic: {
+    blocks: TOWN_INNER_BLOCKS,
+    long: TOWN_INNER_LONG,
+    single: TOWN_INNER_VARIANTS,
+    interior: TOWN_INTERIOR_INNER,
+  },
+};
+
+/**
+ * TOWN-4.4: the art the lead owes for a planned town, as file names under
+ * `assets/buildings/` (pipeline: tools/make-building-pngs.mjs). Every name is
+ * already in a pool above, so each one starts drawing the moment its PNG and
+ * manifest row land — no code change. Until then the pools fall back to the
+ * existing art named beside them.
+ */
+export const PLANNED_ART_NEEDED: readonly string[] = [
+  // Block interiors (BUILD item 3): 1×1 ground decals.
+  "town_backyard_1x1", "town_courtyard_1x1", "town_parking_1x1", "town_parking_2x1",
+  // Narrow shopfronts with their mirrors (epic §6).
+  "shopfront_2x1", "shopfront_2x1_r", "shopfront_1x2", "shopfront_1x2_r",
+  "corner_shop_1x1",
+  // Terrace mirrors, so an inner row can face a street on either axis.
+  "terrace_2x1_yard_r", "terrace_2x1_plain_r",
+  // The edge band.
+  "church_graveyard_1x1", "park_allotment_1x1", "park_pond_1x1", "park_playground_1x1",
+  "park_garden_1x1",
+  // The civic buildings CIVIC-1 declared (still owed; `civicArt` falls back).
+  "town_stadium", "town_stadium_r", "town_hospital", "town_school", "town_library",
+  "town_station", "town_park", "town_fire_station", "town_police", "town_diner",
+  "town_post_office",
+];
+
+// ══════════════════════════════════════════════════════════════════════════
 // CIVIC-1 (#654) — the CIVIC BUILDINGS of a town.
 //
 // The owner's playtest: "we also need more variation in buildings — where are

@@ -14,8 +14,8 @@
 import { fillCoastalHoles } from "./coastline";
 import { deriveTownNames } from "./town-names";
 import {
-  PLANNED_INDUSTRY_SEP, planTown, planVillage, plannedTownSep,
-  type IndustryRect, type PlanSize, type TownPlan,
+  PLANNED_INDUSTRY_SEP, planTileDistrict, planTown, planVillage, plannedTownSep,
+  type IndustryRect, type Lot, type LotFront, type PlanBlock, type PlanSize, type TownPlan,
 } from "./town-plan";
 // TOWN-2 (#653): the town street-plan option's NAME. Type-only: match-settings
 // is the protocol's import-free leaf, so this pulls nothing game-side in.
@@ -28,6 +28,8 @@ import {
   factoryFootprintFor,
   buildingFootprint, TOWN_HOUSE_VARIANTS, TOWN_VILLAGE_VARIANTS, TOWN_SHAPE_VARIANTS, TOWN_PARK_VARIANTS, TOWN_VILLAGE_BLOCKS, TOWN_LAWN, TOWN_TREE_VARIANTS,
   TOWN_HOME_VARIANTS, TOWN_HOME_BLOCK_IN, TOWN_GREEN_LOT_IN,
+  // TOWN-4.4 (#680): a planned town fills its lots from the ZONE POOLS.
+  TOWN_ZONE_POOLS, TOWN_GARDEN_TREE_IN,
   TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
   townCentreSprite, pickTownVariant, hashPick,
   CIVIC_BUILDINGS, CIVIC_MAX_SHARE, civicArt, civicCount,
@@ -2335,7 +2337,25 @@ export function openOrganicCourts(
 
 
 /** TOWN-GRID: one piece of town art and the tile its footprint starts on. */
-export interface TownBuilding { sprite: string; tx: number; ty: number }
+export interface TownBuilding {
+  sprite: string;
+  tx: number;
+  ty: number;
+  /**
+   * TOWN-4.4 (#680): the direction of the street this building fronts — the
+   * `front` of the plan lot it stands on (`town-plan.ts`'s `LotFront`: the
+   * neighbour tile the street sits on, NE/SE/SW/NW).
+   *
+   * OPTIONAL, and deliberately so: a grid or organic town's art carries no
+   * facing (its blocks are laid on the 3-tile lattice, where nothing knows
+   * which street a door opens onto), and every reader that does not know about
+   * planned towns — the draw list, the save, the wire, the depth sort — keeps
+   * reading `{sprite, tx, ty}` exactly as before. In 2D the facing is spent
+   * where the sprite name is chosen (the mirrored `_r` variant, see
+   * `streetFacingSprite`); in 3D it is TOWN-4.6's turn of the model.
+   */
+  front?: LotFront;
+}
 
 // ── L17 (#245): town tiers ───────────────────────────────────────────────────
 /** Bumped every time a town's tier changes, so derived caches can version. */
@@ -2548,6 +2568,21 @@ export interface TownBuildingsOptions {
    * pure callers, tests) means every named sprite is assumed drawable.
    */
   spriteKnown?: (sprite: string) => boolean;
+  /**
+   * TOWN-4.4 (#680): does this tile carry PUBLIC road — the town's own paving
+   * or an inter-town highway (`isPublicRoad` in track.ts)?
+   *
+   * Only a PLANNED town asks. Its growth reveals the master plan's streets by
+   * PAVING them, so a revealed street tile is `blocked` (it carries track) and
+   * must NOT be read as "the player built here": without this question the
+   * sync after a tier-up would trim away the very streets the tier-up had just
+   * laid, and drop every lot fronting them. A player's own road on a reserved
+   * district tile has a player owner, so it still trims the street back to its
+   * last junction, exactly as the ticket asks. Absent (grid and organic towns,
+   * every pure caller) reads as "nothing is public", which is what those paths
+   * always assumed.
+   */
+  publicRoad?: (tx: number, ty: number) => boolean;
 }
 
 /**
@@ -2560,6 +2595,16 @@ export function townBuildings(
   footprintOf: (sprite: string) => [number, number],
   opts: TownBuildingsOptions = {},
 ): TownBuilding[] {
+  // TOWN-4.4 (#680): a PLANNED town has its own filler — it draws the master
+  // plan's lots by ZONE, facing their street, with the block interiors dressed
+  // as back yards, and it reveals district by district instead of growing the
+  // L17 ring. It bypasses the park post-pass below on purpose: that pass
+  // enforces the 3-tile lattice's "one park per BLOCK, never two touching"
+  // rule (`blockOf` floors by TOWN_BLOCK against the town centre), which is
+  // meaningless on a plan's own blocks and would strip the courtyard/park runs
+  // a planned interior is dressed with. Grid and organic towns are untouched:
+  // they carry no `plan`, so this is the same call they always made.
+  if (t.plan) return townBuildingsPlanned(t, footprintOf, opts);
   const out = townBuildingsLaid(t, footprintOf, opts);
   const parks = new Set<string>(TOWN_PARK_VARIANTS);
   const at = new Set(out.filter((b) => parks.has(b.sprite)).map((b) => idx(b.tx, b.ty)));
@@ -3164,6 +3209,786 @@ function layGrownRing(
     }
     place(fill.art(x, y), x, y);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOWN-4.4 (#680) — a PLANNED town's DRAW LIST.
+//
+// TOWN-4.3 (#679) decides the master plan: one avenue, a square, real blocks,
+// depth-2 lots zoned by distance from the square, cul-de-sac lanes in the
+// outer ribbon, and four districts. This section turns that plan into art,
+// and into GROWTH:
+//
+//   • ZONE POOLS (config.ts `TOWN_ZONE_POOLS`) — a lot draws its own zone's
+//     buildings and nothing else: 2×2 commerce downtown, terraces and small
+//     flats inside, detached houses with a garden tree outside, parks and
+//     allotments at the rim, and the plan's reserved civic plots
+//     (`Lot.civic`) through CIVIC-1's own `civicArt` rule.
+//   • FACING — every item records the street direction of the lot it stands
+//     on (`TownBuilding.front`), and in 2D the drawing is turned to face it:
+//     `streetFacingSprite` takes the mirrored `_r` variant when that is the
+//     orientation whose long side runs ALONG the street (and so whose door
+//     opens on the frontage) and the variant exists. 3D is TOWN-4.6.
+//   • BLOCK INTERIORS — the tiles behind the lots are dressed by zone
+//     (parking/courtyard downtown, courtyard/garden inside, gardens and trees
+//     outside), so a block reads as buildings with back yards rather than as
+//     buildings standing in a field.
+//   • GROWTH — `plannedReveal` is the whole of it: tier N reveals the plan's
+//     districts 0..N, a tile the player has taken is skipped, a street whose
+//     continuation is blocked is trimmed back to its last junction (so no
+//     stub is ever drawn), and the lots that lose their street are not drawn
+//     either. It is DISPLAY-ONLY, exactly as L17 pinned the grown ring: no
+//     occupancy, no `Town.houses`, no economy. `plannedGrownTiles` is the
+//     planned answer to `grownTownHouses` — the revealed ground that is NOT
+//     the town's own, which the game keeps out of the obstacle set and hides
+//     the scenery under.
+//
+// DETERMINISM. Every pick is `pickTownVariant` / `hashPick` over tile
+// coordinates, and every walk is in plan order (blocks, then lots, then
+// row-major inside a lot): no RNG, no `Math.random`, no iteration of a Set
+// that was filled in a nondeterministic order. Two clients, a re-sync and a
+// restored save all lay the identical town.
+//
+// COST. This runs at SYNC time (a build, a tier-up, an art load), never per
+// frame, and it allocates nothing per frame: the draw list it returns is the
+// same shape the renderer already caches (`world.extra` → the static half →
+// the depth sort). The reveal walks the plan's street tiles twice per sync
+// per town (once for the draw list, once for the grown-tile list) — measured
+// in tests/unit/town-4-4-fill.test.ts against the epic's fps budget.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The neighbour tile a lot's `front` names (track.ts's NE/SE/SW/NW). */
+const PLANNED_FRONT_VEC: Record<LotFront, readonly [number, number]> = {
+  NE: [0, -1], SE: [1, 0], SW: [0, 1], NW: [-1, 0],
+};
+
+/** Does the street a lot fronts run along x? (NE/SW do; SE/NW run along y.) */
+const frontRunsAlongX = (front: LotFront): boolean => front === "NE" || front === "SW";
+
+/** A run of integers, inclusive, in either direction. */
+const tileSpan = (from: number, to: number): number[] => {
+  const out: number[] = [];
+  for (let v = from; from <= to ? v <= to : v >= to; v += from <= to ? 1 : -1) out.push(v);
+  return out;
+};
+
+/** One rectangle of plan ground, in world tiles. */
+interface Box { x: number; y: number; w: number; h: number }
+
+/**
+ * TOWN-4.4: can this sprite be drawn, and how big is it?
+ *
+ * The live atlas answers when the game passes one (`atlas.has`); a pure caller
+ * (the tests, a CLI) asks the per-building manifest, which is the footprint
+ * authority everywhere else. The scenery's TREES are the one exception: they
+ * are installed into the shared atlas by `loadScenerySprites` and are not
+ * building layers, so the manifest question cannot see them — they are asked
+ * by name, from the list MAP-2 (#559) pinned against the scenery manifest.
+ * An unshipped name (the lead's `town_courtyard_1x1`, a terrace's `_r` mirror)
+ * answers null, and the pool it is in simply loses that pick until the PNG
+ * lands: no code change, no hole in the map.
+ */
+function plannedArt(
+  name: string,
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): [number, number] | null {
+  if (known) return known(name) ? footprintOf(name) : null;
+  if (buildingFootprint(name) !== null) return footprintOf(name);
+  return (TOWN_TREE_VARIANTS as readonly string[]).includes(name) ? footprintOf(name) : null;
+}
+
+/**
+ * TOWN-4.4 (#680): the drawing to stand on a lot that fronts `front`, turned
+ * to face its street — or null when neither orientation fits the box.
+ *
+ * The rule is the ticket's: "use the sprite's mirrored `_r` variant when that
+ * turns its door toward the street and the variant exists; otherwise the
+ * default." A `_r` is the SAME drawing turned 90° (#274), so the orientation
+ * that faces a street is the one whose LONG SIDE RUNS ALONG IT — a 2×1 terrace
+ * on a street running along x keeps its own name, and on a street running
+ * along y takes the mirror. Square art has no turn to make and never moves.
+ * Fit decides the rest: a drawing that does not fit the lot is not a candidate
+ * however it faces, so a 2×1 terrace on a 1-wide lot waits for its `_r` and
+ * the lot packs 1×1 art until the mirror ships.
+ *
+ * Deterministic and pure; exported so the facing rule can be pinned on its own.
+ */
+export function streetFacingSprite(
+  name: string,
+  front: LotFront,
+  boxW: number, boxH: number,
+  footprintOf: (sprite: string) => [number, number],
+  known?: (sprite: string) => boolean,
+): { sprite: string; w: number; h: number } | null {
+  const alongX = frontRunsAlongX(front);
+  let best: { sprite: string; w: number; h: number; score: number } | null = null;
+  // The base name first, so a tie always keeps today's drawing.
+  for (const candidate of [name, `${name}_r`]) {
+    const fp = plannedArt(candidate, footprintOf, known);
+    if (!fp) continue;
+    const [w, h] = fp;
+    if (w > boxW || h > boxH || w < 1 || h < 1) continue;
+    // 10 for fitting, +6 when the long side runs along the street, +3 when the
+    // art is square (nothing to turn), +1 for covering more of the lot.
+    let score = 10;
+    if (w === h) score += 3;
+    else if (alongX ? w > h : h > w) score += 6;
+    score += Math.min(3, w * h / Math.max(1, boxW * boxH) * 3);
+    if (!best || score > best.score) best = { sprite: candidate, w, h, score };
+  }
+  return best ? { sprite: best.sprite, w: best.w, h: best.h } : null;
+}
+
+/** What the reveal needs to know about the live map. */
+export interface PlannedRevealOptions {
+  /** A tile the player has built on (the game's `isBuilt`). */
+  blocked?: (tx: number, ty: number) => boolean;
+  /** A tile carrying PUBLIC road — the town's own paving or a highway. */
+  publicRoad?: (tx: number, ty: number) => boolean;
+}
+
+/** One revealed block: the lots that kept their street, and the interior. */
+export interface RevealedBlock {
+  block: PlanBlock;
+  lots: Lot[];
+  /** The interior tiles to dress, in plan order. */
+  interior: [number, number][];
+  /** The facing the block's interior art inherits. */
+  front: LotFront;
+}
+
+/** What one tier of a planned town reveals. */
+export interface PlannedReveal {
+  /** The highest district revealed (−1 when the town has no plan). */
+  maxDistrict: number;
+  /** The surviving street tiles — what a lot's frontage is tested against. */
+  roadKeys: Set<number>;
+  /** The same tiles, in index order. */
+  roads: [number, number][];
+  /** The ones the town does not already own: what a tier-up PAVES. */
+  grownRoads: [number, number][];
+  /** Every lot that kept its street, in block order. */
+  lots: Lot[];
+  /** The revealed blocks and their interiors. */
+  blocks: RevealedBlock[];
+}
+
+const EMPTY_REVEAL: PlannedReveal = {
+  maxDistrict: -1, roadKeys: new Set<number>(), roads: [], grownRoads: [], lots: [], blocks: [],
+};
+
+/**
+ * The tiles of a lot's frontage: the edge its `front` names, tile by tile. A
+ * lot is only drawn when the WHOLE of that edge is surviving street — a lot
+ * whose door opens on a trimmed-away stub has no street to face.
+ */
+export function lotFrontageTiles(lot: Lot): [number, number][] {
+  const [dx, dy] = PLANNED_FRONT_VEC[lot.front];
+  const out: [number, number][] = [];
+  if (dy !== 0) {
+    const y = dy < 0 ? lot.y - 1 : lot.y + lot.h;
+    for (let i = 0; i < lot.w; i++) out.push([lot.x + i, y]);
+  } else {
+    const x = dx < 0 ? lot.x - 1 : lot.x + lot.w;
+    for (let j = 0; j < lot.h; j++) out.push([x, lot.y + j]);
+  }
+  return out;
+}
+
+/**
+ * "The player has taken this tile": out of bounds, sea, an industry footprint,
+ * or something the player built — where a tile carrying PUBLIC road is the
+ * TOWN's own paving (or a highway), not a player's, and so is never taken.
+ * See `TownBuildingsOptions.publicRoad` for why a planned town needs that
+ * second question and a grid town does not.
+ */
+function plannedTaken(
+  grid: Grid | undefined,
+  blocked?: (tx: number, ty: number) => boolean,
+  publicRoad?: (tx: number, ty: number) => boolean,
+): (tx: number, ty: number) => boolean {
+  return (tx: number, ty: number): boolean => {
+    if (!inBounds(tx, ty)) return true;
+    if (grid) {
+      const i = idx(tx, ty);
+      if (grid.terrain[i] === WATER) return true;
+      if (grid.occupancy[i] >= 0) return true;      // an industry stands here
+    }
+    return !!blocked?.(tx, ty) && !publicRoad?.(tx, ty);
+  };
+}
+
+/**
+ * TOWN-4.4 (#680): what tier `tier` of a planned town REVEALS.
+ *
+ * Tier N shows the master plan's districts 0..N (a LEGACY town — no tier, an
+ * MP seat or a story chapter — shows the whole plan, which is the metropolis
+ * look every other layout gives an untiered town). Ground rules, in order:
+ *
+ *   1. the avenue is always whole: it is the town's spine, laid at full length
+ *      from tier 0 and entered by the highways at both ends;
+ *   2. a street tile is revealed when its own district is ≤ the tier and the
+ *      player has not taken it;
+ *   3. NO STUBS — a revealed tile with fewer than two revealed street
+ *      neighbours is dropped, repeatedly, so a street whose continuation is
+ *      blocked (or simply not revealed yet) is trimmed back to its last
+ *      junction; a cul-de-sac circle is the one legal dead end and is exempt
+ *      from the degree test but not from the reachability one;
+ *   4. only the network the avenue reaches survives, so a pocket of street cut
+ *      off by the player's building does not float in the fields;
+ *   5. a lot is drawn only when its whole frontage survived, and a block's
+ *      interior is dressed only when the block still has a drawn lot (or, for
+ *      a designated park, still touches a surviving street).
+ *
+ * `grownRoads` is the part a tier-up has to PAVE (the game does that in
+ * `growTownArt`, where a grid town paves its ring road): every revealed street
+ * tile the town does not already own. Empty at tier 0, so a new game's boot
+ * stamps exactly what TOWN-4.3 committed.
+ *
+ * Display-only, like L17's ring: nothing here writes occupancy, `Town.houses`
+ * or `Town.roads`, so no catchment, contract, demand or price moves because a
+ * town grew.
+ */
+export function plannedReveal(
+  t: Town,
+  grid: Grid | undefined,
+  tier: number,
+  opts: PlannedRevealOptions = {},
+): PlannedReveal {
+  const plan = t.plan;
+  if (!plan) return EMPTY_REVEAL;
+  const maxDistrict = tier < 0
+    ? plan.districts - 1
+    : Math.min(Math.floor(tier), plan.districts - 1);
+  const taken = plannedTaken(grid, opts.blocked, opts.publicRoad);
+
+  // ── 1–2. the candidate street set ──────────────────────────────────────
+  const avenue = new Set<number>();
+  const live = new Set<number>();
+  const at = (x: number, y: number): boolean => inBounds(x, y) && live.has(idx(x, y));
+  for (const [x, y] of plan.avenueTiles) {
+    const i = idx(x, y);
+    avenue.add(i);
+    live.add(i);
+  }
+  const circles = new Set<number>();
+  for (const [x, y] of plan.culDeSacs) circles.add(idx(x, y));
+  const consider = (x: number, y: number): void => {
+    if (planTileDistrict(plan, x, y) > maxDistrict) return;
+    if (taken(x, y)) return;
+    live.add(idx(x, y));
+  };
+  for (const street of plan.streets) for (const [x, y] of street.tiles) consider(x, y);
+  for (const k of [...circles].sort((a, b) => a - b)) consider(k % MAP_W, (k / MAP_W) | 0);
+
+  // ── 3. no stubs: leaves back to their last junction ────────────────────
+  const degree = (k: number): number => {
+    const x = k % MAP_W, y = (k / MAP_W) | 0;
+    return (at(x, y - 1) ? 1 : 0) + (at(x + 1, y) ? 1 : 0)
+      + (at(x, y + 1) ? 1 : 0) + (at(x - 1, y) ? 1 : 0);
+  };
+  for (let sweep = 0; sweep < 64; sweep++) {
+    let removed = 0;
+    for (const k of [...live]) {
+      if (avenue.has(k) || circles.has(k)) continue;
+      if (degree(k) < 2) { live.delete(k); removed++; }
+    }
+    if (!removed) break;
+  }
+
+  // ── 4. only what the avenue reaches ────────────────────────────────────
+  const start = plan.avenueTiles.length ? idx(plan.avenueTiles[0][0], plan.avenueTiles[0][1]) : -1;
+  if (start >= 0 && live.has(start)) {
+    const seen = new Set<number>([start]);
+    const stack = [start];
+    while (stack.length) {
+      const k = stack.pop() as number;
+      const x = k % MAP_W, y = (k / MAP_W) | 0;
+      for (const [dx, dy] of DIR4) {
+        if (!inBounds(x + dx, y + dy)) continue;
+        const nk = idx(x + dx, y + dy);
+        if (!live.has(nk) || seen.has(nk)) continue;
+        seen.add(nk);
+        stack.push(nk);
+      }
+    }
+    for (const k of [...live]) if (!seen.has(k)) live.delete(k);
+  }
+
+  // ── the outputs, in index order ────────────────────────────────────────
+  const owned = new Set<number>();
+  for (const [x, y] of t.roads) owned.add(idx(x, y));
+  const roads: [number, number][] = [];
+  const grownRoads: [number, number][] = [];
+  for (const k of [...live].sort((a, b) => a - b)) {
+    const x = k % MAP_W, y = (k / MAP_W) | 0;
+    roads.push([x, y]);
+    if (!owned.has(k)) grownRoads.push([x, y]);
+  }
+
+  // ── 5. the lots that kept their street, and their blocks ───────────────
+  const lots: Lot[] = [];
+  const blocks: RevealedBlock[] = [];
+  for (const block of plan.blocks) {
+    if (block.district > maxDistrict) continue;
+    const kept: Lot[] = [];
+    for (const lot of block.lots) {
+      if (lot.district > maxDistrict) continue;
+      if (lotFrontageTiles(lot).some(([x, y]) => !at(x, y))) continue;
+      kept.push(lot);
+      lots.push(lot);
+    }
+    // A block is revealed while it still has a lot on a surviving street. A
+    // designated PARK has no lots of its own, so it asks the other question:
+    // does a surviving street still run beside it? Either way, a block whose
+    // streets were trimmed away draws nothing at all — no lots AND no back
+    // yards, so a trimmed district never leaves a lawn floating in a field.
+    const revealedBlock = block.kind === "park"
+      ? block.interior.some(([x, y]) => at(x, y - 1) || at(x + 1, y) || at(x, y + 1) || at(x - 1, y))
+      : kept.length > 0;
+    if (!revealedBlock) continue;
+    const interior: [number, number][] = [];
+    for (const [x, y] of block.interior) {
+      if (planTileDistrict(plan, x, y) > maxDistrict) continue;
+      if (taken(x, y)) continue;
+      interior.push([x, y]);
+    }
+    // The interior inherits its block's facing: the first lot that survived,
+    // else the direction of a street beside the block, else toward the hall.
+    let front: LotFront | null = kept.length ? kept[0].front : null;
+    if (!front) {
+      outer: for (const [x, y] of block.interior) {
+        for (const dir of ["NE", "SE", "SW", "NW"] as const) {
+          const [dx, dy] = PLANNED_FRONT_VEC[dir];
+          if (at(x + dx, y + dy)) { front = dir; break outer; }
+        }
+      }
+    }
+    if (!front) {
+      // No lot and no street beside it: face the hall, so a park block's art
+      // still turns the same way on every client.
+      const [hallX, hallY] = plan.square.hall;
+      const ref = block.interior[0]
+        ?? (block.lots.length ? [block.lots[0].x, block.lots[0].y] as [number, number] : null);
+      front = !ref ? "SW"
+        : Math.abs(ref[0] - hallX) >= Math.abs(ref[1] - hallY)
+          ? (ref[0] >= hallX ? "NW" : "SE")
+          : (ref[1] >= hallY ? "NE" : "SW");
+    }
+    blocks.push({ block, lots: kept, interior, front });
+  }
+  return { maxDistrict, roadKeys: live, roads, grownRoads, lots, blocks };
+}
+
+/**
+ * TOWN-4.4 (#680): the planned answer to `grownTownHouses` — every tile this
+ * tier reveals that is NOT ground the town already owns (`Town.houses`,
+ * `Town.roads`, the square).
+ *
+ * The game reads it for exactly the two things L17's ring is read for: those
+ * tiles are kept OUT of the town's obstacle set (`townObstacleTiles`'
+ * `skipOrigin`), because a revealed district is display-only and a player may
+ * still build on ground the plan has only reserved; and they are marked as
+ * covered, so the scenery's trees and flowers do not draw through a building
+ * that just appeared. `grownTownHouses` itself keeps returning [] for a
+ * planned town — its `rings` argument is the L17 block-ring count, which a
+ * master plan does not have, and every existing caller keeps its answer.
+ */
+export function plannedGrownTiles(
+  t: Town,
+  grid: Grid | undefined,
+  tier: number,
+  blocked?: (tx: number, ty: number) => boolean,
+  publicRoad?: (tx: number, ty: number) => boolean,
+): [number, number][] {
+  const plan = t.plan;
+  if (!plan) return [];
+  const reveal = plannedReveal(t, grid, tier, { blocked, publicRoad });
+  const own = new Set<number>();
+  for (const [x, y] of t.houses) own.add(idx(x, y));
+  for (const [x, y] of t.roads) own.add(idx(x, y));
+  for (const [x, y] of plan.square.tiles) own.add(idx(x, y));
+  const seen = new Set<number>();
+  const out: [number, number][] = [];
+  const add = (x: number, y: number): void => {
+    if (!inBounds(x, y)) return;
+    const i = idx(x, y);
+    if (own.has(i) || seen.has(i)) return;
+    seen.add(i);
+    out.push([x, y]);
+  };
+  for (const lot of reveal.lots) {
+    for (let dy = 0; dy < lot.h; dy++) for (let dx = 0; dx < lot.w; dx++) add(lot.x + dx, lot.y + dy);
+  }
+  for (const b of reveal.blocks) for (const [x, y] of b.interior) add(x, y);
+  return out;
+}
+
+/**
+ * TOWN-4.4 (#680): the CUL-DE-SAC CIRCLES of a map — every planned town's
+ * turning-circle tiles, as tile keys, for the road renderer's circle pass.
+ *
+ * Cached per grid exactly like `townGroundBytes`: a plan is derived from the
+ * seed and never moves, so this costs one walk of the towns the first time a
+ * chunk bake asks and nothing thereafter — no per-frame work, and a chunk
+ * re-bake (a build, a tier-up) reads the same set. Returns null when the map
+ * has no planned towns, which is every map generated before TOWN-4.3, so the
+ * renderer skips the pass entirely there.
+ */
+const culDeSacCache = new WeakMap<Grid, Set<number> | null>();
+
+export function culDeSacTiles(grid: Grid): Set<number> | null {
+  const hit = culDeSacCache.get(grid);
+  if (hit !== undefined) return hit;
+  let out: Set<number> | null = null;
+  for (const t of grid.towns) {
+    for (const [x, y] of t.plan?.culDeSacs ?? []) {
+      if (!inBounds(x, y)) continue;
+      if (!out) out = new Set<number>();
+      out.add(idx(x, y));
+    }
+  }
+  culDeSacCache.set(grid, out);
+  return out;
+}
+
+/**
+ * One in `of` of a zone's 2×2 lots takes a SINGLE whole-lot building; the
+ * rest pack frontage art and singles, which is what puts a street of shops
+ * between the towers instead of a row of identical blocks.
+ */
+const PLANNED_BLOCK_SHARE: Record<LotZoneKey, readonly [number, number]> = {
+  downtown: [2, 3], inner: [1, 3], outer: [0, 1], edge: [0, 1], civic: [1, 3],
+};
+
+/** How often a back yard of this zone gets a tree (one in N tiles). */
+const PLANNED_YARD_TREE_IN: Record<LotZoneKey, number> = {
+  downtown: 16, inner: 9, outer: 4, edge: 3, civic: 12,
+};
+
+/** `TownZone` and `town-plan.ts`'s `LotZone` are the same union; this alias
+ *  keeps the two tables below keyed on the plan's own type. */
+type LotZoneKey = keyof typeof TOWN_ZONE_POOLS;
+
+/**
+ * TOWN-4.4 (#680): the DRAW LIST of a planned town — `townBuildings`' third
+ * path, beside the 3-tile lattice and the organic outline.
+ *
+ * Order of passes, each one claiming its tiles before the next:
+ *
+ *   1. the CENTRE on the square (the village church, then the bank — L17's
+ *      `townCentreSprite`), anchored inside the plaza on the avenue side, so
+ *      a 2×2 hall can never stand on a carriageway whichever way the plan is
+ *      mirrored;
+ *   2. the SQUARE's own free tiles — lawn, a fountain, a tree — so the hall
+ *      stands in a plaza rather than in a field;
+ *   3. the reserved CIVIC plots (`Lot.civic`, TOWN-4.3's pins) through
+ *      CIVIC-1's `civicArt`, turned to face the plot's street;
+ *   4. every other revealed LOT, by zone: one whole-lot building where the
+ *      zone takes it, a long row (terrace / shopfront) along the frontage,
+ *      singles behind, a corner shop on a corner lot, and a garden tree on
+ *      one outer lot in `TOWN_GARDEN_TREE_IN`;
+ *   5. the revealed BLOCK INTERIORS, dressed by zone.
+ *
+ * Every free tile of a revealed lot ends up with a draw item, which is what
+ * the epic's density targets (§2.7) and its "no empty grass patch bigger than
+ * 2×2 inside a block" rule actually measure.
+ */
+function townBuildingsPlanned(
+  t: Town,
+  footprintOf: (sprite: string) => [number, number],
+  opts: TownBuildingsOptions,
+): TownBuilding[] {
+  const plan = t.plan as TownPlan;
+  const tier = opts.tier ?? TOWN_TIER_LEGACY;
+  const known = opts.spriteKnown;
+  const reveal = plannedReveal(t, opts.grid, tier, {
+    blocked: opts.blocked, publicRoad: opts.publicRoad,
+  });
+  const taken = plannedTaken(opts.grid, opts.blocked, opts.publicRoad);
+  const out: TownBuilding[] = [];
+  const used = new Set<number>();
+  const free = (x: number, y: number): boolean =>
+    inBounds(x, y) && !used.has(idx(x, y)) && !taken(x, y);
+
+  const place = (sprite: string, ox: number, oy: number, w: number, h: number, front?: LotFront): boolean => {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) if (!free(ox + dx, oy + dy)) return false;
+    }
+    const item: TownBuilding = { sprite, tx: ox, ty: oy };
+    if (front) item.front = front;
+    out.push(item);
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) used.add(idx(ox + dx, oy + dy));
+    return true;
+  };
+
+  /** The box corner on the street side: a drawing anchors against its own
+   *  frontage, so its door is on the street however big the lot is. */
+  const streetCorner = (box: Box, front: LotFront, w: number, h: number): [number, number] => [
+    front === "SE" ? box.x + box.w - w : box.x,
+    front === "SW" ? box.y + box.h - h : box.y,
+  ];
+
+  /**
+   * A deterministic pick from `names` that fits the box, turned to face the
+   * street. Walked from a hashed start so a town's picks are spread rather
+   * than all the first entry, and so an unshipped name costs this lot its
+   * first choice instead of a hole.
+   */
+  const pickFitting = (
+    names: readonly string[], x: number, y: number,
+    box: Box, front: LotFront,
+  ): { sprite: string; w: number; h: number } | null => {
+    if (!names.length) return null;
+    const start = hashPick(x + 0x0f, y + 0x2d, names.length);
+    for (let k = 0; k < names.length; k++) {
+      const got = streetFacingSprite(
+        names[(start + k) % names.length], front, box.w, box.h, footprintOf, known,
+      );
+      if (got) return got;
+    }
+    return null;
+  };
+
+  /** Place a pick from `names` in the box, on the street side. */
+  const layFrom = (names: readonly string[], box: Box, front: LotFront): boolean => {
+    const got = pickFitting(names, box.x, box.y, box, front);
+    if (!got) return false;
+    const [ox, oy] = streetCorner(box, front, got.w, got.h);
+    return place(got.sprite, ox, oy, got.w, got.h, front);
+  };
+
+  const trees = townTreePool(footprintOf, known);
+  const parks = parkPool(footprintOf);
+  const lawn = buildingFootprint(TOWN_LAWN) !== null ? TOWN_LAWN : parks[0];
+
+  // ── 1. the centre, inside the plaza on the avenue side ─────────────────
+  // The hall tile is the plaza's avenue-edge centre (`plan.square.hall`), so
+  // the 2×2 centre belongs on the two plan-frame tiles beside it TOWARD the
+  // plaza (u = 0,1 × v = 0,1) — folded onto the world, which is what keeps it
+  // off the carriageway on a mirrored or y-axis plan.
+  const [hx, hy] = plan.square.hall;
+  const uVec: readonly [number, number] = plan.axis === "x" ? [1, 0] : [0, 1];
+  const vVec: readonly [number, number] = plan.axis === "x" ? [0, plan.mirror] : [plan.mirror, 0];
+  let cx0 = hx, cy0 = hy, cx1 = hx, cy1 = hy;
+  for (const u of [0, 1]) {
+    for (const v of [0, 1]) {
+      const x = hx + u * uVec[0] + v * vVec[0];
+      const y = hy + u * uVec[1] + v * vVec[1];
+      cx0 = Math.min(cx0, x); cy0 = Math.min(cy0, y);
+      cx1 = Math.max(cx1, x); cy1 = Math.max(cy1, y);
+    }
+  }
+  // The plaza faces the avenue, which is the plan's −v side.
+  const plazaFront: LotFront = plan.axis === "x"
+    ? (plan.mirror > 0 ? "NE" : "SW")
+    : (plan.mirror > 0 ? "NW" : "SE");
+  const centreBox: Box = { x: cx0, y: cy0, w: cx1 - cx0 + 1, h: cy1 - cy0 + 1 };
+  {
+    const sprite = townCentreSprite(tier);
+    const fp = plannedArt(sprite, footprintOf, known);
+    const [cw, ch] = fp ?? footprintOf(sprite);
+    if (cw <= centreBox.w && ch <= centreBox.h) {
+      const [ox, oy] = streetCorner(centreBox, plazaFront, cw, ch);
+      if (!place(sprite, ox, oy, cw, ch, plazaFront)) {
+        // The player is standing on the hall's own plot: keep the centre (it
+        // is the town's clickable heart) on the first free plaza tile.
+        place(sprite, t.tx, t.ty, cw, ch, plazaFront);
+      }
+    }
+  }
+
+  // ── 2. the square's own ground ─────────────────────────────────────────
+  // Until the lead's plaza decal lands this is the tended lawn the town block
+  // paving reads as, with the fountain CIVIC-1 already ships and a couple of
+  // trees: a plaza, not a meadow.
+  for (const [x, y] of plan.square.tiles) {
+    if (!free(x, y)) continue;
+    const roll = hashPick(x + 0x5c, y + 0x33, 100);
+    if (roll < 8 && parks.length) place(pickTownVariant(x + 7, y + 13, parks), x, y, 1, 1, plazaFront);
+    else if (roll < 22 && trees.length) place(trees[hashPick(x, y, trees.length)], x, y, 1, 1, plazaFront);
+    else if (lawn) place(lawn, x, y, 1, 1, plazaFront);
+  }
+
+  /** The lot's tiles, frontage row first: rows[0] is the street side. */
+  const lotRows = (lot: Lot): [number, number][][] => {
+    const rows: [number, number][][] = [];
+    if (frontRunsAlongX(lot.front)) {
+      const ys = lot.front === "NE"
+        ? tileSpan(lot.y, lot.y + lot.h - 1)
+        : tileSpan(lot.y + lot.h - 1, lot.y);
+      for (const y of ys) {
+        const row: [number, number][] = [];
+        for (let x = lot.x; x < lot.x + lot.w; x++) row.push([x, y]);
+        rows.push(row);
+      }
+    } else {
+      const xs = lot.front === "NW"
+        ? tileSpan(lot.x, lot.x + lot.w - 1)
+        : tileSpan(lot.x + lot.w - 1, lot.x);
+      for (const x of xs) {
+        const row: [number, number][] = [];
+        for (let y = lot.y; y < lot.y + lot.h; y++) row.push([x, y]);
+        rows.push(row);
+      }
+    }
+    return rows;
+  };
+
+  /** The lot's corner tile: the frontage tile a perpendicular street touches. */
+  const cornerTileOf = (lot: Lot, frontage: [number, number][]): number | null => {
+    const alongX = frontRunsAlongX(lot.front);
+    for (const [x, y] of frontage) {
+      const ends: [number, number][] = alongX ? [[x - 1, y], [x + 1, y]] : [[x, y - 1], [x, y + 1]];
+      const outside = ends.filter(([ex, ey]) => ex < lot.x || ey < lot.y
+        || ex >= lot.x + lot.w || ey >= lot.y + lot.h);
+      if (outside.some(([ex, ey]) => reveal.roadKeys.has(idx(ex, ey)))) return idx(x, y);
+    }
+    return frontage.length ? idx(frontage[0][0], frontage[0][1]) : null;
+  };
+
+  const fillLot = (lot: Lot): void => {
+    const pool = TOWN_ZONE_POOLS[lot.zone];
+    const rows = lotRows(lot);
+    const freeRows = rows.map((row) => row.filter(([x, y]) => free(x, y)));
+    const freeCount = freeRows.reduce((n, row) => n + row.length, 0);
+    if (!freeCount) return;
+    const box: Box = { x: lot.x, y: lot.y, w: lot.w, h: lot.h };
+
+    // 4a. ONE whole-lot building — the 2×2 commerce downtown, the small flats
+    // inside — where the zone has that art and this lot is one of the ones
+    // that take it (`PLANNED_BLOCK_SHARE`).
+    const [take, of] = PLANNED_BLOCK_SHARE[lot.zone];
+    if (pool.blocks.length && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
+      && take > 0 && hashPick(lot.x + 0x41, lot.y + 0x1d, of) < take) {
+      if (layFrom(pool.blocks, box, lot.front)) return;
+    }
+
+    // 4b. A GARDEN: an outer lot keeps one tile green, on the BACK row so the
+    // house still fronts the street (epic §2.6).
+    let garden = -1;
+    if (lot.zone === "outer" && TOWN_GARDEN_TREE_IN > 0 && trees.length && freeCount >= 2
+      && hashPick(lot.x + 0x1f, lot.y + 0x0b, TOWN_GARDEN_TREE_IN) === 0) {
+      const back = freeRows[freeRows.length - 1];
+      if (back.length) garden = idx(back[back.length - 1][0], back[back.length - 1][1]);
+    }
+
+    // 4c. A CORNER SHOP, laid BEFORE the frontage packs: the lot at the end of
+    // a run gives its corner tile to a shop, so a terrace along the frontage
+    // cannot take the corner the epic reserves for one (§2.6).
+    if (lot.corner && pool.corner?.length) {
+      const corner = cornerTileOf(lot, rows[0]);
+      if (corner !== null) {
+        layFrom(pool.corner, { x: corner % MAP_W, y: (corner / MAP_W) | 0, w: 1, h: 1 }, lot.front);
+      }
+    }
+
+    // 4d. Pack the rows: a long row (terrace, shopfront) along the frontage,
+    // singles on every tile behind it.
+    for (let r = 0; r < freeRows.length; r++) {
+      const row = freeRows[r];
+      if (r === 0 && pool.long.length) {
+        const alongX = frontRunsAlongX(lot.front);
+        for (let i = 0; i + 1 < row.length; i += 2) {
+          const [ax, ay] = row[i];
+          const [bx, by] = row[i + 1];
+          const adjacent = alongX ? (by === ay && bx === ax + 1) : (bx === ax && by === ay + 1);
+          if (!adjacent) { i--; continue; }
+          const pair: Box = alongX
+            ? { x: ax, y: ay, w: bx - ax + 1, h: 1 }
+            : { x: ax, y: ay, w: 1, h: by - ay + 1 };
+          if (layFrom(pool.long, pair, lot.front)) continue;
+          // Nothing long fits: the front tile takes a single, the next pair
+          // gets its own chance.
+          i--;
+        }
+      }
+      for (const [x, y] of row) {
+        if (!free(x, y)) continue;
+        if (garden === idx(x, y)) {
+          place(trees[hashPick(x, y, trees.length)], x, y, 1, 1, lot.front);
+          continue;
+        }
+        if (layFrom(pool.single, { x, y, w: 1, h: 1 }, lot.front)) continue;
+        // No house art at all in this atlas yet: the lot stays green rather
+        // than bare (MAP-2's answer, and the density rule's fallback).
+        if (trees.length && hashPick(x + 0x2b, y + 0x17, 2) === 0) {
+          place(trees[hashPick(x, y, trees.length)], x, y, 1, 1, lot.front);
+        } else if (lawn) place(lawn, x, y, 1, 1, lot.front);
+      }
+    }
+  };
+
+  /** A reserved civic plot, through CIVIC-1's own art rule. */
+  const layCivic = (lot: Lot): boolean => {
+    const def = CIVIC_BUILDINGS.find((d) => d.sprite === lot.civic);
+    if (!def) return false;
+    // A LEGACY town (no tier) draws the full city, so every civic is due.
+    const due = tier < 0 ? TOWN_VISUAL_MAX : tier;
+    if (due < def.minTier) return false;
+    const box: Box = { x: lot.x, y: lot.y, w: lot.w, h: lot.h };
+    for (const rotated of [false, true]) {
+      if (rotated && def.rotate !== true) continue;
+      const art = civicArt(def, footprintOf, known, rotated);
+      if (!art) continue;
+      const [w, h] = art.footprint;
+      if (w > box.w || h > box.h) continue;
+      const [ox, oy] = streetCorner(box, lot.front, w, h);
+      if (place(art.sprite, ox, oy, w, h, lot.front)) return true;
+    }
+    return false;
+  };
+
+  // ── 3–4. the lots, in plan order ───────────────────────────────────────
+  for (const revealed of reveal.blocks) {
+    for (const lot of revealed.lots) {
+      // A reserved plot whose building is not due yet (or whose art and
+      // stand-in are both missing) simply fills from its zone's pool.
+      if (lot.civic) layCivic(lot);
+      fillLot(lot);
+    }
+  }
+
+  // ── 5. the block interiors ─────────────────────────────────────────────
+  // Ground art, 1×1, by the zone of the lot behind it (a block can straddle
+  // two zones: its avenue frontage is downtown while its back row is inner).
+  const interiorNames = new Map<LotZoneKey, string[]>();
+  for (const zone of Object.keys(TOWN_ZONE_POOLS) as LotZoneKey[]) {
+    interiorNames.set(zone, TOWN_ZONE_POOLS[zone].interior.filter((n) => {
+      const fp = plannedArt(n, footprintOf, known);
+      return fp !== null && fp[0] === 1 && fp[1] === 1;
+    }));
+  }
+  const zoneAt = new Map<number, LotZoneKey>();
+  for (const revealed of reveal.blocks) {
+    for (const lot of revealed.lots) {
+      for (let dy = 0; dy < lot.h; dy++) {
+        for (let dx = 0; dx < lot.w; dx++) {
+          zoneAt.set(idx(lot.x + dx, lot.y + dy), lot.zone);
+        }
+      }
+    }
+  }
+  for (const revealed of reveal.blocks) {
+    for (const [x, y] of revealed.interior) {
+      if (!free(x, y)) continue;
+      let zone: LotZoneKey = revealed.block.zone;
+      for (const [dx, dy] of DIR4) {
+        const hit = zoneAt.get(idx(x + dx, y + dy));
+        if (hit) { zone = hit; break; }
+      }
+      const treeIn = PLANNED_YARD_TREE_IN[zone];
+      if (trees.length && hashPick(x + 0x2b, y + 0x17, treeIn) === 0) {
+        place(trees[hashPick(x, y, trees.length)], x, y, 1, 1, revealed.front);
+        continue;
+      }
+      const names = interiorNames.get(zone) ?? [];
+      if (names.length) place(pickTownVariant(x, y, names), x, y, 1, 1, revealed.front);
+      else if (lawn) place(lawn, x, y, 1, 1, revealed.front);
+    }
+  }
+  return out;
 }
 
 /** 4-neighbourhood, in a fixed order (keeps every BFS below deterministic). */
