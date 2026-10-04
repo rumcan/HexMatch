@@ -22,7 +22,159 @@ export const HW = TILE_W / 2, HH = TILE_H / 2;   // 32, 16
 // T4: tripled per dimension (48 → 144) = 9× the tiles for breathing room
 // between industries and towns. Counts (INDUSTRY_QUOTA, TOWN_COUNT) stay
 // fixed; the extra space goes to separation, not density.
-export const MAP_W = 144, MAP_H = 144;
+//
+// TOWN-4.1 (#677): the size is a per-game RUNTIME option, not a constant.
+//   • `MAP_SIZES` names the sides a game may play on. Standard (144) is every
+//     existing save, story chapter, scenario, the Starter Island and the
+//     unit-test default; large (216) is opt-in (`?size=large`) until TOWN-4.5
+//     makes it the free-play default.
+//   • `MAP_W`/`MAP_H` are `let` LIVE BINDINGS. ES modules export bindings, not
+//     values, so every importer reads the CURRENT size at the moment its code
+//     runs — the ~330 call-time reads across the game follow the size with no
+//     change. What must never read them is MODULE-SCOPE code: a typed array or
+//     a derived constant computed at import freezes at whatever size was
+//     current then. Allocate lazily (`mapSizedBuffer`), or re-derive in an
+//     `onMapSize` callback.
+//   • `setMapSize` is called ONCE per boot, by `startIsoGame`, right where the
+//     map options are resolved and BEFORE generateMap / createTrack / any
+//     map-sized allocation. The allocators `lockMapSize()`; resizing a locked
+//     map throws in dev builds (warns in production, where the new game's own
+//     buffers are all that matter), and the game's dispose `releaseMapSize()`s.
+//   • Counts stay fixed on a large map, exactly the T4 rule above: the extra
+//     room goes to separation (see `mapSpread` in src/iso/grid.ts).
+// The names are mirrored by `MAP_SIZE_NAMES` in src/net/match-settings.ts —
+// the protocol leaf may not import this module (nor this one it: the e2e
+// typecheck would pull the leaf's Vite-only `import.meta.env` reads in), so
+// tests/unit/town-4-1-map-size.test.ts pins the two lists together.
+export const MAP_SIZES: Readonly<Record<"standard" | "large", number>> = Object.freeze({ standard: 144, large: 216 });
+export let MAP_W: number = MAP_SIZES.standard, MAP_H: number = MAP_SIZES.standard;
+/**
+ * The largest side `setMapSize` accepts. Not a design size — a correctness
+ * ceiling: a few hash folds pack a tile as `tx * 256 + ty` (ai.ts plan
+ * fingerprints), which stays collision-free only while both coordinates are
+ * below 256.
+ */
+export const MAP_SIDE_MAX = 256;
+/** …and the smallest: one renderer chunk (8 tiles) a side. */
+export const MAP_SIDE_MIN = 8;
+
+let mapSizeLocked = false;
+const mapSizeListeners: (() => void)[] = [];
+
+/** Vite dev server and the vitest runner — never a production bundle, and
+ *  never the room server (no `import.meta.env` there at all). */
+function devBuild(): boolean {
+  // Typed through a cast: this module is also compiled by the e2e config,
+  // which has no Vite client types (`import.meta.env` would not type-check).
+  try { return (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true; } catch { return false; }
+}
+
+const validSide = (n: number): boolean =>
+  Number.isInteger(n) && n >= MAP_SIDE_MIN && n <= MAP_SIDE_MAX;
+
+function applyMapSize(w: number, h: number): void {
+  MAP_W = w; MAP_H = h;
+  for (const fn of mapSizeListeners) fn();
+}
+
+/**
+ * TOWN-4.1: set the map's size for the game about to boot. Same size: a
+ * no-op. A different size after this size's buffers were allocated (generateMap,
+ * createTrack, createRail — `lockMapSize`) is a boot-order bug: those buffers
+ * would silently disagree with every index computed from now on, so it throws
+ * in dev builds and warns in production.
+ */
+export function setMapSize(w: number, h: number = w): void {
+  if (!validSide(w) || !validSide(h)) {
+    throw new RangeError(`setMapSize(${w}, ${h}): a side must be an integer in ${MAP_SIDE_MIN}..${MAP_SIDE_MAX}`);
+  }
+  if (w === MAP_W && h === MAP_H) return;
+  if (mapSizeLocked) {
+    const msg = `setMapSize(${w}, ${h}) after the ${MAP_W}×${MAP_H} map was allocated — `
+      + "call it once per boot, before generateMap/createTrack (TOWN-4.1)";
+    if (devBuild()) throw new Error(msg);
+    console.warn(msg);
+  }
+  applyMapSize(w, h);
+}
+
+/** TOWN-4.1: map-sized buffers now exist at the current size — called by the
+ *  allocators (generateMap, createTrack, createRail). */
+export function lockMapSize(): void { mapSizeLocked = true; }
+
+let mapSizeClaim = 0;
+
+/**
+ * TOWN-4.1: a booting game takes the size (right after `setMapSize`) and hands
+ * the claim back to `releaseMapSize` from its dispose. Only the LATEST claim
+ * releases — two games can share one page (a test's host and guest seats), and
+ * the first one's dispose must not resize the map under the one still running.
+ */
+export function claimMapSize(): number { return ++mapSizeClaim; }
+
+/**
+ * TOWN-4.1: the game that owned the map is gone (`startIsoGame`'s dispose):
+ * unlock, and go back to the standard size every between-games reader (the
+ * menus) assumes. The next boot sets its own size either way. A stale claim
+ * (a newer boot has claimed since) changes nothing.
+ */
+export function releaseMapSize(claim?: number): void {
+  if (claim !== undefined && claim !== mapSizeClaim) return;
+  mapSizeLocked = false;
+  if (MAP_W !== MAP_SIZES.standard || MAP_H !== MAP_SIZES.standard) {
+    applyMapSize(MAP_SIZES.standard, MAP_SIZES.standard);
+  }
+}
+
+/** Debug/tests: are map-sized buffers alive at the current size? */
+export const isMapSizeLocked = (): boolean => mapSizeLocked;
+
+/**
+ * TOWN-4.1: re-derive a module-scope value that depends on the size (a chunk
+ * grid's width, a channel's base column) whenever the size changes. Runs on
+ * every change, never at registration — initialise the value from MAP_W/MAP_H
+ * at its declaration as usual. Keep callbacks to plain arithmetic: they run
+ * inside `setMapSize`.
+ */
+export function onMapSize(fn: () => void): void { mapSizeListeners.push(fn); }
+
+/**
+ * TOWN-4.1: run `fn` with the map at w×h, then put the previous size AND lock
+ * state back. ONLY for synchronous, throwaway work that never outlives the
+ * call — the menu scoring a save it is not playing (`save-summary.ts`). It
+ * bypasses the lock on purpose: nothing a live game holds can run in between
+ * (the call is synchronous), lazy caches re-derive on their next use, and the
+ * scratch buffers `fn` allocates must not leave the size locked for the next
+ * boot.
+ */
+export function withMapSize<T>(w: number, h: number, fn: () => T): T {
+  if (!validSide(w) || !validSide(h)) {
+    throw new RangeError(`withMapSize(${w}, ${h}): a side must be an integer in ${MAP_SIDE_MIN}..${MAP_SIDE_MAX}`);
+  }
+  const pw = MAP_W, ph = MAP_H, locked = mapSizeLocked;
+  if (w !== pw || h !== ph) applyMapSize(w, h);
+  try {
+    return fn();
+  } finally {
+    if (MAP_W !== pw || MAP_H !== ph) applyMapSize(pw, ph);
+    mapSizeLocked = locked;
+  }
+}
+
+/**
+ * TOWN-4.1: a module-scope scratch buffer of one cell per tile, allocated on
+ * first use and re-allocated only when the map size changes — the lazy form
+ * of `const X = new Uint8Array(MAP_W * MAP_H)`, which would freeze at the
+ * import-time size. The getter costs one length compare per call.
+ */
+export function mapSizedBuffer<T extends { length: number }>(make: (cells: number) => T): () => T {
+  let buf: T | null = null;
+  return () => {
+    const n = MAP_W * MAP_H;
+    if (buf === null || buf.length !== n) buf = make(n);
+    return buf;
+  };
+}
 // Fixed zoom levels only — the atlas is pre-rendered at each of these once,
 // so every frame is a 1:1 blit (E0: no per-frame drawImage scaling).
 export const ZOOM_STEPS = [0.5, 1, 2] as const;

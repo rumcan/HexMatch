@@ -27,14 +27,15 @@
 
 import {
   MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions,
-  readTownLayout, defaultTownLayout, type MapOptions, type TownLayout,
+  readTownLayout, defaultTownLayout, readMapSize, defaultMapSize, MAP_SIZE_NAMES,
+  type MapOptions, type TownLayout, type MapSizeName,
 } from "../net/match-settings";
 
 export {
   MAP_OPTIONS_OFF, MAP_OPTIONS_ON, defaultMapOptions, mapOptionsEqual, readMapOptions,
-  readTownLayout, defaultTownLayout,
+  readTownLayout, defaultTownLayout, readMapSize, defaultMapSize, MAP_SIZE_NAMES,
 };
-export type { MapOptions, TownLayout };
+export type { MapOptions, TownLayout, MapSizeName };
 
 const KEYS = ["rivers", "elevation", "shapes", "rings", "diag"] as const;
 
@@ -113,4 +114,52 @@ export function resolveTownLayout(
   const fromUrl = readTownLayout(q);
   if (fromUrl) return fromUrl;
   return runnerDefault;
+}
+
+/**
+ * TOWN-4.1 (#677): the map size a boot generates with — the ticket's chain,
+ * most specific first:
+ *
+ *   1. an explicit option (`opts.size`) — tests and debug boots;
+ *   2. a URL param (`?size=standard|large`) — for a NEW game only: never over
+ *      a save or a room. `game.ts` counts `size` among the map params that
+ *      start a fresh map (`mapParamsInUrl`), so a URL can never resize the
+ *      map under a resumed save;
+ *   3. a resumed save's recorded size — ABSENT = standard: every save written
+ *      before TOWN-4.1 is a 144×144 map, and it reloads as one;
+ *   4. a networked room's `MatchSettings.map.size` — the HOST's record, so a
+ *      guest's own `?size=` cannot split the seats. Absent = standard too: a
+ *      room whose settings predate the option (or name no size) plays the map
+ *      it always did, even once TOWN-4.5 makes large the free-play default;
+ *   5. a story contract / scenario — standard: tuned places (a chapter or a
+ *      scenario may name a size in its `mapOptions`; none does);
+ *   6. otherwise `defaultMapSize()` — standard, in this ticket, everywhere.
+ *
+ * The Starter Island and the tutorial lessons never get here: `game.ts`
+ * hard-codes their whole map record (standard), exactly as it already does
+ * their other map options — a first launch is a fixed place.
+ */
+export function resolveMapSize(
+  src: MapOptionSources,
+  newGameDefault: MapSizeName = defaultMapSize(),
+): MapSizeName {
+  const explicit = readMapSize(src.explicit?.size);
+  if (explicit) return explicit;
+  if (!src.save && !src.room) {
+    let q: string | null = null;
+    try { q = new URLSearchParams(src.search ?? "").get("size"); } catch { q = null; }
+    const fromUrl = readMapSize(q);
+    if (fromUrl) return fromUrl;
+  }
+  if (src.save) {
+    const rec = src.save.map;
+    return readMapSize(rec && typeof rec === "object" ? (rec as Record<string, unknown>).size : undefined)
+      ?? "standard";
+  }
+  if (src.room) return readMapSize(src.room.map?.size) ?? "standard";
+  if (src.story || src.scenario) {
+    const tuned = (src.story ?? src.scenario) as { mapOptions?: Partial<MapOptions> } | null | undefined;
+    return readMapSize(tuned?.mapOptions?.size) ?? "standard";
+  }
+  return newGameDefault;
 }
