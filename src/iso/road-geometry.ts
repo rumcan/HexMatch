@@ -192,6 +192,11 @@ export interface RoadTile {
    * gravel lane crossing a town's limits is not one of them.
    */
   sidewalk: boolean;
+  /** TOWN-4.2 (#678): set on Avenue tiles — the carriageway axis, which side
+   * of the pair this tile is on (outer side of the planted median), and
+   * whether it is a junction cell. Drives the offset figures, the outer
+   * sidewalk and the median passes. */
+  avenue?: AvenueInfo;
 }
 
 /**
@@ -215,9 +220,12 @@ export function roadTile(
    */
   town = false,
   diagonal = 0,
+  /** TOWN-4.2 (#678): Avenue context — offset figures, outer sidewalk. */
+  avenue?: AvenueInfo,
 ): RoadTile {
   const mask = maskOf(cell);
-  const figures = roadFigures(tx, ty, mask, diagonal);
+  // An Avenue draws its own offset cross-section; diagonals never ride one.
+  const figures = avenue ? avenueFigures(tx, ty, mask, avenue) : roadFigures(tx, ty, mask, diagonal);
   const transitions: RoadTransition[] = [];
   if (material === "dirt") {
     const centre = tileCentre(tx, ty);
@@ -235,7 +243,12 @@ export function roadTile(
       });
     }
   }
-  return { tx, ty, material, mask, ...(diagonal ? { diagonal } : {}), figures, transitions, sidewalk: town && material === "paved" };
+  return {
+    tx, ty, material, mask, ...(diagonal ? { diagonal } : {}), figures, transitions,
+    // An Avenue always has its OUTER sidewalk (see avenueSidewalkPaths).
+    sidewalk: (town && material === "paved") || !!avenue,
+    ...(avenue ? { avenue } : {}),
+  };
 }
 
 // ── centre-lines for paint ──────────────────────────────────────────────────
@@ -859,4 +872,192 @@ export function highwayDividerFigures(tiles: readonly RoadTile[]): RoadFigure[] 
     else figures.push(...paintFigures(t.tx, t.ty, t.mask, t.diagonal));
   }
   return continuousRoadFigures(figures);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOWN-4.2 (#678) AVENUE — the two-tile boulevard, in ground space.
+//
+// One tile of an Avenue pair is a slice of ONE boulevard, not a road that
+// happens to sit beside another road. The cross-section (sums to exactly one
+// tile, measured from this tile's outer edge inward):
+//
+//     0.00 ─ 0.06   frontage          AVENUE_FRONTAGE
+//     0.06 ─ 0.13   outer sidewalk    SIDEWALK_WIDTH (OUTER edge only)
+//     0.13 ─ 0.91   carriageway       ROAD_WIDTH.paved, centre offset 0.02
+//                                     toward the median (AVENUE_BIAS)
+//     0.91 ─ 1.09   planted median    MEDIAN_WIDTH — straddles the SHARED
+//                                     edge, so only the pair's outer=−1 cell
+//                                     draws it (exactly once per pair-tile)
+//
+// The carriageway centreline therefore sits 0.02 off the tile centre toward
+// the partner, and every figure — surface, dashes, sidewalks — runs along
+// that offset line. Neighbour tiles compute the SAME offset (their partner
+// side agrees), so ports still butt-join exactly like roadFigures'.
+//
+// A corner needs no special figure: two straight offset runs simply overlap
+// on the interface cells (a "wide bend"), because each run's figures reach
+// their port and the neighbour's reach back. Junction cells add a short
+// cross stub from each cross-arm port to the offset centreline so the
+// asphalt stays continuous where a street threads the pair.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** Everything a tile needs to draw itself as half a boulevard. */
+export type AvenueInfo = {
+  /** Carriageway axis: "x" lanes run SE/NW, "y" lanes run NE/SW. */
+  axis: "x" | "y";
+  /** Which perpendicular side this tile's OUTERMOST edge is on (−1 draws the
+   *  median strip, because the partner then sits on its +side). */
+  outer: -1 | 1;
+  /** `avenueJunction` — the median opens and the flow painter may draw here. */
+  junction: boolean;
+};
+
+/** The planted median's width, straddling the shared edge between the pair. */
+export const MEDIAN_WIDTH = 0.18;
+/** Frontage between the outer sidewalk and the tile edge (1 − half median −
+ *  sidewalk − carriageway). Fits the cross-section to exactly one tile. */
+export const AVENUE_FRONTAGE = 1 - MEDIAN_WIDTH / 2 - SIDEWALK_WIDTH - ROAD_WIDTH.paved;
+/** How far the carriageway centreline sits from the tile centre, toward the
+ *  median — frontage + sidewalk + half carriageway − half tile (0.02). */
+export const AVENUE_BIAS = AVENUE_FRONTAGE + SIDEWALK_WIDTH + ROAD_WIDTH.paved / 2 - 0.5;
+
+const alongDirs = (axis: "x" | "y"): number[] => axis === "x" ? [SE, NW] : [NE, SW];
+const crossDirs = (axis: "x" | "y"): number[] => axis === "x" ? [NE, SW] : [SE, NW];
+
+/** The tile-centre point of the carriageway's offset centreline. */
+export function avenueCentre(tx: number, ty: number, info: AvenueInfo): GroundPoint {
+  return info.axis === "x"
+    ? [tx + 0.5, ty + 0.5 - AVENUE_BIAS * info.outer]
+    : [tx + 0.5 - AVENUE_BIAS * info.outer, ty + 0.5];
+}
+
+/** The offset port where the centreline meets the `dir` edge — algebraically
+ *  the same point on both sides of the shared edge, exactly like portPoint. */
+export function avenuePort(tx: number, ty: number, info: AvenueInfo, dir: number): GroundPoint {
+  const c = avenueCentre(tx, ty, info);
+  if (dir === SE) return [tx + 1, c[1]];
+  if (dir === NW) return [tx, c[1]];
+  if (dir === SW) return [c[0], ty + 1];
+  return [c[0], ty]; // NE
+}
+
+/**
+ * The asphalt of one Avenue tile: the offset straight run along the
+ * carriageway (paired through the offset centreline, like roadFigures), plus
+ * — at junction cells only — a cross stub from each cross-arm port to that
+ * centreline so a street threading the pair leaves no gap. Never a figure
+ * across the median outside a junction; the median pass covers that ground.
+ */
+export function avenueFigures(tx: number, ty: number, mask: number, info: AvenueInfo): RoadFigure[] {
+  const c = avenueCentre(tx, ty, info);
+  const [alongA, alongB] = alongDirs(info.axis);
+  const hasA = (mask & alongA) !== 0, hasB = (mask & alongB) !== 0;
+  const out: RoadFigure[] = [];
+  if (hasA && hasB) {
+    out.push({ points: [avenuePort(tx, ty, info, alongA), c, avenuePort(tx, ty, info, alongB)] });
+  } else if (hasA || hasB) {
+    out.push({ points: [c, avenuePort(tx, ty, info, hasA ? alongA : alongB)] });
+  } else {
+    out.push({ points: [c] }); // pad — isolated carriageway tile
+  }
+  if (info.junction) {
+    for (const d of crossDirs(info.axis)) {
+      if (!(mask & d)) continue;
+      out.push({ points: [portPoint(tx, ty, d), c] });
+    }
+  }
+  return out;
+}
+
+/**
+ * The dashed lane divider along the offset centreline — `paintFigures`'
+ * rules on the boulevard's line: two arms or more, trimmed back from the
+ * centre at a junction, nothing on a stub, and NOTHING across the median or
+ * the cross stubs (an Avenue has no centre line — flow-paint owns junction
+ * zebras, and only Streets carry a painted centre line).
+ */
+export function avenuePaintFigures(tx: number, ty: number, mask: number, info: AvenueInfo): RoadFigure[] {
+  const [a, b] = alongDirs(info.axis);
+  const hasA = (mask & a) !== 0, hasB = (mask & b) !== 0;
+  if (!hasA || !hasB) return [];                    // no through-route, no paint
+  const dirs = (hasA ? 1 : 0) + (hasB ? 1 : 0)
+    + crossDirs(info.axis).filter((d) => mask & d).length;
+  const trim = dirs >= 3 ? JUNCTION_GAP : 0;
+  const c = avenueCentre(tx, ty, info);
+  const arm = (d: number): GroundPoint[] => {
+    const port = avenuePort(tx, ty, info, d);
+    if (trim === 0) return [port, c];
+    const len = Math.hypot(port[0] - c[0], port[1] - c[1]) || 1;
+    const t = (len - trim) / len;
+    return [port, [c[0] + (port[0] - c[0]) * t, c[1] + (port[1] - c[1]) * t]];
+  };
+  return [{ points: arm(a) }, { points: arm(b) }];
+}
+
+/**
+ * The outer-edge sidewalk flanks (full tile run each) plus the END CAP: a
+ * transverse segment across the whole boulevard face where a carriageway arm
+ * is genuinely missing (a dead end). Both pair cells compute the same cap,
+ * so a chunk boundary never splits it. Junction cross-arms are left to the
+ * street's own sidewalks — an Avenue never draws a sidewalk through the
+ * median it shares with its partner.
+ */
+export function avenueSidewalkPaths(tx: number, ty: number, mask: number, info: AvenueInfo): RoadFigure[] {
+  const { axis, outer } = info;
+  const out: RoadFigure[] = [];
+  // The outer flank: tile centre + outer × (0.5 − frontage − half sidewalk).
+  const reach = 0.5 - AVENUE_FRONTAGE - SIDEWALK_WIDTH / 2;
+  if (axis === "x") {
+    const v = ty + 0.5 + outer * reach;
+    out.push({ points: [[tx, v], [tx + 1, v]] });
+    const lo = Math.min(ty, ty - outer);              // the pair's lower row
+    for (const [d, u] of [[SE, tx + 1], [NW, tx]] as [number, number][]) {
+      if (mask & d) continue;                         // arm continues — no cap
+      out.push({ points: [[u, lo + AVENUE_FRONTAGE + SIDEWALK_WIDTH / 2],
+        [u, lo + 1 + 1 - AVENUE_FRONTAGE - SIDEWALK_WIDTH / 2]] });
+    }
+  } else {
+    const u = tx + 0.5 + outer * reach;
+    out.push({ points: [[u, ty], [u, ty + 1]] });
+    const lo = Math.min(tx, tx - outer);
+    for (const [d, v] of [[SW, ty + 1], [NE, ty]] as [number, number][]) {
+      if (mask & d) continue;
+      out.push({ points: [[lo + AVENUE_FRONTAGE + SIDEWALK_WIDTH / 2, v],
+        [lo + 1 + 1 - AVENUE_FRONTAGE - SIDEWALK_WIDTH / 2, v]] });
+    }
+  }
+  return out;
+}
+
+/**
+ * The planted median strip's quad — drawn ONLY by the pair cell whose
+ * partner is on its +side (`outer === −1`), so each shared edge gets exactly
+ * one strip, and NEVER at a junction cell (the median opens there; flow's
+ * zebra takes over the ground). Returns the four corners for a fill.
+ */
+export function avenueMedianStrip(tx: number, ty: number, info: AvenueInfo): GroundPoint[] | null {
+  if (info.outer !== -1 || info.junction) return null;
+  const h = MEDIAN_WIDTH / 2;
+  if (info.axis === "x") {
+    const e = ty + 1;                                 // the shared edge
+    return [[tx, e - h], [tx + 1, e - h], [tx + 1, e + h], [tx, e + h]];
+  }
+  const e = tx + 1;
+  return [[e - h, ty], [e + h, ty], [e + h, ty + 1], [e - h, ty + 1]];
+}
+
+/** A tree spot on the median — one per pair-tile (every tile), mid-along. */
+export function avenueMedianTreeSpot(tx: number, ty: number, info: AvenueInfo): GroundPoint | null {
+  if (info.outer !== -1 || info.junction) return null;
+  return info.axis === "x" ? [tx + 0.5, ty + 1] : [tx + 1, ty + 0.5];
+}
+
+/** A DOUBLE lamp post spot — every SECOND tile along the run (parity on the
+ *  tile's along-coordinate), offset a quarter tile from the tree so the two
+ *  silhouettes never overlap. */
+export function avenueMedianLampSpot(tx: number, ty: number, info: AvenueInfo): GroundPoint | null {
+  if (info.outer !== -1 || info.junction) return null;
+  const even = info.axis === "x" ? (tx & 1) === 0 : (ty & 1) === 0;
+  if (!even) return null;
+  return info.axis === "x" ? [tx + 0.25, ty + 1] : [tx + 1, ty + 0.25];
 }
