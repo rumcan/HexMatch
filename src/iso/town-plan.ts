@@ -427,6 +427,14 @@ export function planTown(
   // ── the depths, drawn per side ────────────────────────────────────────
   const dA = [pick(knobs.depthsA), pick(knobs.depthsA)];   // [square side, far side]
   const dB = [pick(knobs.depthsB), pick(knobs.depthsB)];
+  // The plaza is 4 deep on the standard map but 6 on the large one, while row
+  // A draws 4–5 either way: on the square side the depth must clear the plaza,
+  // or the parallel street would run THROUGH the plaza (the row it crosses is
+  // the plaza's own last row) and lots would front a street paved on the
+  // square. The far side is untouched, and the standard map's drawn depths
+  // already clear the 4-deep plaza, so only a large plan moves here — the RNG
+  // draw order is unchanged either way.
+  dA[0] = Math.max(dA[0], sqV1 + 1);
 
   /** The block row between the avenue and the parallel street. */
   const rowA = (side: 1 | -1) => ({
@@ -781,21 +789,31 @@ export function planTown(
         edges.push({ rows: nearPar, out: par, dir: dirPar > 0 ? front.vPos : front.vNeg, kind: "parallel" });
       }
       for (const edge of edges) {
-        const along: [number, number][] = [];
+        // The frontage is laid per CONTIGUOUS run of street: the plaza carves
+        // a gap out of the square side's blocks (and a street the terrain cut
+        // leaves one anywhere), and a lot must never span a gap — its rect is
+        // min..max in `u`, so a width-2 lot next to the plaza would otherwise
+        // cover the plaza's own tiles (the one LOT-ON-SQUARE the large map's
+        // 6-deep square exposed).
+        const frontages: [number, number][][] = [];
+        let cur: [number, number][] = [];
         for (const u of run(spec.u0, spec.u1)) {
-          if (!street.has(key(u, edge.out))) continue;
-          if (edge.rows.some((v) => inSquare(u, v))) continue;   // the plaza's edge
-          along.push([u, edge.rows[0]]);
+          const ok = street.has(key(u, edge.out))
+            && !edge.rows.some((v) => inSquare(u, v));           // the plaza's edge
+          if (ok) cur.push([u, edge.rows[0]]);
+          else if (cur.length) { frontages.push(cur); cur = []; }
         }
-        if (!along.length) continue;
-        const d = planDistrict(along[0][0], edge.rows[0]);
-        // The epic's zoning (§2.6): commercial on the avenue near the square,
-        // terraces and small flats in the core's other frontages, detached
-        // houses further out, parks and allotments at the plan's rim.
-        const zone: LotZone = edge.kind === "avenue" && Math.abs(along[0][0]) <= 10 && d <= 1
-          ? "downtown"
-          : d <= 1 ? "inner" : d >= 3 ? "edge" : "outer";
-        layHorizontal(along, edge.rows, edge.dir, zone, d);
+        if (cur.length) frontages.push(cur);
+        for (const along of frontages) {
+          const d = planDistrict(along[0][0], edge.rows[0]);
+          // The epic's zoning (§2.6): commercial on the avenue near the square,
+          // terraces and small flats in the core's other frontages, detached
+          // houses further out, parks and allotments at the plan's rim.
+          const zone: LotZone = edge.kind === "avenue" && Math.abs(along[0][0]) <= 10 && d <= 1
+            ? "downtown"
+            : d <= 1 ? "inner" : d >= 3 ? "edge" : "outer";
+          layHorizontal(along, edge.rows, edge.dir, zone, d);
+        }
       }
       // Then the short sides (cross streets and spur lanes), on whatever rows
       // the horizontal lots left: a 2-wide column either side, 2 rows deep.

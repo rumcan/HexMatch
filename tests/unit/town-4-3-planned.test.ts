@@ -21,11 +21,12 @@
 //   * the boot stamp paves BOTH avenue carriageways as public road — the one
 //     place TOWN-4.2 (#678, the AVENUE tier) will change
 // ══════════════════════════════════════════════════════════════════════════
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   generateMap, idx, inBounds, WATER, TOWN_OCC, type Grid,
 } from "../../src/iso/grid";
 import { MAP_W, MAP_H } from "../../src/iso/config";
+import { MAP_SIZES, releaseMapSize, setMapSize } from "../../src/game/config";
 import { harvesterSpots } from "../../src/iso/ai";
 import { MAP_OPTIONS_OFF, MAP_OPTIONS_ON, resolveTownLayout } from "../../src/iso/map-options";
 import {
@@ -49,6 +50,10 @@ const k = (x: number, y: number): number => y * MAP_W + x;
 
 const maps = SEEDS.map((seed) => ({ seed, grid: generateMap(seed, { layout: "planned" }) }));
 const plans = maps.flatMap(({ seed, grid }) => grid.towns.map((t) => ({ seed, town: t, plan: t.plan! })));
+
+/** The avenue length and plaza size each plan size draws (the KNOBS table). */
+const AVE_RANGE = { standard: [22, 28], large: [32, 40] } as const;
+const SQUARE_TILES = { standard: 16, large: 24 } as const;
 
 /** AUDIT: every master-plan invariant the ticket asks for, in one pass. */
 function audit(plan: TownPlan): string[] {
@@ -101,8 +106,9 @@ function audit(plan: TownPlan): string[] {
   const area = (plan.bounds.x1 - plan.bounds.x0 + 1) * (plan.bounds.y1 - plan.bounds.y0 + 1);
   const share = (100 * roads) / area;
   if (share < 20 || share > 30) out.push(`SHARE ${share.toFixed(1)}%`);
+  const [aveMin, aveMax] = AVE_RANGE[plan.size];
   const len = plan.avenueTiles.length / 2;
-  if (len < 22 || len > 28) out.push(`AVENUE ${len}`);
+  if (len < aveMin || len > aveMax) out.push(`AVENUE ${len}`);
   return out;
 }
 
@@ -114,6 +120,14 @@ function roadRank(plan: TownPlan, x: number, y: number): number {
   }
   for (const [cx, cy] of plan.culDeSacs) if (cx === x && cy === y) return 0;
   return -1;
+}
+
+/** Every tile a plan claims: the reserved bands + the avenue. */
+function planTileKeys(plan: TownPlan): Set<number> {
+  const out = new Set<number>();
+  for (const [x, y] of plan.reserved) out.add(k(x, y));
+  for (const [x, y] of plan.avenueTiles) out.add(k(x, y));
+  return out;
 }
 
 /** FNV-1a over a grid's terrain, occupancy, towns and highways. */
@@ -254,6 +268,38 @@ describe("TOWN-4.3 planned towns — the master plan", () => {
           for (const [x, y] of tiles) frontBest = Math.max(frontBest, roadRank(plan, x, y));
           expect(frontBest, `seed ${seed} town ${town.id} corner lot @${lot.x},${lot.y} fronts a side street`)
             .toBe(widest);
+        }
+      }
+    }
+  });
+
+  it("keeps the plans off each other: no tile belongs to two towns", () => {
+    // The epic's TOWN_TOWN_SEP (44 standard / 64 large) is the TARGET — the
+    // first rung of the centre ladder. The hard floor is here: the reserved
+    // bands are not stamped, so `occ` alone cannot keep two plans apart and a
+    // large seed that cannot fit four plans at 64 still places four that
+    // interlock rather than dropping one.
+    for (const { seed, grid } of maps) {
+      const seen = new Map<number, number>();
+      for (const t of grid.towns) {
+        for (const key of planTileKeys(t.plan!)) {
+          const prev = seen.get(key);
+          expect(prev, `seed ${seed} tile ${key} belongs to towns ${prev} and ${t.id}`).toBeUndefined();
+          seen.set(key, t.id);
+        }
+      }
+    }
+  });
+
+  it("keeps the epic's 44-tile centre separation on the standard seeds", () => {
+    for (const { seed, grid } of maps) {
+      for (let a = 0; a < grid.towns.length; a++) {
+        for (let b = a + 1; b < grid.towns.length; b++) {
+          const cheb = Math.max(
+            Math.abs(grid.towns[a].tx - grid.towns[b].tx),
+            Math.abs(grid.towns[a].ty - grid.towns[b].ty),
+          );
+          expect(cheb, `seed ${seed} towns ${a}/${b}`).toBeGreaterThanOrEqual(44);
         }
       }
     }
@@ -540,4 +586,40 @@ describe("TOWN-4.3 planned towns — the audit is not vacuous", () => {
       expect(planLotTiles(plan).length, `seed ${seed} town ${town.id}`).toBeGreaterThan(30);
     }
   });
+});
+
+// ── the large map (TOWN-4.1 has landed: sizes its plans large) ────────────
+describe("TOWN-4.3 planned towns — a large map draws large plans", () => {
+  afterEach(() => { releaseMapSize(); });
+  it("sizes the avenue 32–40 and the square 4×6, and keeps the plans apart", () => {
+    releaseMapSize();
+    setMapSize(MAP_SIZES.large, MAP_SIZES.large);
+    for (const seed of [1, 7, 42]) {
+      const grid = generateMap(seed, { size: "large", layout: "planned" });
+      expect(grid.towns.length, `seed ${seed} town count`).toBe(4);
+      for (const t of grid.towns) {
+        const plan = t.plan!;
+        expect(plan.size, `seed ${seed} town ${t.id} plan size`).toBe("large");
+        expect(plan.square.tiles.length, `seed ${seed} town ${t.id} plaza`).toBe(SQUARE_TILES.large);
+        expect(plan.avenueTiles.length / 2, `seed ${seed} town ${t.id} avenue`)
+          .toBeGreaterThanOrEqual(AVE_RANGE.large[0]);
+        expect(audit(plan), `seed ${seed} town ${t.id} (large)`).toEqual([]);
+      }
+      // The centre separation here is the 64-tile TARGET (the ladder's first
+      // rung): seeds 1 and 42 cannot fit four plans that far apart on this
+      // size and fall to the interlock floor below instead of dropping a
+      // town. The floor is exact: no tile belongs to two plans.
+      const seen = new Map<number, number>();
+      for (const t of grid.towns) {
+        for (const key of planTileKeys(t.plan!)) {
+          const prev = seen.get(key);
+          expect(prev, `seed ${seed} tile ${key} belongs to towns ${prev} and ${t.id}`).toBeUndefined();
+          seen.set(key, t.id);
+        }
+      }
+      // …and the plan is still a pure function of the seed and the size.
+      expect(JSON.stringify(generateMap(seed, { size: "large", layout: "planned" }).towns))
+        .toBe(JSON.stringify(grid.towns));
+    }
+  }, 300000);
 });

@@ -3566,6 +3566,11 @@ function placeTowns(
     ? industries.map((i) => ({ tx: i.tx, ty: i.ty, w: i.w, h: i.h }))
     : [];
   const plannedIndustrySep = spread(PLANNED_INDUSTRY_SEP);
+  // Every tile an earlier plan already reserved (plus its avenue). The
+  // reserved bands are NOT stamped in `occ` — TOWN-4.4 reveals them — so a
+  // second plan's free-ground test cannot see them, and two plans could
+  // interleave; the sep ladder is the target, this set is the hard floor.
+  const planTaken = new Set<number>();
   // TOWN-2 (#653): the organic extras of the town that finally places —
   // reset per town, so a rejected candidate's carving never leaks into the
   // next one's `Town` record.
@@ -3586,10 +3591,12 @@ function placeTowns(
     // TOWN-4.3 (#679): a planned town keeps `plannedTownSep` (44 standard, 64
     // large — the epic's own numbers, not TOWN-4.1's spread of the grid's 28:
     // a plan is up to 40 tiles long, so 28 would let two plans overlap). The
-    // fallback is 0, not a smaller number: the plan's own free-ground test
-    // (`occ === -1` against every earlier town's stamped tiles) is what
-    // actually keeps towns apart, and a too-close centre simply fails to
-    // produce a plan.
+    // fallback rung is 0 because the hard floor is the plan's own free-ground
+    // test plus `planTaken` (no two plans share a tile): a large map that
+    // cannot place four plans at the 64 target inside the attempt budget
+    // still places four towns that interlock instead of dropping one (seen on
+    // seeds 1 and 42). On the standard seeds the target rung places all four
+    // towns outright.
     for (const sep of planned ? [plannedTownSep(planSize), 0] : [townTownSep, 6, 4, 2]) {
       for (let attempt = 0; attempt < 120 && !placed; attempt++) {
         const cx = townCentre
@@ -3615,6 +3622,10 @@ function placeTowns(
           // the ideal blocks lost).
           const plan = planTown(cx, cy, terrain, occ, rng, planSize, industryRects, plannedIndustrySep);
           if (!plan) continue;
+          let clash = false;
+          for (const [x, y] of plan.reserved) if (planTaken.has(idx(x, y))) { clash = true; break; }
+          if (!clash) for (const [x, y] of plan.avenueTiles) if (planTaken.has(idx(x, y))) { clash = true; break; }
+          if (clash) continue;
           // BUILD item 2: the town OWNS district 0 plus the avenue; the rest
           // of the plan is reserved (TOWN-4.4 reveals it) and stays free land.
           const village = planVillage(plan);
@@ -3623,8 +3634,8 @@ function placeTowns(
           for (const [hx, hy] of village.houses) blocked.add(idx(hx, hy));
           for (const [rx, ry] of village.roads) blocked.add(idx(rx, ry));
           // The square is town ground too (the commit stamps it TOWN_OCC):
-          // without this the plaza is a "free" pocket walled in by its own
-          // blocks and every plan is rejected as an enclave.
+          // leaving it out of `blocked` made the plaza a "free" pocket walled
+          // in by its own blocks, and every plan was rejected as an enclave.
           for (const [sx, sy] of village.square) blocked.add(idx(sx, sy));
           if (connected) {
             if (!allIndustriesReachable(blocked)) continue;
@@ -3635,6 +3646,8 @@ function placeTowns(
           for (const [hx, hy] of village.houses) occ[idx(hx, hy)] = TOWN_OCC;
           for (const [rx, ry] of village.roads) occ[idx(rx, ry)] = TOWN_OCC;
           for (const [sx, sy] of village.square) occ[idx(sx, sy)] = TOWN_OCC;
+          for (const [rx, ry] of plan.reserved) planTaken.add(idx(rx, ry));
+          for (const [ax, ay] of plan.avenueTiles) planTaken.add(idx(ax, ay));
           towns.push({
             id: towns.length, tx: cx, ty: cy,
             houses: village.houses, roads: village.roads, plan,

@@ -85,9 +85,8 @@ Cross-street period `6–8`, stagger `1–2`, district rings `0.45/0.7/0.9`,
 `PLANNED_INDUSTRY_SEP = 8` (mirrors grid's `TOWN_INDUSTRY_SEP`),
 `TOWN_HOUSES_MIN = 18` still gates the committed village.
 
-On the 144×144 map `placeTowns` always draws `size: "standard"`; when
-TOWN-4.1 (#677, the 216 map) lands, that call passes `"large"` and
-`plannedTownSep` follows.
+`placeTowns` sizes the plan from the map it is drawing on (TOWN-4.1's live
+`MAP_W`): standard → the left column above, large → the right one.
 
 **RNG draw order** (determinism contract): avenue length, `dA[0]`, `dA[1]`,
 `dB[0]`, `dB[1]`, then per side the cross-street `period` and `phase` (side 1
@@ -137,19 +136,31 @@ draws.
   towns and public roads) pinned for `grid` and `organic` on seeds
   1/7/42/1337, verified equal to a worktree run of the same function on
   `main` @ `c66a1a5`.
-- **Generation time** (single process, warm, one run per seed):
+- **Generation time, standard 144 map** (single process, warm, one run per
+  seed):
 
   | seed | organic | planned | delta |
   | ---- | ------- | ------- | ----- |
-  | 1    | 358 ms  | 337 ms  | −21 ms |
-  | 2    | 257 ms  | 319 ms  | +62 ms |
-  | 3    | 302 ms  | 405 ms  | +103 ms |
-  | 7    | 223 ms  | 236 ms  | +14 ms |
-  | 42   | 264 ms  | 344 ms  | +80 ms |
-  | 1337 | 232 ms  | 353 ms  | +121 ms |
+  | 1    | 337 ms  | 401 ms  | +64 ms |
+  | 2    | 262 ms  | 327 ms  | +65 ms |
+  | 3    | 296 ms  | 382 ms  | +87 ms |
+  | 7    | 225 ms  | 266 ms  | +41 ms |
+  | 42   | 296 ms  | 395 ms  | +99 ms |
+  | 1337 | 265 ms  | 376 ms  | +111 ms |
 
-  Worst delta +121 ms, inside the +150 ms budget; a planned map places the
-  same four towns as an organic one.
+  Worst delta +111 ms, inside the +150 ms budget; a planned map places the
+  same four towns as an organic one. The epic's 44-tile centre separation
+  holds on all six seeds (measured 44–50).
+- **The large 216 map** (TOWN-4.1 #677, merged while this was in review):
+  plans size themselves large — 32–40 tile avenue, 4×6 square, `sep` 64 — and
+  the pinned large seeds keep four towns whose plans never share a tile. Where
+  four plans cannot be placed at the 64 target, the ladder's floor keeps four
+  interlocking plans instead of dropping a town (seeds 1 and 42). Cost: **2.3–5.9 s
+  per large planned map vs 0.62–0.70 s organic** — the per-candidate
+  `allIndustriesReachable` + `noEnclaves` floods (each a full 216² sweep) run
+  ~50–130 times per map and are what selects the four committed towns
+  (~45 ms per candidate on the hardest seed). A follow-up can cache or bound
+  that; the standard map's budget above is unaffected.
 
 ### Two towns (seed 3 t0, axis x; seed 1 t1, axis y)
 
@@ -210,6 +221,9 @@ c+++++++AADDii+iio
 
 ## Later tickets
 
+- **Large-map generation cost** — the per-candidate reachability/enclave
+  floods are the large map's generation cost (above); caching them per
+  committed town, or a cheaper local pre-filter, is the obvious next lever.
 - **TOWN-4.2 (#678)** — the avenue's one-way AVENUE_X/Y pair: `stampAvenue`
   is the only place that changes (today it paves both carriageways as
   ordinary public road).
