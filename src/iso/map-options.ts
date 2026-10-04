@@ -71,12 +71,12 @@ export function resolveMapOptions(src: MapOptionSources): MapOptions {
 }
 
 /**
- * TOWN-2 (#653): the town street plan a boot generates with, over the same
- * chain of custody as the booleans (most specific wins):
+ * TOWN-2 (#653) / TOWN-4.3 (#679): the town street plan a boot generates with,
+ * over the same chain of custody as the booleans (most specific wins):
  *
  *   1. an explicit option (`opts.layout`) — tests and debug boots;
- *   2. a URL param (`?layout=grid|organic`) — for a NEW game only, exactly
- *      like `?shapes=`: a save never re-terrains under a URL;
+ *   2. a URL param (`?layout=grid|organic|planned`) — for a NEW game only,
+ *      exactly like `?shapes=`: a save never re-terrains under a URL;
  *   3. a resumed save's recorded layout — a record without the key predates
  *      TOWN-2 and was generated "grid", so it resumes "grid";
  *   4. a networked room's `MatchSettings.map.layout` — the HOST's record (a
@@ -86,6 +86,8 @@ export function resolveMapOptions(src: MapOptionSources): MapOptions {
  *      otherwise, the same rule its booleans play;
  *   6. otherwise `defaultTownLayout()` — "organic" for a new game, "grid"
  *      under the unit-test runner so the seed-pinned suites keep their maps.
+ *      TOWN-4.3 (#679) ADDS "planned" to the chain and changes NO default:
+ *      making it the new-game default is TOWN-4.5 (#681).
  *
  * Nothing here reads `KEYS`: the layout is not a boolean and never rides the
  * `?rivers=0|1` loop — it has its own names and its own param.
