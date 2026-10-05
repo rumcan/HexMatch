@@ -345,7 +345,7 @@ describe("D1 flags and persistence", () => {
       expect(roadDiagLinked(copy, 10, 10, 11, 11)).toBe(true);
     }
     expect(SAVEGAME_VERSION).toBe(3);
-    expect(SNAPSHOT_VERSION).toBe(18);   // TOWN-4.1 (#677) bumped it for the map size, not D1
+    expect(SNAPSHOT_VERSION).toBe(19);   // TOWN-4.1 (#677) and TOWN-4.7 (#700) bumped it, not D1
     expect(snap.version).toBe(SNAPSHOT_VERSION);
     expect(snap.dirt.length).toBe(snapshot(createTrack(false)).dirt.length);
     expect(snap).not.toHaveProperty("diagonalRoads");

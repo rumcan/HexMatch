@@ -145,7 +145,7 @@ describe("TOWN-4.1: a large game boots, renders, saves and reloads at its size",
     h.saveNow();
     const saved = readSave() as SaveGamePayload;
     expect(saved.map?.size).toBe("large");
-    expect(saved.snapV).toBe(18);
+    expect(saved.snapV).toBe(19);   // v19: TOWN-4.7 (#700)
     expect(layerBytes(saved.track.dirt)).toBe(216 * 216);
 
     window.history.replaceState(null, "", "/?seed=1337&loop=old");
