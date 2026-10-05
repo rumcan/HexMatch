@@ -1779,14 +1779,17 @@ export const TOWN_EDGE_GREEN = [
 
 /** The block interiors' stand-ins until the lead's decals land (BUILD item 3):
  *  downtown parking or courtyard, inner courtyard or garden, outer gardens. */
+// Owner playtest 2026-10-05: block middles read as empty lawn (the courtyard /
+// back-yard / car-park art is still owed and draws nothing), so they are trees
+// and gardens now - "open grass in cities should be filled with trees".
 export const TOWN_INTERIOR_DOWNTOWN = [
-  "town_parking_1x1", "town_courtyard_1x1", TOWN_LAWN,
+  "town_parking_1x1", "town_courtyard_1x1", ...TOWN_TREE_VARIANTS,
 ] as const;
 export const TOWN_INTERIOR_INNER = [
-  "town_courtyard_1x1", "town_backyard_1x1", "park_garden_1x1", TOWN_LAWN,
+  "town_courtyard_1x1", "town_backyard_1x1", "park_garden_1x1", ...TOWN_TREE_VARIANTS,
 ] as const;
 export const TOWN_INTERIOR_OUTER = [
-  "town_backyard_1x1", "park_garden_1x1", TOWN_LAWN,
+  "town_backyard_1x1", "park_garden_1x1", ...TOWN_TREE_VARIANTS,
 ] as const;
 
 /** The zone pools `townBuildings` fills a planned town from. */

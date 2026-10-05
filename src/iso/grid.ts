@@ -3483,9 +3483,14 @@ export function plannedReveal(
 ): PlannedReveal {
   const plan = t.plan;
   if (!plan) return EMPTY_REVEAL;
+  // Owner playtest 2026-10-05 ("why are these cities so sparsely
+  // populated?"): the avenue and streets run out across the plan from tier 0,
+  // so a tier that built only its own ring left a few houses on a long empty
+  // road. Each tier now shows ONE MORE ring - a new game's town is the first two
+  // rings, still low-rise (heights are gated by tier, TOWN_ART_MIN_TIER).
   const maxDistrict = tier < 0
     ? plan.districts - 1
-    : Math.min(Math.floor(tier), plan.districts - 1);
+    : Math.min(Math.floor(tier) + 1, plan.districts - 1);
   const taken = plannedTaken(grid, opts.blocked, opts.publicRoad);
 
   // ── 1–2. the candidate street set ──────────────────────────────────────
@@ -3899,7 +3904,11 @@ function townBuildingsPlanned(
       const [fw, fh] = footprintOf(v);
       return (fw === lot.w && fh === lot.h) || (fw === lot.h && fh === lot.w);
     });
-    if (wholeLot.length && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
+    // ...and only when the zone has at least TWO such buildings standing at this
+    // tier: one lone choice repeated down a whole street read as a housing estate
+    // of identical blocks (owner playtest 2026-10-05).
+    const standing = wholeLot.filter((v) => plannedArt(v, footprintOf, known) !== null);
+    if (standing.length >= 2 && freeCount === lot.w * lot.h && lot.w >= 2 && lot.h >= 2
       && take > 0 && hashPick(lot.x + 0x41, lot.y + 0x1d, of) < take) {
       if (layFrom(wholeLot, box, lot.front)) return;
     }

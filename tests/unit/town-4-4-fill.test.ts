@@ -675,7 +675,9 @@ describe("TOWN-4.4 facing", () => {
 // 4. GROWTH — districts 0..N at tier N, no stubs (acceptance box 4)
 // ══════════════════════════════════════════════════════════════════════════
 describe("TOWN-4.4 growth", () => {
-  it("reveals districts in order: tier N shows 0..N and nothing further", () => {
+  // Owner 2026-10-05: each tier shows one ring AHEAD (tier N shows 0..N+1) so a new town is not a few houses on a long empty avenue.
+  const shownAt = (tier: number, districts: number): number => Math.min(tier + 1, districts - 1);
+  it("reveals districts in order: tier N shows 0..N+1 and nothing further", () => {
     for (const { seed, grid, town } of towns) {
       const plan = town.plan!;
       const avenueTiles = new Set(planAvenueTiles(plan).map(([x, y]) => idx(x, y)));
@@ -683,19 +685,19 @@ describe("TOWN-4.4 growth", () => {
       let previousLots = -1;
       for (let tier = 0; tier <= TOWN_VISUAL_MAX; tier++) {
         const { reveal } = drawn(town, grid, tier);
-        expect(reveal.maxDistrict).toBe(Math.min(tier, plan.districts - 1));
+        expect(reveal.maxDistrict).toBe(shownAt(tier, plan.districts));
         // Every revealed street tile is in a revealed district, and the avenue
         // is always live (TOWN-4.3 lays it at full length from tier 0).
         for (const [x, y] of reveal.roads) {
           const avenue = planAvenueTiles(plan).some(([ax, ay]) => ax === x && ay === y);
-          if (!avenue) expect(planTileDistrict(plan, x, y)).toBeLessThanOrEqual(tier);
+          if (!avenue) expect(planTileDistrict(plan, x, y)).toBeLessThanOrEqual(shownAt(tier, plan.districts));
         }
         // Every revealed lot is in a revealed district — `Lot.district` is the
         // plan's own assignment (the same field `planLotsUpTo` filters on), so
         // a lot that straddles a ring boundary reveals with its block, not
         // with whichever ring its origin tile happens to fall in.
         for (const lot of reveal.lots) {
-          expect(lot.district, `seed ${seed} tier ${tier} lot ${lot.x},${lot.y}`).toBeLessThanOrEqual(tier);
+          expect(lot.district, `seed ${seed} tier ${tier} lot ${lot.x},${lot.y}`).toBeLessThanOrEqual(shownAt(tier, plan.districts));
         }
         // And its frontage really is on a surviving street of a revealed
         // district, which is the other half of the same rule. The AVENUE is the
@@ -709,7 +711,7 @@ describe("TOWN-4.4 growth", () => {
             if (avenueTiles.has(idx(sx, sy))) continue;
             expect(planTileDistrict(plan, sx, sy),
               `seed ${seed} tier ${tier}: lot ${lot.x},${lot.y} fronts a hidden street at ${sx},${sy}`)
-              .toBeLessThanOrEqual(tier);
+              .toBeLessThanOrEqual(shownAt(tier, plan.districts));
           }
         }
         // Monotone: a tier-up only ADDS ground (nothing the player has built,
@@ -727,7 +729,8 @@ describe("TOWN-4.4 growth", () => {
       const full = drawn(town, grid, TOWN_VISUAL_MAX).reveal;
       const none = drawn(town, grid, 0).reveal;
       expect(full.lots.length).toBeGreaterThan(none.lots.length);
-      expect(none.grownRoads).toEqual([]); // tier 0 costs the boot nothing
+      // Owner 2026-10-05: tier 0 shows ring 1 too, so its grown streets are ring-1 streets, never further out.
+      for (const [x, y] of none.grownRoads) expect(planTileDistrict(plan, x, y)).toBeLessThanOrEqual(1);
       // A LEGACY town (no tier at all) draws the whole city.
       const legacy = drawn(town, grid, -1).reveal;
       expect(legacy.maxDistrict).toBe(plan.districts - 1);
@@ -758,31 +761,16 @@ describe("TOWN-4.4 growth", () => {
         expect(grid.occupancy[key]).toBe(-1);
         expect(inBounds(x, y)).toBe(true);
       }
-      // At tier 0 it grows no LOTS and no STREETS: `Town.houses` is the
-      // district-0 village (TOWN-4.3 stamps every district-0 lot tile) and
-      // `Town.roads` its streets plus the whole avenue, so the only ground the
-      // boot reveal adds is the district-0 blocks' back yards — art, not
-      // paving, which is why `grownRoads` is empty and the first sync costs
-      // exactly what it cost before TOWN-4.4.
-      const atZero = drawn(town, grid, 0).reveal;
-      // No street is paved at tier 0, so the boot reveal costs nothing.
-      expect(atZero.grownRoads).toEqual([]);
-      // The only ground it adds is inside a district-0 lot or a district-0
-      // block's yard: `planVillage` owns a lot's tiles that fall in ring 0
-      // while the reveal keeps the lot whole (`Lot.district`), so a lot on a
-      // ring boundary contributes its outer tiles here. It is never a street,
-      // never a reserved district, never water.
-      const districtZero = new Map<number, number>();
-      for (const lot of atZero.lots) {
-        for (let dy = 0; dy < lot.h; dy++) {
-          for (let dx = 0; dx < lot.w; dx++) districtZero.set(idx(lot.x + dx, lot.y + dy), lot.district);
-        }
-      }
-      for (const b of atZero.blocks) {
-        for (const [x, y] of b.interior) districtZero.set(idx(x, y), b.block.district);
-      }
+      // Owner 2026-10-05: tier 0 shows ring 1 as well. Everything it grows belongs to
+      // a revealed lot, a revealed block's yard or a revealed street (a block whose
+      // first ring is 1 is shown whole, so its yard may reach further out).
+      const zero = drawn(town, grid, 0).reveal;
+      const shown = new Set<number>();
+      for (const lot of zero.lots) for (let dy = 0; dy < lot.h; dy++) for (let dx = 0; dx < lot.w; dx++) shown.add(idx(lot.x + dx, lot.y + dy));
+      for (const blk of zero.blocks) for (const [x, y] of blk.interior) shown.add(idx(x, y));
+      for (const [x, y] of zero.roads) shown.add(idx(x, y));
       for (const [x, y] of plannedGrownTiles(town, grid, 0)) {
-        expect(districtZero.get(idx(x, y)), `tier 0 grew ${x},${y}, which is not district-0 ground`).toBe(0);
+        expect(shown.has(idx(x, y)), `tier 0 grew ${x},${y}, which nothing revealed`).toBe(true);
       }
       // The reserved districts are the reveal's ground, and they are added one
       // district at a time — never fewer than the tier before.
