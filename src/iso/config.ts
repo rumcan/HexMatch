@@ -1785,6 +1785,23 @@ export const TOWN_INTERIOR_OUTER = [
 ] as const;
 
 /** The zone pools `townBuildings` fills a planned town from. */
+/**
+ * TOWN-4.7 (#700): the town tier at which tall art may first stand in a
+ * PLANNED town, so a new game opens on a town, not a city (owner, 2026-10-04).
+ * Heights come from the 3D models (public/models/manifest.json `h`, in tiles):
+ * a 1x1 at ~1.2+ or a 2x2 office block waits for tier 2, the glass tower for
+ * tier 3. Unlisted art is tier 0. `_r` mirrors share their base's gate.
+ */
+export const TOWN_ART_MIN_TIER: Readonly<Record<string, number>> = {
+  town_cinema: 1, town_flats: 1, town_offices_1423: 1, town_flats_townhouse_tall: 1, town_hotel: 1,
+  town_offices_tall: 2, town_flats_grey: 2, town_house_c: 2,
+  town_shops_offices: 2, town_shops_offices_2: 2, town_office_1460: 2, town_flats_2: 2, town_flats_4: 2,
+  town_office_tower_modern: 3,
+};
+/** May `sprite` stand in a planned town at `tier`? */
+export const townArtUnlocked = (sprite: string, tier: number): boolean =>
+  (TOWN_ART_MIN_TIER[sprite.replace(/_r$/, "")] ?? 0) <= tier;
+
 export const TOWN_ZONE_POOLS: Record<TownZone, TownZonePool> = {
   downtown: {
     blocks: TOWN_DOWNTOWN_VARIANTS,

@@ -56,6 +56,8 @@ const idx = (tx: number, ty: number) => ty * MAP_W + tx;
 const inBounds = (tx: number, ty: number) => tx >= 0 && tx < MAP_W && ty >= 0 && ty < MAP_H;
 /** grid.ts's WATER terrain byte; a local copy for the same reason. */
 const WATER_IDX = 1;
+/** TOWN-4.7 (#700): the share of planned towns that get a second, crossing avenue. */
+export const CROSS_AVENUE_PERCENT = 35;
 
 /** TOWN-4.1 (#677): the map sizes a plan is drawn for. */
 export type PlanSize = "standard" | "large";
@@ -147,6 +149,12 @@ export interface TownPlan {
   avenue: { from: [number, number]; to: [number, number] };
   /** Both carriageway tiles of the avenue, low-u end first. */
   avenueTiles: [number, number][];
+  /**
+   * TOWN-4.7 (#700): a second avenue crossing the first at right angles beside
+   * the square (some towns only). Its carriageways run ACROSS `axis`; the four
+   * tiles where it meets the main avenue belong to `avenueTiles`, not here.
+   */
+  crossAvenueTiles?: [number, number][];
   /** The avenue's tiles at its two ends: where a highway may meet the town. */
   termini: [number, number][];
   square: {
@@ -255,6 +263,11 @@ export function planLotTiles(plan: TownPlan): [number, number][] {
   return out;
 }
 
+/** TOWN-4.7 (#700): every avenue tile of the plan — the main avenue and, when it has one, the cross avenue. */
+export function planAvenueTiles(plan: TownPlan): [number, number][] {
+  return plan.crossAvenueTiles ? [...plan.avenueTiles, ...plan.crossAvenueTiles] : plan.avenueTiles;
+}
+
 /** Every paved tile of the plan: the avenue, its streets and the circles. */
 export function planRoadTiles(plan: TownPlan): [number, number][] {
   const seen = new Set<number>();
@@ -267,7 +280,7 @@ export function planRoadTiles(plan: TownPlan): [number, number][] {
       out.push([x, y]);
     }
   };
-  add(plan.avenueTiles);
+  add(planAvenueTiles(plan));
   for (const street of plan.streets) add(street.tiles);
   add(plan.culDeSacs);
   return out;
@@ -288,7 +301,7 @@ export function planVillage(plan: TownPlan): {
   square: [number, number][];
 } {
   const key = (x: number, y: number): number => y * 4096 + x;
-  const avenue = new Set<number>(plan.avenueTiles.map(([x, y]) => key(x, y)));
+  const avenue = new Set<number>(planAvenueTiles(plan).map(([x, y]) => key(x, y)));
   const houses = planLotTiles(plan).filter(([x, y]) => planTileDistrict(plan, x, y) === 0);
   const roads: [number, number][] = [];
   const seen = new Set<number>();
@@ -298,6 +311,45 @@ export function planVillage(plan: TownPlan): {
     if (!avenue.has(k) && planTileDistrict(plan, x, y) !== 0) continue;
     seen.add(k);
     roads.push([x, y]);
+  }
+  // TOWN-4.7 (#700): clipping the streets at the district-0 ring can leave a
+  // village street that reaches the avenue only through streets the town does
+  // not own yet (a highway used to paper over the gap by running on them,
+  // which is how buildings ended up on a highway, #699). Join every such piece
+  // to the avenue along the plan's own streets, by the shortest connector.
+  const planRoad = new Set<number>(planRoadTiles(plan).map(([x, y]) => key(x, y)));
+  const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+  for (let guard = 0; guard < 64; guard++) {
+    const linked = new Set<number>();
+    const q: number[] = [];
+    for (const k of avenue) if (seen.has(k)) { linked.add(k); q.push(k); }
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h] % 4096, y = (q[h] / 4096) | 0;
+      for (const [dx, dy] of N4) {
+        const n = key(x + dx, y + dy);
+        if (seen.has(n) && !linked.has(n)) { linked.add(n); q.push(n); }
+      }
+    }
+    const stray = roads.find(([x, y]) => !linked.has(key(x, y)));
+    if (!stray) break;
+    // BFS from the stray piece over plan streets to the linked network.
+    const prev = new Map<number, number>([[key(stray[0], stray[1]), -1]]);
+    const bq = [key(stray[0], stray[1])];
+    let hit = -1;
+    for (let h = 0; h < bq.length && hit < 0; h++) {
+      const x = bq[h] % 4096, y = (bq[h] / 4096) | 0;
+      for (const [dx, dy] of N4) {
+        const n = key(x + dx, y + dy);
+        if (prev.has(n) || !planRoad.has(n)) continue;
+        prev.set(n, bq[h]);
+        if (linked.has(n)) { hit = n; break; }
+        bq.push(n);
+      }
+    }
+    if (hit < 0) break;   // nothing joins it: leave it (the plan audit reports it)
+    for (let c = prev.get(hit)!; c >= 0; c = prev.get(c)!) {
+      if (!seen.has(c)) { seen.add(c); roads.push([c % 4096, (c / 4096) | 0]); }
+    }
   }
   return { houses, roads, square: [...plan.square.tiles] };
 }
@@ -473,6 +525,47 @@ export function planTown(
   crossUs[0].sort((a, b) => a - b);
   crossUs[1].sort((a, b) => a - b);
 
+  // ── TOWN-4.7 (#700): a second, crossing avenue for some towns ─────────
+  // Decided by a hash of the town's centre, NOT the RNG, so a town without one
+  // draws exactly the plan it always did. The cross avenue takes the square
+  // side's cross street nearest the hall (never the plaza's own columns) and
+  // widens it to two tiles, u* and u*+1. It always spans both block rows
+  // (parallel street to parallel street) and runs on through an outer ribbon
+  // when that ribbon's column is free ground. The far side's crossings near it
+  // are moved onto it, so the meeting is a true four-way crossing, not a jog.
+  let crossU: number | null = null;
+  let crossVLo = 0, crossVHi = 0;
+  {
+    let h = Math.imul(cx + 0x2545f491, 0x9e3779b1) ^ Math.imul(cy + 0x68e31da4, 0x85ebca77);
+    h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+    const roll = ((h ^ (h >>> 12)) >>> 0) % 100;
+    if (roll < CROSS_AVENUE_PERCENT && crossUs[0].length + crossUs[1].length >= 2) {
+      const colFree = (u: number, from: number, to: number): boolean => {
+        for (let v = Math.min(from, to); v <= Math.max(from, to); v++) {
+          if (!freeAt(u, v) || !freeAt(u + 1, v)) return false;
+        }
+        return true;
+      };
+      const parLo = rowA(-1).par, parHi = rowA(1).par;
+      const candidates = [...new Set([...crossUs[0], ...crossUs[1]])]
+        .filter((u) => u > U0 + 3 && u + 1 < U1 - 3 && (u + 1 < sqU0 - 2 || u > sqU1 + 2))
+        .sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+      for (const u of candidates) {
+        if (!colFree(u, parLo, parHi)) continue;
+        crossU = u;
+        crossVLo = colFree(u, rowB(-1).b, parLo) ? rowB(-1).b : parLo;
+        crossVHi = colFree(u, parHi, rowB(1).b) ? rowB(1).b : parHi;
+        break;
+      }
+    }
+    if (crossU !== null) {
+      const u = crossU;
+      crossUs[0] = [...crossUs[0].filter((x) => x < u - 2 || x > u + 3), u, u + 1].sort((a, b) => a - b);
+      crossUs[1] = [...crossUs[1].filter((x) => x < u - 2 || x > u + 3), u, u + 1].sort((a, b) => a - b);
+    }
+  }
+  const crossCols = new Set<number>(crossU === null ? [] : [crossU, crossU + 1]);
+
   // ── the street set, as plan-frame keys ────────────────────────────────
   const street = new Map<number, StreetKind>();
   const avenueKeys = new Set<number>();
@@ -487,6 +580,18 @@ export function planTown(
     const side: 1 | -1 = s === 0 ? 1 : -1;
     const { a, par } = rowA(side);
     for (const u of crossUs[s]) for (const v of run(a, par)) street.set(key(u, v), "street");
+  }
+  /** TOWN-4.7: the cross avenue's tiles (the four meeting tiles stay the main avenue's). */
+  const crossKeys = new Set<number>();
+  if (crossU !== null) {
+    const vLo = Math.min(crossVLo, crossVHi), vHi = Math.max(crossVLo, crossVHi);
+    for (const u of [crossU, crossU + 1]) {
+      for (let v = vLo; v <= vHi; v++) {
+        const k = key(u, v);
+        street.set(k, "street");
+        if (!avenueKeys.has(k)) crossKeys.add(k);
+      }
+    }
   }
   // The parallel streets span their side's first to last cross street: both
   // ends are junctions, so neither end is a stub.
@@ -509,13 +614,26 @@ export function planTown(
   // the parallel street, as a lane ending in a turning circle at the ribbon's
   // far edge — the one legal dead end the epic allows, and the outer
   // residential ring's access.
-  const spurs: { side: 1 | -1; u: number; v0: number; v1: number }[] = [];
+  const spurs: { side: 1 | -1; u: number; v0: number; v1: number; avenue?: boolean }[] = [];
   for (let s = 0; s < 2; s++) {
     const side: 1 | -1 = s === 0 ? 1 : -1;
     const list = crossUs[s];
     if (list.length < 2) continue;
     const { a: bNear, b: bFar } = rowB(side);
+    // TOWN-4.7: does the cross avenue run on into THIS side's ribbon?
+    const crossInRibbon = crossU !== null && (side > 0 ? crossVHi === bFar : crossVLo === bFar);
     for (const u of list) {
+      if (crossCols.has(u)) {
+        if (crossInRibbon) {
+          // The cross avenue runs through the ribbon here: it bounds the ribbon
+          // blocks like a lane, but is no lane and has no circle.
+          spurs.push({ side, u, v0: Math.min(bNear, bFar), v1: Math.max(bNear, bFar), avenue: true });
+          continue;
+        }
+        // It stopped at the parallel street: its first column carries on as an
+        // ordinary cul-de-sac lane (below); the second one is no ribbon street.
+        if (u !== crossU) continue;
+      }
       let ok = true;
       for (const v of run(bNear, bFar)) if (!freeAt(u, v)) ok = false;
       if (!ok) continue;
@@ -606,7 +724,7 @@ export function planTown(
     for (let sweep = 0; sweep < 64; sweep++) {
       let removed = 0;
       for (const k of [...street.keys()]) {
-        if (avenueKeys.has(k) || circles.has(k)) continue;
+        if (avenueKeys.has(k) || crossKeys.has(k) || circles.has(k)) continue;
         if (streetNeighbours(k) < 2) { street.delete(k); removed++; }
       }
       if (!removed) break;
@@ -626,7 +744,7 @@ export function planTown(
         }
       }
       for (const k of [...street.keys()]) {
-        if (seen.has(k) || avenueKeys.has(k) || circles.has(k)) continue;
+        if (seen.has(k) || avenueKeys.has(k) || crossKeys.has(k) || circles.has(k)) continue;
         street.delete(k);
       }
     }
@@ -762,7 +880,16 @@ export function planTown(
       }
     };
 
+    const shortSides = [
+      [[spec.u0, spec.u0 + 1], spec.u0 - 1, front.uNeg],
+      [[spec.u1 - 1, spec.u1], spec.u1 + 1, front.uPos],
+    ] as const;
     if (!park) {
+      // TOWN-4.7 (#700): a side on the CROSS AVENUE is the busiest street at
+      // its corners, so it is laid before the horizontal frontages take them.
+      for (const [cols, out, dir] of shortSides.filter(([, out]) => crossCols.has(out))) {
+        layShortSide(cols, out, dir);
+      }
       // Horizontal frontages first: their rows take the corners, and the
       // avenue / parallel street are always the busier of the streets meeting
       // at a corner (the epic's "corner lots front the busier one").
@@ -799,7 +926,7 @@ export function planTown(
         let cur: [number, number][] = [];
         for (const u of run(spec.u0, spec.u1)) {
           const ok = street.has(key(u, edge.out))
-            && !edge.rows.some((v) => inSquare(u, v));           // the plaza's edge
+            && !edge.rows.some((v) => inSquare(u, v) || claimed.has(key(u, v)));   // the plaza's edge, or a cross-avenue lot
           if (ok) cur.push([u, edge.rows[0]]);
           else if (cur.length) { frontages.push(cur); cur = []; }
         }
@@ -817,10 +944,12 @@ export function planTown(
       }
       // Then the short sides (cross streets and spur lanes), on whatever rows
       // the horizontal lots left: a 2-wide column either side, 2 rows deep.
-      for (const [cols, out, dir] of [
-        [[spec.u0, spec.u0 + 1], spec.u0 - 1, front.uNeg],
-        [[spec.u1 - 1, spec.u1], spec.u1 + 1, front.uPos],
-      ] as const) {
+      for (const [cols, out, dir] of shortSides.filter(([, out]) => !crossCols.has(out))) {
+        layShortSide(cols, out, dir);
+      }
+    }
+    function layShortSide(cols: readonly [number, number], out: number, dir: LotFront): void {
+      {
         const rows: number[] = [];
         for (const v of run(spec.v0, spec.v1)) {
           if (!street.has(key(out, v))) continue;
@@ -892,18 +1021,20 @@ export function planTown(
     const side: 1 | -1 = s === 0 ? 1 : -1;
     const { a, par } = rowA(side);
     for (const u of crossUs[s]) {
+      if (crossCols.has(u)) continue;   // TOWN-4.7: that column is the cross avenue
       const tiles: [number, number][] = [];
       for (const v of run(a, par)) if (street.has(key(u, v))) tiles.push(at(u, v));
       if (tiles.length) streets.push({ kind: "street", tiles, district: minDistrict(tiles) });
     }
     const parTiles: [number, number][] = [];
     for (const u of run(U0, U1)) {
-      if (avenueKeys.has(key(u, par))) continue;
+      if (avenueKeys.has(key(u, par)) || crossKeys.has(key(u, par))) continue;
       if (street.has(key(u, par))) parTiles.push(at(u, par));
     }
     if (parTiles.length) streets.push({ kind: "street", tiles: parTiles, district: minDistrict(parTiles) });
   }
   for (const sp of spurs) {
+    if (sp.avenue) continue;
     const tiles: [number, number][] = [];
     for (const v of run(sp.v0, sp.v1)) if (street.has(key(sp.u, v))) tiles.push(at(sp.u, v));
     if (tiles.length) streets.push({ kind: "lane", tiles, district: minDistrict(tiles) });
@@ -912,6 +1043,11 @@ export function planTown(
   const avenueTiles: [number, number][] = [];
   for (const u of run(U0, U1)) for (const v of [av, av + 1]) avenueTiles.push(at(u, v));
   const termini: [number, number][] = [at(U0, av), at(U0, av + 1), at(U1, av), at(U1, av + 1)];
+  const crossAvenueTiles: [number, number][] = [...crossKeys].sort((a, b) => a - b).map((k) => at(keyU(k), keyV(k)));
+  if (crossU !== null) {
+    const vLo = Math.min(crossVLo, crossVHi), vHi = Math.max(crossVLo, crossVHi);
+    termini.push(at(crossU, vLo), at(crossU + 1, vLo), at(crossU, vHi), at(crossU + 1, vHi));
+  }
   const squareTiles: [number, number][] = [];
   for (const v of run(sqV0, sqV1)) for (const u of run(sqU0, sqU1)) squareTiles.push(at(u, v));
 
@@ -921,7 +1057,7 @@ export function planTown(
   const reserved: [number, number][] = [];
   const core: [number, number][] = [];
   for (const k of street.keys()) {
-    if (avenueKeys.has(k)) continue;
+    if (avenueKeys.has(k) || crossKeys.has(k)) continue;
     const [x, y] = at(keyU(k), keyV(k));
     reserved.push([x, y]);
     if (tileDistrict(x, y) === 0) core.push([x, y]);
@@ -937,13 +1073,14 @@ export function planTown(
     reserved.push([x, y]);
     core.push([x, y]);
   }
-  const bounds = box([...reserved, ...avenueTiles]);
+  const bounds = box([...reserved, ...avenueTiles, ...crossAvenueTiles]);
   return {
     axis,
     size,
     mirror,
     avenue: { from: at(U0, av), to: at(U1, av) },
     avenueTiles,
+    ...(crossAvenueTiles.length ? { crossAvenueTiles } : {}),
     termini,
     square: { ...box(squareTiles), hall: [cx, cy], tiles: squareTiles },
     streets,

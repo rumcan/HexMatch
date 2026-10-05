@@ -582,13 +582,18 @@ function stampAvenue(t: Track, plan: TownPlan): void {
   // also overrides the `rings` street tier the avenue picks up from
   // `Town.roads`: the avenue is a trunk, not a kerbed town street.)
   const tier: RoadTier = plan.axis === "x" ? AVENUE_X : AVENUE_Y;
-  const laid: [number, number][] = [];
-  for (const [x, y] of plan.avenueTiles) {
-    if (!inMapT(x, y)) continue;
-    buildTile(t, "road", x, y, PUBLIC_OWNER);
-    laid.push([x, y]);
+  // TOWN-4.7 (#700): a cross avenue runs the other way, so it takes the other
+  // axis tier; the four tiles where the two meet stay the main avenue's.
+  const crossTier: RoadTier = plan.axis === "x" ? AVENUE_Y : AVENUE_X;
+  const laid: [number, number, RoadTier][] = [];
+  for (const [tiles, tr] of [[plan.avenueTiles, tier], [plan.crossAvenueTiles ?? [], crossTier]] as const) {
+    for (const [x, y] of tiles) {
+      if (!inMapT(x, y)) continue;
+      buildTile(t, "road", x, y, PUBLIC_OWNER);
+      laid.push([x, y, tr]);
+    }
   }
-  for (const [x, y] of laid) setRoadTier(t, x, y, tier);
+  for (const [x, y, tr] of laid) setRoadTier(t, x, y, tr);
 }
 
 /**
