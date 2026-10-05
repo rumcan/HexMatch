@@ -512,7 +512,7 @@ function snapshotSource(): SnapshotSource {
 
 describe("TOWN-4.1: snapshot v18 carries the map size; a mismatch is refused both ways", () => {
   it("bumped the version, and writes the size it was built at", () => {
-    expect(SNAPSHOT_VERSION).toBe(18);
+    expect(SNAPSHOT_VERSION).toBe(19);   // v19: TOWN-4.7 (#700)
     const s = buildSnapshot(snapshotSource());
     expect([s.mapW, s.mapH]).toEqual([144, 144]);
     expect(validateSnapshot({ ...s, version: 17 })?.code).toBe("version");
@@ -595,7 +595,7 @@ function savePayload(side: number, size: "standard" | "large" | undefined, snapV
 
 describe("TOWN-4.1: saves record the size; a save without it is a 144 save", () => {
   it("a snap-17 save (written before the option) still loads, as a 144 map", () => {
-    expect(SAVE_SNAP_VERSIONS).toEqual([17, 18]);
+    expect(SAVE_SNAP_VERSIONS).toEqual([17, 18, 19]);
     const store = stubStorage();
     const old = savePayload(144, undefined, 17);
     store.set(SAVE_KEY, JSON.stringify(old));

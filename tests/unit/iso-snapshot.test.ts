@@ -334,7 +334,7 @@ describe("E10 malformed payloads", () => {
     // carries its rotation — a v14 guest would build a different island.
     // v18 (TOWN-4.1 / #677): the map size is a per-game option, so the layers
     // are measured against the size the snapshot carries (`mapW`/`mapH`).
-    expect(SNAPSHOT_VERSION).toBe(18);
+    expect(SNAPSHOT_VERSION).toBe(19);
     expect(validateSnapshot(old)?.code).toBe("version");
     expect(() => applySnapshot(old)).toThrow(/incompatible version/i);
   });

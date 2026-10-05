@@ -106,7 +106,12 @@ import type { OfferWire } from "./offers";
 // NOT a save break: a save's track layers share this wire format, and every
 // v17 save is a 144 map, byte for byte — `savegame-runtime.ts` keeps reading
 // it (SAVE_SNAP_VERSIONS) and loads it at 144.
-export const SNAPSHOT_VERSION = 18;
+// v19 (TOWN-4.7 / #700, TOWN-BUG-2 / #699): seed-derived PLANNED towns and
+// highways changed (a crossing second avenue on some towns, highways kept off
+// plan land and routed through the avenue ends, village street connectors), so
+// two builds generate different planned maps from one seed: mixed versions
+// must refuse. Wire shape unchanged; saves keep loading (SAVE_SNAP_VERSIONS).
+export const SNAPSHOT_VERSION = 19;
 
 /** TOWN-4.1: the byte count of one track (or rail) layer on a w×h map. */
 export const expectedTrackBytes = (w: number = MAP_W, h: number = MAP_H): number => w * h;

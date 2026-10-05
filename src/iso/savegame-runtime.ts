@@ -50,7 +50,7 @@ export const OLD_SAVE_TOAST = "This save is from an older version — start a ne
  * The next bump that keeps saves loadable adds the outgoing version here;
  * one that genuinely moves the seeded map leaves it out.
  */
-export const SAVE_SNAP_VERSIONS: readonly number[] = [17, SNAPSHOT_VERSION];
+export const SAVE_SNAP_VERSIONS: readonly number[] = [17, 18, SNAPSHOT_VERSION];
 
 const snapVersionLoads = (snapV: unknown): boolean =>
   typeof snapV === "number" && SAVE_SNAP_VERSIONS.includes(snapV);
