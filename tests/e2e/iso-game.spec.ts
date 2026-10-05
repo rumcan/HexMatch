@@ -58,6 +58,9 @@ async function bootIso(page: import("@playwright/test").Page) {
     remembered: {
       "hexmatch:rival-skill": "normal",
       "hexmatch:tutorial": "never",
+      // TOWN-4.5 (#681): new games default to the LARGE map with planned towns; seed 1337 was
+      // swept on the standard grid-town map, so the Play menu's map picker is remembered on it.
+      "hexmatch:new-game-map": JSON.stringify({ size: "standard", layout: "grid" }),
     },
   });
 }
@@ -180,8 +183,9 @@ test.describe("iso layout on every viewport", () => {
     // flag, OFF by default (production ignores `?rail=1`; the rail-on bar is
     // covered by iso-game.test.ts booting with { rail: true }).
     // HUD redesign (#516) + rail on by default: the Build list carries road grades, the
-    // railway tools and Level Ground too — twelve tools, in this order.
-    await expect(root.locator("[data-tool]")).toHaveCount(12);
+    // railway tools and Level Ground too; TOWN-4.2 (#678) added the Avenue grade —
+    // thirteen tools, in this order.
+    await expect(root.locator("[data-tool]")).toHaveCount(13);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
     const scene = await page.evaluate(() => {
       const h = (window as unknown as { __iso: {
@@ -255,7 +259,7 @@ test.describe("iso game boots on the default route", () => {
     // behind RAIL-05's feature flag (OFF by default, and never on in production).
     const tools = await root.locator("[data-tool]").evaluateAll((bs) =>
       bs.map((b) => (b as HTMLElement).dataset.tool));
-    expect(tools).toEqual(["select", "dirt", "street", "road", "highway", "harvester", "rail", "platform", "loop", "plant", "level", "demolish"]);
+    expect(tools).toEqual(["select", "dirt", "street", "road", "highway", "avenue", "harvester", "rail", "platform", "loop", "plant", "level", "demolish"]);
     await expect(root.locator("[data-act=recenter]")).toHaveCount(1);
 
     // J1: the match-3 quarry is mounted NEXT TO the map, not instead of it,
