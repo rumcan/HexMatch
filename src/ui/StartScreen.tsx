@@ -1768,7 +1768,8 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
       <fieldset className="ms-group" disabled={locked || !hosting}>
         <legend>Town style</legend>
         <div className="ms-presets" role="group" aria-label="Town style">
-          {(Object.entries({ planned: "avenues + plazas", organic: "winding lanes", grid: "city blocks" }) as [TownLayout, string][]).map(([layout, blurb]) => (
+          {/* TOWN-2b (#697): organic is no longer offered for a new room. */}
+          {(Object.entries({ planned: "avenues + plazas", grid: "city blocks" }) as [TownLayout, string][]).map(([layout, blurb]) => (
             <button type="button" key={layout} data-sfx="tab"
               className={`ms-preset${shownLayout === layout ? " on" : ""}`}
               aria-pressed={shownLayout === layout}
@@ -1777,7 +1778,7 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
             </button>
           ))}
         </div>
-        <p className="ms-hint">Planned towns grow along avenues as they level; organic and grid towns keep their familiar streets.</p>
+        <p className="ms-hint">Planned towns grow along avenues as they level; grid towns keep their familiar streets.</p>
       </fieldset>
 
       {/* MP-MGR: manager perks on / off — the host's rule, read-only for a guest. */}

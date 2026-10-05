@@ -3401,7 +3401,7 @@ export function lotFrontageTiles(lot: Lot): [number, number][] {
 }
 
 /** TOWN-BUG-2 (#699): art whose PNG is bigger than its manifest footprint (#694). */
-const PLANNED_OVERSIZE_ART: ReadonlySet<string> = new Set(["town_hotel", "town_hotel_r"]);
+const PLANNED_OVERSIZE_ART: ReadonlySet<string> = new Set<string>();   // empty since #707 re-drew town_hotel at 1x2
 const highwayCache = new WeakMap<Grid, Set<number>>();
 /**
  * TOWN-BUG-2 (#699): the inter-town highway tiles that are NOT a town's own

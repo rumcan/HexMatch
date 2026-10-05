@@ -46,7 +46,9 @@ function Preset(props: { on: boolean; onClick: () => void; label: string; small?
 }
 
 const SKILL_BLURB: Record<PlaySkill, string> = { easy: "relaxed rival", normal: "the shipped game", hard: "sharp rival" };
-const LAYOUT_BLURB: Record<TownLayout, string> = { planned: "avenues + plazas", organic: "winding lanes", grid: "city blocks" };
+// TOWN-2b (#697): "organic" (the diagonal-avenue towns) is no longer offered for a NEW game;
+// old organic saves and rooms still load as they were.
+const LAYOUT_BLURB: Partial<Record<TownLayout, string>> = { planned: "avenues + plazas", grid: "city blocks" };
 const MONEY_BLURB: Record<MoneyChoice, string> = { low: "½ cash", normal: "today", high: "2× cash" };
 
 export function NewGameSettingsPage({ initial, defaults, lastSeed, onBack, onStart, onSave }: Props) {

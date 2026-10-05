@@ -41,7 +41,8 @@ export function loadNewGameMap(
     if (!parsed || typeof parsed !== "object") return fallback;
     return {
       size: readMapSize(parsed.size) ?? fallback.size,
-      layout: readTownLayout(parsed.layout) ?? fallback.layout,
+      // TOWN-2b (#697): a remembered "organic" choice is no longer offered; it becomes the default.
+      layout: ((l) => (l && l !== "organic" ? l : fallback.layout))(readTownLayout(parsed.layout)),
     };
   } catch {
     return fallback;
