@@ -111,9 +111,9 @@ import {
 } from "./protest";
 import { loadGroundTextures } from "./ground";
 import {
-  createCamera, tickViewYaw, getViewYaw, rotateViewStep, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt,
-  createGesture, pointerDown, pointerMove, pointerUp, worldToScreen, panBy,
-  bootZoomFor, tapSlop, HH, HW, visibleTileRange, screenToTileAt,
+  createCamera, tickViewYaw, getViewYaw, rotateViewStep, centerOnTile, centerOnWorld, resizeCamera, zoomStepAt, zoomAt, tileToScreenAt, tileVertexAt,
+  createGesture, pointerDown, pointerMove, pointerUp, panBy,
+  bootZoomFor, tapSlop, HH, visibleTileRange, screenToTileAt,
   type Camera, type GestureState,
 } from "./camera";
 // AMB-2 (#391): the bird pool — cosmetic, seeded from the map seed, drawn at
@@ -2821,7 +2821,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // (flashLayer — a FloatLayer of its own so the delivery/sabotage texts a
   // test reads from `floats` never mix with the on-map "build it HERE" line).
   const tileScreenCss = (tx: number, ty: number): [number, number] => {
-    const [x, y] = tileToScreenAt(cam, tx, ty);
+    const [x, y] = tileVertexAt(cam, tx, ty, -1);   // 3D-FIX-2: the top vertex at any yaw
     const d = dpr();
     // E3 (#269): a float/label over a raised tile must rise with it. Lift the
     // anchor by the surface height of the tile under it (sampled at the tile
@@ -2839,16 +2839,22 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const guideTileRect = (box: GuideBox): { x: number; y: number; w: number; h: number } | null => {
     const d = dpr();
     const host = ui.mapHost.getBoundingClientRect();
-    const hw = (HW * cam.zoom) / d;
     const hh = (HH * cam.zoom) / d;
-    const [, ty] = tileToScreenAt(cam, box.x0, box.y0);     // the top vertex
-    const [, by] = tileToScreenAt(cam, box.x1, box.y1);     // the bottom tile
-    const [lx] = tileToScreenAt(cam, box.x0, box.y1);       // the left flank
-    const [rx] = tileToScreenAt(cam, box.x1, box.y0);       // the right flank
-    const left = (lx - hw) / d;
-    const top = (ty - hh) / d;
-    const right = (rx + hw) / d;
-    const bottom = (by + 2 * hh) / d;
+    // 3D-FIX-2 (#661): the box's four outer lattice corners, bounded — under a
+    // view turn any of them can be the top/left/right/bottom, so none is
+    // assumed. At yaw 0 this is exactly the old top / left / right / bottom.
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [cx, cy] of [[box.x0, box.y0], [box.x1 + 1, box.y0], [box.x0, box.y1 + 1], [box.x1 + 1, box.y1 + 1]] as const) {
+      const [sx, sy] = tileToScreenAt(cam, cx, cy);
+      if (sx < x0) x0 = sx;
+      if (sx > x1) x1 = sx;
+      if (sy < y0) y0 = sy;
+      if (sy > y1) y1 = sy;
+    }
+    const left = x0 / d;
+    const top = (y0 - hh) / d;
+    const right = x1 / d;
+    const bottom = y1 / d;
     if (right - left < 4 || bottom - top < 4) return null;
     return { x: host.left + left, y: host.top + top, w: right - left, h: bottom - top };
   };
@@ -16195,8 +16201,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     const draw = (tx: number, ty: number, alpha: number, label: string | null) => {
       // Feet on the road: the png's bottom-centre lands on the tile diamond's
       // bottom vertex, the same ground point a truck drives over.
-      const [wx, wy] = tileToScreen(tx + 1, ty + 1);
-      const [bx, by] = worldToScreen(cam, wx, wy);
+      const [bx, by] = tileVertexAt(cam, tx, ty, 1);   // 3D-FIX-2: the bottom vertex at any yaw
       if (bx < -w || by < -h - 24 * z || bx > cam.vw + w || by > cam.vh + h) return;
       ctx.globalAlpha = alpha;
       ctx.drawImage(protestImg!, Math.floor(bx - w / 2), Math.floor(by - h + 6 * z), w, h);

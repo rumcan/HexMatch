@@ -104,6 +104,21 @@ export function tileToScreenAt(c: Camera, tx: number, ty: number): [number, numb
   return worldToScreen(c, wx, wy);
 }
 
+/**
+ * 3D-FIX-2 (#661): the screen point a tile-anchored overlay (label, float,
+ * protest crowd) means by "the tile's TOP vertex" (dy = -1) or "its BOTTOM
+ * vertex" (dy = +1), at any view yaw. Under a turn the lattice corner
+ * (tx, ty) is no longer the tile's top on screen, so the anchor is the turned
+ * tile CENTRE moved half a tile straight up / down the screen. Yaw 0 keeps the
+ * lattice-corner path exactly.
+ */
+export function tileVertexAt(c: Camera, tx: number, ty: number, dy: -1 | 1): [number, number] {
+  if (yaw === 0) return tileToScreenAt(c, dy < 0 ? tx : tx + 1, dy < 0 ? ty : ty + 1);
+  const [wx, wy] = tileToScreen(tx + 0.5, ty + 0.5);
+  const [sx, sy] = worldToScreen(c, wx, wy);
+  return [sx, sy + dy * HH * c.zoom];
+}
+
 // ── zoom ──────────────────────────────────────────────────────────────────
 export const zoomIndex = (z: Zoom) => ZOOM_STEPS.indexOf(z);
 
