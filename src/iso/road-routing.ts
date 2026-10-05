@@ -21,7 +21,32 @@ import { DEFAULT_FACING, depotEntranceTiles, type DepotFacing } from "./depot";
  * the dirt layer, so it never faces back on it). A tile never carries both
  * tiers (`track.ts` replaces on pave).
  */
+/**
+ * Owner playtest 2026-10-05: "the plant is connected and there is no truck".
+ * A lorry drives its route OUT and then BACK the same way, so it can never
+ * honour a one-way Avenue in both directions; and the connection test that
+ * says "connected" is direction-blind. When the only way from a depot to its
+ * plant runs against an avenue's carriageway, the strict search found nothing
+ * and the depot got no truck. The one-way route is still preferred; when there
+ * is none, the lorry's route ignores the carriageway direction (the traffic
+ * sim still drives it on its own side of the road).
+ */
+let avenueGate = true;
+const avenueOk = (track: Track, ax: number, ay: number, bx: number, by: number): boolean =>
+  !avenueGate || avenueEdgeOk(track, ax, ay, bx, by);
+
 export function roadPath(
+  track: Track, owner: number,
+  from: [number, number][], goals: Set<number>,
+  kind?: TrackKind,
+): [number, number][] | null {
+  const strict = roadPathOnce(track, owner, from, goals, kind);
+  if (strict) return strict;
+  avenueGate = false;
+  try { return roadPathOnce(track, owner, from, goals, kind); } finally { avenueGate = true; }
+}
+
+function roadPathOnce(
   track: Track, owner: number,
   from: [number, number][], goals: Set<number>,
   kind?: TrackKind,
@@ -58,7 +83,7 @@ export function roadPath(
       // also ONE-WAY — against the carriageway, across the median off a
       // junction, and into an orphaned half never expand. Maps without
       // avenues pass unchanged (avenueEdgeOk is a cheap non-avenue pass).
-      if (!avenueEdgeOk(track, x, y, nx, ny)) continue;
+      if (!avenueOk(track, x, y, nx, ny)) continue;
       const ni = tIdx(nx, ny);
       if (parent.has(ni)) continue;
       if (!trackOpenTo(track, owner, nx, ny)) continue;        // W2 + PP-13
@@ -153,7 +178,7 @@ function diagonalRoadPath(
       // TOWN-4.2 (#678): same one-way Avenue gate as the BFS (no avenue
       // tiles on the map → avenueEdgeOk is always true, costs one read).
       if ((bitsOf(x, y) & d) && (bitsOf(nx, ny) & OPPOSITE[d])
-        && avenueEdgeOk(track, x, y, nx, ny)) visit(nx, ny, 1);
+        && avenueOk(track, x, y, nx, ny)) visit(nx, ny, 1);
     }
     for (const [nx, ny] of roadDiagNeighbours(track, x, y, kind)) visit(nx, ny, Math.SQRT2);
     for (const d of DIRS) {
