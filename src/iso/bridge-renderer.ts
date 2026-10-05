@@ -48,6 +48,8 @@ export interface BridgeDeck {
   kind?: DeckKind;
   /** BRIDGE-1: false for a deck that does not stand in water (a rail overpass over a road). */
   pier?: boolean;
+  /** BRIDGE-1: how far (zoom-1 px) the deck stands above the water under it - the pier's height. */
+  heightPx?: number;
 }
 
 /**
@@ -277,8 +279,12 @@ export function paintBridgeDecks(
   const shadowOff = screen(4, 8);
   const left1 = screen(-1, 0);
 
-  // 1. The shadow on the water (sun from the upper left).
-  for (const d of decks) strokeAll(ctx, deckArms(d).map((a) => shift(a, shadowOff)), deckHalf(d) * 2, SHADOW, elev);
+  // 1. The shadow on the water (sun from the upper left), cast down past the
+  //    deck's own height so a raised bridge throws it onto the water below.
+  for (const d of decks) {
+    const off = d.heightPx ? screen(4 + d.heightPx * 0.25, 8 + d.heightPx) : shadowOff;
+    strokeAll(ctx, deckArms(d).map((a) => shift(a, off)), deckHalf(d) * 2, SHADOW, elev);
+  }
 
   // 2. A pier under every deck tile that stands in water: a dark column from
   //    the deck down into the water, a lighter face on its sunny side.
@@ -286,7 +292,8 @@ export function paintBridgeDecks(
     if (d.pier === false) continue;
     const c: GroundPoint = [d.tx + 0.5, d.ty + 0.5];
     const w = Math.min(0.2, deckHalf(d) * 0.4);
-    const col: GroundPoint[] = [c, [c[0] + down12[0], c[1] + down12[1]]];
+    const reach = d.heightPx ? screen(0, d.heightPx + 10) : down12;
+    const col: GroundPoint[] = [c, [c[0] + reach[0], c[1] + reach[1]]];
     strokeAll(ctx, [col], w, PIER_DARK, elev);
     strokeAll(ctx, [shift(col, left1)], w * 0.45, PIER, elev);
   }
