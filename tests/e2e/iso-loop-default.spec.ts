@@ -29,7 +29,7 @@ async function bootFresh(page: import("@playwright/test").Page, search: string) 
   // the fresh game this spec is about. Drop it before the menu mounts.
   await page.evaluate((k) => localStorage.removeItem(k), SAVE_KEY);
   await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+  await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
   await page.waitForFunction(() => {
     const h = (window as unknown as {
       __iso?: { phase: string; loading: boolean; grid?: { industries: unknown[] } };

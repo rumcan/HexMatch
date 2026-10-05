@@ -70,8 +70,15 @@ export function NewGameSettingsPage({ initial, defaults, lastSeed, onBack, onSta
   return (
     <div className="start-panel px-dialog-card ng-page">
       <p className="start-kicker">SOLO · NEW GAME</p>
-      <h1>Game settings</h1>
-      <p className="start-subtitle">Everything here starts at today's game. Change what you like; the Play screen remembers it for the next new game.</p>
+      <h1>New game</h1>
+      <p className="start-subtitle">Pick the game type and how you want to play. Your choices are remembered for the next new game.</p>
+
+      <Row name="Game type">
+        <Preset on={!d.conquest} onClick={() => set({ conquest: false })} testId="ng-mode-classic"
+          label="Vs AI" small="first to the ★ line" />
+        <Preset on={d.conquest} onClick={() => set({ conquest: true })} testId="ng-mode-conquest"
+          label="Conquest" small="no ★ line · win when the rival is bankrupt" />
+      </Row>
 
       <Row name="Rival difficulty">
         {(["easy", "normal", "hard"] as const).map((k) => (
@@ -101,12 +108,14 @@ export function NewGameSettingsPage({ initial, defaults, lastSeed, onBack, onSta
         ))}
       </Row>
 
-      <Row name="Win target" note={`The first seat to ${d.winVp}★ wins. Stars come from running Depots, paved routes, city upgrades and held sites.`}>
-        {WIN_VP_PRESETS.map((p) => (
-          <Preset key={p.vp} on={d.winVp === p.vp} onClick={() => set({ winVp: p.vp })} testId={`ng-win-${p.vp}`}
-            label={`${p.vp}★`} small={p.label} />
-        ))}
-      </Row>
+      {d.conquest ? null : (
+        <Row name="Win target" note={`The first seat to ${d.winVp}★ wins. Stars come from running Depots, paved routes, city upgrades and held sites.`}>
+          {WIN_VP_PRESETS.map((p) => (
+            <Preset key={p.vp} on={d.winVp === p.vp} onClick={() => set({ winVp: p.vp })} testId={`ng-win-${p.vp}`}
+              label={`${p.vp}★`} small={p.label} />
+          ))}
+        </Row>
+      )}
 
       <Row name="Starting money">
         {(["low", "normal", "high"] as const).map((m) => (

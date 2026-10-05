@@ -98,9 +98,8 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
   it("boots straight into Play vs AI with no save, with no Continue door", async () => {
     await render();
     expect(buttons().some((b) => /^Continue/.test((b.textContent ?? "").trim()))).toBe(false);
-    const play = findButton(/^Play vs AI/);
-    expect(play.textContent).toMatch(/no login/);
-    await click(play);
+    await click(findButton(/^Start new game/));
+    await click(document.querySelector('[data-testid="ng-start"]') as HTMLButtonElement);
     expect(choices).toEqual([{
       mode: "ai", portrait: "anne", conquest: false,
       // TOWN-4.5 (#681): the new-game door forwards the Play screen's
@@ -120,7 +119,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     expect(cont.textContent).toMatch(/0★ vs 0★/);
     expect(cont.textContent).toMatch(/saved 2 h ago/);
     // the door beneath now reads as the NEW-game path
-    expect(findButton(/^Play vs AI/).textContent).toMatch(/start a new game/);
+    expect(findButton(/^Start new game/)).toBeTruthy();
     const rawBefore = localStorage.getItem(SAVE_KEY);
     await click(cont);
     expect(choices).toEqual([{ mode: "ai", portrait: "anne" }]);
@@ -130,7 +129,8 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
   it("Play vs AI asks before clearing the old match; cancel keeps the save", async () => {
     writeSave(SAVE_KEY);
     await render();
-    await click(findButton(/^Play vs AI/));
+    await click(findButton(/^Start new game/));
+    await click(document.querySelector('[data-testid="ng-start"]') as HTMLButtonElement);
     // the painted ask stands, no boot yet
     const plate = confirmPlate();
     expect(plate).not.toBeNull();
@@ -146,7 +146,8 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     writeSave(SAVE_KEY);
     localStorage.setItem(SKILL_STORAGE_KEY, "hard");
     await render();
-    await click(findButton(/^Play vs AI/));
+    await click(findButton(/^Start new game/));
+    await click(document.querySelector('[data-testid="ng-start"]') as HTMLButtonElement);
     await click(confirmOk());
     await flush();
     expect(choices).toEqual([{
@@ -156,7 +157,9 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
       map: { size: "standard", layout: "grid" },
     }]);
     expect(localStorage.getItem(SAVE_KEY)).toBeNull();
-    expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBeNull();
+    // the old match's pick is cleared, then the page's own difficulty (hard,
+    // shown on the page) is recorded, so the in-game prompt never asks again
+    expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBe("hard");
   });
 
   it("only offers Continue while the save is inside the freshness window", async () => {
@@ -164,7 +167,7 @@ describe("mode screen — Continue vs a new Play vs AI", () => {
     writeSave(SAVE_KEY, { savedAt: Date.now() - 8 * 24 * 3600_000 });
     await render();
     expect(buttons().some((b) => /^Continue/.test((b.textContent ?? "").trim()))).toBe(false);
-    expect(findButton(/^Play vs AI/).textContent).toMatch(/no login/);
+    expect(findButton(/^Start new game/)).toBeTruthy();
   });
 });
 

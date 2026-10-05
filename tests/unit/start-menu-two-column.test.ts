@@ -130,7 +130,7 @@ describe("#184 two-column mode menu", () => {
     const labels = buttonLabels(container.querySelector(".start-actions")!);
     // Story mode is hidden for now (src/story/flag.ts) — its door comes and goes with the flag.
     expect(labels.some((l) => l.startsWith("Story Mode"))).toBe(STORY_MODE_ENABLED);
-    for (const action of ["Play vs AI", "Scenarios", "Back to the menu"]) {
+    for (const action of ["Start new game", "Scenarios", "Back to the menu"]) {
       expect(labels.some((l) => l.startsWith(action)), `missing action: ${action}`).toBe(true);
     }
     // Owner (2026-09-29): the multiplayer doors moved to the Multiplayer tab.
@@ -147,7 +147,7 @@ describe("#184 two-column mode menu", () => {
     // #681: size + town style for the next Solo game) — no multiplayer group.
     const groupLabels = [...container.querySelectorAll(".start-actions .start-actions-label")]
       .map((el) => el.textContent);
-    expect(groupLabels).toEqual(["Solo", "New game map"]);
+    expect(groupLabels).toEqual(["Solo"]);   // the map choice lives on the New game page now
     // …and the header's Multiplayer tab opens the screen that holds the rest.
     const tab = container.querySelector<HTMLButtonElement>('.px-tabs [data-tab="multiplayer"]');
     expect(tab, "a Multiplayer tab beside the Ladder").toBeTruthy();
@@ -163,7 +163,7 @@ describe("#184 two-column mode menu", () => {
   it("puts each mode's detail on its own line under the label", async () => {
     await renderModes();
     const story = [...container.querySelectorAll(".start-actions button")]
-      .find((b) => (b.textContent ?? "").startsWith("Play vs AI"))!;
+      .find((b) => (b.textContent ?? "").startsWith("Start new game"))!;
     expect(story.querySelector("small")?.textContent).toBeTruthy();
     const css = stylesCss();
     expect(css).toMatch(/\.start-panel\.start-modes \.start-actions button\s*\{[^}]*flex-direction:\s*column/s);
@@ -177,7 +177,7 @@ describe("#184 two-column mode menu", () => {
       order.findIndex((l) => l.includes("Anne Whitmore")),
       order.findIndex((l) => l.includes("James Calloway")),
     );
-    const firstAction = order.findIndex((l) => l.startsWith(STORY_MODE_ENABLED ? "Story Mode" : "Play vs AI"));
+    const firstAction = order.findIndex((l) => l.startsWith(STORY_MODE_ENABLED ? "Story Mode" : "Start new game"));
     expect(lastPortrait).toBeGreaterThanOrEqual(0);
     expect(firstAction).toBeGreaterThan(lastPortrait);
   });

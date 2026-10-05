@@ -37,7 +37,7 @@ async function bootIso(page: import("@playwright/test").Page) {
   });
   await page.goto(ISO_URL);
   await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+  await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
   await page.waitForFunction(() => {
     const h = (window as any).__iso;
     return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0 && !h.loading;

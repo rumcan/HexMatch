@@ -28,7 +28,7 @@ const SIZES = [
 const ACTIONS = [
   // Story mode is hidden for now (src/story/flag.ts).
   ...(STORY_MODE_ENABLED ? ["Story Mode"] : []),
-  "Play vs AI",
+  "Start new game",
   "Scenarios",
   // Owner (2026-09-29): Multiplayer (Auto Matchmaking, Host, Join, the ladder)
   // has its own screen behind the header's Multiplayer tab — the Play card is Solo.
@@ -92,8 +92,8 @@ test.describe("start menu two-column layout", () => {
         // ^Play vs AI regex matched both and triggered a strict-mode violation. Match the exact label
         // for that entry (the Conquest button has its own explicit name) and keep prefix matching for
         // the rest (e.g. "Auto Matchmaking" may carry a <small> suffix in the accessible name).
-        const nameFilter = action === "Play vs AI"
-          ? /^Play vs AI(?! — Conquest)/
+        const nameFilter = action === "Start new game"
+          ? /^Start new game/
           : new RegExp(`^${action}`);
         const button = page.locator(".start-actions").getByRole("button", { name: nameFilter });
         await expect(button).toBeVisible();

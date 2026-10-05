@@ -83,9 +83,11 @@ export async function bootSoloIso(
     await page.locator(".menu-btn.primary").click();
   } else {
     await page.locator(".menu-btn.primary").click();
-    const playBtn = page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ });
+    // Owner 2026-10-05: one "Start new game" door opens the New game page; Start game boots.
+    const playBtn = page.getByRole("button", { name: /^Start new game/ });
     await playBtn.waitFor({ state: "visible", timeout: bootBudget() });
     await playBtn.click();
+    await page.getByTestId("ng-start").click();
   }
   await page.waitForFunction((resumed) => {
     const h = (window as unknown as {

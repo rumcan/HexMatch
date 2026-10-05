@@ -61,7 +61,7 @@ describe("SETTINGS-1: the stored settings", () => {
       size: "standard", layout: "grid", rivers: false, elevation: false, rings: false, diag: false,
       seed: 4242, townCount: 5, winVp: 18, moneyScale: 2,
     });
-    expect(describeNewGame(s)).toBe("Standard map · Grid towns · Hard rival · first to 18★ · 5 towns · High money · seed 4242");
+    expect(describeNewGame(s)).toBe("Vs AI · Standard map · Grid towns · Hard rival · first to 18★ · 5 towns · High money · seed 4242");
   });
 
   it("a bad stored value costs that one setting, never the page", () => {

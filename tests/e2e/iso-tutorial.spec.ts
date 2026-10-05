@@ -69,7 +69,7 @@ async function boot(page: Page, extra = "", opts: { fresh?: boolean } = {}) {
       await page.getByRole("button", { name: /^Continue/ }).click();
     } else {
       await menuBtn.click();
-      await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+      await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
     }
   }
   await page.waitForFunction(() => {

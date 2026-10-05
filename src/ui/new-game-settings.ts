@@ -38,6 +38,8 @@ export const WIN_VP_PRESETS = [
 export type PlaySkill = Exclude<SkillKey, "trainee">;
 
 export interface NewGameSettings {
+  /** Owner (2026-10-05): the game type is picked on this page too. Conquest = no star line, win when the rival is bankrupt. */
+  conquest: boolean;
   size: MapSizeName;
   layout: TownLayout;
   skill: PlaySkill;
@@ -59,6 +61,7 @@ export interface NewGameSettings {
 /** Today's game, field for field. */
 export function defaultNewGameSettings(): NewGameSettings {
   return {
+    conquest: false,
     ...defaultNewGameMap(),
     skill: DEFAULT_SKILL as PlaySkill,
     winVp: DEFAULT_WIN_VP,
@@ -96,6 +99,7 @@ export function loadNewGameSettings(storage: Store | null = defaultStore()): New
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) o = parsed as Record<string, unknown>;
   } catch { /* a broken record reads as no record */ }
   return {
+    conquest: readBool(o.conquest, d.conquest),
     size: map.size,
     layout: map.layout,
     skill,
@@ -123,6 +127,7 @@ export function saveNewGameSettings(
   saveNewGameMap({ size: s.size, layout: s.layout }, storage);
   try {
     storage.setItem(NEW_GAME_SETTINGS_KEY, JSON.stringify({
+      conquest: s.conquest,
       winVp: s.winVp, rivers: s.rivers, hills: s.hills, rings: s.rings, diag: s.diag,
       seed: s.seed, money: s.money, towns: s.towns,
     }));
@@ -168,10 +173,11 @@ export function bootOptionsFor(s: NewGameSettings): NewGameBootOptions {
 /** One line for the Play screen: what a new game will be. */
 export function describeNewGame(s: NewGameSettings): string {
   const parts = [
+    s.conquest ? "Conquest" : "Vs AI",
     s.size === "large" ? "Large map" : "Standard map",
     `${s.layout.charAt(0).toUpperCase()}${s.layout.slice(1)} towns`,
     `${s.skill.charAt(0).toUpperCase()}${s.skill.slice(1)} rival`,
-    `first to ${s.winVp}★`,
+    ...(s.conquest ? [] : [`first to ${s.winVp}★`]),
   ];
   if (s.towns !== DEFAULT_TOWNS) parts.push(`${s.towns} towns`);
   if (s.money !== "normal") parts.push(`${s.money === "high" ? "High" : "Low"} money`);
