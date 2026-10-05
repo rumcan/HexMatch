@@ -38,6 +38,16 @@ export interface BridgeDeck {
   tx: number;
   ty: number;
   axis: BridgeDeckAxis;
+  /** BRIDGE-1 (#685): the arms the carried surface really has (centre to edge, straight or 45 degrees). Absent = the axis pair. */
+  arms?: GroundPoint[][];
+  /** BRIDGE-1: per arm, does it land on a bank (draw an abutment)? */
+  landEnds?: boolean[];
+  /** BRIDGE-1: half the deck's width; absent = BRIDGE_DECK_HALF (the old width). */
+  half?: number;
+  /** BRIDGE-1: the material it is built in; absent = timber. */
+  kind?: DeckKind;
+  /** BRIDGE-1: false for a deck that does not stand in water (a rail overpass over a road). */
+  pier?: boolean;
 }
 
 /**
@@ -172,82 +182,197 @@ function traceInto(ctx: Ctx2D, points: readonly GroundPoint[], elev: Draper = FL
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
 }
 
-/** Trace a closed quad into the CURRENT path. */
-function traceQuad(ctx: Ctx2D, quad: readonly GroundPoint[], elev: Draper = FLAT_DRAPER): void {
-  traceInto(ctx, quad, elev);
-  ctx.closePath();
+// ── BRIDGE-1 (#685): decks that read as bridges ─────────────────────────────
+//
+// A deck used to be the tile's square narrowed across ONE axis. That broke on
+// the crossings players see most: a public highway crosses a river as a
+// staircase of tiles through their centres (drawn with round joins, so it reads
+// as a diagonal), and a highway is ~1.25 tiles wide, so the asphalt spilled off
+// a 0.92-wide square onto the water and no bridge showed at all.
+//
+// A deck is now traced along the ARMS its surface actually has (centre to the
+// tile edge it links through, straight or 45 degrees), at a half-width taken
+// from the road class it carries. It is drawn as a structure standing in the
+// water: a soft shadow on the water, a pier under every deck tile, stone
+// abutments where it meets a bank, a dark fascia lip under the deck edge (the
+// "raised" read), the surface, then - over the road - railings and posts offset
+// along each arm. Everything is ground-plane vector work in the cached chunk
+// raster, exactly as before: no sprite, no per-frame cost.
+
+/** The material a deck is built in: timber (lanes, roads), concrete (highways), steel (railway). */
+export type DeckKind = "timber" | "concrete" | "steel";
+
+/**
+ * Screen pixels to a ground-plane offset (the raster's transform is in ground
+ * units). The road raster is blitted through the view turn, so its caller
+ * passes the turn-aware version (`screenOffsetAt(dx, dy, vq)`); this default is
+ * the unturned one.
+ */
+export type ScreenOffset = (dx: number, dy: number) => GroundPoint;
+const HW_PX = 32, HH_PX = 16;
+const UNTURNED: ScreenOffset = (dx, dy) => [dx / (2 * HW_PX) + dy / (2 * HH_PX), dy / (2 * HH_PX) - dx / (2 * HW_PX)];
+
+/** Per-material colours; flat 1950s palette, no gradients. */
+export const DECK_MATERIAL: Record<DeckKind, { deck: string; fascia: string; railing: string; railingEdge: string; post: string }> = {
+  timber: { deck: "#8b7355", fascia: "#4a3d31", railing: "#3f382e", railingEdge: "#2b2620", post: "#3f382e" },
+  concrete: { deck: "#a7a29a", fascia: "#5f5b55", railing: "#cfc9bd", railingEdge: "#6d6860", post: "#8e897f" },
+  steel: { deck: "#5d5f60", fascia: "#2f3133", railing: "#3b4a57", railingEdge: "#1f272e", post: "#3b4a57" },
+};
+const SHADOW = "rgba(10,24,32,0.24)";
+const PIER = "#6b6459";
+const PIER_DARK = "#4d4840";
+const STONE = "#8f8676";
+
+/** The arms of an axis deck: centre to the two tile edges it spans. */
+function axisArms(d: BridgeDeck): GroundPoint[][] {
+  const c: GroundPoint = [d.tx + 0.5, d.ty + 0.5];
+  return d.axis === "x"
+    ? [[c, [d.tx, d.ty + 0.5]], [c, [d.tx + 1, d.ty + 0.5]]]
+    : [[c, [d.tx + 0.5, d.ty]], [c, [d.tx + 0.5, d.ty + 1]]];
+}
+/** The arms a deck is drawn along (its own, or the axis pair). */
+export function deckArms(d: BridgeDeck): GroundPoint[][] {
+  return d.arms && d.arms.length ? d.arms : axisArms(d);
+}
+const deckHalf = (d: BridgeDeck): number => d.half ?? BRIDGE_DECK_HALF;
+const kindOf = (d: BridgeDeck): DeckKind => d.kind ?? "timber";
+
+const shift = (pts: readonly GroundPoint[], o: GroundPoint): GroundPoint[] =>
+  pts.map(([u, v]) => [u + o[0], v + o[1]] as GroundPoint);
+
+/** A straight arm offset sideways by `o` ground units (positive = left of travel). */
+export function offsetArm(arm: readonly GroundPoint[], o: number): GroundPoint[] {
+  const a = arm[0], b = arm[arm.length - 1];
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * o, ny = (dx / len) * o;
+  return [[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny]];
+}
+
+/** Stroke a set of polylines at one width and colour, in one batch. */
+function strokeAll(ctx: Ctx2D, lines: readonly (readonly GroundPoint[])[], width: number, color: string, elev: Draper): void {
+  if (!lines.length) return;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  for (const l of lines) traceInto(ctx, l, elev);
+  ctx.stroke();
 }
 
 /**
- * Paint the decks: the timber surface under everything the road/rail pass will
- * draw, then the kerbs and cross-beams. Batched — one fill for every deck on
- * the chunk, one stroke per pass — exactly like the road and rail painters.
+ * Paint the decks, under everything the road/rail pass will draw: the shadow on
+ * the water, piers, bank abutments, the fascia lip, the surface and (timber)
+ * its planks.
  */
 export function paintBridgeDecks(
   ctx: Ctx2D, decks: readonly BridgeDeck[], style: BridgeStyle = DEFAULT_BRIDGE_STYLE,
   elev: Draper = FLAT_DRAPER,
+  screen: ScreenOffset = UNTURNED,
 ): void {
   if (!decks.length) return;
   ctx.save();
-  ctx.lineCap = "butt";
+  ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  const down3 = screen(0, 3), down12 = screen(0, 12);
+  const shadowOff = screen(4, 8);
+  const left1 = screen(-1, 0);
 
-  // 1. The surface, opaque: it has to cover the water texture underneath.
-  ctx.fillStyle = style.deck;
-  ctx.beginPath();
-  for (const d of decks) traceQuad(ctx, deckQuad(d), elev);
-  ctx.fill();
+  // 1. The shadow on the water (sun from the upper left).
+  for (const d of decks) strokeAll(ctx, deckArms(d).map((a) => shift(a, shadowOff)), deckHalf(d) * 2, SHADOW, elev);
 
-  // 2. Cross-beams, under the surface's traffic — the deck's visible structure.
-  ctx.strokeStyle = style.plank;
-  ctx.lineWidth = 0.05;
-  ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).planks) traceInto(ctx, line, elev);
-  ctx.stroke();
+  // 2. A pier under every deck tile that stands in water: a dark column from
+  //    the deck down into the water, a lighter face on its sunny side.
+  for (const d of decks) {
+    if (d.pier === false) continue;
+    const c: GroundPoint = [d.tx + 0.5, d.ty + 0.5];
+    const w = Math.min(0.2, deckHalf(d) * 0.4);
+    const col: GroundPoint[] = [c, [c[0] + down12[0], c[1] + down12[1]]];
+    strokeAll(ctx, [col], w, PIER_DARK, elev);
+    strokeAll(ctx, [shift(col, left1)], w * 0.45, PIER, elev);
+  }
 
+  // 3. Stone abutments where an arm lands on a bank.
+  for (const d of decks) {
+    const ends = d.landEnds ?? [];
+    const blocks = deckArms(d).filter((_, i) => ends[i]).map((a) => {
+      const p = a[0], q = a[a.length - 1];
+      return [[p[0] + (q[0] - p[0]) * 0.7, p[1] + (q[1] - p[1]) * 0.7], q] as GroundPoint[];
+    });
+    strokeAll(ctx, blocks.map((b) => shift(b, down3)), deckHalf(d) * 2 + 0.1, PIER_DARK, elev);
+    strokeAll(ctx, blocks, deckHalf(d) * 2 + 0.1, STONE, elev);
+  }
+
+  // 4. The fascia lip, then 5. the surface.
+  for (const d of decks) {
+    strokeAll(ctx, deckArms(d).map((a) => shift(a, down3)), deckHalf(d) * 2, DECK_MATERIAL[kindOf(d)].fascia, elev);
+  }
+  for (const d of decks) {
+    const color = kindOf(d) === "timber" ? style.deck : DECK_MATERIAL[kindOf(d)].deck;
+    strokeAll(ctx, deckArms(d), deckHalf(d) * 2, color, elev);
+  }
+
+  // 6. Timber decks show their planks; concrete and steel are plain slabs.
+  const planks: GroundPoint[][] = [];
+  for (const d of decks) {
+    if (kindOf(d) !== "timber") continue;
+    const h = deckHalf(d) - KERB_INSET;
+    for (const arm of deckArms(d)) {
+      const a = arm[0], b = arm[arm.length - 1];
+      for (let t = PLANK_SPACING * 2; t < 1; t += PLANK_SPACING * 2) {
+        const p: GroundPoint = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        const seg: GroundPoint[] = [p, [p[0] + (b[0] - a[0]), p[1] + (b[1] - a[1])]];
+        planks.push([offsetArm(seg, h)[0], offsetArm(seg, -h)[0]]);
+      }
+    }
+  }
+  ctx.lineCap = "butt";
+  strokeAll(ctx, planks, 0.05, style.plank, elev);
   ctx.restore();
 }
 
 /**
- * …and the railings, painted after the road/rail pass so they stand over the
- * surface's edge rather than under it. The kerb line goes down first: a dark
- * edge is what makes the deck read as raised above the water line.
+ * ...and the railings, painted after the road/rail pass so they stand over the
+ * surface's edge: an edge line, the rail, then short posts, offset along each
+ * arm on both sides.
  */
 export function paintBridgeRailings(
   ctx: Ctx2D, decks: readonly BridgeDeck[], style: BridgeStyle = DEFAULT_BRIDGE_STYLE,
   elev: Draper = FLAT_DRAPER,
+  screen: ScreenOffset = UNTURNED,
 ): void {
   if (!decks.length) return;
   ctx.save();
-  ctx.lineCap = "butt";
+  ctx.lineCap = "round";
   ctx.lineJoin = "round";
-
-  ctx.globalAlpha = 0.5;
-  ctx.strokeStyle = style.kerb;
-  ctx.lineWidth = 0.06;
-  ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).kerbs) traceInto(ctx, line, elev);
-  ctx.stroke();
-
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = style.railingEdge;
-  ctx.lineWidth = RAILING_WIDTH + 0.03;
-  ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).railings) traceInto(ctx, line, elev);
-  ctx.stroke();
-
-  ctx.strokeStyle = style.railing;
-  ctx.lineWidth = RAILING_WIDTH;
-  ctx.beginPath();
-  for (const d of decks) for (const line of deckLines(d).railings) traceInto(ctx, line, elev);
-  ctx.stroke();
-
-  // The posts, last: short ticks across the railings, so the fence lights up
-  // as a fence and not as two painted stripes.
-  ctx.lineWidth = RAILING_WIDTH * 0.8;
-  ctx.beginPath();
-  for (const d of decks) for (const post of deckLines(d).posts) traceInto(ctx, post, elev);
-  ctx.stroke();
-
+  for (const kind of ["timber", "concrete", "steel"] as const) {
+    const group = decks.filter((d) => kindOf(d) === kind);
+    if (!group.length) continue;
+    const m = kind === "timber"
+      ? { railing: style.railing, railingEdge: style.railingEdge, post: style.railing }
+      : DECK_MATERIAL[kind];
+    const rails: GroundPoint[][] = [];
+    const posts: GroundPoint[][] = [];
+    const up3 = screen(0, -3);
+    for (const d of group) {
+      const r = deckHalf(d) - RAILING_INSET;
+      for (const arm of deckArms(d)) {
+        for (const side of [-1, 1]) {
+          const line = offsetArm(arm, side * r);
+          rails.push(line);
+          const [a, b] = line;
+          for (let t = POST_SPACING; t <= 1; t += POST_SPACING * 2) {
+            const p: GroundPoint = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            posts.push([p, [p[0] + up3[0], p[1] + up3[1]]]);
+          }
+        }
+      }
+    }
+    const w = kind === "concrete" ? RAILING_WIDTH * 1.6 : RAILING_WIDTH;
+    strokeAll(ctx, rails, w + 0.03, m.railingEdge, elev);
+    strokeAll(ctx, rails, w, m.railing, elev);
+    ctx.lineCap = "butt";
+    strokeAll(ctx, posts, RAILING_WIDTH * 0.8, m.post, elev);
+    ctx.lineCap = "round";
+  }
   ctx.restore();
 }

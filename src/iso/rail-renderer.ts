@@ -158,7 +158,15 @@ export function railBridgeDecksIn(
       const cell = cellAt(layer.tile, tx, ty);
       if ((cell & PRESENT) === 0) continue;
       if (!isWater(tx, ty) && !(cell & RAIL_OVERPASS)) continue;
-      out.push({ tx, ty, axis: deckAxis(cell, isWater, tx, ty) });
+      // BRIDGE-1 (#685): a railway crosses on a steel girder deck; an overpass
+      // over a road stands on its abutments, not on a pier in the street.
+      const axis = deckAxis(cell, isWater, tx, ty);
+      const [dx, dy] = axis === "x" ? [1, 0] : [0, 1];
+      out.push({
+        tx, ty, axis, kind: "steel",
+        landEnds: [!isWater(tx - dx, ty - dy), !isWater(tx + dx, ty + dy)],
+        ...(isWater(tx, ty) ? {} : { pier: false }),
+      });
     }
   }
   return out;

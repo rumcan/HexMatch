@@ -524,12 +524,42 @@ export function roadBridgeDecksIn(
   const out: BridgeDeck[] = [];
   const isWater = (x: number, y: number): boolean =>
     x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && grid.terrain[y * MAP_W + x] === WATER;
+  // BRIDGE-1 (#685): the deck follows the ARMS the surface has (a staircase
+  // highway bends on the water; a #440 road may cross on a 45-degree link), at
+  // a width and in a material that fit what it carries.
+  const empty = emptyRoads();
+  const track: Track = {
+    road: world.roadBits ?? empty, dirt: world.dirtBits ?? empty,
+    tier: world.roadTiers, owner: empty, upgraded: empty,
+    revision: 0, diagonalRoads: diagonalsOn(world),
+  };
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
       const cell = cellAt(world.roadBits, tx, ty) | cellAt(world.dirtBits, tx, ty);
       if ((cell & PRESENT) === 0) continue;
       if (!isWater(tx, ty)) continue;
-      out.push({ tx, ty, axis: deckAxis(cell, isWater, tx, ty) });
+      const c: GroundPoint = [tx + 0.5, ty + 0.5];
+      const arms: GroundPoint[][] = [];
+      const landEnds: boolean[] = [];
+      const arm = (dx: number, dy: number): void => {
+        arms.push([c, [c[0] + dx * 0.5, c[1] + dy * 0.5]]);
+        landEnds.push(!isWater(tx + dx, ty + dy));
+      };
+      for (const d of [1, 2, 4, 8]) if (cell & d) arm(DIR[d][0], DIR[d][1]);
+      if (track.diagonalRoads) {
+        for (const d of DIAGONAL_DIRS) {
+          const nx = tx + DIR[d][0], ny = ty + DIR[d][1];
+          if (roadDiagLinked(track, tx, ty, nx, ny)) arm(DIR[d][0], DIR[d][1]);
+        }
+      }
+      const tier = cellAt(world.roadTiers, tx, ty) & 7;
+      const paved = (cellAt(world.roadBits, tx, ty) & PRESENT) !== 0;
+      const trunk = paved && (tier === 2 || tier === 4 || tier === 5 || isAvenueTier(tier));
+      out.push({
+        tx, ty, axis: deckAxis(cell, isWater, tx, ty),
+        ...(arms.length ? { arms, landEnds } : {}),
+        ...(trunk ? { half: 0.52, kind: "concrete" as const } : {}),
+      });
     }
   }
   return out;
@@ -1229,7 +1259,7 @@ export function paintRoadTiles(
   ctx.lineJoin = "round";
 
   // 0. R2 (#266) Bridge decks, under everything: the water texture has to go.
-  paintBridgeDecks(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
+  paintBridgeDecks(ctx, decks, DEFAULT_BRIDGE_STYLE, elev, (dx, dy) => screenOffsetAt(dx, dy, vq));
 
   // 0b. #159/#437 Town ground: the LAWNS the houses stand on, under everything
   //    a road paints. Absent a `town` material the passes below still draw the
@@ -1512,7 +1542,7 @@ export function paintRoadTiles(
   // 6. R2 (#266) The decks' kerbs and railings, last of all: a bridge's fence
   //    stands OVER its surface, and over the lamps of any street that happens
   //    to end at the bank.
-  paintBridgeRailings(ctx, decks, DEFAULT_BRIDGE_STYLE, elev);
+  paintBridgeRailings(ctx, decks, DEFAULT_BRIDGE_STYLE, elev, (dx, dy) => screenOffsetAt(dx, dy, vq));
   ctx.restore();
 }
 
