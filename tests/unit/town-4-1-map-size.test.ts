@@ -605,7 +605,7 @@ describe("TOWN-4.1: saves record the size; a save without it is a 144 save", () 
     expect(saveMapSide(back)).toBe(144);
     expect(saveFitsItsMap(back)).toBe(true);
     expect(resolveMapSize({ save: back })).toBe("standard");
-    for (const [snapV, old] of [[16, true], [17, false], [18, false], [19, true]] as const) {
+    for (const [snapV, old] of [[16, true], [17, false], [18, false], [19, false], [20, true]] as const) {
       expect(isOldSave({ ...back, snapV }), `snapV ${snapV}`).toBe(old);
     }
   });
