@@ -375,7 +375,7 @@ import {
 // and every cost in `rail.ts`/`config.ts`: this file is the one place those
 // rules are APPLIED (tools, clicks, the panel, the frame), never re-derived.
 import {
-  createRailState, railPreview, buildRail, demolishRail, structureAt, hasRail, railDrawLayer, railTileRefusal,
+  createRailState, railPreview, buildRail, demolishRail, structureAt, laneTileAt, hasRail, railDrawLayer, railTileRefusal,
   placePlatform, placeDepot, platformRefusal, depotRefusal, resolveAnchor,
   RAIL_COSTS, RAIL_REFUSAL_TEXT, footprintTiles,
   railStructureItems, trainItems, autoTrains, trainSpawnHint, layPlatformTrack, platformTrackAt, RAIL_DIAG, assignLine, renameLine, buyTrain, startLine, recallTrain, sellTrain, tickTrains,
@@ -1757,7 +1757,12 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       return "bridge";
     }
     if (structureAt(rail, x, y)) return "platform";
+    // RIVAL-ROAD-1 (#683): a GROWN lane is the station's too — its strip is
+    // platform, its stopping track is rail no road may cross.
+    const lane = laneTileAt(rail, x, y);
+    if (lane === "slab") return "platform";
     if (hasRail(rail.rail, x, y)) {
+      if (lane === "track") return "rail";
       const m = rail.rail.tile[tIdx(x, y)];
       if (m & RAIL_DIAG) return "rail";
       const bits = m & 0b1111;

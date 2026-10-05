@@ -667,6 +667,30 @@ export const footprintTiles = (s: Pick<RailStructure, "tx" | "ty" | "w" | "h">):
 export const structureAt = (state: RailState, tx: number, ty: number): RailStructure | null =>
   state.structures.find((s) => tx >= s.tx && tx < s.tx + s.w && ty >= s.ty && ty < s.ty + s.h) ?? null;
 
+/**
+ * RIVAL-ROAD-1 (#683): is (tx, ty) on a station lane's strip ("slab") or its
+ * stopping track ("track")? A station that grew lanes (RAIL-6) stands on them,
+ * but `structureAt` answers only for the rectangle it was placed with — the
+ * rail rules rely on that — so the map's `builtAt` asks this as well, and a
+ * grown lane reads as built ground to the road rules. Allocation-free.
+ */
+export function laneTileAt(state: RailState, tx: number, ty: number): "slab" | "track" | null {
+  for (const s of state.structures) {
+    if (s.kind !== "platform" || !s.lanes) continue;
+    const fallback = Math.max(s.w, s.h);
+    for (const l of s.lanes) {
+      const len = l.len ?? fallback;
+      const along = l.view === "se" || l.view === "nw";
+      const u = along ? ty - l.ty : tx - l.tx;           // position along the lane
+      if (u < 0 || u >= len) continue;
+      const v = along ? tx - l.tx : ty - l.ty;           // across: 0 = strip, ±1 = track
+      if (v === 0) return "slab";
+      if (v === (l.view === "se" || l.view === "sw" ? 1 : -1)) return "track";
+    }
+  }
+  return null;
+}
+
 export const structureById = (state: RailState, id: number): RailStructure | null =>
   state.structures.find((s) => s.id === id) ?? null;
 
