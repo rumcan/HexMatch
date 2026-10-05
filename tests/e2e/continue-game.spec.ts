@@ -92,7 +92,7 @@ test.describe("Continue door (#191)", () => {
     // fresh machine: no Continue door, Play stays gold
     await expect(page.getByRole("button", { name: /^Continue/ })).toHaveCount(0);
     await page.locator(".menu-btn.primary").click();
-    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+    await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
     await waitIsoPhase(page, "setup-factory");
     // the 5-second autosave puts the match on the shelf (the boot stalls the main thread for
     // 10s+ in software GL, so the first tick lands late — the wait follows the boot budget)
@@ -131,7 +131,7 @@ test.describe("Continue door (#191)", () => {
     await expect(page.getByRole("button", { name: /^Continue/ })).toContainText(/vs AI \(Normal\)/);
 
     // first attempt: the painted ask, then cancel — the shelf survives
-    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+    await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
     const plate = page.locator(".confirm-sheet");
     await expect(plate).toBeVisible();
     await expect(plate).toContainText(/Start a new game/);
@@ -140,7 +140,7 @@ test.describe("Continue door (#191)", () => {
     expect(await page.evaluate((k) => localStorage.getItem(k) !== null, SAVE_KEY)).toBe(true);
 
     // second attempt: confirm — slot cleared, a genuinely NEW boot begins
-    await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+    await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
     await plate.getByRole("button", { name: /Start new game/ }).click();
     await waitIsoPhase(page, "setup-factory");
     await expect(page.locator(".feed-pane")).not.toContainText(/restored from your save/);

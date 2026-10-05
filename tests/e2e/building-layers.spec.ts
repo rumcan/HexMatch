@@ -208,7 +208,7 @@ async function bootIso(page: Page, search = "?seed=79"): Promise<void> {
   // once a mode is chosen. "Play vs AI" boots solo play; the ?seed in the URL
   // still pins the map (resolveMapSeed reads location.search).
   await page.locator(".menu-btn.primary").click();
-  await page.getByRole("button", { name: /^Play vs AI(?! — Conquest)/ }).click();
+  await page.getByRole("button", { name: /^Start new game/ }).click().then(() => page.getByTestId("ng-start").click());
   await page.waitForFunction(() => {
     const h = (window as unknown as { __iso?: { phase: string; grid?: { industries: unknown[] } } }).__iso;
     return !!h && h.phase === "setup-factory" && !!h.grid && h.grid.industries.length > 0;

@@ -990,7 +990,8 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   // return from a match mounts the component afresh anyway), so a Continue
   // ribbon just cleared or just written never lies.
   const sandboxSave = useMemo<SoloSaveSummary | null>(
-    () => (state === "choose" ? saveForMode(null) : null),
+    // The New game page starts games too, so it must see the save it would replace.
+    () => (state === "choose" || state === "newgame" ? saveForMode(null) : null),
     [state],
   );
   const storySaves = useMemo<Map<string, SoloSaveSummary>>(() => {
@@ -1045,13 +1046,20 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
    * is what stops the old match silently reattaching. The save's own door is
    * the Continue button rendered above this one.
    */
-  const beginAiNew = useCallback((conquest = false, with_: NewGameSettings = ngSettings) => {
+  const beginAiNew = useCallback((conquest = false, with_: NewGameSettings = ngSettings, recordSkill = false) => {
     // SETTINGS-1 (#701): `boot` rides only when the page changed more than the
     // map (size + layout always ride on `map`), so a default page starts
     // exactly the game "Play vs AI" always started.
     const boot = bootOptionsFor(with_);
     const extra = Object.keys(boot).some((k) => k !== "size" && k !== "layout");
-    const start = () => onStart({
+    const start = () => {
+      // The New game page always shows a difficulty, so a game it starts
+      // records it - AFTER any old save was cleared (clearing forgets the
+      // pick), so the in-game difficulty prompt never asks again.
+      if (recordSkill) saveNewGameSettings(with_, true);
+      onStartGame();
+    };
+    const onStartGame = () => onStart({
       mode: "ai", portrait, conquest,
       map: { size: with_.size, layout: with_.layout },
       ...(extra ? { boot } : {}),
@@ -1258,22 +1266,18 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
           {STORY_MODE_ENABLED ? (
             <button className={sandboxSave ? "" : "start-primary"} data-sfx="open" onClick={() => { setProgress(loadStoryProgress()); setState("story"); }}>Story Mode <small>the Foundry Syndicate campaign</small></button>
           ) : null}
-          <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open" onClick={() => beginAiNew(false)}>Play vs AI <small>{sandboxSave ? "start a new game" : "sandbox · no login"}</small></button>
-          {/* 2026-09: play until the rival cannot go on — no ★ line. */}
-          <button data-sfx="open" onClick={() => beginAiNew(true)}>Play vs AI — Conquest <small>no ★ line · win when the rival is bankrupt</small></button>
+          {/* Owner (2026-10-05): ONE door for a new solo game. It opens the New
+              game page, where the game type (Vs AI / Conquest), the difficulty
+              and the map are picked before anything boots. The line under it
+              says what Start will begin. */}
+          <button className={sandboxSave || STORY_MODE_ENABLED ? "" : "start-primary"} data-sfx="open"
+            data-testid="start-new-game" onClick={() => setState("newgame")}>
+            Start new game <small data-testid="ng-summary">{describeNewGame(ngSettings)}</small>
+          </button>
           {/* TOWN-4.5 (#681): the NEW-game map — the size + town plan both
               "Play vs AI" doors above boot with, remembered per browser. A
               resumed save (Continue), the Starter Island, story and scenarios
               never consult it. */}
-          <div className="ng-map" role="group" aria-label="New game map">
-            <p className="start-actions-label">New game map</p>
-            {/* SETTINGS-1 (#701): the whole New Game page behind one door; the
-                line under it says what "Play vs AI" will start. */}
-            <p className="ng-summary" data-testid="ng-summary">{describeNewGame(ngSettings)}</p>
-            <button type="button" className="ng-open" data-sfx="open" onClick={() => setState("newgame")}>
-              Game settings <small>difficulty · map · ★ line · more</small>
-            </button>
-          </div>
           {/* PROG-1 (#475): four tuned maps beyond the default island. */}
           <button data-sfx="open" onClick={() => { setScenProgress(loadScenarioProgress()); setState("scenarios"); }}>Scenarios <small>four maps · unlock by winning</small></button>
           {/* Owner (2026-09-29): Multiplayer has its own screen — the header's
@@ -1388,11 +1392,14 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         defaults={defaultNewGameSettings()}
         lastSeed={loadLastSeed()}
         onBack={() => setState("choose")}
-        onStart={(next, skillChosen) => {
-          saveNewGameSettings(next, skillChosen);
+        onStart={(next) => {
+          // The page always shows a difficulty, so Start records it: AI-02's
+          // in-game difficulty prompt (which only asks when none is saved)
+          // never repeats a choice this page just made.
+          saveNewGameSettings(next, false);
           setNgSettings(next);
           setState("choose");
-          beginAiNew(false, next);
+          beginAiNew(next.conquest, next, true);
         }}
         onSave={(next, skillChosen) => { saveNewGameSettings(next, skillChosen); setNgSettings(next); }}
       />

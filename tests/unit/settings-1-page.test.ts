@@ -65,17 +65,17 @@ describe("SETTINGS-1: the New Game page", () => {
   it("the Play card says what a new game is and opens the page", async () => {
     await render();
     expect(byTest("ng-summary").textContent).toMatch(/Normal rival · first to \d+★/);
-    await click(findButton(/^Game settings/));
-    expect(container.querySelector(".ng-page h1")?.textContent).toBe("Game settings");
+    await click(byTest("start-new-game"));
+    expect(container.querySelector(".ng-page h1")?.textContent).toBe("New game");
     // every dial of the ticket is on the page
-    for (const name of ["Rival difficulty", "Map size", "Town style", "Towns", "Win target", "Starting money", "Map features", "Map seed", "Graphics"]) {
+    for (const name of ["Game type", "Rival difficulty", "Map size", "Town style", "Towns", "Win target", "Starting money", "Map features", "Map seed", "Graphics"]) {
       expect(container.querySelector(`.ng-page [role=group][aria-label="${name}"]`), name).not.toBeNull();
     }
   });
 
   it("Start game boots a new game with the page's choices and remembers them", async () => {
     await render();
-    await click(findButton(/^Game settings/));
+    await click(byTest("start-new-game"));
     await click(byTest("ng-skill-hard"));
     await click(byTest("ng-towns-5"));
     await click(byTest("ng-win-18"));
@@ -94,26 +94,42 @@ describe("SETTINGS-1: the New Game page", () => {
 
   it("Back keeps the choices without starting; Reset returns today's game", async () => {
     await render();
-    await click(findButton(/^Game settings/));
+    await click(byTest("start-new-game"));
     await click(byTest("ng-towns-3"));
     await click(byTest("ng-back"));
     expect(choices).toEqual([]);
     expect(byTest("ng-summary").textContent).toMatch(/3 towns/);
-    // the difficulty was not touched, so AI-02's first-game picker still runs
+    // Back does not start a game, so it does not record a difficulty
     expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBeNull();
-    await click(findButton(/^Game settings/));
+    await click(byTest("start-new-game"));
     await click(byTest("ng-reset"));
     await click(byTest("ng-back"));
     expect(byTest("ng-summary").textContent).not.toMatch(/\d towns/);
-    // a default Play vs AI sends no `boot` at all
-    await click(findButton(/^Play vs AI/));
+    // a default new game sends no `boot` at all, and Start records the
+    // difficulty shown, so the in-game difficulty prompt never asks again
+    await click(byTest("start-new-game"));
+    await click(byTest("ng-start"));
     expect((choices[0] as { boot?: unknown }).boot).toBeUndefined();
+    expect((choices[0] as { conquest?: boolean }).conquest).toBe(false);
+    expect(localStorage.getItem(SKILL_STORAGE_KEY)).toBe("normal");
+  });
+
+  it("Conquest is a game type on the page: no win target, and the game boots as conquest", async () => {
+    await render();
+    expect(container.querySelector("button")?.textContent ?? "").not.toMatch(/Play vs AI/);
+    await click(byTest("start-new-game"));
+    await click(byTest("ng-mode-conquest"));
+    expect(container.querySelector('.ng-page [role=group][aria-label="Win target"]')).toBeNull();
+    expect(byTest("ng-page-summary").textContent).toMatch(/^Conquest/);
+    await click(byTest("ng-start"));
+    expect((choices[0] as { conquest?: boolean }).conquest).toBe(true);
+    expect(JSON.parse(localStorage.getItem(NEW_GAME_SETTINGS_KEY)!)).toMatchObject({ conquest: true });
   });
 
   it("a fixed seed is offered and sent; Random clears it", async () => {
     localStorage.setItem("hexmatch:last-seed", "777");
     await render();
-    await click(findButton(/^Game settings/));
+    await click(byTest("start-new-game"));
     await click(byTest("ng-seed-last"));
     expect(byTest("ng-page-summary").textContent).toMatch(/seed 777/);
     await click(byTest("ng-seed-random"));
