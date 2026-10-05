@@ -412,9 +412,11 @@ describe("#300 the results pop-up a tuning session ends on", () => {
     // two-step confirm is what abandons a scored session.
     vi.spyOn(window, "confirm").mockReturnValue(false);
     const abandon = root.querySelector(".tp-abandon") as HTMLButtonElement;
-    abandon.click();
-    abandon.click();
-    await settle();
+    // Arm, then confirm. The plate re-arms instead of confirming when the score
+    // it shows moved between the clicks, and that score is refreshed on render
+    // frames, so a frame landing between two back-to-back clicks re-armed it and
+    // the test flaked (CI unit shard 1). Click until the two-step confirm lands.
+    for (let i = 0; i < 4 && h.tuning; i++) { abandon.click(); await settle(); }
     expect(h.tuning).toBeNull();
     expect(h.tuningResult, "no results for an abandon").toBeNull();
     expect(shown()).toBe(false);

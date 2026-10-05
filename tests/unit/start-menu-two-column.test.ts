@@ -143,10 +143,11 @@ describe("#184 two-column mode menu", () => {
     expect(labels.some((l) => /^(Any|Similar) rank/.test(l))).toBe(false);
     // Nobody is told a hosted game is experimental any more.
     expect(labels.some((l) => l.includes("Experimental"))).toBe(false);
-    // The Play card is the Solo group alone.
+    // The Play card is the Solo group, then the new-game map picker (TOWN-4.5
+    // #681: size + town style for the next Solo game) — no multiplayer group.
     const groupLabels = [...container.querySelectorAll(".start-actions .start-actions-label")]
       .map((el) => el.textContent);
-    expect(groupLabels).toEqual(["Solo"]);
+    expect(groupLabels).toEqual(["Solo", "New game map"]);
     // …and the header's Multiplayer tab opens the screen that holds the rest.
     const tab = container.querySelector<HTMLButtonElement>('.px-tabs [data-tab="multiplayer"]');
     expect(tab, "a Multiplayer tab beside the Ladder").toBeTruthy();
