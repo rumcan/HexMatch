@@ -809,9 +809,22 @@ export function buildRefusal(
   if (built === "platform" || built === "depot" || built === "plant" || built === "bridge" || built === "dam") {
     return "occupied";
   }
+  // RIVAL-ROAD-1 (#683): a level crossing that is ALREADY a road is part of
+  // that road for everybody — rail ownership never closes a road. A caller
+  // that knows only the step it came by (the rival's A*, the plan validator)
+  // gets the axis from that step; a drag still passes its own `crossing`.
+  const across = crossing
+    ?? (from && track && (hasTrack(track, "road", tx, ty) || hasTrack(track, "dirt", tx, ty))
+      ? stepAxis(from, tx, ty) : undefined);
   if (built === "rail") return "rail";
-  if (built === "rail-x" && crossing !== "y") return "rail";
-  if (built === "rail-y" && crossing !== "x") return "rail";
+  if (built === "rail-x" && across !== "y") return "rail";
+  if (built === "rail-y" && across !== "x") return "rail";
+  // …and a road leaves a level crossing the way it entered: straight on.
+  if (from) {
+    const left = grid.builtAt?.(from[0], from[1]) ?? null;
+    const ax = stepAxis(from, tx, ty);
+    if ((left === "rail-x" && ax !== "y") || (left === "rail-y" && ax !== "x")) return "rail";
+  }
   // R2 (#266): a bridge is straight. A tile ORTHOGONALLY beside a bridge deck
   // would join it (the merged autotile connects any two tiles carrying track),
   // and the deck would grow a third arm — a junction on a bridge. Refused
@@ -851,6 +864,12 @@ export function buildRefusal(
     if (!adj) return "not-adjacent";
   }
   return null;
+}
+
+/** The axis one orthogonal step runs along ("x" when x changes), else undefined. */
+function stepAxis(from: readonly [number, number], tx: number, ty: number): "x" | "y" | undefined {
+  const dx = tx - from[0], dy = ty - from[1];
+  return dy === 0 && dx !== 0 ? "x" : dx === 0 && dy !== 0 ? "y" : undefined;
 }
 
 /**

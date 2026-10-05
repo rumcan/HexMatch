@@ -182,7 +182,9 @@ export function stepCost(
   // below, so a flat route of the same length always wins.
   if (roadStepRefusal(grid, from, [tx, ty])) return IMPASSABLE;
   // Use the build rule itself: town tiles (TOWN_OCC = -2) block routes too.
-  if (!canBuildOn(grid, kind, tx, ty, undefined, undefined, track)) return IMPASSABLE;
+  // RIVAL-ROAD-1 (#683): `from` tells the rule which way the road runs, so a
+  // standing level crossing on a public road is passable straight across.
+  if (!canBuildOn(grid, kind, tx, ty, undefined, undefined, track, from)) return IMPASSABLE;
   const i = tIdx(tx, ty);
   // AI-01: never plan over the other player's line (see above).
   if (owner !== 0) {
