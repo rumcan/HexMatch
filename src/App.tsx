@@ -240,6 +240,10 @@ export default function App() {
         // absent (a resumed save boots without it) = the shipped default.
         size: choice.map?.size,
         layout: choice.map?.layout,
+        // SETTINGS-1 (#701): the New Game page — difficulty is already in its
+        // storage key; the rest (map features, seed, towns, ★ line, money)
+        // rides here. Absent on Continue: a resumed save reads its own record.
+        ...(choice.boot ?? {}),
         // run.world feedback: the very first game is coached, not toured.
         firstRun,
         // FTUE-1 (#464): the Starter Island — the fixed preset map, the

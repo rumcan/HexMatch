@@ -102,13 +102,8 @@ const DEPTH = 2048;
 
 // LIVE3D-ON (#698): 3D is the default. `?three=0` opts out and `?three=1` forces on; either wins over the
 // persisted "3D buildings" setting for that boot. WebGL failure falls back to 2D (threeUnavailable()).
-const THREE_KEY = "hexmatch.three3d";
-export const threeSetting = (): boolean => {
-  try { return localStorage.getItem(THREE_KEY) !== "0"; } catch { return true; }
-};
-export const setThreeSetting = (on: boolean): void => {
-  try { localStorage.setItem(THREE_KEY, on ? "1" : "0"); } catch { /* storage blocked */ }
-};
+import { threeSetting } from "./three-pref";
+export { threeSetting, setThreeSetting } from "./three-pref";
 export const threeWanted = (s: string = typeof location !== "undefined" ? location.search : ""): boolean => {
   const v = new URLSearchParams(s).get("three");
   if (v === "1") return true;

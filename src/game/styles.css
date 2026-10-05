@@ -3680,6 +3680,23 @@ html, body, #root {
 }
 .ng-preset.on small { color: rgba(16, 22, 24, 0.75); }
 
+/* SETTINGS-1 (#701): the Play card's one-line summary + its door, and the New
+   Game page itself (same rows and keys as above, one paper card). */
+.ng-summary { margin: 0; font: 500 11px var(--mono); letter-spacing: .6px; color: var(--txt-dim); line-height: 1.5; }
+.ng-open { width: 100%; }
+.ng-page { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
+.ng-page h1 { margin-bottom: 0; }
+.ng-note { margin: 2px 0 0; font: 500 10px var(--mono); letter-spacing: .5px; color: var(--txt-dim); }
+.ng-seed {
+  flex: 1 1 120px; min-width: 0; min-height: 34px; padding: 5px 8px;
+  font: 600 12px var(--mono); color: var(--txt, rgb(var(--c-bone) / 1)); background: #111718;
+  border: 1px solid var(--line, #484f51);
+}
+.ng-page .ng-summary { padding-top: 8px; border-top: 1px solid rgb(var(--c-line) / 0.22); }
+.ng-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ng-actions > button { flex: 1 1 140px; }
+@media (max-width: 480px) { .ng-preset { flex-basis: calc(50% - 5px); } }
+
 /* Native disabled states prevent activation by pointer and keyboard. */
 .build-btn:disabled, .sab-btn:disabled, .post-btn:disabled, .mini:disabled {
   filter: grayscale(.8) brightness(.8); opacity: .42; cursor: not-allowed;

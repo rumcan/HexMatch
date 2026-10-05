@@ -79,9 +79,13 @@ import {
   perksEnabled,
 } from "../net/match-settings";
 // TOWN-4.5 (#681): the solo menu's remembered map choice (size + town plan).
+import { type NewGameMap } from "./new-game-map";
+// SETTINGS-1 (#701): the New Game settings page (everything a new solo game starts with).
 import {
-  loadNewGameMap, saveNewGameMap, type NewGameMap,
-} from "./new-game-map";
+  bootOptionsFor, defaultNewGameSettings, describeNewGame, loadLastSeed, loadNewGameSettings,
+  saveNewGameSettings, type NewGameBootOptions, type NewGameSettings,
+} from "./new-game-settings";
+import { NewGameSettingsPage } from "./NewGameSettingsPage";
 import { type Portrait } from "../iso/config";
 // CONTINUE-01 (#191): the menus name the saves they can resume, and starting
 // a new game deliberately clears the slot first instead of silently resuming.
@@ -122,6 +126,9 @@ export type StartChoice =
        *  game (a resumed save ignores it — the boot reads the save's record).
        *  Absent = the shipped default (large + planned). */
       map?: NewGameMap;
+      /** SETTINGS-1 (#701): the New Game page's boot options for a NEW game
+       *  (absent on Continue — a resumed save reads its own record). */
+      boot?: NewGameBootOptions;
     }
   | { mode: "story"; chapter: string; portrait: Portrait }
   | { mode: "story-intro"; portrait: Portrait }
@@ -162,6 +169,8 @@ type ScreenState =
   | "multiplayer"
   | "story"
   | "scenarios"
+  /** SETTINGS-1 (#701): the New Game settings page. */
+  | "newgame"
   | "host"
   | "join"
   | "joined"
@@ -327,11 +336,9 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   const [roomSettings, setRoomSettings] = useState<MatchSettings>({ ...DEFAULT_MATCH_SETTINGS, startPurse: { ...DEFAULT_MATCH_SETTINGS.startPurse } });
   // TOWN-4.5 (#681): the solo menu's map choice — the size + town plan the
   // "Play vs AI" doors boot a NEW game with, remembered per browser.
-  const [newGameMap, setNewGameMapState] = useState<NewGameMap>(() => loadNewGameMap());
-  const setNewGameMap = useCallback((prefs: NewGameMap) => {
-    setNewGameMapState(prefs);
-    saveNewGameMap(prefs);
-  }, []);
+  // SETTINGS-1 (#701): …and since the New Game page, everything else a new
+  // game starts with (difficulty, ★ line, map features, seed, money, towns).
+  const [ngSettings, setNgSettings] = useState<NewGameSettings>(() => loadNewGameSettings());
   /** RANK-01: Any rank (the default — fastest) or Similar rank (widening). */
   const [rankSearch, setRankSearch] = useState<RankSearch>("any");
   /** The rung a similar-rank search is currently on, for the waiting screen. */
@@ -1038,7 +1045,17 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
    * is what stops the old match silently reattaching. The save's own door is
    * the Continue button rendered above this one.
    */
-  const beginAiNew = useCallback((conquest = false) => {
+  const beginAiNew = useCallback((conquest = false, with_: NewGameSettings = ngSettings) => {
+    // SETTINGS-1 (#701): `boot` rides only when the page changed more than the
+    // map (size + layout always ride on `map`), so a default page starts
+    // exactly the game "Play vs AI" always started.
+    const boot = bootOptionsFor(with_);
+    const extra = Object.keys(boot).some((k) => k !== "size" && k !== "layout");
+    const start = () => onStart({
+      mode: "ai", portrait, conquest,
+      map: { size: with_.size, layout: with_.layout },
+      ...(extra ? { boot } : {}),
+    });
     if (sandboxSave) {
       setPendingNew({
         title: "Start a new game vs the AI?",
@@ -1046,13 +1063,13 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
         confirmLabel: "Start new game",
         act: () => {
           discardSoloSave(null);
-          onStart({ mode: "ai", portrait, conquest, map: newGameMap });
+          start();
         },
       });
       return;
     }
-    onStart({ mode: "ai", portrait, conquest, map: newGameMap });
-  }, [onStart, portrait, sandboxSave, newGameMap]);
+    start();
+  }, [onStart, portrait, sandboxSave, ngSettings]);
 
   /** A scenario card resumes when a save exists; this sibling starts the
    *  scenario over, clearing the slot only after the player confirms. */
@@ -1087,7 +1104,7 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
   // UI-3: every state stands in the MenuShell frame. The header's Home, Play
   // and Ladder tabs only work from the neutral screens; a lobby, a search or
   // a rejoin offer keeps its own Leave / Cancel so no room is left dangling.
-  const free = state === "choose" || state === "story" || state === "scenarios" || state === "ladder" || state === "multiplayer" || state === "join" || state === "error";
+  const free = state === "choose" || state === "story" || state === "scenarios" || state === "newgame" || state === "ladder" || state === "multiplayer" || state === "join" || state === "error";
   const shell = (tab: ShellTab | null, aria: string, cls: string, content: ReactNode) => (
     <MenuShell tab={tab} ariaLabel={aria} className={cls}
       onTutorialSection={onTutorialSection}
@@ -1250,32 +1267,12 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
               never consult it. */}
           <div className="ng-map" role="group" aria-label="New game map">
             <p className="start-actions-label">New game map</p>
-            <div className="ng-row" role="group" aria-label="Map size">
-              <span className="ng-name">Map size</span>
-              <div className="ng-presets">
-                {(["standard", "large"] as const).map((size) => (
-                  <button type="button" key={size} data-sfx="tab"
-                    className={`ng-preset${newGameMap.size === size ? " on" : ""}`}
-                    aria-pressed={newGameMap.size === size}
-                    onClick={() => setNewGameMap({ ...newGameMap, size })}>
-                    {size === "large" ? "Large" : "Standard"}<small>{size === "large" ? "216×216" : "144×144"}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="ng-row" role="group" aria-label="Town style">
-              <span className="ng-name">Town style</span>
-              <div className="ng-presets">
-                {(Object.entries({ planned: "avenues + plazas", organic: "winding lanes", grid: "city blocks" }) as [TownLayout, string][]).map(([layout, blurb]) => (
-                  <button type="button" key={layout} data-sfx="tab"
-                    className={`ng-preset${newGameMap.layout === layout ? " on" : ""}`}
-                    aria-pressed={newGameMap.layout === layout}
-                    onClick={() => setNewGameMap({ ...newGameMap, layout })}>
-                    {layout.charAt(0).toUpperCase()}{layout.slice(1)}<small>{blurb}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* SETTINGS-1 (#701): the whole New Game page behind one door; the
+                line under it says what "Play vs AI" will start. */}
+            <p className="ng-summary" data-testid="ng-summary">{describeNewGame(ngSettings)}</p>
+            <button type="button" className="ng-open" data-sfx="open" onClick={() => setState("newgame")}>
+              Game settings <small>difficulty · map · ★ line · more</small>
+            </button>
           </div>
           {/* PROG-1 (#475): four tuned maps beyond the default island. */}
           <button data-sfx="open" onClick={() => { setScenProgress(loadScenarioProgress()); setState("scenarios"); }}>Scenarios <small>four maps · unlock by winning</small></button>
@@ -1384,6 +1381,23 @@ export default function StartScreen({ onStart, onBack, onTutorialSection, initia
 
   // PROG-1 (#475): the scenario list — the campaign list's shape (locks,
   // seals, bests, Continue, Start over) over the four tuned maps.
+  if (state === "newgame") {
+    return shell("play", "New game settings", "newgame", (
+      <NewGameSettingsPage
+        initial={ngSettings}
+        defaults={defaultNewGameSettings()}
+        lastSeed={loadLastSeed()}
+        onBack={() => setState("choose")}
+        onStart={(next, skillChosen) => {
+          saveNewGameSettings(next, skillChosen);
+          setNgSettings(next);
+          setState("choose");
+          beginAiNew(false, next);
+        }}
+        onSave={(next, skillChosen) => { saveNewGameSettings(next, skillChosen); setNgSettings(next); }}
+      />
+    ));
+  }
   if (state === "scenarios") {
     const pin = pinnedScenario();
     const openCount = effectiveUnlocked(scenProgress, progress);
