@@ -151,6 +151,9 @@ import {
   tileInFootprint, townHouseAt, townObstacleTiles, rotatedSpan,
   type Grid, type Industry, type Town,
 } from "./grid";
+// TOWN-4.6 (#682): the direction a planned-town lot fronts (a `LotFront`), the
+// 3D layer's reason to turn a model. Type-only — the plan itself lives in grid.
+import type { LotFront } from "./town-plan";
 import {
   createTrack, drawBits, previewDrag, commitDrag, canBuildOn, hasTrack,
   demolishTile, tIdx, canAfford, buildRefusal, seedTownRoads, seedTownDiagonals,
@@ -2991,7 +2994,9 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   const terrainGl: TerrainGl | null = terrainGlWanted() ? mountTerrainGl(ui.mapHost, grid, seed) : null;
   // LIVE-3D spike: `?three=1` mounts the instanced 3D building layer under the overlay canvas.
   // LIVE-3D: the railway structures the 3D layer draws (platform and train depot art, any view)
-  let lastThreeItems: { sprite: string; tx: number; ty: number; w: number; h: number; lift: number }[] = [];   // __iso.threeItems
+  // TOWN-4.6 (#682): `front` is the street a planned-town lot fronts; the 3D
+  // layer turns the model by it (absent on grid and organic towns).
+  let lastThreeItems: { sprite: string; tx: number; ty: number; w: number; h: number; lift: number; front?: LotFront }[] = [];   // __iso.threeItems
   const RAIL_3D = /^(platform|train-depot)_(ne|se|sw|nw)$/;
   const threeLayer: ThreeLayer | null = threeWanted() ? mountThreeLayer(ui.mapHost, canvases.overlay) : null;
   // ROT-UI-1: the rotate keys under the minimap exist only where the view can
@@ -4535,6 +4540,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
           tx: b.tx, ty: b.ty,
           ref: { kind: "town", id: t.id } as unknown,
           ...(look && look.alpha < 1 ? { alpha: look.alpha } : {}),
+          // TOWN-4.6 (#682): the street this lot fronts, for the 3D layer to
+          // turn the model by. Only a planned town's items carry one, and it
+          // rides along through the construction look (a building under
+          // scaffolding still faces its street).
+          ...(b.front ? { front: b.front } : {}),
         };
       });
     });
@@ -4603,7 +4613,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
         const [w, h] = footprintOf(e.sprite);
         // the 2D sprite rides up the hill with its base (depth.ts E3); the 3D model gets the same lift
         const lift = elevationActive(grid) ? surfaceHeight(grid, e.tx + w - 0.5, e.ty + h - 0.5) * LEVEL_PX : 0;
-        return [{ sprite: e.sprite, tx: e.tx, ty: e.ty, w, h, lift }];
+        return [{ sprite: e.sprite, tx: e.tx, ty: e.ty, w, h, lift, front: e.front }];
       });
       threeLayer.setItems(lastThreeItems);
     }
