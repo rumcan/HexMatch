@@ -135,7 +135,9 @@ export async function openSide(browser: Browser, name: string): Promise<Side> {
   page.on("pageerror", (err) => side.errors.push(err.message));
   page.on("websocket", (ws) => {
     // The room sidecar only (§ the SDK's own socket is the SDK's business).
-    if (!ws.url().includes(":9001/")) return;
+    // The room port follows the dev server's RUNDOT_DEV_ROOM_PORT (9001 by default), so a second
+    // checkout can run this suite beside another Vite holding 9001.
+    if (!ws.url().includes(`:${process.env.RUNDOT_DEV_ROOM_PORT ?? "9001"}/`)) return;
     side.wire.push("ws:open");
     ws.on("framereceived", (frame) => {
       const text = String(frame.payload);
