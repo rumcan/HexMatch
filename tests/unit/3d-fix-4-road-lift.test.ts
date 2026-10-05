@@ -307,7 +307,9 @@ describe("3D-FIX-4 rail, decks, slope shading and the ground decals share the ru
   const rendererSrc = readFileSync(new URL("../../src/iso/renderer.ts", import.meta.url), "utf8");
 
   it("the railway, the grade decks and the slope shading are draped by the SAME quarter draper as the roads", () => {
-    expect(src).toMatch(/const elev = draperFor\(world\.grid, vq\)/);
+    // BRIDGE-1 (2026-10-05): the quarter draper is wrapped once so a bridge deck rides its bank's level.
+    expect(src).toMatch(/const terrainElev = draperFor\(world\.grid, vq\)/);
+    expect(src).toMatch(/const elev = bridgeDraper\(terrainElev, deckLevels, MAP_W, vq\)/);
     // Every painter that lifts geometry into the raster takes that one draper; a painter that lifted on its own
     // (or with the unturned one) would seam against the road it crosses at every quarter but 0.
     expect(src).toMatch(/paintRoadTiles\(ctx, tiles, style, townGround, roadDecks, elev,/);
