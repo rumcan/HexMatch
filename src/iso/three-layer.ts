@@ -62,8 +62,19 @@ type Manifest = Record<string, ModelInfo>;
  * 3D-FIX-5 (#664): exported (it was module-private) so the platform's and the depot's quarter turns are testable
  * data instead of a number only the render loop can see — see tests/unit/3d-fix-5-facing.test.ts.
  */
+/**
+ * Owner playtest 2026-10-05: these generated models read badly in game - streaks painted down their lower
+ * walls (offices_1423, offices_tall, flats_townhouse_tall, flats_grey) or the #656 stone plinth floating on
+ * the old stilts (shops_modern, office_tower_modern). Until they are re-made, the 3D layer leaves them to
+ * their clean 2D sprite (the `_r` mirror too). Delete a name here once its model is fixed.
+ */
+export const MODEL_2D_ONLY: ReadonlySet<string> = new Set([
+  "town_offices_1423", "town_offices_tall", "town_flats_townhouse_tall", "town_flats_grey",
+  "town_shops_modern", "town_office_tower_modern",
+]);
 export const modelOf = (sprite: string, mf: Manifest | null): { name: string; extra: number } | null => {
   if (!mf) return null;
+  if (MODEL_2D_ONLY.has(sprite.replace(/_r$/, ""))) return null;
   if (mf[sprite]) return { name: sprite, extra: 0 };
   // LIVE-3D: the railway's platform (4x1 / 1x4 by view) and train depot (2x2). The platform model lies along X with
   // its shed at the -X end; the art keeps the shed at the SOUTH end (+x for the 4x1 views ne/sw, +y for the 1x4
