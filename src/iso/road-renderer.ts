@@ -57,7 +57,7 @@ import {
 import {
   DEFAULT_BRIDGE_STYLE, deckAxis, paintBridgeDecks, paintBridgeRailings, type BridgeDeck,
 } from "./bridge-renderer";
-import { FLAT_DRAPER, draperFor, elevationLiftPx, slopeShade, tileCorners, type Draper } from "./elevation";
+import { FLAT_DRAPER, LEVEL_PX, bridgeDraper, draperFor, elevationLiftPx, slopeShade, surfaceHeight, tileCorners, type Draper } from "./elevation";
 import type { Decal } from "./scenery";
 import {
   DIAGONAL_DIRS, DIR, roadDiagLinked, roadRailDeckAxis, resolveDiagonalRoads,
@@ -504,6 +504,36 @@ const isPaved = (world: RoadWorld, tx: number, ty: number): boolean =>
  */
 const isTownStreet = (world: RoadWorld, tx: number, ty: number): boolean =>
   !!world.grid && isTownTile(world.grid, tx, ty);
+
+/**
+ * BRIDGE-1 (owner 2026-10-05): the level each deck rides at - the higher of
+ * the two banks it spans (walking along its axis to dry land, up to 6 tiles
+ * each way), never below the water under it - and, on each deck, how far it
+ * stands above that water (`heightPx`, the pier's height). Pure function of
+ * the map, so every chunk agrees on a bridge that crosses a chunk edge.
+ */
+export function bridgeDeckLevels(grid: Grid | undefined, decks: BridgeDeck[]): Map<number, number> {
+  const out = new Map<number, number>();
+  if (!grid?.height || !decks.length) return out;
+  const water = (x: number, y: number): boolean =>
+    x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && grid.terrain[y * MAP_W + x] === WATER;
+  for (const d of decks) {
+    const [ax, ay] = d.axis === "x" ? [1, 0] : [0, 1];
+    let bank = -Infinity;
+    for (const s of [-1, 1]) {
+      for (let k = 1; k <= 6; k++) {
+        const x = d.tx + ax * s * k, y = d.ty + ay * s * k;
+        if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) break;
+        if (!water(x, y)) { bank = Math.max(bank, surfaceHeight(grid, x + 0.5, y + 0.5)); break; }
+      }
+    }
+    const below = surfaceHeight(grid, d.tx + 0.5, d.ty + 0.5);
+    const level = Math.max(below, Number.isFinite(bank) ? bank : below);
+    out.set(d.ty * MAP_W + d.tx, level);
+    d.heightPx = (level - below) * LEVEL_PX;
+  }
+  return out;
+}
 
 /**
  * R2 (#266): every BRIDGE DECK in a range. A deck is track on water — nothing
@@ -1731,7 +1761,7 @@ export class RoadCache {
     // it is baked into the raster exactly like the rail's detail tier — no
     // per-frame work, and the flat path keeps the identity draper and the tile
     // range it has always evaluated.
-    const elev = draperFor(world.grid, vq);
+    const terrainElev = draperFor(world.grid, vq);
     const lift = elevationLiftPx(world.grid);
     const range = tilesForRect(
       px - (vq ? 2 * lift : 0), py, px + ROAD_CHUNK_W + GUTTER * 2 + (vq ? 2 * lift : 0), py + ROAD_CHUNK_H + GUTTER * 2, lift,
@@ -1759,6 +1789,11 @@ export class RoadCache {
     const rail = railTilesIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
     // R2 (#266): the railway's own decks, painted by the rail pass.
     const railDecks = railBridgeDecksIn(world, range.tx0, range.ty0, range.tx1, range.ty1);
+    // BRIDGE-1 (owner 2026-10-05): every deck rides at its higher bank's level
+    // and stands on piers down to the water; the deck-aware draper lifts the
+    // deck, the road or rail on it and its railings together.
+    const deckLevels = bridgeDeckLevels(world.grid, [...roadDecks, ...railDecks]);
+    const elev = bridgeDraper(terrainElev, deckLevels, MAP_W, vq);
 
     // A chunk with nothing to draw is never rasterised: an empty path painted
     // into a fresh surface would cost the same memory for a rectangle that

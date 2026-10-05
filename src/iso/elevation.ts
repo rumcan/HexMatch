@@ -392,6 +392,26 @@ export function liftShift(u: number, v: number, k: number, q: number): GroundPoi
   }
 }
 
+/**
+ * BRIDGE-1 (#685, owner 2026-10-05): a bridge stays at the height of the bank
+ * it starts from and stands on piers, instead of dipping to the water between
+ * two raised banks. `levels` maps a deck tile (`ty * mapW + tx`) to the height
+ * level its deck rides at; every point inside such a tile is lifted to that
+ * level, every other point keeps `base`'s terrain lift. A pure function of the
+ * point, so a road that leaves the bank onto the deck shares its edge point
+ * with the deck and stays seamless.
+ */
+export function bridgeDraper(
+  base: Draper, levels: ReadonlyMap<number, number>, mapW: number, q = 0,
+): Draper {
+  if (!levels.size) return base;
+  const point = (u: number, v: number): GroundPoint => {
+    const lv = levels.get(Math.floor(v) * mapW + Math.floor(u));
+    return lv === undefined ? base.point(u, v) : liftShift(u, v, lv * LIFT_GROUND_PER_LEVEL, q);
+  };
+  return { point, path: (points) => drapePath(points, point), active: true };
+}
+
 /** Drop a cached draper with its lattice. */
 export function invalidateDraper(grid: Grid): void { drapers.delete(grid); }
 
