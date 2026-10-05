@@ -1415,7 +1415,7 @@ export const DEPOT_SPRITE = "truck_depot";
 export const TOWN_HOUSE_VARIANTS = [ "town_office_1460",
   "town_fountain_1x1",
   "town_small_flat_1x1_1", "town_small_flat_1x1_2", "town_small_house_1x1_1", "town_townhouse_garden_2", "town_townhouse_gardens_2",
-  "town_townhouse_3", "town_townhouse_garden_3", "town_bank", "town_cinema", "town_flats",
+  "town_townhouse_3", "town_townhouse_garden_3", "town_cinema", "town_flats",
   "town_flats_2", "town_flats_4", "town_flats_grey", "town_house_pool",
   "town_shops_modern", "town_office_tower_modern",
   "town_shops_offices", "town_shops_offices_2", "town_cottage_old_small_a",
@@ -1646,6 +1646,11 @@ export const TOWN_VILLAGE_VARIANTS = [ "town_small_house_1x1_1", "town_small_fla
  * the swap is one sprite and nothing else on the map moves. The bank is where
  * the city upgrade is bought: click it.
  */
+/**
+ * Owner (2026-10-05): the domed town hall (`town_bank`) stands ONCE per town, at its centre, from the
+ * first upgrade on - never in a level-0 town (the church), and never as ordinary block or downtown art (it
+ * is in no building pool).
+ */
 export function townCentreSprite(tier: number): string {
   return tier >= 1 ? "town_bank" : "town_center";
 }
@@ -1705,7 +1710,7 @@ export interface TownZonePool {
  * PP-12's list so a narrow lot still reads as commerce rather than as a house.
  */
 export const TOWN_DOWNTOWN_VARIANTS = [
-  "town_bank", "town_cinema", "town_offices_tall", "town_office_tower_modern",
+  "town_cinema", "town_offices_tall", "town_office_tower_modern",
   "town_flats", "town_flats_grey", "town_hotel",
 ] as const;
 
