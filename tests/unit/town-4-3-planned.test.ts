@@ -37,7 +37,7 @@ import {
   seedTownRoads,
 } from "../../src/iso/track";
 import {
-  PLANNED_INDUSTRY_SEP, planLotTiles, planLotsUpTo, planRoadTiles, planVillage,
+  PLANNED_INDUSTRY_SEP, planAvenueTiles, planLotTiles, planLotsUpTo, planRoadTiles, planVillage,
   planTileDistrict, plannedTownSep, type LotFront, type TownPlan,
 } from "../../src/iso/town-plan";
 
@@ -89,7 +89,7 @@ function audit(plan: TownPlan): string[] {
     }
   });
   const dn = (x: number, y: number): number => (road.has(k(x, y)) ? 1 : 0);
-  const legal = new Set<number>([...plan.avenueTiles, ...plan.culDeSacs].map(([x, y]) => k(x, y)));
+  const legal = new Set<number>([...planAvenueTiles(plan), ...plan.culDeSacs].map(([x, y]) => k(x, y)));
   for (const [x, y] of planRoadTiles(plan)) {
     const n = dn(x, y - 1) + dn(x + 1, y) + dn(x, y + 1) + dn(x - 1, y);
     if (n === 1 && !legal.has(k(x, y))) out.push(`STUB @${x},${y}`);
@@ -105,7 +105,9 @@ function audit(plan: TownPlan): string[] {
   const roads = planRoadTiles(plan).length;
   const area = (plan.bounds.x1 - plan.bounds.x0 + 1) * (plan.bounds.y1 - plan.bounds.y0 + 1);
   const share = (100 * roads) / area;
-  if (share < 20 || share > 30) out.push(`SHARE ${share.toFixed(1)}%`);
+  // TOWN-4.7 (#700): a town with a second, crossing avenue carries 2 more
+  // tiles of road across its whole depth, so its ceiling is 33%, not 30%.
+  if (share < 20 || share > (plan.crossAvenueTiles ? 33 : 30)) out.push(`SHARE ${share.toFixed(1)}%`);
   const [aveMin, aveMax] = AVE_RANGE[plan.size];
   const len = plan.avenueTiles.length / 2;
   if (len < aveMin || len > aveMax) out.push(`AVENUE ${len}`);
@@ -114,7 +116,7 @@ function audit(plan: TownPlan): string[] {
 
 /** The plain road class of a tile, for the corner-frontage rule. */
 function roadRank(plan: TownPlan, x: number, y: number): number {
-  if (plan.avenueTiles.some(([ax, ay]) => ax === x && ay === y)) return 2;
+  if (planAvenueTiles(plan).some(([ax, ay]) => ax === x && ay === y)) return 2;
   for (const s of plan.streets) {
     if (s.tiles.some(([sx, sy]) => sx === x && sy === y)) return s.kind === "street" ? 1 : 0;
   }
@@ -126,7 +128,7 @@ function roadRank(plan: TownPlan, x: number, y: number): number {
 function planTileKeys(plan: TownPlan): Set<number> {
   const out = new Set<number>();
   for (const [x, y] of plan.reserved) out.add(k(x, y));
-  for (const [x, y] of plan.avenueTiles) out.add(k(x, y));
+  for (const [x, y] of planAvenueTiles(plan)) out.add(k(x, y));
   return out;
 }
 
@@ -203,8 +205,9 @@ describe("TOWN-4.3 planned towns — the master plan", () => {
       // …and both ends are the ends a highway may meet.
       const [f, t2] = [plan.avenue.from, plan.avenue.to];
       expect(k(f[0], f[1])).not.toBe(k(t2[0], t2[1]));
-      expect(plan.termini.length, `seed ${seed} town ${town.id} termini`).toBe(4);
-      const av = new Set(plan.avenueTiles.map(([x, y]) => k(x, y)));
+      // Four ends per avenue: two carriageways at each end (TOWN-4.7 adds a cross avenue's four).
+      expect(plan.termini.length, `seed ${seed} town ${town.id} termini`).toBe(plan.crossAvenueTiles ? 8 : 4);
+      const av = new Set(planAvenueTiles(plan).map(([x, y]) => k(x, y)));
       for (const [x, y] of plan.termini) expect(av.has(k(x, y)), `terminus (${x},${y}) off-avenue`).toBe(true);
     }
     expect([...axes].sort(), "both avenue orientations appear").toEqual(["x", "y"]);
@@ -331,7 +334,7 @@ describe("TOWN-4.3 planned towns — the master plan", () => {
       const houseSet = new Set(town.houses.map(([x, y]) => k(x, y)));
       const roadSet = new Set(town.roads.map(([x, y]) => k(x, y)));
       const squareSet = new Set(plan.square.tiles.map(([x, y]) => k(x, y)));
-      const avenueSet = new Set(plan.avenueTiles.map(([x, y]) => k(x, y)));
+      const avenueSet = new Set(planAvenueTiles(plan).map(([x, y]) => k(x, y)));
       const lotTiles = new Set(planLotTiles(plan).map(([x, y]) => k(x, y)));
       expect(houseSet.size, `seed ${seed} town ${town.id} duplicate house tiles`).toBe(houses.length);
       expect(roadSet.size, `seed ${seed} town ${town.id} duplicate road tiles`).toBe(roads.length);
@@ -351,13 +354,19 @@ describe("TOWN-4.3 planned towns — the master plan", () => {
         expect(houseSet.has(k(x, y)), `${where(x, y)} core lot left free`).toBe(true);
       }
       // Roads: the WHOLE avenue (already at tier 0) plus every district-0 street.
-      for (const [x, y] of plan.avenueTiles) {
+      for (const [x, y] of planAvenueTiles(plan)) {
         expect(roadSet.has(k(x, y)), `${where(x, y)} avenue tile unpaved`).toBe(true);
       }
+      // TOWN-4.7: planVillage may commit a FEW district-1 plan-street tiles: the
+      // shortest connectors that join a stray village street to the avenue.
+      const planStreets = new Set(planRoadTiles(plan).map(([x, y]) => k(x, y)));
+      let connectors = 0;
       for (const [x, y] of town.roads) {
-        expect(avenueSet.has(k(x, y)) || planTileDistrict(plan, x, y) === 0,
-          `${where(x, y)} reserved street committed early`).toBe(true);
+        if (avenueSet.has(k(x, y)) || planTileDistrict(plan, x, y) === 0) continue;
+        connectors++;
+        expect(planStreets.has(k(x, y)), `${where(x, y)} reserved street committed early`).toBe(true);
       }
+      expect(connectors, `seed ${seed} town ${town.id} too many early street tiles`).toBeLessThanOrEqual(16);
       for (const [x, y] of planRoadTiles(plan)) {
         if (planTileDistrict(plan, x, y) !== 0) continue;
         expect(roadSet.has(k(x, y)), `${where(x, y)} core street left out`).toBe(true);
@@ -412,7 +421,7 @@ describe("TOWN-4.3 planned towns — the master plan", () => {
   it("stands every building on dry land, in bounds", () => {
     for (const { seed, grid } of maps) {
       for (const t of grid.towns) {
-        for (const [x, y] of [...t.houses, ...t.roads, ...t.plan!.avenueTiles]) {
+        for (const [x, y] of [...t.houses, ...t.roads, ...planAvenueTiles(t.plan!)]) {
           expect(inBounds(x, y), `seed ${seed} off-map`).toBe(true);
           expect(grid.terrain[idx(x, y)], `seed ${seed} town ${t.id} tile (${x},${y}) on water`)
             .not.toBe(WATER);

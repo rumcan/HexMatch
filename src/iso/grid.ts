@@ -14,7 +14,7 @@
 import { fillCoastalHoles } from "./coastline";
 import { deriveTownNames } from "./town-names";
 import {
-  PLANNED_INDUSTRY_SEP, planTileDistrict, planTown, planVillage, plannedTownSep,
+  PLANNED_INDUSTRY_SEP, planAvenueTiles, planTileDistrict, planTown, planVillage, plannedTownSep,
   type IndustryRect, type Lot, type LotFront, type PlanBlock, type PlanSize, type TownPlan,
 } from "./town-plan";
 // TOWN-2 (#653): the town street-plan option's NAME. Type-only: match-settings
@@ -30,7 +30,7 @@ import {
   TOWN_HOME_VARIANTS, TOWN_HOME_BLOCK_IN, TOWN_GREEN_LOT_IN,
   // TOWN-4.4 (#680): a planned town fills its lots from the ZONE POOLS.
   TOWN_ZONE_POOLS, TOWN_GARDEN_TREE_IN,
-  TOWN_TIER_LEGACY, TOWN_VISUAL_MAX,
+  TOWN_TIER_LEGACY, TOWN_VISUAL_MAX, townArtUnlocked,
   townCentreSprite, pickTownVariant, hashPick,
   CIVIC_BUILDINGS, CIVIC_MAX_SHARE, civicArt, civicCount,
 } from "./config";
@@ -3492,7 +3492,7 @@ export function plannedReveal(
   const avenue = new Set<number>();
   const live = new Set<number>();
   const at = (x: number, y: number): boolean => inBounds(x, y) && live.has(idx(x, y));
-  for (const [x, y] of plan.avenueTiles) {
+  for (const [x, y] of planAvenueTiles(plan)) {
     const i = idx(x, y);
     avenue.add(i);
     live.add(i);
@@ -3727,7 +3727,13 @@ function townBuildingsPlanned(
 ): TownBuilding[] {
   const plan = t.plan as TownPlan;
   const tier = opts.tier ?? TOWN_TIER_LEGACY;
-  const known = opts.spriteKnown;
+  // TOWN-4.7 (#700): tall art waits for its tier (`TOWN_ART_MIN_TIER`); a
+  // legacy (unset) tier draws everything, as before.
+  const artTier = tier < 0 ? TOWN_VISUAL_MAX : tier;
+  const baseKnown = opts.spriteKnown;
+  const known = (s: string): boolean => townArtUnlocked(s, artTier)
+    && (baseKnown ? baseKnown(s)
+      : buildingFootprint(s) !== null || (TOWN_TREE_VARIANTS as readonly string[]).includes(s));
   const reveal = plannedReveal(t, opts.grid, tier, {
     blocked: opts.blocked, publicRoad: opts.publicRoad,
   });
@@ -4063,14 +4069,15 @@ export function publicRoadTiles(
   // TOWN-BUG-2 (#699): a planned town's reserved districts are free land until
   // they grow, so the highway used to cut straight through future lots and
   // block interiors — and the grown town then stood on the road. Every tile the
-  // plan reserves is off-limits except its own streets and avenue (a highway
-  // may run along a town street, as it does in a grid town).
+  // plan reserves is off-limits except its avenue and the streets the town
+  // already owns (a highway may run along a town street, as in a grid town; a
+  // FUTURE street would lead it into the avenue's middle instead of its ends).
   const planLand = new Set<number>();
   for (const t of towns) {
     if (!t.plan) continue;
     for (const [x, y] of t.plan.reserved) planLand.add(idx(x, y));
-    for (const [x, y] of t.plan.avenueTiles) planLand.delete(idx(x, y));
-    for (const s of t.plan.streets) for (const [x, y] of s.tiles) planLand.delete(idx(x, y));
+    for (const [x, y] of planAvenueTiles(t.plan)) planLand.delete(idx(x, y));
+    for (const [x, y] of t.roads) planLand.delete(idx(x, y));   // the streets the town already owns, not its future ones
   }
 
   const passable = (tx: number, ty: number): boolean => {
@@ -4089,10 +4096,13 @@ export function publicRoadTiles(
   const linkFromNetwork = (
     sourceSet: Set<number>, targetTiles: number[],
     highwaySet: Set<number>, pavedSet: Set<number>,
+    /** TOWN-4.7: tiles the search may neither start from nor walk through. */
+    sealed?: Set<number>,
   ): [number, number][] => {
     const targets = new Set<number>(targetTiles);
     const prev = new Int32Array(MAP_W * MAP_H).fill(-1);
     const seen = new Uint8Array(MAP_W * MAP_H);
+    if (sealed) for (const id of sealed) seen[id] = 1;
     const queue: number[] = [];
     const orderedSources = [...sourceSet].sort((a, b) => a - b);
     for (const si of orderedSources) {
@@ -4200,6 +4210,16 @@ export function publicRoadTiles(
     if (!t.plan) continue;
     for (const [dx, dy] of t.plan.termini) doors.add(idx(dx, dy));
   }
+  // TOWN-4.7 (#700): a planned town is LEFT through its doors as well as
+  // entered through them: once it is in the network, its non-door tiles are
+  // sealed, so no highway starts from the middle of its avenue or a side street.
+  const sealedPlan = new Set<number>();
+  if (doors.size) {
+    for (const comp of comps) {
+      if (!comp.some((id) => doors.has(id))) continue;
+      for (const id of comp) if (!doors.has(id)) sealedPlan.add(id);
+    }
+  }
   const grow = (root: number): void => {
     const inTree = [root];
     const rest = comps.map((_, i) => i).filter((i) => i !== root);
@@ -4215,7 +4235,7 @@ export function publicRoadTiles(
           const own = targets.filter((id) => doors.has(id));
           if (own.length) targets = own;
         }
-        const path = linkFromNetwork(networkSet, targets, highwaySet, paved);
+        const path = linkFromNetwork(networkSet, targets, highwaySet, paved, doors.size ? sealedPlan : undefined);
         if (!path.length) continue;
         // path length is number of tiles; shorter is better, tie-break by comp index
         const len = path.length;
@@ -4651,7 +4671,7 @@ function placeTowns(
           if (!plan) continue;
           let clash = false;
           for (const [x, y] of plan.reserved) if (planTaken.has(idx(x, y))) { clash = true; break; }
-          if (!clash) for (const [x, y] of plan.avenueTiles) if (planTaken.has(idx(x, y))) { clash = true; break; }
+          if (!clash) for (const [x, y] of planAvenueTiles(plan)) if (planTaken.has(idx(x, y))) { clash = true; break; }
           if (clash) continue;
           // BUILD item 2: the town OWNS district 0 plus the avenue; the rest
           // of the plan is reserved (TOWN-4.4 reveals it) and stays free land.
@@ -4682,7 +4702,7 @@ function placeTowns(
           for (const [rx, ry] of village.roads) occ[idx(rx, ry)] = TOWN_OCC;
           for (const [sx, sy] of village.square) occ[idx(sx, sy)] = TOWN_OCC;
           for (const [rx, ry] of plan.reserved) planTaken.add(idx(rx, ry));
-          for (const [ax, ay] of plan.avenueTiles) planTaken.add(idx(ax, ay));
+          for (const [ax, ay] of planAvenueTiles(plan)) planTaken.add(idx(ax, ay));
           towns.push({
             id: towns.length, tx: cx, ty: cy,
             houses: village.houses, roads: village.roads, plan,

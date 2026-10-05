@@ -46,7 +46,7 @@ import {
 } from "../../src/iso/road-geometry";
 import { depthSort, place, type DrawItem, type Placed } from "../../src/iso/depth";
 import { growthLots, STAGGER_BANDS } from "../../src/iso/town-growth";
-import { planTileDistrict, type Lot, type LotFront, type PlanBlock } from "../../src/iso/town-plan";
+import { planAvenueTiles, planTileDistrict, type Lot, type LotFront, type PlanBlock } from "../../src/iso/town-plan";
 
 // ── The atlas, as the game hands it to `townBuildings` ─────────────────────
 // The runtime passes `spriteKnown` (can the loaded atlas blit this?) and a
@@ -586,7 +586,7 @@ describe("TOWN-4.4 facing", () => {
         }
         for (const b of reveal.blocks) for (const [x, y] of b.interior) want.set(idx(x, y), b.front);
         // The square faces the avenue: its art turns to the avenue side.
-        const avenue = new Set(plan.avenueTiles.map(([x, y]) => idx(x, y)));
+        const avenue = new Set(planAvenueTiles(plan).map(([x, y]) => idx(x, y)));
         let plazaFront: LotFront | null = null;
         for (const [x, y] of plan.square.tiles) {
           for (const [dx, dy] of DIR4) {
@@ -678,7 +678,7 @@ describe("TOWN-4.4 growth", () => {
   it("reveals districts in order: tier N shows 0..N and nothing further", () => {
     for (const { seed, grid, town } of towns) {
       const plan = town.plan!;
-      const avenueTiles = new Set(plan.avenueTiles.map(([x, y]) => idx(x, y)));
+      const avenueTiles = new Set(planAvenueTiles(plan).map(([x, y]) => idx(x, y)));
       let previous: Set<number> | null = null;
       let previousLots = -1;
       for (let tier = 0; tier <= TOWN_VISUAL_MAX; tier++) {
@@ -687,7 +687,7 @@ describe("TOWN-4.4 growth", () => {
         // Every revealed street tile is in a revealed district, and the avenue
         // is always live (TOWN-4.3 lays it at full length from tier 0).
         for (const [x, y] of reveal.roads) {
-          const avenue = plan.avenueTiles.some(([ax, ay]) => ax === x && ay === y);
+          const avenue = planAvenueTiles(plan).some(([ax, ay]) => ax === x && ay === y);
           if (!avenue) expect(planTileDistrict(plan, x, y)).toBeLessThanOrEqual(tier);
         }
         // Every revealed lot is in a revealed district — `Lot.district` is the
@@ -803,7 +803,7 @@ describe("TOWN-4.4 growth", () => {
     const bad: string[] = [];
     for (const { seed, grid, town } of towns) {
       const plan = town.plan!;
-      const avenue = new Set(plan.avenueTiles.map(([x, y]) => idx(x, y)));
+      const avenue = new Set(planAvenueTiles(plan).map(([x, y]) => idx(x, y)));
       const circles = new Set(plan.culDeSacs.map(([x, y]) => idx(x, y)));
       for (let tier = 0; tier <= TOWN_VISUAL_MAX; tier++) {
         const { reveal } = drawn(town, grid, tier);
@@ -838,7 +838,7 @@ describe("TOWN-4.4 growth", () => {
     let checked = 0;
     for (const { seed, grid, town } of towns) {
       const plan = town.plan!;
-      const avenue = new Set(plan.avenueTiles.map(([x, y]) => idx(x, y)));
+      const avenue = new Set(planAvenueTiles(plan).map(([x, y]) => idx(x, y)));
       const circles = new Set(plan.culDeSacs.map(([x, y]) => idx(x, y)));
       const open = drawn(town, grid, TOWN_VISUAL_MAX).reveal;
       // A reserved-district street tile whose removal cuts a tail off — and
