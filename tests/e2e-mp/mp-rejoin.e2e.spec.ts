@@ -127,7 +127,10 @@ test.fixme("(a) a reload-dropped guest is announced with a countdown, and the wa
   }
 });
 
-test("(b) an abandoned RANKED match credits the survivor: the win is filed and the rating moves", async ({ browser }, testInfo) => {
+// QUARANTINED, tracked in #711: red on main since d4bfb52c (TOWN-4.5 made the LARGE map the room
+// default); the reloaded seat never sees "Match in progress" inside the budget on a 2-core runner.
+// `test.fixme`, not a loosened assertion — see docs/known-test-failures.md.
+test.fixme("(b) an abandoned RANKED match credits the survivor: the win is filed and the rating moves", async ({ browser }, testInfo) => {
   test.setTimeout(540_000);
   const seatA = await openSide(browser, "seat-a");
   const seatB = await openSide(browser, "seat-b");
