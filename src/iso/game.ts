@@ -499,6 +499,9 @@ import {
   DEFAULT_MATCH_SETTINGS,
   describeMatchSettings,
   normalizeMatchSettings,
+  readTownCount,
+  readWinVp,
+  readMoneyScale,
   type MatchSettings,
 } from "../net/match-settings";
 // RANK-01 (#147): the rated match. `rank-runtime.ts` holds the rating and talks
@@ -807,6 +810,24 @@ export interface IsoGameOptions {
    * save: a save of another size is then not resumed (a different map).
    */
   size?: MapSizeName;
+  /**
+   * SETTINGS-1 (#701): the New Game page's town count (1..6, the generator
+   * clamps). Absent = the shipped `TOWN_COUNT`. Solo free play only, like the
+   * map size: a resumed save keeps its own record (`map.towns`), a room, a
+   * contract, a scenario and the lessons ignore it.
+   */
+  townCount?: number;
+  /**
+   * SETTINGS-1 (#701): the ★ line a NEW solo free-play game races to. Absent =
+   * today's line. Recorded on the save (`winVp`), so a resumed game keeps it;
+   * contracts, scenarios, the Starter Island and rooms keep their own lines.
+   */
+  winVp?: number;
+  /**
+   * SETTINGS-1 (#701): one multiplier on the player's opening cash (Low 0.5 /
+   * Normal 1 / High 2). A new game only — a resumed save carries its purse.
+   */
+  moneyScale?: number;
   /**
    * L1a (#232): force the new-loop feature flag. Absent, the flag is read
    * from `?loop=new` — DEV builds only, the same guarantee the rail flag
@@ -1201,6 +1222,17 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       scenario: scenarioOn ? (scenarioDef ?? {}) : null,
     });
   mapOptions.size = mapSize;
+  // SETTINGS-1 (#701): the town count, a map feature like the size — the
+  // map regenerates from the seed, so a save that named one must name it again
+  // (`map.towns`); absent is the shipped count. New solo free play only.
+  const freePlay = !opts.tutorialSection && !starterIsland && !isMp() && !storyOn && !scenarioOn;
+  const townCount = !freePlay ? undefined
+    : bootSave ? readTownCount((bootSave.map as { towns?: unknown } | undefined)?.towns)
+    : readTownCount(opts.townCount);
+  if (townCount !== undefined) mapOptions.towns = townCount;
+  // SETTINGS-1 (#701): the New Game page offers "replay the last map" — the
+  // seed of the last free-play game this browser started or resumed.
+  if (freePlay) { try { localStorage.setItem("hexmatch:last-seed", String(seed)); } catch { /* storage blocked */ } }
   setMapSize(MAP_SIZES[mapSize], MAP_SIZES[mapSize]);
   const mapSizeClaim = claimMapSize();
   const organicTowns = townLayout === "organic";
@@ -1213,6 +1245,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       layout: townLayout,
       // TOWN-4.1: held to the size just set (a mismatch throws, never builds).
       size: mapSize,
+      ...(townCount !== undefined ? { townCount } : {}),
       ...(scenarioDef?.gen ?? {}),
     });
   // #456: the seed-derived heights, kept as the baseline the edited-heights
@@ -1339,6 +1372,10 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     { i: 1, id: "ai", name: storyChapter ? CAST[rivalCast].name : "Rival", colour: storyChapter ? CAST[rivalCast].colour : "#ff7a5a", purse: toBag(startPurse), human: false, freeTrack: FREE_SETUP_TRACK, freeDepots: FREE_SETUP_DEPOTS, depotTier: 0, townLevel: 0, townBonus: 0, money: START_MONEY, manager: null, fixer: freshFixer() },
   ];
   const me = players[0], rival = players[1];
+  // SETTINGS-1 (#701): the New Game page's Starting money — one multiplier on
+  // the player's opening cash, a NEW free-play game only (a resumed save
+  // restores its own purse over this below).
+  if (freePlay && !bootSave) me.money = Math.round(START_MONEY * readMoneyScale(opts.moneyScale));
   /**
    * CAST-1: the face a seat wears on battle screens and the ledger — the
    * player's own manager, another human's manager (as the host echoed it),
@@ -1714,6 +1751,11 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
   // trainee's own ★ line (6), read live like every other line, so the HUD,
   // the king bars and the win check all agree.
   // PROG-1 (#475): a scenario races its own ★ line, like a contract.
+  // SETTINGS-1 (#701): the New Game page's ★ line — free play only, kept on
+  // the save so a resumed game races the line it started on.
+  const winVpOverride: number | null = !freePlay ? null
+    : bootSave ? readWinVp((bootSave as { winVp?: unknown }).winVp)
+    : readWinVp(opts.winVp);
   const winTarget = (): number => opts.tutorialSection ? skill().winTarget
     : starterIsland
     ? skill().winTarget
@@ -1721,6 +1763,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       ? storyChapter.target
       : scenarioDef
         ? scenarioDef.winTarget
+        : winVpOverride !== null
+          ? winVpOverride
         : (newLoop
           ? VICTORY.loop.target
           : (isSolo() ? skill().winTarget : settings.winTarget));
@@ -15657,6 +15701,7 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
       snapV: SNAPSHOT_VERSION, // track layers share the MP wire format
       savedAt: Date.now(),
       seed, map: mapOptions, skillKey: skillKey, phase, winnerId: winner?.id ?? null,
+      ...(winVpOverride !== null ? { winVp: winVpOverride } : {}),
       story: {
         playerSabotage,
         rivalSabotage: rivalSabotageHits,
@@ -17392,6 +17437,8 @@ export function startIsoGame(root: HTMLElement, opts: IsoGameOptions = {}) {
     get purse() { return me.purse; },
     /** ECON-1 (#421): the local seat's money — settable so a test can fund builds. */
     get money() { return me.money; },
+    /** SETTINGS-1 (#701): the ★ line this game races to (`winTarget()`). */
+    get winTarget() { return winTarget(); },
     set money(v: number) { me.money = Math.max(0, v); },
     /**
      * L11 (#226): the bank's click path, exposed so a test can aim the LOCAL

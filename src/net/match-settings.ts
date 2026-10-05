@@ -182,6 +182,12 @@ export interface MapOptions {
    * boot (`resolveMapSize`) and written back here, so its save records it.
    */
   size?: MapSizeName;
+  /**
+   * SETTINGS-1 (#701): how many towns the generator seats. OPTIONAL and absent
+   * from the frozen records, on the `size` pattern: a record without it was
+   * generated with the shipped count, and resumes with it.
+   */
+  towns?: number;
 }
 export const MAP_OPTIONS_OFF: Readonly<MapOptions> = Object.freeze({ rivers: false, elevation: false, shapes: false, rings: false, diag: false });
 export const MAP_OPTIONS_ON: Readonly<MapOptions> = Object.freeze({ rivers: true, elevation: true, shapes: true, rings: true, diag: true });
@@ -224,6 +230,12 @@ export function readMapOptions(raw: unknown): MapOptions | null {
     const size = readMapSize(o.size);
     if (!size) return null;
     out.size = size;
+  }
+  // SETTINGS-1 (#701): the town count, as strict as the size.
+  if (o.towns !== undefined) {
+    const towns = readTownCount(o.towns);
+    if (towns === undefined) return null;
+    out.towns = towns;
   }
   return out;
 }
@@ -635,4 +647,27 @@ export function saveMatchSettings(
   try {
     storage.setItem(MATCH_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
   } catch { /* private mode: the next room asks again */ }
+}
+
+// ── SETTINGS-1 (#701): the New Game page's rule readers ──────────────────
+// One validator per value, shared by the page (stored choices), the boot
+// (options) and the save (records), so a hand-edited value can never reach
+// the generator or the win check unchecked.
+
+/** Towns a map may seat (the generator clamps to 1..6 as well). */
+export const TOWN_COUNT_CHOICES = [3, 4, 5] as const;
+/** A town count from storage / a save / an option; anything else → undefined. */
+export function readTownCount(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 6 ? raw : undefined;
+}
+/** A ★ line from storage / a save / an option (a whole 1..99); else null. */
+export function readWinVp(raw: unknown): number | null {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 99 ? raw : null;
+}
+/** The opening-cash multipliers the page offers. */
+export const MONEY_SCALES = { low: 0.5, normal: 1, high: 2 } as const;
+export type MoneyChoice = keyof typeof MONEY_SCALES;
+/** A cash multiplier; anything outside the offered three reads as 1. */
+export function readMoneyScale(raw: unknown): number {
+  return typeof raw === "number" && (Object.values(MONEY_SCALES) as number[]).includes(raw) ? raw : 1;
 }

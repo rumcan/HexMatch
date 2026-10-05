@@ -73,8 +73,12 @@ export interface SaveGamePayload {
     layout?: TownLayout;
     /** TOWN-4.1 (#677): the map size; absent = "standard" (every save before it). */
     size?: MapSizeName;
+    /** SETTINGS-1 (#701): the town count; absent = the shipped count. */
+    towns?: number;
   };
   skillKey: string;
+  /** SETTINGS-1 (#701): the New Game page's ★ line; absent = the shipped line. */
+  winVp?: number;
   phase: string;
   winnerId: string | null;
   story?: {

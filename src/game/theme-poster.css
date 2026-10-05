@@ -362,19 +362,22 @@
    lobby preset look in poster dress (orange = chosen). */
 .start-screen.px .px-modes .ng-map { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .start-screen.px .px-modes .ng-map .start-actions-label { margin: 0; }
-.start-screen.px .px-modes .ng-row { display: flex; flex-direction: column; gap: 4px; }
-.start-screen.px .px-modes .ng-name { color: var(--accent); font: 700 11px var(--px-display); letter-spacing: .16em; text-transform: uppercase; }
-.start-screen.px .px-modes .ng-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.start-screen.px .px-modes .ng-preset {
+.start-screen.px .px-modes .ng-row, .start-screen.px .ng-page .ng-row { display: flex; flex-direction: column; gap: 4px; }
+.start-screen.px .px-modes .ng-name, .start-screen.px .ng-page .ng-name { color: var(--accent); font: 700 11px var(--px-display); letter-spacing: .16em; text-transform: uppercase; }
+.start-screen.px .px-modes .ng-presets, .start-screen.px .ng-page .ng-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.start-screen.px .px-modes .ng-preset, .start-screen.px .ng-page .ng-preset {
   flex: 1 1 auto; min-height: 40px; padding: 4px 12px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   border: 1.5px solid #1e2527; border-radius: 0; background: transparent; color: #11191c; text-align: center;
   font: 700 14px var(--px-display); letter-spacing: .06em; text-transform: uppercase;
 }
-.start-screen.px .px-modes .ng-preset small { display: inline; margin: 0; color: inherit; font: 500 12px var(--px-body); letter-spacing: 0; text-transform: none; }
-.start-screen.px .px-modes .ng-preset.on { border-color: #e46b0e; background: #e46b0e; color: #fff; }
-.start-screen.px .px-modes .ng-preset.on small { color: #fff; }
-.start-screen.px .px-modes .ng-preset:hover:not(.on) { background: var(--px-ink); border-color: var(--px-ink); color: #f2e8d4; }
+.start-screen.px .px-modes .ng-preset small, .start-screen.px .ng-page .ng-preset small { display: inline; margin: 0; color: inherit; font: 500 12px var(--px-body); letter-spacing: 0; text-transform: none; }
+.start-screen.px .px-modes .ng-preset.on, .start-screen.px .ng-page .ng-preset.on { border-color: #e46b0e; background: #e46b0e; color: #fff; }
+.start-screen.px .px-modes .ng-preset.on small, .start-screen.px .ng-page .ng-preset.on small { color: #fff; }
+.start-screen.px .px-modes .ng-preset:hover:not(.on), .start-screen.px .ng-page .ng-preset:hover:not(.on) { background: var(--px-ink); border-color: var(--px-ink); color: #f2e8d4; }
+/* SETTINGS-1 (#701): the New Game page wears the same keys; its seed field and notes in poster ink. */
+.start-screen.px .ng-page .ng-seed { border: 1.5px solid #1e2527; border-radius: 0; background: transparent; color: #11191c; font: 700 14px var(--px-display); }
+.start-screen.px .ng-page .ng-note, .start-screen.px .ng-page .ng-summary { color: var(--px-mute); font: 500 12px var(--px-body); letter-spacing: 0; }
 .start-screen.px .px-modes .start-back {
   grid-column: 1 / -1; justify-self: end; min-height: 0; padding: 2px 0; border: 0; background: none;
   color: var(--px-mute); font: 700 12px var(--px-display); letter-spacing: .14em;
